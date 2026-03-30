@@ -126,9 +126,9 @@ Source: `~/Desktop/Projects/MoonMarket`
 
 | # | Task | Owner | Status | Notes |
 |---|---|---|---|---|
-| 1.1 | Set up FastAPI app skeleton (`main.py`, CORS, lifespan) | Ben | TODO | Port from MoonMarket, add health check |
-| 1.2 | Port IBKR auth service (`services/ibkr.py`) | Ben | TODO | Auth, tickle, session keep-alive, typed errors |
-| 1.3 | Port rate limiter + cache layer | Ben | TODO | Swap Redis for in-memory/SQLite cache |
+| 1.1 | Set up FastAPI app skeleton (`main.py`, CORS, lifespan) | Ben | DONE | `main.py` — async lifespan creates IBKRService singleton, CORS for `localhost:1420`, typed exception handlers (401/429/502/500), `/health` endpoint. Supporting files: `config.py` (all env vars), `exceptions.py` (typed error hierarchy), `deps.py` (DI helper), `state.py` (Pydantic state model), `models/__init__.py` (HealthResponse, AuthStatusResponse), `routers/auth.py` (GET `/auth/status`, POST `/auth/logout`). Routes: `/health`, `/auth/status`, `/auth/logout`. |
+| 1.2 | Port IBKR auth service (`services/ibkr.py`) | Ben | DONE | `services/ibkr.py` — singleton class with `_request()` core HTTP helper (retry on 404/503, typed exceptions for 401/429/4xx, connection errors). Auth methods: `auth_status()`, `tickle()`, `sso_validate()`, `ensure_accounts()`, `logout()`. Background tickle loop (55s interval) auto-starts on successful auth. Clean `shutdown()` cancels all tasks + closes httpx client. No mixin pattern (simpler than MoonMarket). |
+| 1.3 | Port rate limiter + cache layer | Ben | DONE | `rate_control.py` — async token-bucket rate limiter via aiolimiter. 8 endpoint patterns matching IBKR's observed limits (global 10/s, history 5 concurrent, tickle 1/s, scanner 1/15min, etc.). `@paced("dynamic")` decorator resolves limiter at call time. `cache.py` — in-memory TTL cache (dict + asyncio.Lock), replaces MoonMarket's Redis. `@cached(ttl=60)` decorator with default key builder. No external dependencies. |
 | 1.4 | Set up SQLite schema + service (`services/db.py`) | Bro | TODO | Tables: watchlists, trigger_rules, trigger_hits, settings |
 | 1.5 | Market data router (`routers/market.py`) | Ben | TODO | GET /quote, GET /candles, field code mapping |
 | 1.6 | WebSocket handler for live streaming | Ben | TODO | Port from MoonMarket, add auto-reconnect |
