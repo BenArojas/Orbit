@@ -4,7 +4,7 @@ Tracks session status, WebSocket state, and subscription tracking.
 """
 
 import asyncio
-from typing import Optional
+from typing import Any, Optional
 from pydantic import BaseModel, Field
 
 
@@ -19,8 +19,10 @@ class IBKRState(BaseModel):
     authenticated: bool = False
     session_token: Optional[str] = None
 
-    # WebSocket
+    # WebSocket — IBKR gateway connection
     ws_connected: bool = False
+    ibkr_ws: Any = None  # websockets.WebSocketClientProtocol (Any to avoid import)
+    ws_subscriptions: set[int] = Field(default_factory=set)  # conids we're subscribed to
 
     # Accounts
     accounts_fetched: bool = False
@@ -37,5 +39,7 @@ class IBKRState(BaseModel):
         self.authenticated = False
         self.session_token = None
         self.ws_connected = False
+        self.ibkr_ws = None
+        self.ws_subscriptions.clear()
         self.accounts_fetched = False
         self.accounts.clear()
