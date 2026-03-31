@@ -325,3 +325,35 @@ Focus areas:
 The UI should feel like a professional tool — dense, information-rich, dark cinematic theme.
 Glowing accents, arc gauges, gradient effects. Think TradingView meets Bloomberg terminal
 with a sci-fi edge.
+
+---
+
+## IBKR Hub Context
+
+Parallax is one of three modules in the **IBKR Hub** — a single Tauri binary that houses:
+- **Parallax** — technical analysis (this app)
+- **MoonMarket** — portfolio & account management
+- **Inflect** — trading journal (Phase 4, built last)
+
+All three share one Python FastAPI sidecar and one SQLite database.
+
+### conid is the universal instrument key
+
+`conid` (IBKR's contract ID integer) is the primary identifier for all instruments
+across every module. Never store or link instruments by ticker string — always by conid.
+
+The `instruments` table in SQLite is the shared cache for conid → symbol/name/type lookups.
+Parallax owns this table (task 1.4). All other modules read from it.
+
+### What Inflect needs from Parallax
+
+Nothing special. Inflect will call the existing `/indicators` endpoint to fetch indicator
+context (RSI, MACD, Fibonacci levels, etc.) at the time of a trade entry. No journal-specific
+code belongs in Parallax. Build the indicator API for Parallax's own needs — Inflect rides
+along for free.
+
+### What NOT to add for Inflect
+
+- No journal hooks, callbacks, or event emissions in Parallax
+- No "save to journal" buttons or UI in Parallax (that lives in Inflect)
+- No schema changes beyond the `instruments` table already planned

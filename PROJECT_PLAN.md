@@ -1,6 +1,6 @@
 # Parallax — Project Plan
 
-> Last updated: 2026-03-30
+> Last updated: 2026-04-01
 > Status: Characterization complete. Ready for implementation.
 
 ---
@@ -58,10 +58,22 @@ React UI (Tauri webview)
 Python FastAPI sidecar  [localhost:8000]
        ↕  ibind + Ollama (local AI)
 IBKR Client Portal Gateway  [localhost:5000]
+       ↕
+   SQLite (shared with MoonMarket and Inflect — the trading journal)
 ```
 
 Data never leaves the machine. The Python sidecar starts with Tauri.
 Frontend never talks directly to IBKR or Ollama.
+
+**Hub context:** Parallax is one module inside the IBKR Hub (see `MoonMarket/PLAN.md`).
+The Hub will eventually include MoonMarket (portfolio) and Inflect (trading journal).
+Inflect reads from the shared SQLite — it calls Parallax's existing `/indicators` endpoint
+to fetch indicator context at the time of a trade. No special work needed in Parallax for
+this; it is a natural consumer of the API already being built.
+
+**Universal instrument key:** `conid` (IBKR's contract ID) is the primary identifier for
+all instruments across Parallax, MoonMarket, and Inflect. Never use ticker string as a
+primary key. The `instruments` table in SQLite is the shared cache (see task 1.4).
 
 ---
 
@@ -129,7 +141,7 @@ Source: `~/Desktop/Projects/MoonMarket`
 | 1.1 | Set up FastAPI app skeleton (`main.py`, CORS, lifespan) | Ben | DONE | `main.py` — async lifespan creates IBKRService singleton, CORS for `localhost:1420`, typed exception handlers (401/429/502/500), `/health` endpoint. Supporting files: `config.py` (all env vars), `exceptions.py` (typed error hierarchy), `deps.py` (DI helper), `state.py` (Pydantic state model), `models/__init__.py` (HealthResponse, AuthStatusResponse), `routers/auth.py` (GET `/auth/status`, POST `/auth/logout`). Routes: `/health`, `/auth/status`, `/auth/logout`. |
 | 1.2 | Port IBKR auth service (`services/ibkr.py`) | Ben | DONE | `services/ibkr.py` — singleton class with `_request()` core HTTP helper (retry on 404/503, typed exceptions for 401/429/4xx, connection errors). Auth methods: `auth_status()`, `tickle()`, `sso_validate()`, `ensure_accounts()`, `logout()`. Background tickle loop (55s interval) auto-starts on successful auth. Clean `shutdown()` cancels all tasks + closes httpx client. No mixin pattern (simpler than MoonMarket). |
 | 1.3 | Port rate limiter + cache layer | Ben | DONE | `rate_control.py` — async token-bucket rate limiter via aiolimiter. 8 endpoint patterns matching IBKR's observed limits (global 10/s, history 5 concurrent, tickle 1/s, scanner 1/15min, etc.). `@paced("dynamic")` decorator resolves limiter at call time. `cache.py` — in-memory TTL cache (dict + asyncio.Lock), replaces MoonMarket's Redis. `@cached(ttl=60)` decorator with default key builder. No external dependencies. |
-| 1.4 | Set up SQLite schema + service (`services/db.py`) | Ofek | DONE | `services/db.py` — async DatabaseService with SQLite WAL mode. 3 tables: `trigger_rules` (conid, symbol, indicator, condition, threshold, timeframe, enabled — per individual stock), `trigger_hits` (actual_value, dedup_key for once-per-day alerts, acknowledged flag, CASCADE delete with rule), `settings` (key-value store with upsert). 5 indexes for fast lookups. Full async CRUD for all tables. Seeded defaults: scan_interval=300, default_timeframe=1D, default_period=3M. Integrated into main.py lifespan (init on startup, close on shutdown). DI helper `get_db()` added to deps.py. Watchlists NOT stored locally — managed in IBKR. |
+| 1.4 | Set up SQLite schema + service (`services/db.py`) | Ofek | DONE | `services/db.py` — async DatabaseService with SQLite WAL mode. 3 tables: `trigger_rules` (conid, symbol, indicator, condition, threshold, timeframe, enabled — per individual stock), `trigger_hits` (actual_value, dedup_key for once-per-day alerts, acknowledged flag, CASCADE delete with rule), `settings` (key-value store with upsert). 5 indexes for fast lookups. Full async CRUD for all tables. Seeded defaults: scan_interval=300, default_timeframe=1D, default_period=3M. Integrated into main.py lifespan (init on startup, close on shutdown). DI helper `get_db()` added to deps.py. Watchlists NOT stored locally — managed in IBKR. **Still needed:** `instruments` table (conid, symbol, company_name, sec_type, currency) — the shared instrument cache used by Parallax, MoonMarket, and Inflect. Populate on first resolution, update lazily. |
 | 1.5 | Market data router (`routers/market.py`) | Ben | DONE | `routers/market.py` — 4 endpoints: `GET /market/quote/{conid}` (full snapshot with 12 fields), `GET /market/candles/{conid}` (OHLCV bars, 7 periods + YTD, TradingView Lightweight Charts format), `GET /market/search?q=` (symbol search), `GET /market/conid/{symbol}` (ticker→conid resolver). `constants.py` — IBKR field codes, period/bar mappings, default quote fields. Market data methods added to `services/ibkr.py`: `search()`, `get_conid()`, `snapshot()` (with polling/warmup), `history()` (cached 5min). |
 | 1.6 | WebSocket handler for live streaming | Ben | DONE | Two-layer WebSocket architecture: `routers/ws.py` — FastAPI `/ws` endpoint for frontend clients (accept, broadcast, command dispatch). `services/ibkr.py` — IBKR WebSocket loop (`_ws_loop`) with auto-reconnect on disconnect, 30s heartbeat, auto-resubscribe after reconnect. Frontend sends `{action: "subscribe", conid: 12345}` to subscribe. IBKR smd messages are parsed, NaN-cleaned, and broadcast to all connected clients as `{type: "market_data", conid, last, bid, ask, ...}`. State tracks `ws_subscriptions` set for reconnect. |
 | 1.7 | Pydantic models for all request/response types | Ofek | DONE | `models/__init__.py` — full model set: Health/Auth (HealthResponse, AuthStatusResponse), Market Data (QuoteResponse with 12 fields, CandleData, SearchResult, ConidResponse), Triggers (TriggerRuleCreate/Update/Response with target_watchlist, source_watchlist, auto_expire_days for IBKR watchlist moves; TriggerHitResponse with expires_at, moved_back), Settings (SettingUpdate/Response), Indicators (IndicatorRequest, IndicatorValue with value/signal/histogram/upper/lower, IndicatorResult, FibonacciLevel/Result, IndicatorComputeResponse). No local watchlist models — watchlists managed entirely in IBKR. All models documented with plain-English comments. |
@@ -244,9 +256,11 @@ Source: `~/Desktop/Projects/MoonMarket`
 - Options chain analysis
 - System tray mode with persistent scanning
 - Ichimoku Cloud, Supertrend, 52-Week indicators
-- Trade journaling / logging
 - Export analysis as PDF/image
 - Mobile companion (read-only dashboard)
+
+> **Inflect (trading journal)** is NOT a v2 item — it is Phase 4 of the Hub roadmap,
+> built after Parallax and MoonMarket are complete. See `MoonMarket/PLAN.md`.
 
 ---
 
