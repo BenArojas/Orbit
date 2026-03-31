@@ -1,0 +1,527 @@
+"""
+SQLite database service for Parallax.
+
+This is the app's local "memory" — it stores data that IBKR doesn't
+store for us and that needs to survive app restarts:
+
+  - Trigger rules (e.g., "alert me when AAPL RSI < 30")
+  - Trigger hits (log of when a trigger rule actually fired)
+  - Settings (scan interval, default timeframe, etc.)
+
+What we do NOT store locally:
+  - Watchlists — managed inside IBKR itself. The app reads them
+    live from IBKR's API. No local copy needed.
+
+All database access goes through this module. No other file should
+write raw SQL — they call these functions instead.
+
+The database is a single file (parallax.db) that lives next to the app.
+It's never deleted unless you manually remove it. Closing the app,
+restarting your computer — the data stays.
+"""
+
+import asyncio
+import logging
+import sqlite3
+from datetime import datetime, timezone
+from typing import Any
+
+from config import SQLITE_DB_PATH
+
+log = logging.getLogger("parallax.db")
+
+
+class DatabaseService:
+    """
+    Async-friendly SQLite service.
+
+    SQLite itself is synchronous (it blocks while reading/writing), so we
+    run all queries in a thread pool using asyncio.to_thread(). This way
+    the rest of the app doesn't freeze while waiting for the database.
+
+    Created once during FastAPI startup, shared across the whole app.
+    """
+
+    def __init__(self, db_path: str = SQLITE_DB_PATH) -> None:
+        self.db_path = db_path
+        self._conn: sqlite3.Connection | None = None
+
+    # ── Lifecycle ────────────────────────────────────────────
+
+    async def initialize(self) -> None:
+        """
+        Open the database connection and create tables if they don't exist.
+        Called once during app startup (in main.py lifespan).
+        """
+        self._conn = await asyncio.to_thread(self._connect)
+        await asyncio.to_thread(self._create_tables)
+        log.info("SQLite database initialized at %s", self.db_path)
+
+    async def close(self) -> None:
+        """Close the database connection. Called during app shutdown."""
+        if self._conn:
+            await asyncio.to_thread(self._conn.close)
+            self._conn = None
+            log.info("SQLite connection closed.")
+
+    def _connect(self) -> sqlite3.Connection:
+        """
+        Create a new SQLite connection with useful settings.
+
+        - WAL mode: Allows reading and writing at the same time (faster).
+        - Row factory: Lets us access columns by name instead of index.
+        - Foreign keys: Enforces relationships between tables.
+        """
+        conn = sqlite3.connect(self.db_path, check_same_thread=False)
+        conn.row_factory = sqlite3.Row  # Access columns by name: row["symbol"]
+        conn.execute("PRAGMA journal_mode=WAL")  # Better concurrent access
+        conn.execute("PRAGMA foreign_keys=ON")  # Enforce table relationships
+        return conn
+
+    def _create_tables(self) -> None:
+        """
+        Create all database tables if they don't already exist.
+        This is safe to call every time the app starts — it won't
+        destroy existing data.
+
+        Tables:
+          1. trigger_rules — Your alert conditions (per individual stock)
+          2. trigger_hits  — Log of fired alerts (with deduplication)
+          3. settings      — App preferences (key-value pairs)
+        """
+        assert self._conn is not None
+
+        self._conn.executescript("""
+            -- ─── Trigger Rules ─────────────────────────────────────
+            -- Conditions you set up to get alerted. For example:
+            --   "When AAPL's RSI drops below 30" or
+            --   "When SPY crosses above its 200 EMA"
+            --
+            -- Each rule watches one indicator on one specific stock
+            -- and checks if the value is above/below/crossing a threshold.
+            --
+            -- When a trigger fires, the stock is MOVED between IBKR watchlists:
+            --   source_watchlist → target_watchlist
+            -- If auto_expire_days is set, it moves back automatically after N days.
+            --
+            -- conid = IBKR's unique ID for the stock (like a SSN for securities).
+            -- symbol = the human-readable ticker (AAPL, SPY, etc.).
+            CREATE TABLE IF NOT EXISTS trigger_rules (
+                id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+                name               TEXT NOT NULL,
+                conid              INTEGER NOT NULL,
+                symbol             TEXT NOT NULL,
+                indicator          TEXT NOT NULL,     -- e.g., "rsi", "ema_50", "macd"
+                condition          TEXT NOT NULL,     -- "above", "below", "crosses_above", "crosses_below"
+                threshold          REAL NOT NULL,     -- The number to compare against (e.g., 30 for RSI)
+                timeframe          TEXT DEFAULT '1D', -- Which chart timeframe to check
+                target_watchlist   TEXT NOT NULL,     -- IBKR watchlist name to MOVE the stock INTO when triggered
+                source_watchlist   TEXT NOT NULL,     -- IBKR watchlist name to MOVE the stock OUT OF when triggered
+                auto_expire_days   INTEGER,           -- NULL = manual removal only. N = auto-move back after N days
+                enabled            INTEGER DEFAULT 1, -- 1 = active, 0 = paused
+                created_at         TEXT DEFAULT (datetime('now')),
+                updated_at         TEXT DEFAULT (datetime('now'))
+            );
+
+            -- ─── Trigger Hits ──────────────────────────────────────
+            -- Log of every time a trigger rule actually fired.
+            -- This is what populates the alert feed on the dashboard.
+            --
+            -- We store a dedup_key to avoid alerting the same condition
+            -- over and over (e.g., if RSI stays below 30 for 3 days,
+            -- you only get alerted once per day).
+            --
+            -- When a trigger fires, the stock is moved between watchlists.
+            -- If the rule has auto_expire_days, expires_at is set and the
+            -- background scanner will move the stock back when it expires.
+            -- moved_back = 1 means the stock has already been returned.
+            CREATE TABLE IF NOT EXISTS trigger_hits (
+                id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+                rule_id            INTEGER NOT NULL REFERENCES trigger_rules(id) ON DELETE CASCADE,
+                conid              INTEGER NOT NULL,
+                symbol             TEXT NOT NULL,
+                indicator          TEXT NOT NULL,
+                condition          TEXT NOT NULL,
+                threshold          REAL NOT NULL,
+                actual_value       REAL NOT NULL,    -- What the indicator actually was when it triggered
+                target_watchlist   TEXT NOT NULL,     -- Where the stock was moved to
+                source_watchlist   TEXT NOT NULL,     -- Where the stock was moved from
+                triggered_at       TEXT DEFAULT (datetime('now')),
+                expires_at         TEXT,              -- NULL = no auto-expire. Otherwise datetime when stock moves back
+                moved_back         INTEGER DEFAULT 0, -- 0 = stock is in target watchlist, 1 = already moved back
+                acknowledged       INTEGER DEFAULT 0, -- 0 = unread, 1 = user has seen it
+                dedup_key          TEXT NOT NULL,     -- Prevents duplicate alerts
+                UNIQUE(dedup_key)                     -- Only one alert per unique condition per day
+            );
+
+            -- ─── Settings ──────────────────────────────────────────
+            -- Key-value store for app preferences.
+            -- Examples: scan_interval=300, default_timeframe=1D
+            CREATE TABLE IF NOT EXISTS settings (
+                key         TEXT PRIMARY KEY,
+                value       TEXT NOT NULL,
+                updated_at  TEXT DEFAULT (datetime('now'))
+            );
+
+            -- ─── Indexes ───────────────────────────────────────────
+            -- Indexes are like a book's table of contents — they help
+            -- the database find things faster without reading every row.
+            CREATE INDEX IF NOT EXISTS idx_trigger_rules_conid
+                ON trigger_rules(conid);
+
+            CREATE INDEX IF NOT EXISTS idx_trigger_rules_enabled
+                ON trigger_rules(enabled);
+
+            CREATE INDEX IF NOT EXISTS idx_trigger_hits_rule
+                ON trigger_hits(rule_id);
+
+            CREATE INDEX IF NOT EXISTS idx_trigger_hits_triggered_at
+                ON trigger_hits(triggered_at);
+
+            CREATE INDEX IF NOT EXISTS idx_trigger_hits_acknowledged
+                ON trigger_hits(acknowledged);
+
+            CREATE INDEX IF NOT EXISTS idx_trigger_hits_expires_at
+                ON trigger_hits(expires_at);
+        """)
+        self._conn.commit()
+        log.info("Database tables verified/created.")
+
+    # ── Internal helpers ─────────────────────────────────────
+
+    def _execute(self, sql: str, params: tuple = ()) -> sqlite3.Cursor:
+        """Run a single SQL statement. Used internally."""
+        assert self._conn is not None
+        return self._conn.execute(sql, params)
+
+    def _fetchone(self, sql: str, params: tuple = ()) -> dict | None:
+        """Run a query and return one row as a dictionary, or None."""
+        cursor = self._execute(sql, params)
+        row = cursor.fetchone()
+        return dict(row) if row else None
+
+    def _fetchall(self, sql: str, params: tuple = ()) -> list[dict]:
+        """Run a query and return all rows as a list of dictionaries."""
+        cursor = self._execute(sql, params)
+        return [dict(row) for row in cursor.fetchall()]
+
+    # ── Trigger Rule Operations ──────────────────────────────
+
+    async def get_trigger_rules(self, enabled_only: bool = False) -> list[dict]:
+        """
+        Get all trigger rules.
+        If enabled_only=True, skip paused rules (only return active ones).
+        """
+        sql = "SELECT * FROM trigger_rules"
+        if enabled_only:
+            sql += " WHERE enabled = 1"
+        sql += " ORDER BY created_at DESC"
+        return await asyncio.to_thread(self._fetchall, sql)
+
+    async def get_trigger_rule(self, rule_id: int) -> dict | None:
+        """Get a single trigger rule by ID."""
+        return await asyncio.to_thread(
+            self._fetchone,
+            "SELECT * FROM trigger_rules WHERE id = ?",
+            (rule_id,),
+        )
+
+    async def get_trigger_rules_for_stock(self, conid: int, enabled_only: bool = True) -> list[dict]:
+        """Get all trigger rules that apply to a specific stock."""
+        sql = "SELECT * FROM trigger_rules WHERE conid = ?"
+        if enabled_only:
+            sql += " AND enabled = 1"
+        return await asyncio.to_thread(self._fetchall, sql, (conid,))
+
+    async def create_trigger_rule(
+        self,
+        name: str,
+        conid: int,
+        symbol: str,
+        indicator: str,
+        condition: str,
+        threshold: float,
+        target_watchlist: str,
+        source_watchlist: str,
+        timeframe: str = "1D",
+        auto_expire_days: int | None = None,
+    ) -> int:
+        """
+        Create a new trigger rule. Returns the new rule's ID.
+
+        When this trigger fires, the stock is MOVED in IBKR:
+          source_watchlist → target_watchlist
+
+        If auto_expire_days is set, the stock automatically moves back
+        after that many days. If None, you remove it manually.
+
+        Example: create_trigger_rule(
+            name="AAPL EMA 9 Weekly",
+            conid=265598,
+            symbol="AAPL",
+            indicator="ema_9",
+            condition="crosses_below",
+            threshold=0,
+            target_watchlist="EMA 9 Hits",
+            source_watchlist="My Stocks",
+            timeframe="1W",
+            auto_expire_days=5,
+        )
+        """
+        def _insert() -> int:
+            cursor = self._execute(
+                """INSERT INTO trigger_rules
+                   (name, conid, symbol, indicator, condition, threshold, timeframe,
+                    target_watchlist, source_watchlist, auto_expire_days)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (name, conid, symbol, indicator, condition, threshold, timeframe,
+                 target_watchlist, source_watchlist, auto_expire_days),
+            )
+            assert self._conn is not None
+            self._conn.commit()
+            assert cursor.lastrowid is not None
+            return cursor.lastrowid
+
+        return await asyncio.to_thread(_insert)
+
+    async def update_trigger_rule(self, rule_id: int, **fields: Any) -> bool:
+        """
+        Update one or more fields on a trigger rule.
+        Pass only the fields you want to change as keyword arguments.
+
+        Example: update_trigger_rule(5, threshold=25.0, enabled=False)
+        """
+        allowed = {"name", "conid", "symbol", "indicator", "condition",
+                    "threshold", "timeframe", "target_watchlist",
+                    "source_watchlist", "auto_expire_days", "enabled"}
+        updates = {k: v for k, v in fields.items() if k in allowed}
+        if not updates:
+            return False
+
+        def _update() -> bool:
+            parts = [f"{k} = ?" for k in updates]
+            parts.append("updated_at = datetime('now')")
+            values = list(updates.values()) + [rule_id]
+            cursor = self._execute(
+                f"UPDATE trigger_rules SET {', '.join(parts)} WHERE id = ?",
+                tuple(values),
+            )
+            assert self._conn is not None
+            self._conn.commit()
+            return cursor.rowcount > 0
+
+        return await asyncio.to_thread(_update)
+
+    async def delete_trigger_rule(self, rule_id: int) -> bool:
+        """Delete a trigger rule (and its hit history via CASCADE)."""
+        def _delete() -> bool:
+            cursor = self._execute(
+                "DELETE FROM trigger_rules WHERE id = ?", (rule_id,)
+            )
+            assert self._conn is not None
+            self._conn.commit()
+            return cursor.rowcount > 0
+
+        return await asyncio.to_thread(_delete)
+
+    # ── Trigger Hit Operations ───────────────────────────────
+
+    async def record_trigger_hit(
+        self,
+        rule_id: int,
+        conid: int,
+        symbol: str,
+        indicator: str,
+        condition: str,
+        threshold: float,
+        actual_value: float,
+        target_watchlist: str,
+        source_watchlist: str,
+        auto_expire_days: int | None = None,
+    ) -> int | None:
+        """
+        Record that a trigger rule fired. Returns the hit ID,
+        or None if this exact condition was already recorded (deduplicated).
+
+        The dedup_key is built from: rule_id + conid + date.
+        This means the same rule can only fire once per stock per day.
+
+        If auto_expire_days is set, calculates expires_at so the
+        background scanner knows when to move the stock back.
+        """
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        dedup_key = f"{rule_id}:{conid}:{today}"
+
+        # Calculate expiry if auto_expire_days is set
+        expires_at: str | None = None
+        if auto_expire_days is not None:
+            from datetime import timedelta
+            expires_at = (datetime.now(timezone.utc) + timedelta(days=auto_expire_days)).strftime(
+                "%Y-%m-%d %H:%M:%S"
+            )
+
+        def _insert() -> int | None:
+            try:
+                cursor = self._execute(
+                    """INSERT INTO trigger_hits
+                       (rule_id, conid, symbol, indicator, condition, threshold,
+                        actual_value, target_watchlist, source_watchlist, expires_at, dedup_key)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (rule_id, conid, symbol, indicator, condition, threshold,
+                     actual_value, target_watchlist, source_watchlist, expires_at, dedup_key),
+                )
+                assert self._conn is not None
+                self._conn.commit()
+                return cursor.lastrowid
+            except sqlite3.IntegrityError:
+                # Duplicate — this trigger already fired for this stock today
+                return None
+
+        return await asyncio.to_thread(_insert)
+
+    async def get_trigger_hits(
+        self,
+        limit: int = 50,
+        unacknowledged_only: bool = False,
+    ) -> list[dict]:
+        """
+        Get recent trigger hits (newest first).
+        If unacknowledged_only=True, only return hits the user hasn't seen yet.
+        """
+        sql = "SELECT * FROM trigger_hits"
+        if unacknowledged_only:
+            sql += " WHERE acknowledged = 0"
+        sql += " ORDER BY triggered_at DESC LIMIT ?"
+        return await asyncio.to_thread(self._fetchall, sql, (limit,))
+
+    async def get_trigger_hits_for_rule(self, rule_id: int, limit: int = 20) -> list[dict]:
+        """Get recent hits for a specific rule."""
+        return await asyncio.to_thread(
+            self._fetchall,
+            "SELECT * FROM trigger_hits WHERE rule_id = ? ORDER BY triggered_at DESC LIMIT ?",
+            (rule_id, limit),
+        )
+
+    async def get_expired_hits(self) -> list[dict]:
+        """
+        Get trigger hits where auto-expire has passed and the stock
+        hasn't been moved back yet. The background scanner uses this
+        to know which stocks to return to their source watchlist.
+        """
+        return await asyncio.to_thread(
+            self._fetchall,
+            """SELECT * FROM trigger_hits
+               WHERE expires_at IS NOT NULL
+               AND expires_at <= datetime('now')
+               AND moved_back = 0
+               ORDER BY expires_at""",
+        )
+
+    async def mark_moved_back(self, hit_id: int) -> bool:
+        """
+        Mark a trigger hit as "moved back" — the stock has been
+        returned to its source watchlist after auto-expire.
+        """
+        def _mark() -> bool:
+            cursor = self._execute(
+                "UPDATE trigger_hits SET moved_back = 1 WHERE id = ?",
+                (hit_id,),
+            )
+            assert self._conn is not None
+            self._conn.commit()
+            return cursor.rowcount > 0
+
+        return await asyncio.to_thread(_mark)
+
+    async def acknowledge_trigger_hit(self, hit_id: int) -> bool:
+        """Mark a trigger hit as seen/read by the user."""
+        def _ack() -> bool:
+            cursor = self._execute(
+                "UPDATE trigger_hits SET acknowledged = 1 WHERE id = ?",
+                (hit_id,),
+            )
+            assert self._conn is not None
+            self._conn.commit()
+            return cursor.rowcount > 0
+
+        return await asyncio.to_thread(_ack)
+
+    async def acknowledge_all_hits(self) -> int:
+        """Mark ALL unread trigger hits as acknowledged. Returns count."""
+        def _ack_all() -> int:
+            cursor = self._execute(
+                "UPDATE trigger_hits SET acknowledged = 1 WHERE acknowledged = 0"
+            )
+            assert self._conn is not None
+            self._conn.commit()
+            return cursor.rowcount
+
+        return await asyncio.to_thread(_ack_all)
+
+    # ── Settings Operations ──────────────────────────────────
+
+    async def get_setting(self, key: str, default: str | None = None) -> str | None:
+        """
+        Get a single setting value by key.
+        Returns the default if the key doesn't exist.
+        """
+        row = await asyncio.to_thread(
+            self._fetchone,
+            "SELECT value FROM settings WHERE key = ?",
+            (key,),
+        )
+        return row["value"] if row else default
+
+    async def get_all_settings(self) -> dict[str, str]:
+        """Get all settings as a key→value dictionary."""
+        rows = await asyncio.to_thread(
+            self._fetchall, "SELECT key, value FROM settings"
+        )
+        return {row["key"]: row["value"] for row in rows}
+
+    async def set_setting(self, key: str, value: str) -> None:
+        """
+        Save a setting. If the key already exists, update it.
+        Uses SQLite's "upsert" — insert if new, update if exists.
+        """
+        def _upsert() -> None:
+            self._execute(
+                """INSERT INTO settings (key, value, updated_at)
+                   VALUES (?, ?, datetime('now'))
+                   ON CONFLICT(key) DO UPDATE SET value = ?, updated_at = datetime('now')""",
+                (key, value, value),
+            )
+            assert self._conn is not None
+            self._conn.commit()
+
+        await asyncio.to_thread(_upsert)
+
+    async def delete_setting(self, key: str) -> bool:
+        """Delete a setting. Returns True if it existed."""
+        def _delete() -> bool:
+            cursor = self._execute(
+                "DELETE FROM settings WHERE key = ?", (key,)
+            )
+            assert self._conn is not None
+            self._conn.commit()
+            return cursor.rowcount > 0
+
+        return await asyncio.to_thread(_delete)
+
+    # ── Seed default settings ────────────────────────────────
+
+    async def seed_defaults(self) -> None:
+        """
+        Insert default settings if they don't exist yet.
+        Called once during app startup, after tables are created.
+        """
+        defaults = {
+            "scan_interval": "300",        # 5 minutes (in seconds)
+            "default_timeframe": "1D",     # Default chart timeframe
+            "default_period": "3M",        # Default chart period
+        }
+        for key, value in defaults.items():
+            existing = await self.get_setting(key)
+            if existing is None:
+                await self.set_setting(key, value)
+                log.info("Seeded default setting: %s = %s", key, value)

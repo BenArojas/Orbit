@@ -25,6 +25,7 @@ from exceptions import (
     IBKRRequestError,
     ParallaxError,
 )
+from services.db import DatabaseService
 from services.ibkr import IBKRService
 
 # ── Logging setup (must be first) ────────────────────────────
@@ -54,7 +55,12 @@ async def lifespan(app: FastAPI):
     ibkr = IBKRService()
     app.state.ibkr = ibkr
 
-    # SQLite init will go here (Step 1.4)
+    # Initialize SQLite database (Step 1.4)
+    db = DatabaseService()
+    await db.initialize()
+    await db.seed_defaults()
+    app.state.db = db
+
     # Ollama lifecycle will go here (Step 4.12)
 
     log.info("Backend ready. Waiting for frontend connections.")
@@ -62,6 +68,7 @@ async def lifespan(app: FastAPI):
 
     # Shutdown
     log.info("Parallax backend shutting down...")
+    await db.close()
     await ibkr.shutdown()
     log.info("Shutdown complete.")
 
@@ -155,16 +162,17 @@ async def parallax_error_handler(request: Request, exc: ParallaxError):
 # ── Routers ──────────────────────────────────────────────────
 
 from routers.auth import router as auth_router
+from routers.indicators import router as indicators_router
 from routers.market import router as market_router
 from routers.ws import router as ws_router
 
 app.include_router(auth_router)
+app.include_router(indicators_router)
 app.include_router(market_router)
 app.include_router(ws_router)
 
 # Future routers (uncomment as they're built):
 # from routers.screener import router as screener_router
-# from routers.indicators import router as indicators_router
 # from routers.watchlist import router as watchlist_router
 # from routers.triggers import router as triggers_router
 # from routers.ai import router as ai_router

@@ -7,7 +7,7 @@
 
 ## What Is Parallax
 
-A local-only desktop tool for two experienced traders (Ben + brother).
+A local-only desktop tool for two experienced traders (Ben + Ofek).
 Not a trading bot — a technical analysis and screening tool that connects
 to Interactive Brokers via the Client Portal Web API.
 
@@ -32,7 +32,7 @@ These are locked in. Don't revisit unless something breaks.
 | Dashboard market pulse | Color-coded cards with mini sparklines | Quick scannable market read |
 | Dashboard gauges | Arc gauges for Market Strength, VIX, Rotation, Triggers | Non-standard visual — approved in v2 mockup |
 | Dynamic watchlists | Auto-populated by trigger rules | Separate from master IBKR-synced watchlist |
-| Fibonacci | Primary tool — auto swing detection + manual override | Brother's core trading method |
+| Fibonacci | Primary tool — auto swing detection + manual override | Ofek's core trading method |
 
 ---
 
@@ -113,7 +113,7 @@ Source: `~/Desktop/Projects/MoonMarket`
 ## Task Breakdown
 
 ### Legend
-- `[Ben]` / `[Bro]` — assigned to
+- `[Ben]` / `[Ofek]` — assigned to
 - `[Both]` — pair or either
 - `[?]` — needs further investigation before starting
 - `[Blocked]` — depends on another task completing first
@@ -129,12 +129,12 @@ Source: `~/Desktop/Projects/MoonMarket`
 | 1.1 | Set up FastAPI app skeleton (`main.py`, CORS, lifespan) | Ben | DONE | `main.py` — async lifespan creates IBKRService singleton, CORS for `localhost:1420`, typed exception handlers (401/429/502/500), `/health` endpoint. Supporting files: `config.py` (all env vars), `exceptions.py` (typed error hierarchy), `deps.py` (DI helper), `state.py` (Pydantic state model), `models/__init__.py` (HealthResponse, AuthStatusResponse), `routers/auth.py` (GET `/auth/status`, POST `/auth/logout`). Routes: `/health`, `/auth/status`, `/auth/logout`. |
 | 1.2 | Port IBKR auth service (`services/ibkr.py`) | Ben | DONE | `services/ibkr.py` — singleton class with `_request()` core HTTP helper (retry on 404/503, typed exceptions for 401/429/4xx, connection errors). Auth methods: `auth_status()`, `tickle()`, `sso_validate()`, `ensure_accounts()`, `logout()`. Background tickle loop (55s interval) auto-starts on successful auth. Clean `shutdown()` cancels all tasks + closes httpx client. No mixin pattern (simpler than MoonMarket). |
 | 1.3 | Port rate limiter + cache layer | Ben | DONE | `rate_control.py` — async token-bucket rate limiter via aiolimiter. 8 endpoint patterns matching IBKR's observed limits (global 10/s, history 5 concurrent, tickle 1/s, scanner 1/15min, etc.). `@paced("dynamic")` decorator resolves limiter at call time. `cache.py` — in-memory TTL cache (dict + asyncio.Lock), replaces MoonMarket's Redis. `@cached(ttl=60)` decorator with default key builder. No external dependencies. |
-| 1.4 | Set up SQLite schema + service (`services/db.py`) | Bro | TODO | Tables: watchlists, trigger_rules, trigger_hits, settings |
+| 1.4 | Set up SQLite schema + service (`services/db.py`) | Ofek | DONE | `services/db.py` — async DatabaseService with SQLite WAL mode. 3 tables: `trigger_rules` (conid, symbol, indicator, condition, threshold, timeframe, enabled — per individual stock), `trigger_hits` (actual_value, dedup_key for once-per-day alerts, acknowledged flag, CASCADE delete with rule), `settings` (key-value store with upsert). 5 indexes for fast lookups. Full async CRUD for all tables. Seeded defaults: scan_interval=300, default_timeframe=1D, default_period=3M. Integrated into main.py lifespan (init on startup, close on shutdown). DI helper `get_db()` added to deps.py. Watchlists NOT stored locally — managed in IBKR. |
 | 1.5 | Market data router (`routers/market.py`) | Ben | DONE | `routers/market.py` — 4 endpoints: `GET /market/quote/{conid}` (full snapshot with 12 fields), `GET /market/candles/{conid}` (OHLCV bars, 7 periods + YTD, TradingView Lightweight Charts format), `GET /market/search?q=` (symbol search), `GET /market/conid/{symbol}` (ticker→conid resolver). `constants.py` — IBKR field codes, period/bar mappings, default quote fields. Market data methods added to `services/ibkr.py`: `search()`, `get_conid()`, `snapshot()` (with polling/warmup), `history()` (cached 5min). |
 | 1.6 | WebSocket handler for live streaming | Ben | DONE | Two-layer WebSocket architecture: `routers/ws.py` — FastAPI `/ws` endpoint for frontend clients (accept, broadcast, command dispatch). `services/ibkr.py` — IBKR WebSocket loop (`_ws_loop`) with auto-reconnect on disconnect, 30s heartbeat, auto-resubscribe after reconnect. Frontend sends `{action: "subscribe", conid: 12345}` to subscribe. IBKR smd messages are parsed, NaN-cleaned, and broadcast to all connected clients as `{type: "market_data", conid, last, bid, ask, ...}`. State tracks `ws_subscriptions` set for reconnect. |
-| 1.7 | Pydantic models for all request/response types | Bro | TODO | Quote, Candle, WatchlistItem, TriggerRule, etc. |
-| 1.8 | Indicator computation service (`services/indicators.py`) | Bro | TODO | All 14 indicators via pandas-ta bridged from Polars |
-| 1.9 | Indicator router (`routers/indicators.py`) | Bro | TODO | POST /compute with symbol + timeframe + indicator list |
+| 1.7 | Pydantic models for all request/response types | Ofek | DONE | `models/__init__.py` — full model set: Health/Auth (HealthResponse, AuthStatusResponse), Market Data (QuoteResponse with 12 fields, CandleData, SearchResult, ConidResponse), Triggers (TriggerRuleCreate/Update/Response with target_watchlist, source_watchlist, auto_expire_days for IBKR watchlist moves; TriggerHitResponse with expires_at, moved_back), Settings (SettingUpdate/Response), Indicators (IndicatorRequest, IndicatorValue with value/signal/histogram/upper/lower, IndicatorResult, FibonacciLevel/Result, IndicatorComputeResponse). No local watchlist models — watchlists managed entirely in IBKR. All models documented with plain-English comments. |
+| 1.8 | Indicator computation service (`services/indicators.py`) | Ofek | DONE | `services/indicators.py` — IndicatorService class with compute() entry point. All 14 indicators: RSI(14), MACD(12/26/9), EMA(9/21/50/200), Bollinger Bands(20,2), VWAP, ATR(14), Stochastic(14/3/3), OBV, ADX(14), Volume+VolumeMA(20), Fibonacci retracement (auto swing high/low detection, 7 standard levels, trend direction). Bridges Polars→Pandas for pandas-ta compatibility (Pandas only used inside this file). Each indicator method documented with trading context. |
+| 1.9 | Indicator router (`routers/indicators.py`) | Ofek | DONE | `routers/indicators.py` — POST `/indicators/compute` endpoint. Accepts IndicatorRequest (conid, period, indicator list), fetches OHLCV from IBKR via IBKRService.history(), converts to CandleData, runs IndicatorService.compute(), returns IndicatorComputeResponse with candles + all indicator results + fibonacci in one response. Wired into main.py app router. |
 
 ---
 
@@ -144,12 +144,12 @@ Source: `~/Desktop/Projects/MoonMarket`
 
 | # | Task | Owner | Status | Notes |
 |---|---|---|---|---|
-| 2.1 | App shell + routing (Dashboard / Analysis / Screener pages) | Bro | TODO | React Router or simple state-based nav |
-| 2.2 | Zustand stores (watchlist, chart, screener, settings) | Bro | TODO | Persist settings store to SQLite |
+| 2.1 | App shell + routing (Dashboard / Analysis / Screener pages) | Ofek | TODO | React Router or simple state-based nav |
+| 2.2 | Zustand stores (watchlist, chart, screener, settings) | Ofek | TODO | Persist settings store to SQLite |
 | 2.3 | TanStack Query setup + API client (`lib/api.ts`) | Ben | TODO | Base URL, error handling, typed responses |
 | 2.4 | WebSocket hook (`useWebSocket`) | Ben | TODO | Connect to backend WS, dispatch to stores |
-| 2.5 | Theme + design tokens (dark theme CSS variables) | Bro | TODO | Match approved mockup color scheme |
-| 2.6 | shadcn/ui component setup (buttons, inputs, dialogs, tables) | Bro | TODO | Base components styled to match theme |
+| 2.5 | Theme + design tokens (dark theme CSS variables) | Ofek | TODO | Match approved mockup color scheme |
+| 2.6 | shadcn/ui component setup (buttons, inputs, dialogs, tables) | Ofek | TODO | Base components styled to match theme |
 | 2.7 | Tauri sidecar auto-launch for Python backend | Ben | TODO | Start uvicorn on app launch, kill on close |
 
 ---
@@ -160,13 +160,13 @@ Source: `~/Desktop/Projects/MoonMarket`
 
 | # | Task | Owner | Status | Notes |
 |---|---|---|---|---|
-| 3.1 | Market Pulse bar component | Bro | TODO | Color-coded cards with mini sparklines |
-| 3.2 | Arc gauge components (Market Strength, VIX, Rotation, Triggers) | Bro | TODO | SVG arc with glow effects |
+| 3.1 | Market Pulse bar component | Ofek | TODO | Color-coded cards with mini sparklines |
+| 3.2 | Arc gauge components (Market Strength, VIX, Rotation, Triggers) | Ofek | TODO | SVG arc with glow effects |
 | 3.3 | Sector Performance panel (YTD bars) | Ben | TODO | Sorted bar chart, green/red gradient fills |
 | 3.4 | Sector Rotation RRG panel | Ben | TODO | [?] Need to define RS Momentum calculation |
 | 3.5 | Master Watchlist sidebar (synced from IBKR) | Ben | TODO | Fetch from IBKR watchlist API, store in SQLite |
-| 3.6 | Dynamic trigger watchlists | Bro | TODO | Render from trigger_hits table, glow edge indicators |
-| 3.7 | Trigger Rules section (compact list + create modal) | Bro | TODO | CRUD for trigger rules in SQLite |
+| 3.6 | Dynamic trigger watchlists | Ofek | TODO | Render from trigger_hits table, glow edge indicators |
+| 3.7 | Trigger Rules section (compact list + create modal) | Ofek | TODO | CRUD for trigger rules in SQLite |
 | 3.8 | Click stock → navigate to Analysis with ticker | Both | TODO | Wire up routing from any watchlist item |
 
 ---
@@ -180,11 +180,11 @@ Source: `~/Desktop/Projects/MoonMarket`
 | 4.1 | Chart wrapper component (Lightweight Charts) | Ben | TODO | Candlestick + volume, timeframe switcher |
 | 4.2 | Indicator overlay system (toggle indicators on/off) | Ben | TODO | EMA lines, Bollinger Bands as series overlays |
 | 4.3 | Sub-chart panels (RSI, MACD, Stochastic, OBV) | Ben | TODO | Stacked below main chart |
-| 4.4 | Fibonacci retracement overlay | Bro | TODO | Auto swing high/low detection algorithm |
-| 4.5 | Fibonacci manual adjustment (drag endpoints) | Bro | TODO | [?] Need to figure out Lightweight Charts interaction API |
-| 4.6 | Indicator pill toggles with glow states | Bro | TODO | Match mockup style |
-| 4.7 | AI panel — config section (timeframe + indicator picker) | Bro | TODO | Multi-select chips for analysis parameters |
-| 4.8 | AI panel — Action Signal card component | Bro | TODO | Direction, confidence, entry/stop/target, confirmations |
+| 4.4 | Fibonacci retracement overlay | Ofek | TODO | Auto swing high/low detection algorithm |
+| 4.5 | Fibonacci manual adjustment (drag endpoints) | Ofek | TODO | [?] Need to figure out Lightweight Charts interaction API |
+| 4.6 | Indicator pill toggles with glow states | Ofek | TODO | Match mockup style |
+| 4.7 | AI panel — config section (timeframe + indicator picker) | Ofek | TODO | Multi-select chips for analysis parameters |
+| 4.8 | AI panel — Action Signal card component | Ofek | TODO | Direction, confidence, entry/stop/target, confirmations |
 | 4.9 | AI panel — chat interface | Ben | TODO | Message list + input, scrollable |
 | 4.10 | Ollama integration service (`services/ai.py`) | Ben | TODO | [?] Need to decide model, prompt template, context format |
 | 4.11 | AI analysis router (`routers/ai.py`) | Ben | TODO | POST /analyze with chart data + indicators + timeframes |
@@ -198,8 +198,8 @@ Source: `~/Desktop/Projects/MoonMarket`
 
 | # | Task | Owner | Status | Notes |
 |---|---|---|---|---|
-| 5.1 | Screener filter bar component | Bro | TODO | RSI range, EMA trend, volume, fib, MACD, price |
-| 5.2 | Screener results table | Bro | TODO | Sortable columns, color-coded badges |
+| 5.1 | Screener filter bar component | Ofek | TODO | RSI range, EMA trend, volume, fib, MACD, price |
+| 5.2 | Screener results table | Ofek | TODO | Sortable columns, color-coded badges |
 | 5.3 | Screener backend service (`services/screener.py`) | Ben | TODO | Scan universe, compute indicators, apply filters |
 | 5.4 | Screener router (`routers/screener.py`) | Ben | TODO | POST /scan, GET /results |
 | 5.5 | Click result → navigate to Analysis | Both | TODO | Same pattern as dashboard watchlist |
@@ -215,10 +215,10 @@ Source: `~/Desktop/Projects/MoonMarket`
 |---|---|---|---|---|
 | 6.1 | Background scheduler (asyncio task in FastAPI lifespan) | Ben | TODO | Configurable interval (default 5 min) |
 | 6.2 | Trigger evaluation engine | Ben | TODO | Compare computed indicators against rule conditions |
-| 6.3 | Trigger hit persistence + deduplication | Bro | TODO | Store in SQLite, don't re-alert same hit |
-| 6.4 | Desktop notifications via Tauri | Bro | TODO | Tauri notification plugin |
+| 6.3 | Trigger hit persistence + deduplication | Ofek | TODO | Store in SQLite, don't re-alert same hit |
+| 6.4 | Desktop notifications via Tauri | Ofek | TODO | Tauri notification plugin |
 | 6.5 | Fibonacci alert — "news candle" hitting fib level | Both | TODO | [?] Define "news candle" criteria (volume + price move %) |
-| 6.6 | Alert log component on dashboard | Bro | TODO | Timestamped feed of trigger events |
+| 6.6 | Alert log component on dashboard | Ofek | TODO | Timestamped feed of trigger events |
 
 ---
 
@@ -230,8 +230,8 @@ Source: `~/Desktop/Projects/MoonMarket`
 |---|---|---|---|---|
 | 7.1 | IBKR session disconnect detection + re-auth prompt | Ben | TODO | Detect stale session, show UI prompt |
 | 7.2 | Error states for all components (loading, error, empty) | Both | TODO | Skeleton loaders, error boundaries |
-| 7.3 | Settings page (scan interval, default timeframe, theme tweaks) | Bro | TODO | Persisted to SQLite settings table |
-| 7.4 | Keyboard shortcuts (switch screens, toggle indicators) | Bro | TODO | [?] Define shortcut map |
+| 7.3 | Settings page (scan interval, default timeframe, theme tweaks) | Ofek | TODO | Persisted to SQLite settings table |
+| 7.4 | Keyboard shortcuts (switch screens, toggle indicators) | Ofek | TODO | [?] Define shortcut map |
 | 7.5 | Performance optimization (large watchlists, many indicators) | Both | TODO | Virtualized lists, memoized computations |
 | 7.6 | End-to-end testing with live IBKR connection | Both | TODO | Manual testing checklist |
 
