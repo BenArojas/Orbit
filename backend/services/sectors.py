@@ -209,14 +209,18 @@ class SectorService:
             if not rs_ratio_series or not rs_momentum_series:
                 continue
 
-            # Normalize to center at 100
-            # Use the first valid RS-Ratio value as the normalization base
-            base_ratio = rs_ratio_series[0] if rs_ratio_series[0] != 0 else 1
-            normalized_ratio = [(v / base_ratio) * 100 for v in rs_ratio_series]
+            # Normalize both series to center at 100 using the standard JdK method:
+            # normalized = (value / series_mean) * 100
+            # This makes 100 the neutral point — above 100 = above average, below = below average
+            rs_ratio_mean = sum(rs_ratio_series) / len(rs_ratio_series) if rs_ratio_series else 1
+            if rs_ratio_mean == 0:
+                rs_ratio_mean = 1
+            normalized_ratio = [(v / rs_ratio_mean) * 100 for v in rs_ratio_series]
 
-            # For momentum, center around 100 (positive ROC > 100, negative < 100)
-            # The momentum is already a rate of change, so add 100 to center it
-            normalized_momentum = [100 + (v * 100) for v in rs_momentum_series]
+            rs_momentum_mean = sum(rs_momentum_series) / len(rs_momentum_series) if rs_momentum_series else 1
+            if rs_momentum_mean == 0:
+                rs_momentum_mean = 1
+            normalized_momentum = [(v / rs_momentum_mean) * 100 for v in rs_momentum_series]
 
             # Align the two series (momentum is shorter due to ROC calculation)
             trim = len(normalized_ratio) - len(normalized_momentum)

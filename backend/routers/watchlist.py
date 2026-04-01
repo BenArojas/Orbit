@@ -9,13 +9,13 @@ Endpoints:
   GET  /watchlist/{watchlist_id}       — Get instruments in a watchlist with live quotes
 """
 
-import asyncio
 import logging
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends
 
 from constants import DEFAULT_QUOTE_FIELDS_STR
 from deps import get_db, get_ibkr
+from exceptions import IBKRAuthError, IBKRConnectionError, IBKRRateLimitError, IBKRRequestError
 from services.db import DatabaseService
 from services.ibkr import IBKRService, _safe_float
 
@@ -50,14 +50,23 @@ async def get_watchlist_items(
     Fetch instruments in a specific IBKR watchlist, enriched with live quotes.
 
     Steps:
-      1. Get the instrument list from IBKR watchlist API
-      2. Extract conids
-      3. Fetch market data snapshots for all conids
-      4. Return combined data
+      1. Get all watchlists to resolve watchlist_id → name
+      2. Get the instrument list from IBKR watchlist API
+      3. Extract conids
+      4. Fetch market data snapshots for all conids
+      5. Return combined data
     """
+    # Resolve watchlist name from the lists endpoint
+    all_watchlists = await ibkr.get_watchlists()
+    watchlist_name = ""
+    for wl in all_watchlists:
+        if str(wl.get("id", "")) == watchlist_id:
+            watchlist_name = wl.get("name", "")
+            break
+
     instruments = await ibkr.get_watchlist_items(watchlist_id)
     if not instruments:
-        return {"id": watchlist_id, "name": "", "items": []}
+        return {"id": watchlist_id, "name": watchlist_name, "items": []}
 
     # Extract conids from instruments
     conids = []
@@ -71,7 +80,7 @@ async def get_watchlist_items(
             instrument_map[conid] = inst
 
     if not conids:
-        return {"id": watchlist_id, "name": "", "items": []}
+        return {"id": watchlist_id, "name": watchlist_name, "items": []}
 
     # Fetch live quotes for all conids in one snapshot call
     # IBKR can handle up to ~50 conids per snapshot
@@ -79,6 +88,8 @@ async def get_watchlist_items(
     batch_size = 50
     for i in range(0, len(conids), batch_size):
         batch = conids[i:i + batch_size]
+        snapshot_map: dict[int, dict] = {}
+
         try:
             snapshots = await ibkr.snapshot(
                 conids=batch,
@@ -86,9 +97,15 @@ async def get_watchlist_items(
                 timeout=8.0,
             )
             snapshot_map = {s.get("conid"): s for s in snapshots if s.get("conid")}
-        except Exception as exc:
+        except IBKRAuthError:
+            log.warning("Auth error fetching snapshots — session may have expired")
+            raise  # Let the global 401 handler deal with it
+        except IBKRRateLimitError:
+            log.warning("Rate-limited fetching snapshots for watchlist batch")
+            raise  # Let the global 429 handler deal with it
+        except (IBKRConnectionError, IBKRRequestError) as exc:
             log.warning("Failed to fetch snapshots for watchlist batch: %s", exc)
-            snapshot_map = {}
+            # Continue with empty snapshots — still return instrument list
 
         for conid in batch:
             snap = snapshot_map.get(conid, {})
@@ -114,6 +131,6 @@ async def get_watchlist_items(
 
     return {
         "id": watchlist_id,
-        "name": "",  # IBKR doesn't return the name from the items endpoint
+        "name": watchlist_name,
         "items": items,
     }

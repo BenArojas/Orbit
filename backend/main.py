@@ -27,6 +27,7 @@ from exceptions import (
 )
 from services.db import DatabaseService
 from services.ibkr import IBKRService
+from services.sectors import SectorService
 
 # ── Logging setup (must be first) ────────────────────────────
 
@@ -60,6 +61,10 @@ async def lifespan(app: FastAPI):
     await db.initialize()
     await db.seed_defaults()
     app.state.db = db
+
+    # Create the sector service singleton (Step 3.3–3.4)
+    # Must be a singleton so the conid cache persists across requests
+    app.state.sectors = SectorService(ibkr)
 
     # Ollama lifecycle will go here (Step 4.12)
 
