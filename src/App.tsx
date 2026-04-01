@@ -1,51 +1,114 @@
-import { useState } from "react";
-import reactLogo from "./assets/react.svg";
-import { invoke } from "@tauri-apps/api/core";
+/**
+ * App Shell — Root component with pill navigation
+ *
+ * Zustand-based tab routing between Dashboard, Analysis, and Screener.
+ * Wraps the app with TanStack QueryClientProvider and TooltipProvider.
+ *
+ * Matches the approved Layout A v2 mockup:
+ *   - 44px nav bar with gradient logo, pill nav, connection status
+ *   - Cyan glow line below nav
+ *   - Full viewport height below nav for page content
+ *
+ * Hub integration: When Parallax moves into the IBKR Hub, this shell becomes
+ * a nested route under the Hub's top-level navigation. The nav bar will be
+ * replaced by the Hub's global nav, and these pills become sub-tabs.
+ */
+
+import { QueryClientProvider } from "@tanstack/react-query";
+import { TooltipProvider } from "@/components/ui/tooltip";
+import { queryClient } from "@/lib/query";
+import { useNavigationStore, type Screen } from "@/store";
+import { useSidecar } from "@/hooks/useSidecar";
+import { DashboardPage, AnalysisPage, ScreenerPage } from "@/pages";
 import "./styles.css";
 
-function App() {
-  const [greetMsg, setGreetMsg] = useState("");
-  const [name, setName] = useState("");
+const NAV_ITEMS: { id: Screen; label: string }[] = [
+  { id: "dashboard", label: "Dashboard" },
+  { id: "analysis", label: "Analysis" },
+  { id: "screener", label: "Screener" },
+];
 
-  async function greet() {
-    // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
-    setGreetMsg(await invoke("greet", { name }));
+/** Renders the active page based on navigation state */
+function ActivePage() {
+  const screen = useNavigationStore((s) => s.activeScreen);
+  switch (screen) {
+    case "dashboard":
+      return <DashboardPage />;
+    case "analysis":
+      return <AnalysisPage />;
+    case "screener":
+      return <ScreenerPage />;
   }
+}
+
+/** Connection status dot */
+function ConnectionStatus() {
+  const sidecar = useSidecar();
+
+  const statusMap = {
+    starting: { color: "text-[var(--clr-orange)]", label: "Starting..." },
+    ready: { color: "text-[var(--clr-green)]", label: "Connected" },
+    error: { color: "text-[var(--clr-red)]", label: "Error" },
+    dev: { color: "text-[var(--clr-cyan)]", label: "Dev Mode" },
+  } as const;
+
+  const { color, label } = statusMap[sidecar.status];
 
   return (
-    <main className="container">
-      <h1>Welcome to Tauri + React</h1>
-
-      <div className="row">
-        <a href="https://vite.dev" target="_blank">
-          <img src="/vite.svg" className="logo vite" alt="Vite logo" />
-        </a>
-        <a href="https://tauri.app" target="_blank">
-          <img src="/tauri.svg" className="logo tauri" alt="Tauri logo" />
-        </a>
-        <a href="https://react.dev" target="_blank">
-          <img src={reactLogo} className="logo react" alt="React logo" />
-        </a>
-      </div>
-      <p>Click on the Tauri, Vite, and React logos to learn more.</p>
-
-      <form
-        className="row"
-        onSubmit={(e) => {
-          e.preventDefault();
-          greet();
-        }}
-      >
-        <input
-          id="greet-input"
-          onChange={(e) => setName(e.currentTarget.value)}
-          placeholder="Enter a name..."
-        />
-        <button type="submit">Greet</button>
-      </form>
-      <p>{greetMsg}</p>
-    </main>
+    <div className="flex items-center gap-1.5 font-data text-[10px] text-[var(--text-3)]">
+      <div
+        className={`h-1.5 w-1.5 rounded-full ${color} animate-glow`}
+        style={{ color: "inherit" }}
+      />
+      {label}
+    </div>
   );
 }
 
-export default App;
+export default function App() {
+  const { activeScreen, navigate } = useNavigationStore();
+
+  return (
+    <QueryClientProvider client={queryClient}>
+      <TooltipProvider>
+        <div className="flex h-screen flex-col overflow-hidden">
+          {/* ── Nav bar (44px) ── */}
+          <nav className="relative z-10 flex h-11 items-center border-b border-border bg-gradient-to-b from-[var(--bg-1)]/95 to-[var(--bg-1)] px-5">
+            {/* Cyan glow line */}
+            <div className="absolute bottom-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-[var(--clr-cyan)] to-transparent opacity-30" />
+
+            {/* Logo */}
+            <span className="text-[15px] font-extrabold tracking-[3px] text-gradient-brand">
+              PARALLAX
+            </span>
+
+            {/* Pill navigation — centered */}
+            <div className="mx-auto flex gap-0.5 rounded-[22px] border border-border bg-[var(--bg-2)] p-[3px]">
+              {NAV_ITEMS.map(({ id, label }) => (
+                <button
+                  key={id}
+                  onClick={() => navigate(id)}
+                  className={`rounded-[18px] px-5 py-[5px] text-[11px] font-medium transition-all ${
+                    id === activeScreen
+                      ? "bg-[var(--bg-4)] text-foreground shadow-[0_0_12px_var(--glow-cyan)]"
+                      : "text-[var(--text-3)] hover:text-[var(--text-2)]"
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+
+            {/* Connection status */}
+            <ConnectionStatus />
+          </nav>
+
+          {/* ── Page content ── */}
+          <main className="flex-1 overflow-hidden">
+            <ActivePage />
+          </main>
+        </div>
+      </TooltipProvider>
+    </QueryClientProvider>
+  );
+}

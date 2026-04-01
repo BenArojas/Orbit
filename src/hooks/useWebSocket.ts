@@ -56,7 +56,7 @@ export function useWebSocket() {
   const handlersRef = useRef<Set<MessageHandler>>(new Set());
   const subscriptionsRef = useRef<Set<number>>(new Set());
   const reconnectAttemptRef = useRef(0);
-  const reconnectTimerRef = useRef<ReturnType<typeof setTimeout>>();
+  const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const mountedRef = useRef(true);
 
   // ── Send a JSON command to the backend ──
@@ -149,7 +149,7 @@ export function useWebSocket() {
 
     return () => {
       mountedRef.current = false;
-      clearTimeout(reconnectTimerRef.current);
+      if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
       if (wsRef.current) {
         wsRef.current.onclose = null; // Prevent reconnect on intentional close
         wsRef.current.close();
