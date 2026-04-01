@@ -174,9 +174,9 @@ Source: `~/Desktop/Projects/MoonMarket`
 |---|---|---|---|---|
 | 3.1 | Market Pulse bar component | Ofek | TODO | Color-coded cards with mini sparklines |
 | 3.2 | Arc gauge components (Market Strength, VIX, Rotation, Triggers) | Ofek | TODO | SVG arc with glow effects |
-| 3.3 | Sector Performance panel (YTD bars) | Ben | TODO | Sorted bar chart, green/red gradient fills |
-| 3.4 | Sector Rotation RRG panel | Ben | TODO | [?] Need to define RS Momentum calculation |
-| 3.5 | Master Watchlist sidebar (synced from IBKR) | Ben | TODO | Fetch from IBKR watchlist API, store in SQLite |
+| 3.3 | Sector Performance panel (YTD bars) | Ben | DONE | Sorted bidirectional bar chart, green/red gradient fills. Endpoint: GET /sectors/performance |
+| 3.4 | Sector Rotation RRG panel | Ben | DONE | Standard JdK RRG: RS-Ratio = EMA(sector/SPY), RS-Momentum = EMA(ROC of RS-Ratio), both normalized to 100. 5-point dot trails. Endpoint: GET /sectors/rrg |
+| 3.5 | Master Watchlist sidebar (synced from IBKR) | Ben | DONE | Fetch-only from IBKR (no local cache). Multi-watchlist dropdown, search filter, live quotes, click-to-analyze. Endpoints: GET /watchlist/lists, GET /watchlist/{id} |
 | 3.6 | Dynamic trigger watchlists | Ofek | TODO | Render from trigger_hits table, glow edge indicators |
 | 3.7 | Trigger Rules section (compact list + create modal) | Ofek | TODO | CRUD for trigger rules in SQLite |
 | 3.8 | Click stock → navigate to Analysis with ticker | Both | TODO | Wire up routing from any watchlist item |
@@ -276,5 +276,5 @@ These need answers before their related tasks can start:
 | Q4 | How to get full US equity universe from IBKR? | 5.6 | Scanner API can return filtered lists, but not a raw universe dump |
 | Q5 | What defines a "news candle" for Fibonacci alerts? | 6.5 | Proposal: candle body > 2x ATR AND volume > 2x avg |
 | Q6 | How to calculate Market Strength gauge composite? | 3.2 | Proposal: combine advance/decline + % above 200 EMA + McClellan |
-| Q7 | Sector Rotation (RRG) — what RS calculation? | 3.4 | Standard: price ratio vs SPX, smoothed with EMA. Need period params |
+| Q7 | ~~Sector Rotation (RRG) — what RS calculation?~~ | 3.4 | RESOLVED: standard JdK method — EMA(10) of sector/SPY ratio for RS-Ratio, EMA(10) of ROC(10) of RS-Ratio for RS-Momentum, both centered at 100 |
 | Q8 | Can Ollama be bundled into a Tauri app? | 4.12 | May need to shell out to ollama CLI. Test on Mac + Windows |
