@@ -17,7 +17,7 @@ when the background scanner is built.
 """
 
 import logging
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 
 from deps import get_db
 from models import (
@@ -26,6 +26,7 @@ from models import (
     TriggerRuleResponse,
     TriggerHitResponse,
 )
+from services.db import DatabaseService
 
 log = logging.getLogger("parallax.triggers")
 router = APIRouter(prefix="/triggers", tags=["triggers"])
@@ -35,18 +36,20 @@ router = APIRouter(prefix="/triggers", tags=["triggers"])
 
 
 @router.get("/rules", response_model=list[TriggerRuleResponse])
-async def list_trigger_rules():
+async def list_trigger_rules(db: DatabaseService = Depends(get_db)):
     """
     Get all trigger rules, newest first.
     Used by the sidebar to show the compact rule list + LED indicators.
     """
-    db = get_db()
     rows = await db.get_trigger_rules(enabled_only=False)
     return rows
 
 
 @router.post("/rules", response_model=TriggerRuleResponse, status_code=201)
-async def create_trigger_rule(rule: TriggerRuleCreate):
+async def create_trigger_rule(
+    rule: TriggerRuleCreate,
+    db: DatabaseService = Depends(get_db),
+):
     """
     Create a new trigger rule.
 
@@ -55,7 +58,6 @@ async def create_trigger_rule(rule: TriggerRuleCreate):
 
     Returns the full rule object including its new ID.
     """
-    db = get_db()
     rule_id = await db.create_trigger_rule(
         name=rule.name,
         conid=rule.conid,
@@ -79,15 +81,17 @@ async def create_trigger_rule(rule: TriggerRuleCreate):
 
 
 @router.patch("/rules/{rule_id}", response_model=TriggerRuleResponse)
-async def update_trigger_rule(rule_id: int, updates: TriggerRuleUpdate):
+async def update_trigger_rule(
+    rule_id: int,
+    updates: TriggerRuleUpdate,
+    db: DatabaseService = Depends(get_db),
+):
     """
     Update one or more fields on a trigger rule.
     Only the fields you send are changed — everything else stays the same.
 
     Most common use: toggling enabled/disabled from the LED dot.
     """
-    db = get_db()
-
     # Build the update dict from only the fields that were actually sent
     update_fields = updates.model_dump(exclude_unset=True)
     if not update_fields:
@@ -106,12 +110,14 @@ async def update_trigger_rule(rule_id: int, updates: TriggerRuleUpdate):
 
 
 @router.delete("/rules/{rule_id}", status_code=204)
-async def delete_trigger_rule(rule_id: int):
+async def delete_trigger_rule(
+    rule_id: int,
+    db: DatabaseService = Depends(get_db),
+):
     """
     Delete a trigger rule and all its associated hit history.
     (CASCADE delete handles the hits automatically in SQLite.)
     """
-    db = get_db()
     success = await db.delete_trigger_rule(rule_id)
     if not success:
         raise HTTPException(status_code=404, detail=f"Trigger rule {rule_id} not found")
@@ -124,11 +130,13 @@ async def delete_trigger_rule(rule_id: int):
 
 
 @router.get("/hits", response_model=list[TriggerHitResponse])
-async def list_trigger_hits(limit: int = 50):
+async def list_trigger_hits(
+    limit: int = 50,
+    db: DatabaseService = Depends(get_db),
+):
     """
     Get recent trigger hits (newest first).
     Used by the TriggerWatchlist component to show stocks that have been flagged.
     """
-    db = get_db()
     rows = await db.get_trigger_hits(limit=limit)
     return rows

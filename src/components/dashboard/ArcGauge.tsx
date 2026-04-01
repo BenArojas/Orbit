@@ -15,7 +15,7 @@
  */
 
 import { useQuery } from "@tanstack/react-query";
-import { api, type QuoteResponse, type TriggerRule, type TriggerHit } from "@/lib/api";
+import { api, type QuoteResponse, type ConidResponse, type TriggerRule, type TriggerHit } from "@/lib/api";
 
 // ── Arc SVG constants ──────────────────────────────────────
 
@@ -136,10 +136,20 @@ function vixFillPercent(vix: number): number {
 // ── The Four Gauges Row ────────────────────────────────────
 
 export default function ArcGaugeRow() {
-  // Fetch VIX quote for the VIX gauge
+  // Resolve VIX conid at runtime (works across paper/live accounts)
+  const { data: vixResolved } = useQuery<ConidResponse>({
+    queryKey: ["conid", "VIX"],
+    queryFn: () => api.resolveConid("VIX"),
+    staleTime: Infinity,
+  });
+
+  const vixConid = vixResolved?.conid;
+
+  // Fetch VIX quote for the VIX gauge (only once conid is resolved)
   const { data: vixQuote } = useQuery<QuoteResponse>({
-    queryKey: ["quote", 13455763],
-    queryFn: () => api.quote(13455763), // VIX conid
+    queryKey: ["quote", vixConid],
+    queryFn: () => api.quote(vixConid!),
+    enabled: vixConid != null,
     refetchInterval: 15_000,
   });
 

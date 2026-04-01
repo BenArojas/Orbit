@@ -113,6 +113,21 @@ export interface TriggerRuleCreate {
   auto_expire_days?: number | null;
 }
 
+/** Mirrors backend TriggerRuleUpdate — only updatable fields, all optional */
+export interface TriggerRuleUpdate {
+  name?: string;
+  indicator?: string;
+  condition?: string;
+  threshold?: number;
+  conid?: number;
+  symbol?: string;
+  timeframe?: string;
+  target_watchlist?: string;
+  source_watchlist?: string;
+  auto_expire_days?: number | null;
+  enabled?: boolean;
+}
+
 export interface TriggerHit {
   id: number;
   rule_id: number;
@@ -315,7 +330,7 @@ export const api = {
   createTriggerRule: (rule: TriggerRuleCreate) =>
     request<TriggerRule>("POST", "/triggers/rules", rule),
 
-  updateTriggerRule: (id: number, updates: Partial<TriggerRule>) =>
+  updateTriggerRule: (id: number, updates: TriggerRuleUpdate) =>
     request<TriggerRule>("PATCH", `/triggers/rules/${id}`, updates),
 
   deleteTriggerRule: (id: number) =>

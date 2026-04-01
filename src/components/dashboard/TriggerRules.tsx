@@ -111,7 +111,7 @@ function RuleRow({
 
 // ── Create Rule Modal ──────────────────────────────────────
 
-function CreateRuleModal({ onCreated }: { onCreated: () => void }) {
+function CreateRuleModal() {
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState({
     name: "",
@@ -149,7 +149,6 @@ function CreateRuleModal({ onCreated }: { onCreated: () => void }) {
       queryClient.invalidateQueries({ queryKey: ["trigger-rules"] });
       setOpen(false);
       resetForm();
-      onCreated();
     },
   });
 
@@ -411,7 +410,7 @@ export default function TriggerRules() {
         <span className="text-[10px] font-semibold uppercase tracking-wider text-[var(--text-3)]">
           Trigger Rules
         </span>
-        <CreateRuleModal onCreated={() => {}} />
+        <CreateRuleModal />
       </div>
 
       {/* Rule list */}
