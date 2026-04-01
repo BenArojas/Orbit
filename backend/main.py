@@ -164,16 +164,19 @@ async def parallax_error_handler(request: Request, exc: ParallaxError):
 from routers.auth import router as auth_router
 from routers.indicators import router as indicators_router
 from routers.market import router as market_router
+from routers.sectors import router as sectors_router
+from routers.watchlist import router as watchlist_router
 from routers.ws import router as ws_router
 
 app.include_router(auth_router)
 app.include_router(indicators_router)
 app.include_router(market_router)
+app.include_router(sectors_router)
+app.include_router(watchlist_router)
 app.include_router(ws_router)
 
 # Future routers (uncomment as they're built):
 # from routers.screener import router as screener_router
-# from routers.watchlist import router as watchlist_router
 # from routers.triggers import router as triggers_router
 # from routers.ai import router as ai_router
 

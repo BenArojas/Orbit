@@ -1,28 +1,36 @@
 /**
  * Dashboard Page — Market pulse, gauges, sectors, watchlists
  *
- * This is a thin page shell. All business logic and heavy components
- * will be built in Phase 3 (tasks 3.1–3.8). For now it's a placeholder
- * that proves routing works.
- *
  * Layout from mockup: grid with main content + 310px sidebar
  *   Main: Market pulse bar (top), gauge row, sector panels, RRG
  *   Sidebar: Master watchlist, trigger watchlists, trigger rules
+ *
+ * Phase 3 tasks implemented:
+ *   3.3 — SectorPerformancePanel (YTD bars)
+ *   3.4 — RRGPanel (Relative Rotation Graph)
+ *   3.5 — WatchlistSidebar (IBKR-synced watchlist)
+ *
+ * Still placeholder: Market Pulse (3.1), Gauges (3.2),
+ *   Dynamic Trigger Watchlists (3.6), Trigger Rules (3.7)
  */
+
+import SectorPerformancePanel from "../components/dashboard/SectorPerformancePanel";
+import RRGPanel from "../components/dashboard/RRGPanel";
+import WatchlistSidebar from "../components/watchlist/WatchlistSidebar";
 
 export default function DashboardPage() {
   return (
     <div className="grid h-full grid-cols-[1fr_310px] grid-rows-[54px_1fr]">
-      {/* Market Pulse bar — spans full width */}
+      {/* Market Pulse bar — spans full width (Phase 3 task 3.1 — Ofek) */}
       <div className="col-span-2 flex items-center border-b border-border bg-[var(--bg-1)] px-4">
         <span className="font-data text-xs text-[var(--text-3)]">
-          Market Pulse — Phase 3
+          Market Pulse — Phase 3 (task 3.1)
         </span>
       </div>
 
       {/* Main content area */}
       <div className="flex flex-col gap-4 overflow-y-auto p-4">
-        {/* Gauge row placeholder */}
+        {/* Gauge row placeholder (Phase 3 task 3.2 — Ofek) */}
         <div className="flex gap-3">
           {["Market Strength", "VIX Fear", "Sector Rotation", "Active Triggers"].map(
             (label) => (
@@ -41,36 +49,16 @@ export default function DashboardPage() {
           )}
         </div>
 
-        {/* Sector performance placeholder */}
-        <div className="rounded-lg border border-border bg-card p-4">
-          <span className="text-xs font-semibold text-[var(--text-2)]">
-            Sector Performance — Phase 3
-          </span>
-        </div>
+        {/* Sector Performance — task 3.3 */}
+        <SectorPerformancePanel />
 
-        {/* RRG placeholder */}
-        <div className="rounded-lg border border-border bg-card p-4">
-          <span className="text-xs font-semibold text-[var(--text-2)]">
-            Relative Rotation Graph — Phase 3
-          </span>
-        </div>
+        {/* Relative Rotation Graph — task 3.4 */}
+        <RRGPanel />
       </div>
 
-      {/* Sidebar */}
-      <div className="flex flex-col overflow-y-auto border-l border-border bg-[var(--bg-1)]">
-        <div className="sticky top-0 z-10 flex items-center justify-between border-b border-border bg-[var(--bg-1)]/80 px-3.5 py-2.5 backdrop-blur">
-          <span className="text-[10px] font-semibold uppercase tracking-wider text-[var(--text-3)]">
-            Watchlist
-          </span>
-          <span className="rounded-full bg-[var(--bg-3)] px-1.5 py-0.5 font-data text-[9px] text-[var(--text-3)]">
-            0
-          </span>
-        </div>
-        <div className="flex flex-1 items-center justify-center">
-          <span className="text-xs text-[var(--text-3)]">
-            Connect IBKR to load watchlist
-          </span>
-        </div>
+      {/* Sidebar — Master Watchlist (task 3.5) */}
+      <div className="border-l border-border bg-[var(--bg-1)] overflow-hidden">
+        <WatchlistSidebar />
       </div>
     </div>
   );
