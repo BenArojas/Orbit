@@ -1,19 +1,29 @@
 /**
  * Dashboard Page — Market pulse, gauges, sectors, watchlists
  *
- * Layout from mockup: grid with main content + 310px sidebar
- *   Main: Market pulse bar (top), gauge row, sector panels, RRG
- *   Sidebar: Master watchlist, trigger watchlists, trigger rules
+ * Layout from approved mockup (Layout A v2):
+ *   Grid: main content area + 310px sidebar
+ *   Row 1: Market Pulse bar (full width, 54px tall)
+ *   Row 2: Main area = gauge row + sector panels + RRG
+ *          Sidebar = master watchlist + trigger hits + trigger rules
  *
  * Phase 3 tasks implemented:
- *   3.3 — SectorPerformancePanel (YTD bars)
- *   3.4 — RRGPanel (Relative Rotation Graph)
- *   3.5 — WatchlistSidebar (IBKR-synced watchlist)
- *
- * Still placeholder: Market Pulse (3.1), Gauges (3.2),
- *   Dynamic Trigger Watchlists (3.6), Trigger Rules (3.7)
+ *   3.1 — MarketPulse (top bar, Ofek)
+ *   3.2 — ArcGaugeRow (four arc gauges, Ofek)
+ *   3.3 — SectorPerformancePanel (YTD bars, Ben)
+ *   3.4 — RRGPanel (Relative Rotation Graph, Ben)
+ *   3.5 — WatchlistSidebar (IBKR-synced watchlist, Ben)
+ *   3.6 — TriggerWatchlist (dynamic watchlist from hits, Ofek)
+ *   3.7 — TriggerRules (compact rule list + create modal, Ofek)
+ *   3.8 — Click-to-analyze (handled via navigateToAnalysis in each component)
  */
 
+import {
+  MarketPulse,
+  ArcGaugeRow,
+  TriggerWatchlist,
+  TriggerRules,
+} from "@/components/dashboard";
 import SectorPerformancePanel from "../components/dashboard/SectorPerformancePanel";
 import RRGPanel from "../components/dashboard/RRGPanel";
 import WatchlistSidebar from "../components/watchlist/WatchlistSidebar";
@@ -21,33 +31,13 @@ import WatchlistSidebar from "../components/watchlist/WatchlistSidebar";
 export default function DashboardPage() {
   return (
     <div className="grid h-full grid-cols-[1fr_310px] grid-rows-[54px_1fr]">
-      {/* Market Pulse bar — spans full width (Phase 3 task 3.1 — Ofek) */}
-      <div className="col-span-2 flex items-center border-b border-border bg-[var(--bg-1)] px-4">
-        <span className="font-data text-xs text-[var(--text-3)]">
-          Market Pulse — Phase 3 (task 3.1)
-        </span>
-      </div>
+      {/* ── Row 1: Market Pulse bar (full width) ── */}
+      <MarketPulse />
 
-      {/* Main content area */}
+      {/* ── Row 2 Left: Main content area ── */}
       <div className="flex flex-col gap-4 overflow-y-auto p-4">
-        {/* Gauge row placeholder (Phase 3 task 3.2 — Ofek) */}
-        <div className="flex gap-3">
-          {["Market Strength", "VIX Fear", "Sector Rotation", "Active Triggers"].map(
-            (label) => (
-              <div
-                key={label}
-                className="flex min-w-[140px] flex-1 flex-col items-center rounded-lg border border-border bg-card p-4"
-              >
-                <span className="text-[10px] font-semibold uppercase tracking-wider text-[var(--text-3)]">
-                  {label}
-                </span>
-                <span className="font-data mt-2 text-2xl font-bold text-[var(--text-2)]">
-                  --
-                </span>
-              </div>
-            )
-          )}
-        </div>
+        {/* Gauge row — 4 arc gauges (task 3.2) */}
+        <ArcGaugeRow />
 
         {/* Sector Performance — task 3.3 */}
         <SectorPerformancePanel />
@@ -56,9 +46,18 @@ export default function DashboardPage() {
         <RRGPanel />
       </div>
 
-      {/* Sidebar — Master Watchlist (task 3.5) */}
-      <div className="border-l border-border bg-[var(--bg-1)] overflow-hidden">
-        <WatchlistSidebar />
+      {/* ── Row 2 Right: Sidebar ── */}
+      <div className="flex flex-col overflow-hidden border-l border-border bg-[var(--bg-1)]">
+        {/* Master Watchlist — task 3.5 */}
+        <div className="flex-1 overflow-hidden border-b border-border">
+          <WatchlistSidebar />
+        </div>
+
+        {/* Trigger Hits — dynamic watchlist (task 3.6) */}
+        <TriggerWatchlist />
+
+        {/* Trigger Rules — compact list + create modal (task 3.7) */}
+        <TriggerRules />
       </div>
     </div>
   );

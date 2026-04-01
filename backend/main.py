@@ -180,9 +180,12 @@ app.include_router(sectors_router)
 app.include_router(watchlist_router)
 app.include_router(ws_router)
 
+from routers.triggers import router as triggers_router
+
+app.include_router(triggers_router)
+
 # Future routers (uncomment as they're built):
 # from routers.screener import router as screener_router
-# from routers.triggers import router as triggers_router
 # from routers.ai import router as ai_router
 
 

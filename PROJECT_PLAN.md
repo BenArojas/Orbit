@@ -172,14 +172,14 @@ Source: `~/Desktop/Projects/MoonMarket`
 
 | # | Task | Owner | Status | Notes |
 |---|---|---|---|---|
-| 3.1 | Market Pulse bar component | Ofek | TODO | Color-coded cards with mini sparklines |
-| 3.2 | Arc gauge components (Market Strength, VIX, Rotation, Triggers) | Ofek | TODO | SVG arc with glow effects |
+| 3.1 | Market Pulse bar component | Ofek | DONE | `src/components/dashboard/MarketPulse.tsx` — Horizontal bar showing SPX, VIX, QQQ, DIA, IWM, TLT, GLD, USO. Each item: symbol, live price, change %, mini sparkline (12 bars from recent candles). Glow underline on hover (green/red). Clicking navigates to Analysis via `navigateToAnalysis(conid)`. |
+| 3.2 | Arc gauge components (Market Strength, VIX, Rotation, Triggers) | Ofek | DONE | `src/components/dashboard/ArcGauge.tsx` — Four SVG semicircle gauges with glow. Market Strength (green, placeholder until Phase 6 scanner). VIX (red, live from IBKR quote). Sector Rotation (cyan, placeholder until RRG integration). Triggers Active (orange, live count from trigger rules DB). Each card: radial gradient glow, header with badge, arc fill animation, value, subtitle. |
 | 3.3 | Sector Performance panel (YTD bars) | Ben | DONE | Sorted bidirectional bar chart, green/red gradient fills. Endpoint: GET /sectors/performance |
 | 3.4 | Sector Rotation RRG panel | Ben | DONE | Standard JdK RRG: RS-Ratio = EMA(sector/SPY), RS-Momentum = EMA(ROC of RS-Ratio), both normalized to 100. 5-point dot trails. Endpoint: GET /sectors/rrg |
 | 3.5 | Master Watchlist sidebar (synced from IBKR) | Ben | DONE | Fetch-only from IBKR (no local cache). Multi-watchlist dropdown, search filter, live quotes, click-to-analyze. Endpoints: GET /watchlist/lists, GET /watchlist/{id} |
-| 3.6 | Dynamic trigger watchlists | Ofek | TODO | Render from trigger_hits table, glow edge indicators |
-| 3.7 | Trigger Rules section (compact list + create modal) | Ofek | TODO | CRUD for trigger rules in SQLite |
-| 3.8 | Click stock → navigate to Analysis with ticker | Both | TODO | Wire up routing from any watchlist item |
+| 3.6 | Dynamic trigger watchlists | Ofek | DONE | `src/components/dashboard/TriggerWatchlist.tsx` — Renders active trigger hits from `/triggers/hits`. Each item has glowing left-edge colored by indicator type (EMA=cyan, RSI=purple, Volume=orange, Fibonacci=green). Shows symbol, trigger tag badge, actual value, threshold. Clicking navigates to Analysis. |
+| 3.7 | Trigger Rules section (compact list + create modal) | Ofek | DONE | `src/components/dashboard/TriggerRules.tsx` — Compact list with LED dot (green=enabled, gray=paused), rule name, hit count. Click LED to toggle enabled. Hover reveals delete button. "+ Add" opens a Dialog modal with full form: symbol resolver, indicator/condition/threshold dropdowns, source/target watchlist, timeframe, auto-expire. Backend: `routers/triggers.py` — full CRUD (GET/POST/PATCH/DELETE rules, GET hits). |
+| 3.8 | Click stock → navigate to Analysis with ticker | Both | DONE | Already wired via `navigateToAnalysis(conid)` in navigation store. MarketPulse items, TriggerWatchlist items all call this on click. Sets chart store's activeConid and switches to Analysis page. |
 
 ---
 
