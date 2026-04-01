@@ -240,9 +240,18 @@ export const api = {
     request<IndicatorComputeResponse>("POST", "/indicators/compute", req),
 
   // Triggers (CRUD)
-  // These will be wired when the triggers router is built (Phase 6)
-  // getTriggerRules: () => request<TriggerRule[]>("GET", "/triggers/rules"),
-  // createTriggerRule: (rule: TriggerRuleCreate) => request<TriggerRule>("POST", "/triggers/rules", rule),
-  // deleteTriggerRule: (id: number) => request<void>("DELETE", `/triggers/rules/${id}`),
-  // getTriggerHits: (limit = 50) => request<TriggerHit[]>("GET", `/triggers/hits?limit=${limit}`),
+  getTriggerRules: () =>
+    request<TriggerRule[]>("GET", "/triggers/rules"),
+
+  createTriggerRule: (rule: TriggerRuleCreate) =>
+    request<TriggerRule>("POST", "/triggers/rules", rule),
+
+  updateTriggerRule: (id: number, updates: Partial<TriggerRule>) =>
+    request<TriggerRule>("PATCH", `/triggers/rules/${id}`, updates),
+
+  deleteTriggerRule: (id: number) =>
+    request<void>("DELETE", `/triggers/rules/${id}`),
+
+  getTriggerHits: (limit = 50) =>
+    request<TriggerHit[]>("GET", `/triggers/hits?limit=${limit}`),
 } as const;

@@ -1,76 +1,80 @@
 /**
  * Dashboard Page — Market pulse, gauges, sectors, watchlists
  *
- * This is a thin page shell. All business logic and heavy components
- * will be built in Phase 3 (tasks 3.1–3.8). For now it's a placeholder
- * that proves routing works.
+ * Layout from approved mockup (Layout A v2):
+ *   Grid: main content area + 310px sidebar
+ *   Row 1: Market Pulse bar (full width, 54px tall)
+ *   Row 2: Main area = gauge row + sector panels + RRG
+ *          Sidebar = master watchlist + trigger hits + trigger rules
  *
- * Layout from mockup: grid with main content + 310px sidebar
- *   Main: Market pulse bar (top), gauge row, sector panels, RRG
- *   Sidebar: Master watchlist, trigger watchlists, trigger rules
+ * Phase 3 tasks implemented here:
+ *   3.1 — MarketPulse (top bar)
+ *   3.2 — ArcGaugeRow (four gauges)
+ *   3.6 — TriggerWatchlist (dynamic watchlist from hits)
+ *   3.7 — TriggerRules (compact rule list + create modal)
+ *   3.8 — Click-to-analyze (handled via navigateToAnalysis in each component)
+ *
+ * Ben's tasks (3.3 Sector Performance, 3.4 RRG, 3.5 Master Watchlist)
+ * are on his branch and will be integrated after merge.
  */
+
+import {
+  MarketPulse,
+  ArcGaugeRow,
+  TriggerWatchlist,
+  TriggerRules,
+} from "@/components/dashboard";
 
 export default function DashboardPage() {
   return (
     <div className="grid h-full grid-cols-[1fr_310px] grid-rows-[54px_1fr]">
-      {/* Market Pulse bar — spans full width */}
-      <div className="col-span-2 flex items-center border-b border-border bg-[var(--bg-1)] px-4">
-        <span className="font-data text-xs text-[var(--text-3)]">
-          Market Pulse — Phase 3
-        </span>
-      </div>
+      {/* ── Row 1: Market Pulse bar (full width) ── */}
+      <MarketPulse />
 
-      {/* Main content area */}
+      {/* ── Row 2 Left: Main content area ── */}
       <div className="flex flex-col gap-4 overflow-y-auto p-4">
-        {/* Gauge row placeholder */}
-        <div className="flex gap-3">
-          {["Market Strength", "VIX Fear", "Sector Rotation", "Active Triggers"].map(
-            (label) => (
-              <div
-                key={label}
-                className="flex min-w-[140px] flex-1 flex-col items-center rounded-lg border border-border bg-card p-4"
-              >
-                <span className="text-[10px] font-semibold uppercase tracking-wider text-[var(--text-3)]">
-                  {label}
-                </span>
-                <span className="font-data mt-2 text-2xl font-bold text-[var(--text-2)]">
-                  --
-                </span>
-              </div>
-            )
-          )}
-        </div>
+        {/* Gauge row — 4 arc gauges */}
+        <ArcGaugeRow />
 
-        {/* Sector performance placeholder */}
+        {/* Sector Performance — Ben's task 3.3 (placeholder until merge) */}
         <div className="rounded-lg border border-border bg-card p-4">
           <span className="text-xs font-semibold text-[var(--text-2)]">
-            Sector Performance — Phase 3
+            Sector Performance — waiting for Ben&apos;s branch merge
           </span>
         </div>
 
-        {/* RRG placeholder */}
+        {/* RRG — Ben's task 3.4 (placeholder until merge) */}
         <div className="rounded-lg border border-border bg-card p-4">
           <span className="text-xs font-semibold text-[var(--text-2)]">
-            Relative Rotation Graph — Phase 3
+            Relative Rotation Graph — waiting for Ben&apos;s branch merge
           </span>
         </div>
       </div>
 
-      {/* Sidebar */}
+      {/* ── Row 2 Right: Sidebar ── */}
       <div className="flex flex-col overflow-y-auto border-l border-border bg-[var(--bg-1)]">
-        <div className="sticky top-0 z-10 flex items-center justify-between border-b border-border bg-[var(--bg-1)]/80 px-3.5 py-2.5 backdrop-blur">
-          <span className="text-[10px] font-semibold uppercase tracking-wider text-[var(--text-3)]">
-            Watchlist
-          </span>
-          <span className="rounded-full bg-[var(--bg-3)] px-1.5 py-0.5 font-data text-[9px] text-[var(--text-3)]">
-            0
-          </span>
+        {/* Master Watchlist — Ben's task 3.5 (placeholder until merge) */}
+        <div className="border-b border-border">
+          <div className="flex items-center justify-between px-3.5 py-2.5">
+            <span className="text-[10px] font-semibold uppercase tracking-wider text-[var(--text-3)]">
+              Watchlist
+            </span>
+            <span className="rounded-full bg-[var(--bg-3)] px-1.5 py-0.5 font-data text-[9px] text-[var(--text-3)]">
+              0
+            </span>
+          </div>
+          <div className="flex items-center justify-center py-4">
+            <span className="text-[10px] text-[var(--text-3)]">
+              Waiting for Ben&apos;s branch merge
+            </span>
+          </div>
         </div>
-        <div className="flex flex-1 items-center justify-center">
-          <span className="text-xs text-[var(--text-3)]">
-            Connect IBKR to load watchlist
-          </span>
-        </div>
+
+        {/* Trigger Hits — dynamic watchlist (task 3.6) */}
+        <TriggerWatchlist />
+
+        {/* Trigger Rules — compact list + create modal (task 3.7) */}
+        <TriggerRules />
       </div>
     </div>
   );
