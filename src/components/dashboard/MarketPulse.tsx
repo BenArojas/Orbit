@@ -7,27 +7,21 @@
  * Each item is a clickable card — clicking navigates to Analysis for that ticker.
  *
  * Data comes from the backend /market/quote endpoint for each symbol.
- * Sparklines are built from the last 12 candles (intraday bars).
+ * Sparklines are built from the last 12 candles (5-day bars).
+ *
+ * Conids are resolved at runtime via /market/conid/{symbol} so they work
+ * across paper and live IBKR accounts. Results are cached by TanStack Query.
  *
  * Design: dark bg, monospace prices, colored change %, tiny bar sparklines,
  * glow underline on hover matching up/down color.
  */
 
 import { useQuery } from "@tanstack/react-query";
-import { api, type QuoteResponse, type CandleData } from "@/lib/api";
+import { api, type QuoteResponse, type CandleData, type ConidResponse } from "@/lib/api";
 import { useNavigationStore } from "@/store";
 
-/** The market indices we show in the pulse bar */
-const PULSE_SYMBOLS = [
-  { symbol: "SPX", conid: 416904 },   // S&P 500
-  { symbol: "VIX", conid: 13455763 }, // Volatility Index
-  { symbol: "QQQ", conid: 320227 },   // Nasdaq 100 ETF
-  { symbol: "DIA", conid: 36285627 }, // Dow Jones ETF
-  { symbol: "IWM", conid: 9579970 },  // Russell 2000 ETF
-  { symbol: "TLT", conid: 15547816 }, // 20yr Treasury ETF
-  { symbol: "GLD", conid: 51529211 }, // Gold ETF
-  { symbol: "USO", conid: 28812903 }, // Oil ETF
-];
+/** The market symbols we show in the pulse bar */
+const PULSE_SYMBOLS = ["SPX", "VIX", "QQQ", "DIA", "IWM", "TLT", "GLD", "USO"];
 
 /** Mini sparkline — 12 tiny bars showing recent price direction */
 function MiniSparkline({ candles, isUp }: { candles: CandleData[]; isUp: boolean }) {
@@ -61,21 +55,32 @@ function MiniSparkline({ candles, isUp }: { candles: CandleData[]; isUp: boolean
 }
 
 /** One pulse item — symbol, price, change, sparkline */
-function PulseItem({ symbol, conid }: { symbol: string; conid: number }) {
+function PulseItem({ symbol }: { symbol: string }) {
   const navigateToAnalysis = useNavigationStore((s) => s.navigateToAnalysis);
 
-  // Fetch live quote
-  const { data: quote } = useQuery<QuoteResponse>({
-    queryKey: ["quote", conid],
-    queryFn: () => api.quote(conid),
-    refetchInterval: 10_000, // Refresh every 10 seconds
+  // Step 1: Resolve symbol → conid at runtime (cached indefinitely)
+  const { data: resolved } = useQuery<ConidResponse>({
+    queryKey: ["conid", symbol],
+    queryFn: () => api.resolveConid(symbol),
+    staleTime: Infinity, // conid never changes within a session
   });
 
-  // Fetch recent candles for sparkline
+  const conid = resolved?.conid;
+
+  // Step 2: Fetch live quote (only once we have a conid)
+  const { data: quote } = useQuery<QuoteResponse>({
+    queryKey: ["quote", conid],
+    queryFn: () => api.quote(conid!),
+    enabled: conid != null,
+    refetchInterval: 10_000,
+  });
+
+  // Step 3: Fetch recent candles for sparkline (5-day window → ~12 daily bars)
   const { data: candles } = useQuery<CandleData[]>({
-    queryKey: ["candles", conid, "1D"],
-    queryFn: () => api.candles(conid, "1M"),
-    staleTime: 60_000, // Sparkline doesn't need to refresh as often
+    queryKey: ["candles", conid, "5D"],
+    queryFn: () => api.candles(conid!, "5D"),
+    enabled: conid != null,
+    staleTime: 60_000,
   });
 
   const price = quote?.lastPrice;
@@ -84,7 +89,7 @@ function PulseItem({ symbol, conid }: { symbol: string; conid: number }) {
 
   return (
     <button
-      onClick={() => navigateToAnalysis(conid)}
+      onClick={() => conid && navigateToAnalysis(conid)}
       className="group relative flex min-w-[115px] flex-col gap-0.5 px-[18px] py-2 transition-colors hover:bg-[var(--bg-2)]"
     >
       {/* Glow underline on hover */}
@@ -136,8 +141,8 @@ function formatPrice(price: number): string {
 export default function MarketPulse() {
   return (
     <div className="col-span-2 flex items-center overflow-x-auto border-b border-border bg-[var(--bg-1)]">
-      {PULSE_SYMBOLS.map(({ symbol, conid }) => (
-        <PulseItem key={symbol} symbol={symbol} conid={conid} />
+      {PULSE_SYMBOLS.map((symbol) => (
+        <PulseItem key={symbol} symbol={symbol} />
       ))}
     </div>
   );
