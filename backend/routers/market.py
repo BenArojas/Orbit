@@ -7,6 +7,12 @@ Endpoints:
   GET  /market/candles/{conid}   — Historical OHLCV bars for charting
   GET  /market/search            — Search securities by symbol/name
   GET  /market/conid/{symbol}    — Resolve a ticker to an IBKR conid
+
+Hub integration:
+  Both /search and /conid/{symbol} auto-populate the `instruments` cache table.
+  This means every instrument Parallax touches gets cached locally.
+  MoonMarket and Inflect will read from this cache (by conid) without
+  needing their own IBKR search calls.
 """
 
 import datetime
@@ -15,8 +21,9 @@ import logging
 from fastapi import APIRouter, Depends, Query
 
 from constants import DEFAULT_QUOTE_FIELDS_STR, PERIOD_BAR
-from deps import get_ibkr
+from deps import get_db, get_ibkr
 from exceptions import SymbolNotFoundError
+from services.db import DatabaseService
 from services.ibkr import IBKRService, _safe_float
 
 log = logging.getLogger("parallax.routers.market")
@@ -28,7 +35,11 @@ router = APIRouter(prefix="/market", tags=["market"])
 
 
 @router.get("/quote/{conid}")
-async def get_quote(conid: int, ibkr: IBKRService = Depends(get_ibkr)):
+async def get_quote(
+    conid: int,
+    ibkr: IBKRService = Depends(get_ibkr),
+    db: DatabaseService = Depends(get_db),
+):
     """
     Fetch a full market data snapshot for a single instrument.
     Returns last price, bid/ask, change, high/low, volume, etc.
@@ -38,10 +49,19 @@ async def get_quote(conid: int, ibkr: IBKRService = Depends(get_ibkr)):
         return {"error": "No market data available", "conid": conid}
 
     data = raw[0]
+    symbol = data.get("55", "")
+    company_name = data.get("7051", "")
+
+    # Cache instrument metadata if we got symbol info from the snapshot
+    if symbol:
+        await db.upsert_instrument(
+            conid=conid, symbol=symbol, company_name=company_name,
+        )
+
     return {
         "conid": conid,
-        "symbol": data.get("55", ""),
-        "companyName": data.get("7051", ""),
+        "symbol": symbol,
+        "companyName": company_name,
         "lastPrice": _safe_float(data.get("31")),
         "bid": _safe_float(data.get("84")),
         "ask": _safe_float(data.get("86")),
@@ -106,25 +126,40 @@ async def get_candles(
 async def search_securities(
     q: str = Query(..., description="Symbol or company name to search"),
     ibkr: IBKRService = Depends(get_ibkr),
+    db: DatabaseService = Depends(get_db),
 ):
     """
     Search for securities by symbol or name.
     Returns a list of matches with conid, symbol, company name, and type.
+
+    Hub integration: Every result is cached in the instruments table
+    so MoonMarket and Inflect can resolve conid → symbol locally.
     """
     results = await ibkr.search(symbol=q)
     if not results:
         return []
 
-    return [
-        {
-            "conid": item.get("conid"),
-            "symbol": item.get("symbol"),
-            "companyName": item.get("companyHeader", ""),
-            "secType": item.get("secType", ""),
-        }
-        for item in results
-        if item.get("conid")
-    ]
+    items = []
+    for item in results:
+        conid = item.get("conid")
+        if not conid:
+            continue
+        symbol = item.get("symbol", "")
+        company_name = item.get("companyHeader", "")
+        sec_type = item.get("secType", "")
+        items.append({
+            "conid": conid,
+            "symbol": symbol,
+            "companyName": company_name,
+            "secType": sec_type,
+        })
+        # Cache in instruments table (fire-and-forget, don't block response)
+        await db.upsert_instrument(
+            conid=int(conid), symbol=symbol,
+            company_name=company_name, sec_type=sec_type,
+        )
+
+    return items
 
 
 # ── GET /market/conid/{symbol} ───────────────────────────────
@@ -134,13 +169,18 @@ async def search_securities(
 async def resolve_conid(
     symbol: str,
     ibkr: IBKRService = Depends(get_ibkr),
+    db: DatabaseService = Depends(get_db),
 ):
     """
     Resolve a ticker symbol to an IBKR conid.
     Used when the frontend needs to translate a symbol into an ID.
+
+    Hub integration: Result is cached in the instruments table.
     """
     try:
         conid = await ibkr.get_conid(symbol)
+        # Cache the resolution so other Hub modules can look up by conid
+        await db.upsert_instrument(conid=conid, symbol=symbol.upper())
         return {"conid": conid, "symbol": symbol.upper()}
     except SymbolNotFoundError:
         return {"error": f"Symbol not found: {symbol}", "symbol": symbol}

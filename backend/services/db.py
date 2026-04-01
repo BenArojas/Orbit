@@ -12,6 +12,18 @@ What we do NOT store locally:
   - Watchlists — managed inside IBKR itself. The app reads them
     live from IBKR's API. No local copy needed.
 
+── Hub integration ──────────────────────────────────────────────
+The `instruments` table is the one piece of Parallax's database that
+other Hub modules will read from:
+
+  MoonMarket  → reads instruments to display symbol/name in portfolio
+  Inflect     → reads instruments to display symbol/name in journal entries
+
+Both modules use conid as their primary key. Instruments gets populated
+lazily here in Parallax whenever we resolve a conid for the first time
+(via IBKR search). Other modules are read-only consumers — they never
+write to this table.
+
 All database access goes through this module. No other file should
 write raw SQL — they call these functions instead.
 
@@ -163,6 +175,30 @@ class DatabaseService:
                 updated_at  TEXT DEFAULT (datetime('now'))
             );
 
+            -- ─── Instruments Cache ─────────────────────────────────
+            -- Local cache of IBKR's instrument metadata.
+            -- Avoids hitting IBKR's search API repeatedly for the same stock.
+            --
+            -- conid is the primary key — IBKR's unique integer for each security.
+            -- This is the UNIVERSAL KEY across the entire Hub:
+            --   Parallax uses conid in trigger_rules, trigger_hits, indicators
+            --   MoonMarket will use conid in fills, positions, orders
+            --   Inflect will use conid in journal_entries
+            --
+            -- Populated lazily: when Parallax resolves a conid for the first
+            -- time (via /market/search or /market/conid), it writes a row here.
+            -- If the row already exists, it updates the timestamp.
+            --
+            -- Other Hub modules read from this table but never write to it.
+            -- IBKR is the source of truth — this is just a local cache.
+            CREATE TABLE IF NOT EXISTS instruments (
+                conid          INTEGER PRIMARY KEY,    -- IBKR's unique contract ID
+                symbol         TEXT NOT NULL,           -- Ticker (AAPL, SPY, QQQ)
+                company_name   TEXT DEFAULT '',         -- Full name ("Apple Inc")
+                sec_type       TEXT DEFAULT 'STK',      -- STK, ETF, OPT, FUT, etc.
+                cached_at      TEXT DEFAULT (datetime('now'))
+            );
+
             -- ─── Indexes ───────────────────────────────────────────
             -- Indexes are like a book's table of contents — they help
             -- the database find things faster without reading every row.
@@ -183,6 +219,9 @@ class DatabaseService:
 
             CREATE INDEX IF NOT EXISTS idx_trigger_hits_expires_at
                 ON trigger_hits(expires_at);
+
+            CREATE INDEX IF NOT EXISTS idx_instruments_symbol
+                ON instruments(symbol);
         """)
         self._conn.commit()
         log.info("Database tables verified/created.")
@@ -507,6 +546,81 @@ class DatabaseService:
             return cursor.rowcount > 0
 
         return await asyncio.to_thread(_delete)
+
+    # ── Instrument Cache Operations ────────────────────────────
+    #
+    # Hub integration: This is the ONLY table that other Hub modules
+    # (MoonMarket, Inflect) will read from. Parallax is the sole writer.
+    # The market router auto-populates this on every search/conid resolution.
+
+    async def get_instrument(self, conid: int) -> dict | None:
+        """
+        Look up a cached instrument by conid.
+        Returns None if we haven't resolved this conid yet.
+        """
+        return await asyncio.to_thread(
+            self._fetchone,
+            "SELECT * FROM instruments WHERE conid = ?",
+            (conid,),
+        )
+
+    async def get_instruments_by_conids(self, conids: list[int]) -> list[dict]:
+        """
+        Bulk lookup — get cached instruments for a list of conids.
+        Only returns rows that exist in cache (doesn't hit IBKR).
+        """
+        if not conids:
+            return []
+        placeholders = ",".join("?" for _ in conids)
+        return await asyncio.to_thread(
+            self._fetchall,
+            f"SELECT * FROM instruments WHERE conid IN ({placeholders})",
+            tuple(conids),
+        )
+
+    async def upsert_instrument(
+        self,
+        conid: int,
+        symbol: str,
+        company_name: str = "",
+        sec_type: str = "STK",
+    ) -> None:
+        """
+        Cache an instrument. If it already exists, refresh the timestamp.
+        Called automatically by the market router when resolving conids.
+
+        This is the ONLY write path — other Hub modules don't call this.
+        """
+        def _upsert() -> None:
+            self._execute(
+                """INSERT INTO instruments (conid, symbol, company_name, sec_type, cached_at)
+                   VALUES (?, ?, ?, ?, datetime('now'))
+                   ON CONFLICT(conid) DO UPDATE SET
+                       symbol = ?,
+                       company_name = ?,
+                       sec_type = ?,
+                       cached_at = datetime('now')""",
+                (conid, symbol, company_name, sec_type,
+                 symbol, company_name, sec_type),
+            )
+            assert self._conn is not None
+            self._conn.commit()
+
+        await asyncio.to_thread(_upsert)
+
+    async def search_instruments_local(self, query: str) -> list[dict]:
+        """
+        Search the local cache by symbol or company name.
+        Useful for quick typeahead before hitting IBKR's slower search API.
+        """
+        pattern = f"%{query}%"
+        return await asyncio.to_thread(
+            self._fetchall,
+            """SELECT * FROM instruments
+               WHERE symbol LIKE ? OR company_name LIKE ?
+               ORDER BY symbol LIMIT 20""",
+            (pattern, pattern),
+        )
 
     # ── Seed default settings ────────────────────────────────
 

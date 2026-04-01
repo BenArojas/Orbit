@@ -106,6 +106,27 @@ class ConidResponse(BaseModel):
 
 
 # ═══════════════════════════════════════════════════════════════
+#  Instruments Cache
+#
+#  Hub integration: This is the shared instrument lookup table.
+#  Parallax writes to it (via market search/conid resolution).
+#  MoonMarket and Inflect read from it to resolve conid → symbol.
+# ═══════════════════════════════════════════════════════════════
+
+
+class InstrumentResponse(BaseModel):
+    """
+    A cached instrument from the local instruments table.
+    conid is the universal key across the entire IBKR Hub.
+    """
+    conid: int                   # IBKR's unique contract ID — the universal key
+    symbol: str                  # Ticker (AAPL, SPY, QQQ)
+    company_name: str = ""       # Full company name
+    sec_type: str = "STK"        # STK, ETF, OPT, FUT, etc.
+    cached_at: str = ""          # When this was last refreshed from IBKR
+
+
+# ═══════════════════════════════════════════════════════════════
 #  Trigger Rules
 # ═══════════════════════════════════════════════════════════════
 
