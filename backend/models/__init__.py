@@ -348,3 +348,85 @@ class IndicatorComputeResponse(BaseModel):
     candles: list[CandleData]                          # The raw price data used
     indicators: list[IndicatorResult]                  # Computed indicator values
     fibonacci: Optional[FibonacciResult] = None        # Fibonacci levels (if requested)
+
+
+# ═══════════════════════════════════════════════════════════════
+#  Sectors (Phase 3 — tasks 3.3, 3.4)
+# ═══════════════════════════════════════════════════════════════
+
+
+class SectorPerformance(BaseModel):
+    """
+    YTD performance for one sector ETF.
+    Used in the Sector Performance bar chart on the dashboard.
+    """
+    symbol: str                              # ETF ticker (XLK, XLV, etc.)
+    name: str                                # Sector name ("Technology", etc.)
+    conid: int                               # IBKR contract ID
+    lastPrice: Optional[float] = None        # Current price
+    changePercent: Optional[float] = None    # Day's % change
+    ytdPercent: Optional[float] = None       # Year-to-date % change
+
+
+class RRGDataPoint(BaseModel):
+    """
+    One data point on the Relative Rotation Graph.
+
+    RS-Ratio: measures relative trend strength vs benchmark (SPY).
+      > 100 = outperforming, < 100 = underperforming.
+    RS-Momentum: measures rate of change of RS-Ratio.
+      > 100 = improving, < 100 = weakening.
+
+    The 4 quadrants:
+      Leading   (Ratio > 100, Momentum > 100) — strong and getting stronger
+      Weakening (Ratio > 100, Momentum < 100) — strong but fading
+      Lagging   (Ratio < 100, Momentum < 100) — weak and getting weaker
+      Improving (Ratio < 100, Momentum > 100) — weak but recovering
+    """
+    symbol: str
+    name: str
+    rs_ratio: float                          # Relative strength ratio (centered at 100)
+    rs_momentum: float                       # Rate of change of RS-Ratio (centered at 100)
+    quadrant: str                            # "leading", "weakening", "lagging", "improving"
+    # Trail: last N data points for animated tail
+    trail: list[dict[str, float]] = []       # [{"rs_ratio": ..., "rs_momentum": ...}, ...]
+
+
+class SectorOverviewResponse(BaseModel):
+    """Full sector data for the dashboard — performance bars + RRG."""
+    performance: list[SectorPerformance]
+    rrg: list[RRGDataPoint]
+
+
+# ═══════════════════════════════════════════════════════════════
+#  Watchlists (Phase 3 — task 3.5)
+#
+#  Watchlists live in IBKR — we don't store them locally.
+#  We fetch them fresh from IBKR each time.
+# ═══════════════════════════════════════════════════════════════
+
+
+class WatchlistInfo(BaseModel):
+    """Summary of one IBKR watchlist (just ID + name)."""
+    id: str
+    name: str
+
+
+class WatchlistItemResponse(BaseModel):
+    """
+    One instrument in a watchlist, enriched with live quote data.
+    conid is the universal key — same as everywhere else in the Hub.
+    """
+    conid: int
+    symbol: str = ""
+    companyName: str = ""
+    lastPrice: Optional[float] = None
+    changePercent: Optional[float] = None
+    changeAmount: Optional[float] = None
+
+
+class WatchlistResponse(BaseModel):
+    """Full watchlist with items and live quotes."""
+    id: str
+    name: str
+    items: list[WatchlistItemResponse]

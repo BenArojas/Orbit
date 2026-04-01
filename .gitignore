@@ -18,6 +18,11 @@ __pycache__/
 *.egg-info/
 .venv/
 *.db
+*.db-wal
+*.db-shm
+
+# uv
+uv.lock
 
 # Editor directories and files
 .vscode/*

@@ -175,6 +175,58 @@ export interface IndicatorComputeResponse {
   fibonacci: FibonacciResult | null;
 }
 
+// ── Sectors (Phase 3 — tasks 3.3, 3.4) ──────────────────
+
+export interface SectorPerformance {
+  symbol: string;
+  name: string;
+  conid: number;
+  lastPrice: number | null;
+  changePercent: number | null;
+  ytdPercent: number | null;
+}
+
+export interface RRGTrailPoint {
+  rs_ratio: number;
+  rs_momentum: number;
+}
+
+export interface RRGDataPoint {
+  symbol: string;
+  name: string;
+  rs_ratio: number;
+  rs_momentum: number;
+  quadrant: "leading" | "weakening" | "lagging" | "improving";
+  trail: RRGTrailPoint[];
+}
+
+export interface SectorOverviewResponse {
+  performance: SectorPerformance[];
+  rrg: RRGDataPoint[];
+}
+
+// ── Watchlists (Phase 3 — task 3.5) ─────────────────────
+
+export interface WatchlistInfo {
+  id: string;
+  name: string;
+}
+
+export interface WatchlistItemResponse {
+  conid: number;
+  symbol: string;
+  companyName: string;
+  lastPrice: number | null;
+  changePercent: number | null;
+  changeAmount: number | null;
+}
+
+export interface WatchlistResponse {
+  id: string;
+  name: string;
+  items: WatchlistItemResponse[];
+}
+
 // ── API Error ───────────────────────────────────────────────
 
 export class ApiError extends Error {
@@ -238,6 +290,23 @@ export const api = {
   // Indicators
   computeIndicators: (req: IndicatorRequest) =>
     request<IndicatorComputeResponse>("POST", "/indicators/compute", req),
+
+  // Sectors (Phase 3)
+  sectorPerformance: () =>
+    request<SectorPerformance[]>("GET", "/sectors/performance"),
+
+  sectorRRG: () =>
+    request<RRGDataPoint[]>("GET", "/sectors/rrg"),
+
+  sectorOverview: () =>
+    request<SectorOverviewResponse>("GET", "/sectors/overview"),
+
+  // Watchlists (Phase 3)
+  getWatchlists: () =>
+    request<WatchlistInfo[]>("GET", "/watchlist/lists"),
+
+  getWatchlistItems: (watchlistId: string) =>
+    request<WatchlistResponse>("GET", `/watchlist/${encodeURIComponent(watchlistId)}`),
 
   // Triggers (CRUD)
   // These will be wired when the triggers router is built (Phase 6)

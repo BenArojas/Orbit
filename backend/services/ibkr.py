@@ -315,6 +315,40 @@ class IBKRService:
             "GET", "/iserver/marketdata/history", params=params
         )
 
+    # ── Watchlist Methods (Step 3.5) ───────────────────────────
+
+    @cached(ttl=60)
+    async def get_watchlists(self) -> list[dict]:
+        """
+        Fetch all IBKR watchlists for the authenticated user.
+        Returns list of {id, name} dicts.
+        """
+        await self.ensure_accounts()
+        data = await self._request("GET", "/iserver/watchlists")
+        # IBKR returns: {"data": [{"id": "...", "name": "...", ...}, ...]}
+        # or sometimes just a list
+        if isinstance(data, dict):
+            return data.get("data", data.get("user_lists", []))
+        return data if isinstance(data, list) else []
+
+    async def get_watchlist_items(self, watchlist_id: str) -> list[dict]:
+        """
+        Fetch instruments in a specific IBKR watchlist.
+        Returns raw IBKR response with instrument rows.
+        """
+        await self.ensure_accounts()
+        data = await self._request(
+            "GET", "/iserver/watchlist", params={"id": watchlist_id}
+        )
+        # IBKR returns: {"id": "...", "hash": "...", "data": {"instruments": [...]}}
+        # or {"instruments": [...]}
+        if isinstance(data, dict):
+            instruments_data = data.get("data", data)
+            if isinstance(instruments_data, dict):
+                return instruments_data.get("instruments", [])
+            return []
+        return []
+
     # ── WebSocket (Step 1.6) ─────────────────────────────────
     # The IBKR WebSocket streams real-time market data.
     # Frontend connects to our FastAPI /ws endpoint.

@@ -65,3 +65,29 @@ PERIOD_BAR: dict[str, tuple[str, str]] = {
     "1Y": ("1y", "1d"),        # 1 year, daily bars
     "5Y": ("5y", "1w"),        # 5 years, weekly bars
 }
+
+
+# ── Sector ETFs (SPDR Select Sector) ───────────────────────
+# The 11 S&P 500 sector ETFs + SPY as benchmark.
+# Conids are resolved at runtime via IBKR search — these are just tickers and names.
+
+SECTOR_ETFS: list[dict[str, str]] = [
+    {"symbol": "XLK", "name": "Technology"},
+    {"symbol": "XLV", "name": "Healthcare"},
+    {"symbol": "XLF", "name": "Financials"},
+    {"symbol": "XLE", "name": "Energy"},
+    {"symbol": "XLI", "name": "Industrials"},
+    {"symbol": "XLY", "name": "Consumer Disc."},
+    {"symbol": "XLP", "name": "Consumer Staples"},
+    {"symbol": "XLU", "name": "Utilities"},
+    {"symbol": "XLRE", "name": "Real Estate"},
+    {"symbol": "XLC", "name": "Comm. Services"},
+    {"symbol": "XLB", "name": "Materials"},
+]
+
+SECTOR_BENCHMARK = "SPY"  # S&P 500 benchmark for RRG calculations
+
+# RRG (Relative Rotation Graph) parameters — standard JdK method
+RRG_RS_EMA_PERIOD = 10       # EMA smoothing period for RS-Ratio
+RRG_MOMENTUM_PERIOD = 10     # Rate-of-change period for RS-Momentum
+RRG_LOOKBACK_DAYS = 252      # ~1 year of daily data for RRG calculation
