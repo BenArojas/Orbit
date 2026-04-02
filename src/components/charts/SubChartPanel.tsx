@@ -30,7 +30,7 @@ import type { IndicatorResult, IndicatorValue } from "@/lib/api";
 
 // ── Types ────────────────────────────────────────────────────
 
-export type SubChartType = "rsi" | "macd" | "stochastic" | "obv";
+export type SubChartType = "rsi" | "macd" | "stochastic" | "obv" | "adx";
 
 export interface SubChartPanelProps {
   type: SubChartType;
@@ -55,6 +55,7 @@ const COLORS = {
   stochK: "#00d4ff",       // cyan
   stochD: "#ff9f1c",       // orange
   obv: "#4488ff",          // blue
+  adx: "#ff9f1c",          // orange
   refLine: "rgba(255, 255, 255, 0.08)", // reference lines (30/70, 20/80)
 } as const;
 
@@ -65,6 +66,7 @@ const LABELS: Record<SubChartType, string> = {
   macd: "MACD (12,26,9)",
   stochastic: "Stoch (14,3,3)",
   obv: "OBV",
+  adx: "ADX (14)",
 };
 
 // ── Backend name mapping ─────────────────────────────────────
@@ -74,6 +76,7 @@ const BACKEND_NAME: Record<SubChartType, string> = {
   macd: "macd",
   stochastic: "stoch",
   obv: "obv",
+  adx: "adx",
 };
 
 // ── Helpers ──────────────────────────────────────────────────
@@ -136,6 +139,10 @@ export default function SubChartPanel({
           labelBackgroundColor: "#0f1724",
         },
       },
+      // Scroll/scale disabled — panels should follow the main chart's visible
+      // time range. Time-range syncing is a future enhancement: subscribe to
+      // the main chart's timeScale().subscribeVisibleLogicalRangeChange() and
+      // call panel.timeScale().setVisibleLogicalRange() in response.
       handleScroll: false,
       handleScale: false,
     });
@@ -165,7 +172,7 @@ export default function SubChartPanel({
 
     // Remove old series
     for (const s of seriesRefs.current) {
-      try { chart.removeSeries(s); } catch { /* already removed */ }
+      try { chart.removeSeries(s); } catch (_e: unknown) { /* series already removed on chart destroy */ }
     }
     seriesRefs.current = [];
 
@@ -183,6 +190,9 @@ export default function SubChartPanel({
         break;
       case "obv":
         renderOBV(chart, indicator);
+        break;
+      case "adx":
+        renderADX(chart, indicator);
         break;
     }
 
@@ -350,6 +360,39 @@ export default function SubChartPanel({
     });
     series.setData(data);
     seriesRefs.current.push(series);
+  }
+
+  // ── ADX: trend strength line + 25 reference level ─────────
+
+  function renderADX(chart: IChartApi, ind: IndicatorResult) {
+    const data = toLineData(ind.values);
+    if (data.length === 0) return;
+
+    const series = chart.addSeries(LineSeries, {
+      color: COLORS.adx,
+      lineWidth: 1,
+      priceLineVisible: false,
+      lastValueVisible: false,
+      crosshairMarkerVisible: true,
+      crosshairMarkerRadius: 3,
+    });
+    series.setData(data);
+    seriesRefs.current.push(series);
+
+    // 25 reference line — ADX above 25 = trending market
+    const refSeries = chart.addSeries(LineSeries, {
+      color: COLORS.refLine,
+      lineWidth: 1,
+      lineStyle: 2, // dashed
+      priceLineVisible: false,
+      lastValueVisible: false,
+      crosshairMarkerVisible: false,
+    });
+    refSeries.setData([
+      { time: data[0].time, value: 25 },
+      { time: data[data.length - 1].time, value: 25 },
+    ]);
+    seriesRefs.current.push(refSeries);
   }
 
   return (

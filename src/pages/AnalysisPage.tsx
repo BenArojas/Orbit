@@ -13,7 +13,8 @@
  *   - Chart rendering delegation to ChartContainer
  */
 
-import { useState, useCallback, useMemo, type KeyboardEvent } from "react";
+import { useState, useMemo, type KeyboardEvent } from "react";
+import { useMutation } from "@tanstack/react-query";
 import { useChartStore, type Timeframe, type IndicatorId } from "@/store";
 import { api } from "@/lib/api";
 import { ChartContainer, SubChartPanel, SUB_CHART_BACKEND_NAMES, type SubChartType } from "@/components/charts";
@@ -47,6 +48,18 @@ const INDICATOR_LIST: IndicatorMeta[] = [
 
 const TIMEFRAMES: Timeframe[] = ["1m", "5m", "15m", "1h", "4h", "1D", "1W", "1M"];
 
+/** Sub-chart indicator IDs → panel type mapping (module-level constant) */
+const SUB_CHART_IDS: { id: IndicatorId; type: SubChartType }[] = [
+  { id: "rsi", type: "rsi" },
+  { id: "macd", type: "macd" },
+  { id: "stochastic", type: "stochastic" },
+  { id: "obv", type: "obv" },
+  { id: "adx", type: "adx" },
+];
+
+/** Height in px for each sub-chart panel */
+const SUB_CHART_HEIGHT = 100;
+
 // ── Component ────────────────────────────────────────────────
 
 export default function AnalysisPage() {
@@ -62,7 +75,7 @@ export default function AnalysisPage() {
   } = useChartStore();
 
   const [symbolInput, setSymbolInput] = useState(activeSymbol || "");
-  const [resolving, setResolving] = useState(false);
+  const [inputFocused, setInputFocused] = useState(false);
 
   // Fetch chart data (candles + indicators + live tick)
   const {
@@ -74,42 +87,32 @@ export default function AnalysisPage() {
     error,
   } = useChartData(activeConid, timeframe, activeIndicators);
 
-  // ── Active sub-chart panels (oscillators/line indicators) ──
-
-  const SUB_CHART_IDS: { id: IndicatorId; type: SubChartType }[] = [
-    { id: "rsi", type: "rsi" },
-    { id: "macd", type: "macd" },
-    { id: "stochastic", type: "stochastic" },
-    { id: "obv", type: "obv" },
-  ];
+  // ── Active sub-chart panels (oscillators/line/value indicators) ──
 
   const activeSubCharts = useMemo(
     () =>
       SUB_CHART_IDS.filter(({ id }) => activeIndicators.has(id)).map(
         ({ type }) => type
       ),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
     [activeIndicators],
   );
 
-  // ── Symbol resolution ──────────────────────────────────────
+  // ── Symbol resolution (via useMutation per CLAUDE.md convention) ──
 
-  const resolveSymbol = useCallback(async () => {
-    const sym = symbolInput.trim().toUpperCase();
-    if (!sym || sym === activeSymbol) return;
-
-    setResolving(true);
-    try {
-      const result = await api.resolveConid(sym);
+  const resolveConidMutation = useMutation({
+    mutationFn: (sym: string) => api.resolveConid(sym),
+    onSuccess: (result) => {
       setActiveConid(result.conid);
       setActiveSymbol(result.symbol);
       setSymbolInput(result.symbol);
-    } catch {
-      // Could not resolve — leave the input as-is
-    } finally {
-      setResolving(false);
-    }
-  }, [symbolInput, activeSymbol, setActiveConid, setActiveSymbol]);
+    },
+  });
+
+  const resolveSymbol = () => {
+    const sym = symbolInput.trim().toUpperCase();
+    if (!sym || sym === activeSymbol) return;
+    resolveConidMutation.mutate(sym);
+  };
 
   const handleSymbolKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
     if (e.key === "Enter") {
@@ -123,16 +126,17 @@ export default function AnalysisPage() {
       <div className="flex flex-col overflow-hidden">
         {/* Toolbar */}
         <div className="flex flex-wrap items-center gap-2.5 border-b border-border bg-[var(--bg-1)] px-3.5 py-2">
-          {/* Symbol input */}
+          {/* Symbol input — shows activeSymbol when blurred, raw input when focused */}
           <input
             type="text"
             placeholder="AAPL"
-            value={symbolInput || activeSymbol}
+            value={inputFocused ? symbolInput : (symbolInput || activeSymbol)}
             onChange={(e) => setSymbolInput(e.target.value.toUpperCase())}
             onKeyDown={handleSymbolKeyDown}
-            onBlur={resolveSymbol}
+            onFocus={() => setInputFocused(true)}
+            onBlur={() => { setInputFocused(false); resolveSymbol(); }}
             className={`w-[90px] rounded-md border border-border bg-[var(--bg-0)] px-2.5 py-1.5 text-center text-sm font-bold text-foreground outline-none transition-all focus:border-[var(--clr-cyan)] focus:shadow-[0_0_12px_var(--glow-cyan)] ${
-              resolving ? "animate-pulse" : ""
+              resolveConidMutation.isPending ? "animate-pulse" : ""
             }`}
           />
 
@@ -215,11 +219,11 @@ export default function AnalysisPage() {
           )}
         </div>
 
-        {/* Sub-chart panels — show only active oscillator/line indicators */}
+        {/* Sub-chart panels — show only active oscillator/line/value indicators */}
         {activeSubCharts.length > 0 && (
           <div
             className="flex border-t border-border"
-            style={{ height: activeSubCharts.length * 100 }}
+            style={{ height: activeSubCharts.length * SUB_CHART_HEIGHT }}
           >
             {activeSubCharts.map((type) => (
               <SubChartPanel
@@ -228,7 +232,7 @@ export default function AnalysisPage() {
                 indicator={indicators.find(
                   (ind) => ind.name === SUB_CHART_BACKEND_NAMES[type]
                 )}
-                height={activeSubCharts.length * 100}
+                height={SUB_CHART_HEIGHT}
               />
             ))}
           </div>

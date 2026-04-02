@@ -3,16 +3,16 @@
  *
  * Wraps TradingView Lightweight Charts v5. Manages the chart instance
  * lifecycle (create, resize, destroy) and renders candlestick + volume
- * series. Indicator overlays are added via the IndicatorOverlays component.
+ * series. Indicator overlays are added via the indicatorOverlays module.
  *
  * The chart fills its parent container and auto-resizes via ResizeObserver.
  *
  * Props:
  *   candles — OHLCV bar data (time-sorted, Unix seconds)
  *   indicators — computed indicator results from the backend
- *   fibonacci — Fibonacci retracement result (optional)
+ *   fibonacci — Fibonacci retracement result (reserved for task 4.4)
  *   activeIndicators — set of toggled-on indicator IDs
- *   onCrosshairMove — callback for crosshair position (for data readout)
+ *   liveTick — latest WebSocket price tick for real-time last-candle updates
  */
 
 import {

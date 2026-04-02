@@ -233,7 +233,7 @@ export function removeIndicatorOverlays(
     for (const series of seriesList) {
       try {
         chart.removeSeries(series);
-      } catch {
+      } catch (_e: unknown) {
         // Series may already be removed if chart was destroyed
       }
     }
