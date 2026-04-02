@@ -13,10 +13,10 @@
  *   - Chart rendering delegation to ChartContainer
  */
 
-import { useState, useCallback, type KeyboardEvent } from "react";
+import { useState, useCallback, useMemo, type KeyboardEvent } from "react";
 import { useChartStore, type Timeframe, type IndicatorId } from "@/store";
 import { api } from "@/lib/api";
-import { ChartContainer } from "@/components/charts";
+import { ChartContainer, SubChartPanel, SUB_CHART_BACKEND_NAMES, type SubChartType } from "@/components/charts";
 import { useChartData } from "@/hooks/useChartData";
 
 // ── Indicator metadata for pill toggles ──────────────────────
@@ -73,6 +73,24 @@ export default function AnalysisPage() {
     isLoading,
     error,
   } = useChartData(activeConid, timeframe, activeIndicators);
+
+  // ── Active sub-chart panels (oscillators/line indicators) ──
+
+  const SUB_CHART_IDS: { id: IndicatorId; type: SubChartType }[] = [
+    { id: "rsi", type: "rsi" },
+    { id: "macd", type: "macd" },
+    { id: "stochastic", type: "stochastic" },
+    { id: "obv", type: "obv" },
+  ];
+
+  const activeSubCharts = useMemo(
+    () =>
+      SUB_CHART_IDS.filter(({ id }) => activeIndicators.has(id)).map(
+        ({ type }) => type
+      ),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [activeIndicators],
+  );
 
   // ── Symbol resolution ──────────────────────────────────────
 
@@ -197,19 +215,24 @@ export default function AnalysisPage() {
           )}
         </div>
 
-        {/* Sub-chart panels placeholder (task 4.3) */}
-        <div className="flex h-[140px] border-t border-border">
-          {["RSI", "MACD"].map((label) => (
-            <div
-              key={label}
-              className="relative flex-1 border-r border-border bg-[var(--bg-0)] last:border-r-0"
-            >
-              <span className="absolute left-2.5 top-1 text-[8px] font-semibold text-[var(--text-3)]">
-                {label}
-              </span>
-            </div>
-          ))}
-        </div>
+        {/* Sub-chart panels — show only active oscillator/line indicators */}
+        {activeSubCharts.length > 0 && (
+          <div
+            className="flex border-t border-border"
+            style={{ height: activeSubCharts.length * 100 }}
+          >
+            {activeSubCharts.map((type) => (
+              <SubChartPanel
+                key={type}
+                type={type}
+                indicator={indicators.find(
+                  (ind) => ind.name === SUB_CHART_BACKEND_NAMES[type]
+                )}
+                height={activeSubCharts.length * 100}
+              />
+            ))}
+          </div>
+        )}
       </div>
 
       {/* ── AI Panel (Phase 4 tasks 4.7–4.9) ── */}

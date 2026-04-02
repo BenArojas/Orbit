@@ -12,3 +12,5 @@ export {
   removeIndicatorOverlays,
 } from "./indicatorOverlays";
 export type { OverlayState } from "./indicatorOverlays";
+export { default as SubChartPanel, SUB_CHART_BACKEND_NAMES } from "./SubChartPanel";
+export type { SubChartType, SubChartPanelProps } from "./SubChartPanel";
