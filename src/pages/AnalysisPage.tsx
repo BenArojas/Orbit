@@ -232,7 +232,6 @@ export default function AnalysisPage() {
                 indicator={indicators.find(
                   (ind) => ind.name === SUB_CHART_BACKEND_NAMES[type]
                 )}
-                height={SUB_CHART_HEIGHT}
               />
             ))}
           </div>

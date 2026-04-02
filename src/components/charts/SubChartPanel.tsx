@@ -35,8 +35,6 @@ export type SubChartType = "rsi" | "macd" | "stochastic" | "obv" | "adx";
 export interface SubChartPanelProps {
   type: SubChartType;
   indicator: IndicatorResult | undefined;
-  /** Panel height in px */
-  height?: number;
 }
 
 // ── Theme ────────────────────────────────────────────────────
@@ -100,7 +98,6 @@ function toLineData(
 export default function SubChartPanel({
   type,
   indicator,
-  height = 100,
 }: SubChartPanelProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
@@ -149,10 +146,12 @@ export default function SubChartPanel({
 
     chartRef.current = chart;
 
-    // Auto-resize width
+    // Auto-resize — read both dimensions from the DOM so the chart
+    // stays correct on window resize (height is controlled by parent CSS,
+    // not a fixed prop).
     const resizeObserver = new ResizeObserver((entries) => {
-      const { width } = entries[0].contentRect;
-      chart.applyOptions({ width, height });
+      const { width, height: h } = entries[0].contentRect;
+      chart.applyOptions({ width, height: h });
     });
     resizeObserver.observe(container);
 
@@ -162,7 +161,7 @@ export default function SubChartPanel({
       chartRef.current = null;
       seriesRefs.current = [];
     };
-  }, [height]);
+  }, []); // Chart instance created once — size tracked by ResizeObserver
 
   // ── Update indicator data ──────────────────────────────────
 
