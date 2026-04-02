@@ -189,14 +189,14 @@ Source: `~/Desktop/Projects/MoonMarket`
 
 | # | Task | Owner | Status | Notes |
 |---|---|---|---|---|
-| 4.1 | Chart wrapper component (Lightweight Charts) | Ben | TODO | Candlestick + volume, timeframe switcher |
-| 4.2 | Indicator overlay system (toggle indicators on/off) | Ben | TODO | EMA lines, Bollinger Bands as series overlays |
-| 4.3 | Sub-chart panels (RSI, MACD, Stochastic, OBV) | Ben | TODO | Stacked below main chart |
+| 4.1 | Chart wrapper component (Lightweight Charts) | Ben | DONE | Lightweight Charts v5, candlestick + volume histogram in main pane, timeframe switcher drives store + re-fetch, live WebSocket tick updates last candle via series.update(). |
+| 4.2 | Indicator overlay system (toggle indicators on/off) | Ben | DONE | EMA 9/21/50/200, Bollinger Bands (upper/middle/lower), VWAP as line series overlays. OverlayState ref pattern for clean add/remove. Colors match chart lines. |
+| 4.3 | Sub-chart panels (RSI, MACD, Stochastic, OBV) | Ben | DONE | Each oscillator in its own Lightweight Charts instance stacked below main chart. RSI: 30/70 ref lines. MACD: histogram + line + signal. Stochastic: %K/%D + 20/80 levels. OBV: cumulative line. ADX: line + 25 ref line. Panels show/hide based on pill toggles. Height from ResizeObserver (fully responsive). |
 | 4.4 | Fibonacci retracement overlay | Ofek | TODO | Auto swing high/low detection algorithm |
 | 4.5 | Fibonacci manual adjustment (drag endpoints) | Ofek | TODO | [?] Need to figure out Lightweight Charts interaction API |
-| 4.6 | Indicator pill toggles with glow states | Ofek | TODO | Match mockup style |
-| 4.7 | AI panel — config section (timeframe + indicator picker) | Ofek | TODO | Multi-select chips for analysis parameters |
-| 4.8 | AI panel — Action Signal card component | Ofek | TODO | Direction, confidence, entry/stop/target, confirmations |
+| 4.6 | Indicator pill toggles with glow states | Ofek | DONE | IndicatorPill + IndicatorToolbar components. Per-indicator color mapping, glow border + background when active. Wired to chart store toggleIndicator. |
+| 4.7 | AI panel — config section (timeframe + indicator picker) | Ofek | DONE | AiConfigPanel with multi-select Chip components for timeframes (1H/4H/D/W) and indicators. AI Assist / Manual mode toggle. Run Analysis button disabled when nothing selected. |
+| 4.8 | AI panel — Action Signal card component | Ofek | DONE | ActionSignalCard with direction badge, confidence %, entry/stop/target levels grid, meta row, confirm/caution checklist. Null state shows "Run analysis" placeholder. |
 | 4.9 | AI panel — chat interface | Ben | TODO | Message list + input, scrollable |
 | 4.10 | Ollama integration service (`services/ai.py`) | Ben | TODO | [?] Need to decide model, prompt template, context format |
 | 4.11 | AI analysis router (`routers/ai.py`) | Ben | TODO | POST /analyze with chart data + indicators + timeframes |
