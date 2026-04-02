@@ -1,15 +1,24 @@
 /**
  * Analysis Page — Charts, indicators, Fibonacci, AI panel
  *
+ * Composes Phase 4 components:
+ *   - ChartContainer (4.1) — Lightweight Charts candlestick + volume
+ *   - Indicator overlays (4.2) — EMA, Bollinger, VWAP on main chart
+ *   - SubChartPanel (4.3) — RSI, MACD, Stochastic, OBV, ADX below chart
+ *   - IndicatorToolbar (4.6) — pill toggles in the toolbar
+ *   - AiConfigPanel (4.7) — timeframe + indicator chips in AI panel
+ *   - ActionSignalCard (4.8) — signal result display in AI panel
+ *   - Fibonacci (4.4–4.5) — TODO
+ *   - AI Chat (4.9) — placeholder until Ben builds it
+ *
  * Layout from mockup: grid with chart area + 340px AI panel
  *   Left: toolbar (symbol input, timeframe bar, indicator pills),
  *         main chart, sub-chart panels (RSI, MACD, etc.)
- *   Right: AI panel (config, signal card, chat) — Phase 4 tasks 4.7–4.9
+ *   Right: AI panel (config, signal card, chat)
  *
  * This page composes ChartContainer + useChartData. It owns:
- *   - Symbol search / resolution (input → conid lookup)
+ *   - Symbol search / resolution (input → conid lookup via useMutation)
  *   - Timeframe switching (updates chart store)
- *   - Indicator pill toggles (task 4.6 will polish these)
  *   - Chart rendering delegation to ChartContainer
  */
 
@@ -19,32 +28,17 @@ import { useChartStore, type Timeframe, type IndicatorId } from "@/store";
 import { api } from "@/lib/api";
 import { ChartContainer, SubChartPanel, SUB_CHART_BACKEND_NAMES, type SubChartType } from "@/components/charts";
 import { useChartData } from "@/hooks/useChartData";
+import { IndicatorToolbar } from "@/components/indicators";
+import {
+  AiConfigPanel,
+  ActionSignalCard,
+  type AiTimeframe,
+  type AiIndicator,
+  type AiMode,
+  type SignalData,
+} from "@/components/ai";
 
-// ── Indicator metadata for pill toggles ──────────────────────
-
-interface IndicatorMeta {
-  id: IndicatorId;
-  label: string;
-  color: string; // CSS color for glow when active
-  type: "overlay" | "oscillator" | "histogram" | "value" | "line";
-}
-
-const INDICATOR_LIST: IndicatorMeta[] = [
-  { id: "ema9", label: "EMA 9", color: "var(--clr-cyan)", type: "overlay" },
-  { id: "ema21", label: "EMA 21", color: "var(--clr-purple)", type: "overlay" },
-  { id: "ema50", label: "EMA 50", color: "var(--clr-orange)", type: "overlay" },
-  { id: "ema200", label: "EMA 200", color: "var(--clr-red)", type: "overlay" },
-  { id: "bollinger", label: "BB", color: "var(--clr-blue)", type: "overlay" },
-  { id: "vwap", label: "VWAP", color: "var(--clr-orange)", type: "overlay" },
-  { id: "volume", label: "Vol", color: "var(--clr-blue)", type: "histogram" },
-  { id: "rsi", label: "RSI", color: "var(--clr-purple)", type: "oscillator" },
-  { id: "macd", label: "MACD", color: "var(--clr-cyan)", type: "oscillator" },
-  { id: "stochastic", label: "Stoch", color: "var(--clr-green)", type: "oscillator" },
-  { id: "obv", label: "OBV", color: "var(--clr-blue)", type: "line" },
-  { id: "adx", label: "ADX", color: "var(--clr-orange)", type: "value" },
-  { id: "atr", label: "ATR", color: "var(--clr-red)", type: "value" },
-  { id: "fibonacci", label: "Fib", color: "var(--clr-green)", type: "overlay" },
-];
+// ── Constants ────────────────────────────────────────────────
 
 const TIMEFRAMES: Timeframe[] = ["1m", "5m", "15m", "1h", "4h", "1D", "1W", "1M"];
 
@@ -71,11 +65,13 @@ export default function AnalysisPage() {
     setActiveConid,
     setActiveSymbol,
     setTimeframe,
-    toggleIndicator,
   } = useChartStore();
 
   const [symbolInput, setSymbolInput] = useState(activeSymbol || "");
   const [inputFocused, setInputFocused] = useState(false);
+
+  /** Signal card data — null until AI analysis runs (Phase 4.10+) */
+  const [signal, setSignal] = useState<SignalData | null>(null);
 
   // Fetch chart data (candles + indicators + live tick)
   const {
@@ -120,9 +116,23 @@ export default function AnalysisPage() {
     }
   };
 
+  // ── AI analysis handler (Phase 4.10–4.12 will wire to Ollama) ──
+
+  const handleRunAnalysis = (config: {
+    timeframes: AiTimeframe[];
+    indicators: AiIndicator[];
+    mode: AiMode;
+  }) => {
+    // TODO (Phase 4.10–4.12): Send config to /ai/analyze endpoint
+    // and call setSignal() with the response data.
+    // For now, clear any stale signal and log the request.
+    setSignal(null);
+    console.log("[Analysis] Run requested:", config);
+  };
+
   return (
     <div className="grid h-full grid-cols-[1fr_340px]">
-      {/* ── Chart area ── */}
+      {/* ── Left: Chart area ── */}
       <div className="flex flex-col overflow-hidden">
         {/* Toolbar */}
         <div className="flex flex-wrap items-center gap-2.5 border-b border-border bg-[var(--bg-1)] px-3.5 py-2">
@@ -157,31 +167,8 @@ export default function AnalysisPage() {
             ))}
           </div>
 
-          {/* Indicator pills */}
-          <div className="flex flex-wrap gap-1">
-            {INDICATOR_LIST.map((ind) => {
-              const isActive = activeIndicators.has(ind.id);
-              return (
-                <button
-                  key={ind.id}
-                  onClick={() => toggleIndicator(ind.id)}
-                  className="rounded-full border px-2 py-0.5 font-data text-[9px] font-medium transition-all"
-                  style={{
-                    borderColor: isActive ? ind.color : "var(--border)",
-                    color: isActive ? ind.color : "var(--text-3)",
-                    backgroundColor: isActive
-                      ? `color-mix(in srgb, ${ind.color} 10%, transparent)`
-                      : "transparent",
-                    boxShadow: isActive
-                      ? `0 0 8px color-mix(in srgb, ${ind.color} 20%, transparent)`
-                      : "none",
-                  }}
-                >
-                  {ind.label}
-                </button>
-              );
-            })}
-          </div>
+          {/* Indicator pills (task 4.6 — Ofek's IndicatorToolbar) */}
+          <IndicatorToolbar />
         </div>
 
         {/* Main chart */}
@@ -238,18 +225,35 @@ export default function AnalysisPage() {
         )}
       </div>
 
-      {/* ── AI Panel (Phase 4 tasks 4.7–4.9) ── */}
-      <div className="flex flex-col border-l border-border bg-[var(--bg-1)]">
-        <div className="flex items-center justify-between border-b border-border px-4 py-2.5">
-          <div className="flex items-center gap-1.5 text-xs font-semibold">
-            <div className="h-2 w-2 rounded-full bg-[var(--clr-cyan)] shadow-[0_0_10px_var(--clr-cyan)] animate-glow" />
-            AI Analysis
+      {/* ── Right: AI Panel ── */}
+      <div className="flex flex-col border-l border-border bg-[var(--bg-1)] overflow-y-auto">
+        {/* Config section (task 4.7) */}
+        <AiConfigPanel onRunAnalysis={handleRunAnalysis} />
+
+        {/* Signal card (task 4.8) */}
+        <ActionSignalCard signal={signal} />
+
+        {/* Chat placeholder — Phase 4.9 (Ben) */}
+        <div className="flex flex-1 flex-col">
+          <div className="flex-1 p-4">
+            <div className="rounded-lg bg-[var(--bg-0)] px-3 py-2 text-[11px] text-[var(--text-2)]">
+              {activeSymbol
+                ? `${activeSymbol} loaded. Hit "Run Analysis" or ask me anything.`
+                : "Select a stock to begin."}
+            </div>
           </div>
-        </div>
-        <div className="flex flex-1 items-center justify-center p-4">
-          <span className="text-center text-xs text-[var(--text-3)]">
-            AI panel — Phase 4
-          </span>
+
+          {/* Chat input placeholder */}
+          <div className="flex items-center gap-2 border-t border-[var(--border)] px-3 py-2">
+            <input
+              className="flex-1 rounded-md border border-[var(--border)] bg-[var(--bg-0)] px-3 py-1.5 text-xs text-foreground placeholder:text-[var(--text-3)] outline-none focus:border-[var(--clr-cyan)]"
+              placeholder="Ask about the chart..."
+              readOnly
+            />
+            <button className="flex h-7 w-7 items-center justify-center rounded-md border border-[var(--border)] bg-[var(--bg-0)] text-[var(--text-3)] transition-colors hover:border-[var(--clr-cyan)] hover:text-[var(--clr-cyan)]">
+              →
+            </button>
+          </div>
         </div>
       </div>
     </div>
