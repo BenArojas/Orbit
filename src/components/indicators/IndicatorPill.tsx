@@ -5,10 +5,16 @@
  * it glows with a color specific to that indicator. Clicking toggles it on/off
  * via the chart store.
  *
- * Color mapping matches the approved mockup (demo-layout-a-v2.html):
- *   EMAs → blue, RSI → purple, MACD → purple, Fibonacci → green,
- *   Volume → cyan, Bollinger → orange, VWAP → cyan, ATR → orange,
- *   Stochastic → purple, OBV → cyan, ADX → orange
+ * Color mapping is synced with indicatorOverlays.ts so each pill matches
+ * the actual line color drawn on the chart — the visual association is the
+ * whole point ("cyan pill = cyan EMA line on the chart").
+ *
+ *   EMA 9   → cyan   (matches #00d4ff chart line)
+ *   EMA 21  → purple (matches #b44dff chart line)
+ *   EMA 50  → orange (matches #ff9f1c chart line)
+ *   EMA 200 → red    (matches #ff4466 chart line)
+ *   BB      → blue   (matches rgba(68,136,255) bands)
+ *   VWAP    → orange (matches #ff9f1c chart line)
  */
 
 import { useChartStore, type IndicatorId } from "@/store";
@@ -22,20 +28,24 @@ interface PillConfig {
 }
 
 const PILL_CONFIG: Record<IndicatorId, PillConfig> = {
-  ema9:       { label: "EMA 9",   color: "blue" },
-  ema21:      { label: "EMA 21",  color: "blue" },
-  ema50:      { label: "EMA 50",  color: "orange" },
-  ema200:     { label: "EMA 200", color: "red" },
+  // Overlays — colors match indicatorOverlays.ts INDICATOR_COLORS exactly
+  ema9:       { label: "EMA 9",   color: "cyan" },   // #00d4ff
+  ema21:      { label: "EMA 21",  color: "purple" },  // #b44dff
+  ema50:      { label: "EMA 50",  color: "orange" },  // #ff9f1c
+  ema200:     { label: "EMA 200", color: "red" },     // #ff4466
+  bollinger:  { label: "BB",      color: "blue" },    // rgba(68,136,255)
+  vwap:       { label: "VWAP",    color: "orange" },  // #ff9f1c
+  // Sub-chart indicators
   rsi:        { label: "RSI",     color: "purple" },
-  macd:       { label: "MACD",    color: "purple" },
-  fibonacci:  { label: "Fib",     color: "green" },
-  volume:     { label: "Vol",     color: "cyan" },
-  bollinger:  { label: "BB",      color: "cyan" },
-  vwap:       { label: "VWAP",    color: "cyan" },
-  atr:        { label: "ATR",     color: "orange" },
-  stochastic: { label: "Stoch",   color: "purple" },
-  obv:        { label: "OBV",     color: "cyan" },
+  macd:       { label: "MACD",    color: "cyan" },
+  stochastic: { label: "Stoch",   color: "green" },
+  obv:        { label: "OBV",     color: "blue" },
+  // Value indicators
+  atr:        { label: "ATR",     color: "red" },
   adx:        { label: "ADX",     color: "orange" },
+  // Other overlays
+  volume:     { label: "Vol",     color: "blue" },
+  fibonacci:  { label: "Fib",     color: "green" },
 };
 
 /** Display order — matches mockup toolbar layout */
@@ -63,7 +73,7 @@ export default function IndicatorPill({ id }: IndicatorPillProps) {
   return (
     <button
       onClick={() => toggleIndicator(id)}
-      className="rounded-full border px-2.5 py-1 font-mono text-[10px] font-medium transition-all duration-150 cursor-pointer"
+      className="rounded-full border px-2.5 py-1 font-data text-[10px] font-medium transition-all duration-150"
       style={
         isActive
           ? {

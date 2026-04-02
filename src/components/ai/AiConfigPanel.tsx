@@ -55,7 +55,7 @@ function Chip({ label, selected, onClick }: ChipProps) {
   return (
     <button
       onClick={onClick}
-      className="rounded-[10px] border px-2 py-[3px] font-mono text-[9px] font-medium transition-all duration-150 cursor-pointer"
+      className="rounded-[10px] border px-2 py-[3px] font-mono text-[9px] font-medium transition-all duration-150"
       style={
         selected
           ? {

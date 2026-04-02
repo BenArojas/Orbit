@@ -21,6 +21,9 @@ import { IndicatorToolbar } from "@/components/indicators";
 import {
   AiConfigPanel,
   ActionSignalCard,
+  type AiTimeframe,
+  type AiIndicator,
+  type AiMode,
   type SignalData,
 } from "@/components/ai";
 
@@ -31,9 +34,9 @@ export default function AnalysisPage() {
   const [signal, setSignal] = useState<SignalData | null>(null);
 
   const handleRunAnalysis = (config: {
-    timeframes: string[];
-    indicators: string[];
-    mode: string;
+    timeframes: AiTimeframe[];
+    indicators: AiIndicator[];
+    mode: AiMode;
   }) => {
     // TODO (Phase 4.10–4.12): Send config to /ai/analyze endpoint
     // and call setSignal() with the response data.

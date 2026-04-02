@@ -125,7 +125,7 @@ export default function ActionSignalCard({ signal }: ActionSignalCardProps) {
       </div>
 
       {/* Meta row */}
-      <div className="flex items-center justify-between rounded-md bg-[var(--bg-0)] px-3 py-1.5 font-mono text-[9px] text-[var(--text-3)]">
+      <div className="flex items-center justify-between rounded-md bg-[var(--bg-0)] px-3 py-1.5 font-data text-[9px] text-[var(--text-3)]">
         {signal.meta.map((m) => (
           <span key={m.label}>
             {m.label}{" "}
@@ -156,7 +156,7 @@ export default function ActionSignalCard({ signal }: ActionSignalCardProps) {
                     : "var(--clr-orange)",
               }}
             >
-              {check.type === "confirm" ? "✕" : "⚠"}
+              {check.type === "confirm" ? "✓" : "⚠"}
             </span>
             <span className="flex-1 text-[var(--text-2)]">{check.text}</span>
             <span
