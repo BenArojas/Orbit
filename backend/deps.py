@@ -12,6 +12,8 @@ from fastapi import Request
 from services.db import DatabaseService
 from services.ibkr import IBKRService
 from services.sectors import SectorService
+from services.ai import AiService
+from services.ollama import OllamaLifecycle
 
 
 def get_ibkr(request: Request) -> IBKRService:
@@ -27,3 +29,13 @@ def get_db(request: Request) -> DatabaseService:
 def get_sectors(request: Request) -> SectorService:
     """Get the sector service singleton stashed on app.state during lifespan."""
     return request.app.state.sectors
+
+
+def get_ai(request: Request) -> AiService:
+    """Get the AI service singleton stashed on app.state during lifespan."""
+    return request.app.state.ai
+
+
+def get_ollama(request: Request) -> OllamaLifecycle:
+    """Get the Ollama lifecycle manager from app.state during lifespan."""
+    return request.app.state.ollama

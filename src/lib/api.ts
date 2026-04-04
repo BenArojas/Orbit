@@ -242,6 +242,106 @@ export interface WatchlistResponse {
   items: WatchlistItemResponse[];
 }
 
+// ── AI Analysis (Phase 4 — tasks 4.9–4.12) ────────────────
+
+export interface AnalyzeRequest {
+  conid: number;
+  symbol: string;
+  timeframes: string[];
+  indicators: string[];
+  session_id?: string;
+}
+
+export interface ChatRequest {
+  session_id: string;
+  message: string;
+}
+
+export interface SignalLevel {
+  label: string;
+  value: string;
+  sub: string;
+  color?: "green" | "red";
+}
+
+export interface SignalCheck {
+  text: string;
+  type: "confirm" | "caution";
+}
+
+export interface SignalMeta {
+  label: string;
+  value: string;
+}
+
+export interface SignalData {
+  direction: "STRONG LONG" | "LONG" | "NEUTRAL" | "SHORT" | "STRONG SHORT";
+  description: string;
+  confidence: number;
+  levels: SignalLevel[];
+  meta: SignalMeta[];
+  checks: SignalCheck[];
+}
+
+export interface AnalyzeResponse {
+  session_id: string;
+  signal: SignalData | null;
+  message: string;
+}
+
+export interface ChatResponse {
+  session_id: string;
+  signal: SignalData | null;
+  message: string;
+}
+
+export interface AiStatusResponse {
+  state:
+    | "not_installed"
+    | "installed"
+    | "starting"
+    | "running"
+    | "no_models"
+    | "ready"
+    | "error";
+  selected_model: string | null;
+  ready: boolean;
+  error: string | null;
+  platform: string;
+}
+
+export interface OllamaModelResponse {
+  name: string;
+  size_bytes: number;
+  size_gb: number;
+  family: string;
+  parameter_size: string;
+  quantization: string;
+  modified_at: string;
+}
+
+export interface RecommendedModel {
+  name: string;
+  display_name: string;
+  size_gb: number;
+  min_ram_gb: number;
+  description: string;
+  pull_command: string;
+  tier: "minimal" | "light" | "recommended" | "heavy";
+}
+
+export interface SetupGuideResponse {
+  install_url: string;
+  install_note: string;
+  models_url: string;
+  recommended_models: RecommendedModel[];
+  pull_example: string;
+}
+
+export interface ModelSelectRequest {
+  model: string;
+}
+
 // ── API Error ───────────────────────────────────────────────
 
 export class ApiError extends Error {
@@ -338,4 +438,26 @@ export const api = {
 
   getTriggerHits: (limit = 50) =>
     request<TriggerHit[]>("GET", `/triggers/hits?limit=${limit}`),
+
+  // AI Analysis (Phase 4)
+  aiStatus: () =>
+    request<AiStatusResponse>("GET", "/ai/status"),
+
+  aiModels: () =>
+    request<OllamaModelResponse[]>("GET", "/ai/models"),
+
+  aiSelectModel: (req: ModelSelectRequest) =>
+    request<AiStatusResponse>("POST", "/ai/models/select", req),
+
+  aiSetupGuide: () =>
+    request<SetupGuideResponse>("GET", "/ai/setup-guide"),
+
+  aiRefresh: () =>
+    request<AiStatusResponse>("POST", "/ai/refresh"),
+
+  aiAnalyze: (req: AnalyzeRequest) =>
+    request<AnalyzeResponse>("POST", "/ai/analyze", req),
+
+  aiChat: (req: ChatRequest) =>
+    request<ChatResponse>("POST", "/ai/chat", req),
 } as const;
