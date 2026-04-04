@@ -6,15 +6,13 @@
  *   - Indicator overlays (4.2) — EMA, Bollinger, VWAP on main chart
  *   - SubChartPanel (4.3) — RSI, MACD, Stochastic, OBV, ADX below chart
  *   - IndicatorToolbar (4.6) — pill toggles in the toolbar
- *   - AiConfigPanel (4.7) — timeframe + indicator chips in AI panel
- *   - ActionSignalCard (4.8) — signal result display in AI panel
+ *   - AiChatPanel (4.9) — full AI panel (config, signal, chat, setup guide)
  *   - Fibonacci (4.4–4.5) — TODO
- *   - AI Chat (4.9) — placeholder until Ben builds it
  *
  * Layout from mockup: grid with chart area + 340px AI panel
  *   Left: toolbar (symbol input, timeframe bar, indicator pills),
  *         main chart, sub-chart panels (RSI, MACD, etc.)
- *   Right: AI panel (config, signal card, chat)
+ *   Right: AI panel (handles its own state via Zustand AI store)
  *
  * This page composes ChartContainer + useChartData. It owns:
  *   - Symbol search / resolution (input → conid lookup via useMutation)
@@ -29,14 +27,7 @@ import { api } from "@/lib/api";
 import { ChartContainer, SubChartPanel, SUB_CHART_BACKEND_NAMES, type SubChartType } from "@/components/charts";
 import { useChartData } from "@/hooks/useChartData";
 import { IndicatorToolbar } from "@/components/indicators";
-import {
-  AiConfigPanel,
-  ActionSignalCard,
-  type AiTimeframe,
-  type AiIndicator,
-  type AiMode,
-  type SignalData,
-} from "@/components/ai";
+import { AiChatPanel } from "@/components/ai";
 
 // ── Constants ────────────────────────────────────────────────
 
@@ -69,9 +60,6 @@ export default function AnalysisPage() {
 
   const [symbolInput, setSymbolInput] = useState(activeSymbol || "");
   const [inputFocused, setInputFocused] = useState(false);
-
-  /** Signal card data — null until AI analysis runs (Phase 4.10+) */
-  const [signal, setSignal] = useState<SignalData | null>(null);
 
   // Fetch chart data (candles + indicators + live tick)
   const {
@@ -114,20 +102,6 @@ export default function AnalysisPage() {
     if (e.key === "Enter") {
       resolveSymbol();
     }
-  };
-
-  // ── AI analysis handler (Phase 4.10–4.12 will wire to Ollama) ──
-
-  const handleRunAnalysis = (config: {
-    timeframes: AiTimeframe[];
-    indicators: AiIndicator[];
-    mode: AiMode;
-  }) => {
-    // TODO (Phase 4.10–4.12): Send config to /ai/analyze endpoint
-    // and call setSignal() with the response data.
-    // For now, clear any stale signal and log the request.
-    setSignal(null);
-    console.log("[Analysis] Run requested:", config);
   };
 
   return (
@@ -226,36 +200,7 @@ export default function AnalysisPage() {
       </div>
 
       {/* ── Right: AI Panel ── */}
-      <div className="flex flex-col border-l border-border bg-[var(--bg-1)] overflow-y-auto">
-        {/* Config section (task 4.7) */}
-        <AiConfigPanel onRunAnalysis={handleRunAnalysis} />
-
-        {/* Signal card (task 4.8) */}
-        <ActionSignalCard signal={signal} />
-
-        {/* Chat placeholder — Phase 4.9 (Ben) */}
-        <div className="flex flex-1 flex-col">
-          <div className="flex-1 p-4">
-            <div className="rounded-lg bg-[var(--bg-0)] px-3 py-2 text-[11px] text-[var(--text-2)]">
-              {activeSymbol
-                ? `${activeSymbol} loaded. Hit "Run Analysis" or ask me anything.`
-                : "Select a stock to begin."}
-            </div>
-          </div>
-
-          {/* Chat input placeholder */}
-          <div className="flex items-center gap-2 border-t border-[var(--border)] px-3 py-2">
-            <input
-              className="flex-1 rounded-md border border-[var(--border)] bg-[var(--bg-0)] px-3 py-1.5 text-xs text-foreground placeholder:text-[var(--text-3)] outline-none focus:border-[var(--clr-cyan)]"
-              placeholder="Ask about the chart..."
-              readOnly
-            />
-            <button className="flex h-7 w-7 items-center justify-center rounded-md border border-[var(--border)] bg-[var(--bg-0)] text-[var(--text-3)] transition-colors hover:border-[var(--clr-cyan)] hover:text-[var(--clr-cyan)]">
-              →
-            </button>
-          </div>
-        </div>
-      </div>
+      <AiChatPanel activeConid={activeConid} activeSymbol={activeSymbol} />
     </div>
   );
 }
