@@ -197,10 +197,10 @@ Source: `~/Desktop/Projects/MoonMarket`
 | 4.6 | Indicator pill toggles with glow states | Ofek | DONE | IndicatorPill + IndicatorToolbar components. Per-indicator color mapping, glow border + background when active. Wired to chart store toggleIndicator. |
 | 4.7 | AI panel — config section (timeframe + indicator picker) | Ofek | DONE | AiConfigPanel with multi-select Chip components for timeframes (1H/4H/D/W) and indicators. AI Assist / Manual mode toggle. Run Analysis button disabled when nothing selected. |
 | 4.8 | AI panel — Action Signal card component | Ofek | Done | ActionSignalCard with direction badge, confidence %, entry/stop/target levels grid, meta row, confirm/caution checklist. Null state shows "Run analysis" placeholder. |
-| 4.9 | AI panel — chat interface | Ben | TODO | Message list + input, scrollable |
-| 4.10 | Ollama integration service (`services/ai.py`) | Ben | TODO | [?] Need to decide model, prompt template, context format |
-| 4.11 | AI analysis router (`routers/ai.py`) | Ben | TODO | POST /analyze with chart data + indicators + timeframes |
-| 4.12 | Ollama lifecycle management (install/start/stop) | Ben | TODO | [?] Need to test Ollama CLI bundling in Tauri |
+| 4.9 | AI panel — chat interface | Ben | TODO | Full chat + signal card. Scrollable message history with follow-up questions. Frontend branch: feature/ai-chat-ui |
+| 4.10 | Ollama integration service (`services/ai.py`) | Ben | DONE | Gemma 4 26B A4B via Ollama. Structured JSON input (pre-computed indicator signals). AiService class with chat sessions, signal parsing, multi-timeframe analysis orchestration. Streaming support via SSE. |
+| 4.11 | AI analysis router (`routers/ai.py`) | Ben | DONE | POST /ai/analyze (multi-timeframe, returns signal card + text), POST /ai/chat (follow-up), POST /ai/chat/stream (SSE streaming), GET /ai/status, POST /ai/retry-setup. Pydantic models: AnalyzeRequest, ChatRequest, SignalData, AiStatusResponse. |
+| 4.12 | Ollama lifecycle management (install/start/stop) | Ben | DONE | `services/ollama.py` — OllamaLifecycle class. Full bootstrap: detect binary → auto-install (macOS/Linux curl, Windows winget) → start server → pull model with progress tracking. Background bootstrap in main.py lifespan (non-blocking). Cleanup on shutdown. |
 
 ---
 
@@ -270,11 +270,11 @@ These need answers before their related tasks can start:
 
 | # | Question | Related Task | Notes |
 |---|---|---|---|
-| Q1 | What Ollama model to use for chart analysis? | 4.10 | Candidates: llama3, mistral, codellama. Need to test quality vs speed |
-| Q2 | How to structure the AI prompt with chart data? | 4.10, 4.11 | Send raw OHLCV + computed indicators as JSON? Or a text summary? |
+| Q1 | ~~What Ollama model to use for chart analysis?~~ | 4.10 | RESOLVED: Gemma 4 26B A4B (`gemma4:26b`). 26B total params, only 4B active per request — fast on desktop, 128K context window. |
+| Q2 | ~~How to structure the AI prompt with chart data?~~ | 4.10, 4.11 | RESOLVED: Structured JSON. Pre-compute indicator signals (RSI=67, MACD bullish crossover, etc.) and send as structured text context. More reliable than raw OHLCV arrays. |
 | Q3 | Can Lightweight Charts support draggable Fibonacci endpoints? | 4.5 | May need custom canvas overlay on top of the chart |
 | Q4 | How to get full US equity universe from IBKR? | 5.6 | Scanner API can return filtered lists, but not a raw universe dump |
 | Q5 | What defines a "news candle" for Fibonacci alerts? | 6.5 | Proposal: candle body > 2x ATR AND volume > 2x avg |
 | Q6 | How to calculate Market Strength gauge composite? | 3.2 | Proposal: combine advance/decline + % above 200 EMA + McClellan |
 | Q7 | ~~Sector Rotation (RRG) — what RS calculation?~~ | 3.4 | RESOLVED: standard JdK method — EMA(10) of sector/SPY ratio for RS-Ratio, EMA(10) of ROC(10) of RS-Ratio for RS-Momentum, both centered at 100 |
-| Q8 | Can Ollama be bundled into a Tauri app? | 4.12 | May need to shell out to ollama CLI. Test on Mac + Windows |
+| Q8 | ~~Can Ollama be bundled into a Tauri app?~~ | 4.12 | RESOLVED: Not bundled — auto-installed at first launch. macOS/Linux: `curl -fsSL https://ollama.com/install.sh | sh`. Windows: `winget install Ollama.Ollama`. Bootstrap runs in background, non-blocking. |

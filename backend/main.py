@@ -19,15 +19,19 @@ from starlette.middleware.cors import CORSMiddleware
 
 from config import FRONTEND_ORIGIN
 from exceptions import (
+    AIError,
     IBKRAuthError,
     IBKRConnectionError,
     IBKRRateLimitError,
     IBKRRequestError,
+    OllamaConnectionError,
     ParallaxError,
 )
 from services.db import DatabaseService
 from services.ibkr import IBKRService
 from services.sectors import SectorService
+from services.ai import AiService
+from services.ollama import OllamaLifecycle
 
 # ── Logging setup (must be first) ────────────────────────────
 
@@ -66,13 +70,37 @@ async def lifespan(app: FastAPI):
     # Must be a singleton so the conid cache persists across requests
     app.state.sectors = SectorService(ibkr)
 
-    # Ollama lifecycle will go here (Step 4.12)
+    # Ollama lifecycle — detect binary, start server, list models (Step 4.12)
+    # This NEVER downloads or installs anything. It detects what the user
+    # already has, starts the Ollama server if present, and lists models.
+    # If Ollama isn't installed, the frontend shows a setup guide with links.
+    ollama = OllamaLifecycle()
+    app.state.ollama = ollama
+
+    # Run startup: detect → start server → check models → restore selection.
+    # This is fast (no downloads) so we run it inline, not in background.
+    saved_model = await db.get_setting("ai_model")
+    try:
+        await ollama.startup(saved_model=saved_model)
+        if ollama.status()["ready"]:
+            log.info("Ollama ready — AI features available (model: %s)", ollama.selected_model)
+        else:
+            log.info("Ollama state: %s — frontend will guide setup", ollama.state.value)
+    except Exception as e:
+        log.error("Ollama startup failed: %s", e)
+
+    # AI service — stateless wrapper for Ollama chat/analysis.
+    # The model name is passed per-request from ollama.selected_model.
+    ai = AiService()
+    app.state.ai = ai
 
     log.info("Backend ready. Waiting for frontend connections.")
     yield
 
     # Shutdown
     log.info("Parallax backend shutting down...")
+    await ai.shutdown()
+    await ollama.shutdown()
     await db.close()
     await ibkr.shutdown()
     log.info("Shutdown complete.")
@@ -152,6 +180,28 @@ async def ibkr_request_error_handler(request: Request, exc: IBKRRequestError):
     )
 
 
+@app.exception_handler(OllamaConnectionError)
+async def ollama_connection_error_handler(request: Request, exc: OllamaConnectionError):
+    return JSONResponse(
+        status_code=503,
+        content={
+            "error": "ollama_connection_error",
+            "message": exc.message,
+        },
+    )
+
+
+@app.exception_handler(AIError)
+async def ai_error_handler(request: Request, exc: AIError):
+    return JSONResponse(
+        status_code=500,
+        content={
+            "error": "ai_error",
+            "message": exc.message,
+        },
+    )
+
+
 @app.exception_handler(ParallaxError)
 async def parallax_error_handler(request: Request, exc: ParallaxError):
     """Catch-all for any ParallaxError subclass not handled above."""
@@ -181,12 +231,13 @@ app.include_router(watchlist_router)
 app.include_router(ws_router)
 
 from routers.triggers import router as triggers_router
+from routers.ai import router as ai_router
 
 app.include_router(triggers_router)
+app.include_router(ai_router)
 
 # Future routers (uncomment as they're built):
 # from routers.screener import router as screener_router
-# from routers.ai import router as ai_router
 
 
 # ── Health endpoint ──────────────────────────────────────────

@@ -83,3 +83,18 @@ class OllamaConnectionError(AIError):
 
     def __init__(self, message: str = "Cannot connect to Ollama"):
         super().__init__(message)
+
+
+class OllamaModelError(AIError):
+    """Requested model is not available in Ollama."""
+
+    def __init__(self, model: str):
+        self.model = model
+        super().__init__(f"Model not available: {model}")
+
+
+class AIAnalysisError(AIError):
+    """AI analysis failed — could not generate a valid signal."""
+
+    def __init__(self, message: str = "Analysis failed"):
+        super().__init__(message)

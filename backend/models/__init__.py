@@ -430,3 +430,166 @@ class WatchlistResponse(BaseModel):
     id: str
     name: str
     items: list[WatchlistItemResponse]
+
+
+# ═══════════════════════════════════════════════════════════════
+#  AI Analysis (Phase 4 — tasks 4.9–4.12)
+# ═══════════════════════════════════════════════════════════════
+
+
+class AnalyzeRequest(BaseModel):
+    """
+    Request to run an AI technical analysis on a stock.
+
+    The frontend sends this when the user clicks "Run Analysis" in the AI panel.
+    It includes which timeframes and indicators to analyze.
+
+    Example: "Analyze AAPL on 4H and D timeframes using RSI, MACD, EMA Stack"
+    """
+    conid: int                                          # IBKR contract ID
+    symbol: str                                         # Ticker for display
+    timeframes: list[str] = Field(
+        default=["4H", "D"],
+        description="Timeframes to analyze: 1H, 4H, D, W",
+    )
+    indicators: list[str] = Field(
+        default=["rsi", "macd", "ema_50", "ema_200"],
+        description="Indicator names to include in analysis",
+    )
+    session_id: Optional[str] = None                    # Resume existing session or None for new
+
+
+class ChatMessage(BaseModel):
+    """A single message in a chat conversation."""
+    role: str                                           # "user", "assistant", or "system"
+    content: str                                        # Message text
+
+
+class ChatRequest(BaseModel):
+    """
+    Request to send a follow-up message in an existing analysis session.
+
+    The frontend sends this when the user types a question in the AI chat
+    after an initial analysis has been run.
+
+    session_id links to the conversation started by AnalyzeRequest.
+    """
+    session_id: str                                     # Must match an active session
+    message: str                                        # The user's follow-up question
+
+
+class SignalLevel(BaseModel):
+    """One price level in the signal card (Entry, Stop, or Target)."""
+    label: str                                          # "Entry", "Stop", "Target"
+    value: str                                          # Formatted price string
+    sub: str                                            # Brief note
+    color: Optional[str] = None                         # "green" for target, "red" for stop
+
+
+class SignalCheck(BaseModel):
+    """One confirmation or caution item in the signal card."""
+    text: str                                           # Description text
+    type: str                                           # "confirm" or "caution"
+
+
+class SignalMeta(BaseModel):
+    """Meta info row in the signal card."""
+    label: str                                          # "R:R", "Score", "ADX", "Vol"
+    value: str                                          # Display value
+
+
+class SignalData(BaseModel):
+    """
+    The structured trading signal displayed in the Action Signal card.
+
+    This is the AI's recommendation after analyzing a stock's technicals.
+    Direction indicates the overall bias, confidence is how sure the AI is.
+    """
+    direction: str                                      # "STRONG LONG", "LONG", "NEUTRAL", "SHORT", "STRONG SHORT"
+    description: str                                    # 1-2 sentence summary
+    confidence: int                                     # 0-100
+    levels: list[SignalLevel]                            # Entry, Stop, Target
+    meta: list[SignalMeta]                               # R:R, Score, ADX, Vol
+    checks: list[SignalCheck]                            # Confirmations + cautions
+
+
+class AnalyzeResponse(BaseModel):
+    """
+    Response from POST /ai/analyze — the AI's trading signal and analysis.
+
+    signal: The structured data for the Action Signal card (null if parsing failed)
+    message: The full AI response text (always present)
+    session_id: ID for follow-up questions in this conversation
+    """
+    session_id: str
+    signal: Optional[SignalData] = None
+    message: str
+
+
+class ChatResponse(BaseModel):
+    """
+    Response from POST /ai/chat — AI's reply to a follow-up question.
+
+    signal: Updated signal (only present if AI revised its recommendation)
+    message: The AI's response text
+    """
+    session_id: str
+    signal: Optional[SignalData] = None
+    message: str
+
+
+class AiStatusResponse(BaseModel):
+    """
+    Response from GET /ai/status — Ollama lifecycle state.
+
+    The frontend uses this to decide which UI to show:
+      - "not_installed" → Install guide with download link
+      - "no_models"     → Model guide with pull commands
+      - "running"       → Model picker dropdown (multiple models, no selection)
+      - "ready"         → AI features fully available
+      - "error"         → Error message with retry option
+    """
+    state: str                                          # "not_installed", "installed", "running", "no_models", "ready", "error"
+    selected_model: Optional[str] = None                # Currently selected model name (null if none)
+    ready: bool                                         # True = AI features fully available
+    error: Optional[str] = None                         # Error message if state is "error"
+    platform: str = ""                                  # "darwin", "windows", "linux"
+
+
+class OllamaModelResponse(BaseModel):
+    """One locally available model from Ollama."""
+    name: str                                           # e.g. "gemma4:26b"
+    size_bytes: int                                     # Raw size in bytes
+    size_gb: float                                      # Size in GB (rounded to 1 decimal)
+    family: str                                         # Model family (e.g. "gemma4")
+    parameter_size: str                                 # e.g. "26B"
+    quantization: str                                   # e.g. "Q4_K_M"
+    modified_at: str                                    # ISO timestamp
+
+
+class RecommendedModel(BaseModel):
+    """A model we recommend to users based on their hardware."""
+    name: str                                           # Ollama model name for pull
+    display_name: str                                   # User-friendly name
+    size_gb: float                                      # Download size in GB
+    min_ram_gb: int                                     # Minimum RAM to run it
+    description: str                                    # Why to choose this model
+    pull_command: str                                   # Terminal command to pull it
+    tier: str                                           # "minimal", "light", "recommended", "heavy"
+
+
+class SetupGuideResponse(BaseModel):
+    """
+    Setup guide for users who need to install Ollama or pull a model.
+    Gives the frontend everything it needs to show a helpful guide page.
+    """
+    install_url: str                                    # Platform-specific download URL
+    install_note: str                                   # Brief install instruction
+    models_url: str                                     # Link to Ollama model library
+    recommended_models: list[RecommendedModel]          # Suggested models by tier
+    pull_example: str                                   # Example pull command
+
+
+class ModelSelectRequest(BaseModel):
+    """Request to select which model the AI should use."""
+    model: str                                          # Ollama model name
