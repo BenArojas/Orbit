@@ -9,6 +9,7 @@
  *   watchlist  — master + trigger watchlists, live quotes
  *   screener   — filter criteria, sort state
  *   settings   — app config persisted to SQLite
+ *   ai         — Ollama status, chat session, signal, model selection
  */
 
 export { useNavigationStore, type Screen } from "./navigation";
@@ -29,3 +30,8 @@ export {
   type SortDir,
 } from "./screener";
 export { useSettingsStore } from "./settings";
+export {
+  useAiStore,
+  type OllamaState,
+  type ChatMessage,
+} from "./ai";

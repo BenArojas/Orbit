@@ -19,6 +19,8 @@ BACKEND_PORT = int(os.getenv("BACKEND_PORT", "8000"))
 FRONTEND_ORIGIN = os.getenv("FRONTEND_ORIGIN", "http://localhost:1420")
 
 # Ollama (local AI)
+# The Ollama server runs locally and exposes a REST API.
+# Model selection is stored in SQLite settings (user picks from what they have).
 OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434")
 
 # SQLite
