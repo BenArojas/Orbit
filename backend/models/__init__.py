@@ -462,6 +462,7 @@ class AnalyzeRequest(BaseModel):
     )
     session_id: Optional[str] = None                    # Resume existing session or None for new
     watchlist: Optional[str] = None                     # Originating watchlist name (if any)
+    indicator_priority: Optional[list[str]] = None      # Ordered list — first = most important. None = let AI decide.
 
 
 class ChatMessage(BaseModel):

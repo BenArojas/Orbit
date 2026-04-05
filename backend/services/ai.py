@@ -330,6 +330,7 @@ class AiService:
         model: str,
         session_id: Optional[str] = None,
         watchlist: Optional[str] = None,
+        indicator_priority: Optional[list[str]] = None,
     ) -> dict:
         """
         Run a full technical analysis for a stock.
@@ -355,14 +356,19 @@ class AiService:
         session.symbol = symbol
         session.clear()
 
-        # Build the context from all timeframes, then truncate if needed
-        context = build_multi_timeframe_context(symbol, timeframe_data)
+        # Build the context from all timeframes, then truncate if needed.
+        # If priority is set, indicators are reordered so prioritized ones
+        # appear first in the context (models attend more to earlier content).
+        context = build_multi_timeframe_context(
+            symbol, timeframe_data, indicator_priority=indicator_priority,
+        )
         context = truncate_context(context)
 
-        # Dynamic system prompt — tailored to enabled indicators + watchlist
+        # Dynamic system prompt — tailored to indicators, priority, + watchlist
         system_prompt = build_system_prompt(
             indicators=indicators_requested,
             watchlist=watchlist,
+            indicator_priority=indicator_priority,
         )
 
         # Set up conversation

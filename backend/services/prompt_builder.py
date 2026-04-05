@@ -214,18 +214,61 @@ def _get_formatter(indicator_name: str):
 # ═══════════════════════════════════════════════════════════════
 
 
+def _sort_indicators(
+    indicators: list[IndicatorResult],
+    priority: Optional[list[str]] = None,
+) -> list[IndicatorResult]:
+    """
+    Reorder indicators so prioritized ones appear first in the context.
+
+    LLMs pay more attention to content that appears earlier in the prompt.
+    By putting the user's priority indicators at the top, we get a
+    structural bias towards those signals — reinforced by the explicit
+    weighting instruction in the system prompt.
+
+    priority: ordered list of backend indicator names (first = most important).
+              None means keep original order.
+    """
+    if not priority:
+        return indicators
+
+    # Build a rank map: prioritized indicators get low numbers, rest get high
+    rank = {name: i for i, name in enumerate(priority)}
+    max_rank = len(priority)
+
+    def sort_key(ind: IndicatorResult) -> int:
+        # EMA variants: match "ema_9" against "EMA Stack" by checking
+        # if the indicator name is in the priority list directly
+        name = ind.name
+        if name in rank:
+            return rank[name]
+        # EMA prefix match — all EMAs get the rank of the first EMA in priority
+        if name.startswith("ema_"):
+            for pname in priority:
+                if pname.startswith("ema_"):
+                    return rank[pname]
+        return max_rank  # Unprioritized indicators go after prioritized ones
+
+    return sorted(indicators, key=sort_key)
+
+
 def build_indicator_context(
     symbol: str,
     timeframe: str,
     candles: list[CandleData],
     indicators: list[IndicatorResult],
     fibonacci: Optional[FibonacciResult] = None,
+    indicator_priority: Optional[list[str]] = None,
 ) -> str:
     """
     Build structured text context from computed indicator data.
 
     Uses registered formatters — no if/elif chain. New indicators
     just need a formatter function and a registry entry.
+
+    indicator_priority: optional ordered list of backend indicator names.
+        When set, indicators are reordered so prioritized ones appear
+        first in the context (models attend more to earlier content).
     """
     if not candles:
         return f"No candle data available for {symbol} on {timeframe} timeframe."
@@ -243,7 +286,10 @@ def build_indicator_context(
         "",
     ]
 
-    for ind in indicators:
+    # Reorder indicators by priority (if provided)
+    sorted_indicators = _sort_indicators(indicators, indicator_priority)
+
+    for ind in sorted_indicators:
         if not ind.values:
             lines.append(f"{ind.name.upper()}: No data")
             continue
@@ -256,7 +302,8 @@ def build_indicator_context(
             latest = ind.values[-1]
             lines.append(f"{ind.name.upper()}: {latest.value}")
 
-    # Fibonacci (separate data path)
+    # Fibonacci (separate data path) — if prioritized, it already got
+    # emphasis from being mentioned in the system prompt priority section
     if fibonacci:
         lines.extend(_format_fibonacci(fibonacci, last))
 
@@ -266,10 +313,12 @@ def build_indicator_context(
 def build_multi_timeframe_context(
     symbol: str,
     timeframe_data: dict[str, dict],
+    indicator_priority: Optional[list[str]] = None,
 ) -> str:
     """
     Build context from multiple timeframes.
     timeframe_data: dict of timeframe → {"candles": [...], "indicators": [...], "fibonacci": ...}
+    indicator_priority: optional ordered list — prioritized indicators appear first in each section.
     """
     sections = []
     for tf, data in timeframe_data.items():
@@ -279,6 +328,7 @@ def build_multi_timeframe_context(
             candles=data.get("candles", []),
             indicators=data.get("indicators", []),
             fibonacci=data.get("fibonacci"),
+            indicator_priority=indicator_priority,
         )
         sections.append(section)
     return "\n\n".join(sections)
@@ -387,19 +437,43 @@ INDICATOR_HINTS: dict[str, str] = {
 def build_system_prompt(
     indicators: list[str],
     watchlist: Optional[str] = None,
+    indicator_priority: Optional[list[str]] = None,
 ) -> str:
     """
-    Build a system prompt tailored to the enabled indicators and watchlist context.
+    Build a system prompt tailored to the enabled indicators, priority, and watchlist.
 
     indicators: backend indicator names (e.g., ["rsi", "ema_9", "ema_21", "macd"])
     watchlist: optional watchlist name the ticker came from (e.g., "RS Leaders")
+    indicator_priority: optional ordered list — first = most important to the trader.
+        When None, the AI decides which indicators matter most for the setup.
     """
     parts = [_SYSTEM_BASE]
 
-    # Collect unique indicator hints
+    # ── Indicator priority weighting ──
+    if indicator_priority:
+        # Normalize names for display (ema_9 → EMA 9, rsi → RSI, etc.)
+        display_names = []
+        for name in indicator_priority:
+            if name.startswith("ema_"):
+                display_names.append(f"EMA {name.split('_')[1]}")
+            else:
+                display_names.append(name.upper())
+
+        priority_text = ", ".join(display_names)
+        parts.append(
+            f"\n\nINDICATOR PRIORITY (set by the trader — respect this ordering):\n"
+            f"The trader has ranked these indicators by importance: {priority_text}.\n"
+            f"Weigh the first-listed indicators most heavily in your analysis. "
+            f"Your signal direction and confidence should be primarily driven by "
+            f"what the top-priority indicators are showing. The remaining indicators "
+            f"serve as confirmation or caution — they can raise or lower confidence "
+            f"but should not override the primary signals unless they show strong "
+            f"divergence."
+        )
+
+    # ── Per-indicator analysis hints ──
     added_hints: set[str] = set()
     for ind_name in indicators:
-        # Normalize EMA variants to one hint
         hint_key = "ema" if ind_name.startswith("ema_") else ind_name
         if hint_key in INDICATOR_HINTS and hint_key not in added_hints:
             added_hints.add(hint_key)
@@ -409,7 +483,7 @@ def build_system_prompt(
         for key in added_hints:
             parts.append(f"- {INDICATOR_HINTS[key]}")
 
-    # Watchlist-aware framing
+    # ── Watchlist-aware framing ──
     if watchlist:
         watchlist_framing = _build_watchlist_framing(watchlist)
         if watchlist_framing:

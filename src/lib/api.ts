@@ -252,6 +252,8 @@ export interface AnalyzeRequest {
   session_id?: string;
   /** Originating watchlist name (if any). Adds context to the AI prompt. */
   watchlist?: string;
+  /** Ordered indicator priority — first = most important. Omit to let AI decide. */
+  indicator_priority?: string[];
 }
 
 export interface ChatRequest {

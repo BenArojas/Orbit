@@ -390,6 +390,7 @@ async def analyze(
         model=model,
         session_id=request.session_id,
         watchlist=request.watchlist,
+        indicator_priority=request.indicator_priority,
     )
 
     signal = _parse_signal(result["signal"]) if result.get("signal") else None
