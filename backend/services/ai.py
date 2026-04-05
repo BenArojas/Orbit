@@ -49,6 +49,7 @@ from services.prompt_builder import (
     build_indicator_context,      # noqa: F401 — re-export for backwards compat
     build_multi_timeframe_context, # noqa: F401
     build_system_prompt,
+    get_budget_for_model,
     truncate_context,
 )
 
@@ -362,7 +363,10 @@ class AiService:
         context = build_multi_timeframe_context(
             symbol, timeframe_data, indicator_priority=indicator_priority,
         )
-        context = truncate_context(context)
+        # Per-model token budget — smaller models get aggressive truncation,
+        # beefier models get breathing room. See prompt_builder._MODEL_BUDGETS.
+        budget = get_budget_for_model(model)
+        context = truncate_context(context, budget_tokens=budget)
 
         # Dynamic system prompt — tailored to indicators, priority, + watchlist
         system_prompt = build_system_prompt(

@@ -171,15 +171,51 @@ export interface FibonacciLevel {
   level: number;
   price: number;
   label: string;
+  kind: "retracement" | "extension";
+  golden_pocket: boolean;
 }
 
-export interface FibonacciResult {
+export interface FibonacciCandidate {
   swing_high: number;
   swing_low: number;
   swing_high_time: number;
   swing_low_time: number;
+  direction: "up" | "down";
+  score: number;
+  swing_clarity: number;
+  multi_touch_count: number;
+  rejection_intensity: number;
+  stretched_penalty: number;
+  recency: number;
+  is_nested: boolean;
+  parent_index: number | null;
+}
+
+export interface FibonacciConvergenceZone {
+  price: number;
+  timeframes: string[];
+}
+
+export interface FibonacciResult {
+  tool_mode: "retracement" | "extension";
+  swing_high: number;
+  swing_low: number;
+  swing_high_time: number;
+  swing_low_time: number;
+  direction: "up" | "down";
+  /** Retracement levels (always computed) */
   levels: FibonacciLevel[];
-  trend: "up" | "down";
+  /** Extension levels (always computed) */
+  extensions: FibonacciLevel[];
+  score: number;
+  swing_clarity: number;
+  timeframe_clarity: "clean" | "choppy";
+  candidates: FibonacciCandidate[];
+  convergence_zones: FibonacciConvergenceZone[];
+  is_nested: boolean;
+  parent_fib_id: string | null;
+  reasoning: string;
+  source: "auto" | "manual" | "locked";
 }
 
 export interface IndicatorComputeResponse {

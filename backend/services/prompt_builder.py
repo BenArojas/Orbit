@@ -33,8 +33,9 @@ log = logging.getLogger("parallax.prompt")
 
 # Default budget in estimated tokens. Ollama models vary from 2K to 128K
 # context, but the actual usable budget for the prompt + system + response
-# is much smaller. We target ~3000 tokens for the indicator context
-# (leaves room for system prompt, chat history, and model output).
+# is much smaller. We target ~3000 tokens for the indicator context as a
+# safe default (leaves room for system prompt, chat history, and model
+# output). Per-model overrides live in _MODEL_BUDGETS below.
 DEFAULT_CONTEXT_BUDGET = 3000
 
 # Approximate chars per token for English text (conservative estimate)
@@ -44,6 +45,66 @@ CHARS_PER_TOKEN = 3.5
 def _estimate_tokens(text: str) -> int:
     """Rough token estimate from character count."""
     return int(len(text) / CHARS_PER_TOKEN)
+
+
+# ── Per-model token budgets ─────────────────────────────────
+#
+# Parallax supports the full Ollama model zoo, but tiny models (gemma3:e2b)
+# and heavyweights (gemma3:31b, qwen2.5:72b) have wildly different usable
+# context windows. A 3K flat default is wasteful on beefy models and
+# dangerous on light ones — the prompt grows with every enabled indicator
+# × every timeframe, and Fibonacci output (which includes swing candidates
+# with full scoring breakdowns) is particularly heavy.
+#
+# Tiers are keyed by substrings that appear in typical Ollama model names.
+# Unknown models fall back to DEFAULT_CONTEXT_BUDGET. The lookup is
+# lowercase + substring-match so "gemma3:e2b-instruct-q4_K_M" still hits
+# the "e2b" tier.
+#
+# These are context budgets for the indicator context block only, NOT the
+# model's advertised total context window. The remaining model context is
+# reserved for the system prompt, conversation history, and the response.
+
+# Order matters: larger / more specific tiers must come first so substring
+# matching doesn't collapse "27b" onto "7b". "e2b" / "e4b" are listed early
+# because they're unambiguous two-character tokens unique to tiny Gemma.
+_MODEL_BUDGETS: list[tuple[str, int]] = [
+    # Tiniest Gemma variants
+    ("e2b",   1500),
+    ("e4b",   2500),
+    # Heavyweight first (so "70b" hits before "7b", "27b" before "7b", etc.)
+    ("72b",   8000),
+    ("70b",   8000),
+    ("32b",   6000),
+    ("31b",   6000),
+    ("27b",   4500),
+    ("26b",   4500),
+    ("14b",   3500),
+    ("13b",   3500),
+    # 7-8B class comes last because its tokens are short substrings of
+    # the larger-tier tokens above.
+    ("8b",    3000),
+    ("7b",    3000),
+]
+
+
+def get_budget_for_model(model: Optional[str]) -> int:
+    """
+    Return the estimated-token budget for the indicator context block,
+    scaled to the capability of the user's selected Ollama model.
+
+    Matching is case-insensitive substring against _MODEL_BUDGETS tiers,
+    first hit wins (tiers are ordered smallest → largest so "2b" doesn't
+    eat "e2b" etc.). Falls back to DEFAULT_CONTEXT_BUDGET for unknown
+    models, local custom builds, or None.
+    """
+    if not model:
+        return DEFAULT_CONTEXT_BUDGET
+    name = model.lower()
+    for tier, budget in _MODEL_BUDGETS:
+        if tier in name:
+            return budget
+    return DEFAULT_CONTEXT_BUDGET
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -165,17 +226,54 @@ def _format_fibonacci(
     fibonacci: FibonacciResult,
     last: CandleData,
 ) -> list[str]:
-    """Fibonacci is special — it comes from a separate data path, not IndicatorResult."""
-    lines = [
-        "",
-        f"Fibonacci ({fibonacci.trend.upper()} trend):",
-        f"  Swing High: ${fibonacci.swing_high:.2f}",
-        f"  Swing Low: ${fibonacci.swing_low:.2f}",
-    ]
-    for level in fibonacci.levels:
-        proximity = abs(last.close - level.price) / last.close * 100
-        marker = " ← NEAR" if proximity < 1.0 else ""
-        lines.append(f"  {level.label}: ${level.price:.2f}{marker}")
+    """
+    Format a FibonacciResult for the LLM prompt.
+
+    Emits a structured block covering the active swing, both level sets
+    (retracement + extension), scoring breakdown, timeframe clarity, and
+    any cross-TF convergence zones detected upstream. This is intentionally
+    dense — the LLM uses this as the canonical fib view when building its
+    narrative analysis.
+    """
+    lines: list[str] = ["", f"Fibonacci ({fibonacci.direction.upper()} swing):"]
+    lines.append(
+        f"  Swing: ${fibonacci.swing_low:.2f} → ${fibonacci.swing_high:.2f} "
+        f"  Score: {fibonacci.score:.1f}/100  Clarity: {fibonacci.swing_clarity:.2f}  "
+        f"TF: {fibonacci.timeframe_clarity}"
+    )
+    if fibonacci.is_nested:
+        lines.append("  [NESTED inside a higher-scoring parent fib]")
+
+    # Retracement levels — with NEAR marker and GP tag
+    if fibonacci.levels:
+        lines.append("  Retracement:")
+        for level in fibonacci.levels:
+            proximity = abs(last.close - level.price) / last.close * 100 if last.close else 0
+            marker = " ← NEAR" if proximity < 1.0 else ""
+            gp_tag = " [GP]" if level.golden_pocket else ""
+            lines.append(f"    {level.label}: ${level.price:.2f}{gp_tag}{marker}")
+
+    # Extension levels — compact, only show the most-watched ones
+    if fibonacci.extensions:
+        key_ratios = {1.272, 1.414, 1.5, 1.618, 2.0}
+        key_exts = [e for e in fibonacci.extensions if e.level in key_ratios]
+        if key_exts:
+            lines.append("  Extension targets:")
+            for level in key_exts:
+                lines.append(f"    {level.label}: ${level.price:.2f}")
+
+    # Cross-TF convergences (populated by the AI service post-hoc)
+    if fibonacci.convergence_zones:
+        lines.append("  Cross-TF convergences:")
+        for zone in fibonacci.convergence_zones:
+            price = zone.get("price", "?")
+            tfs = zone.get("timeframes", [])
+            lines.append(f"    ~${price} — {', '.join(tfs)}")
+
+    # Reasoning is short — include it verbatim so the LLM can cite it
+    if fibonacci.reasoning:
+        lines.append(f"  Reasoning: {fibonacci.reasoning}")
+
     return lines
 
 
