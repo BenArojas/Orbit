@@ -444,6 +444,10 @@ class AnalyzeRequest(BaseModel):
     The frontend sends this when the user clicks "Run Analysis" in the AI panel.
     It includes which timeframes and indicators to analyze.
 
+    watchlist is optional — not every ticker comes from a watchlist.
+    When present, the prompt builder adds watchlist-specific framing
+    to guide the AI's analysis style (e.g., RS Leaders → trend continuation).
+
     Example: "Analyze AAPL on 4H and D timeframes using RSI, MACD, EMA Stack"
     """
     conid: int                                          # IBKR contract ID
@@ -457,6 +461,7 @@ class AnalyzeRequest(BaseModel):
         description="Indicator names to include in analysis",
     )
     session_id: Optional[str] = None                    # Resume existing session or None for new
+    watchlist: Optional[str] = None                     # Originating watchlist name (if any)
 
 
 class ChatMessage(BaseModel):

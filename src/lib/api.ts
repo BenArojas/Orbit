@@ -250,6 +250,8 @@ export interface AnalyzeRequest {
   timeframes: string[];
   indicators: string[];
   session_id?: string;
+  /** Originating watchlist name (if any). Adds context to the AI prompt. */
+  watchlist?: string;
 }
 
 export interface ChatRequest {

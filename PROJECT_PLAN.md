@@ -98,8 +98,8 @@ These are locked in. Don't revisit unless something breaks.
 | 4.10 | Ollama integration service | Ben | DONE | services/ai.py — structured JSON input, model per-request |
 | 4.11 | AI analysis router | Ben | DONE | routers/ai.py — 8 endpoints (status, models, setup-guide, analyze, chat) |
 | 4.12 | Ollama lifecycle management | Ben | DONE | services/ollama.py — detect binary, start server, list models, setup guide |
-| 4.13 | Prompt builder refactor | Ben | TODO | Extract indicator-specific formatters out of `build_indicator_context()` if/elif into per-indicator `format_for_prompt()` registration pattern. Add per-model prompt length budget + graceful truncation. Dynamic system prompt that adapts to enabled indicator set. Optional: adopt Ollama `format: json` for strict structured output. Must land before 4.4. |
-| 4.14 | Watchlist context in /ai/analyze | Ben | TODO | Pass originating watchlist (RS / short-dated / swing / long-term) through `AnalyzeRequest`. Prompt builder uses it to add watchlist-aware framing to the system prompt. Depends on 4.13. |
+| 4.13 | Prompt builder refactor | Ben | DONE | Extracted to `services/prompt_builder.py`. Per-indicator formatter registry (no if/elif). Dynamic system prompt with per-indicator analysis hints. Token budget (3000) with graceful truncation (drops oldest timeframes first). |
+| 4.14 | Watchlist context in /ai/analyze | Ben | DONE | Optional `watchlist` field on AnalyzeRequest (+ TS type). 6 watchlist archetypes matched by substring (RS leaders, short-term, swing, long-term, momentum, mean reversion). Unknown watchlists get generic framing mentioning the name. Wired through router → ai.analyze → build_system_prompt. |
 
 ---
 
