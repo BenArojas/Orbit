@@ -1,7 +1,7 @@
 # Parallax — Project Plan
 
 > Last updated: 2026-04-05
-> Status: Phase 1–3 complete. Phase 4 nearly complete (Fibonacci remaining). Phase 5–7 TODO.
+> Status: Phase 1–3 complete. Phase 4 in progress — AI backend (4.10-4.12) done, prompt builder refactor (4.13) + watchlist context (4.14) must land before Fibonacci (4.4-4.5). Phase 5–7 TODO.
 
 ---
 
@@ -98,6 +98,8 @@ These are locked in. Don't revisit unless something breaks.
 | 4.10 | Ollama integration service | Ben | DONE | services/ai.py — structured JSON input, model per-request |
 | 4.11 | AI analysis router | Ben | DONE | routers/ai.py — 8 endpoints (status, models, setup-guide, analyze, chat) |
 | 4.12 | Ollama lifecycle management | Ben | DONE | services/ollama.py — detect binary, start server, list models, setup guide |
+| 4.13 | Prompt builder refactor | Ben | TODO | Extract indicator-specific formatters out of `build_indicator_context()` if/elif into per-indicator `format_for_prompt()` registration pattern. Add per-model prompt length budget + graceful truncation. Dynamic system prompt that adapts to enabled indicator set. Optional: adopt Ollama `format: json` for strict structured output. Must land before 4.4. |
+| 4.14 | Watchlist context in /ai/analyze | Ben | TODO | Pass originating watchlist (RS / short-dated / swing / long-term) through `AnalyzeRequest`. Prompt builder uses it to add watchlist-aware framing to the system prompt. Depends on 4.13. |
 
 ---
 
