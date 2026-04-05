@@ -88,7 +88,32 @@ v1 (task 4.4) implements basic parent/nested detection: a small swing entirely w
 
 ---
 
-## 6. Other Deferred Items
+## 6. Cloud LLM Provider Support
+
+**Status:** v2. Parallax v1 is 100% local — Ollama only. CLAUDE.md rule #3 ("no cloud dependencies") governs v1.
+
+v2 adds an optional escape hatch for users who want cloud model quality instead of local inference. Keeps the local-first default, cloud is purely opt-in.
+
+**Scope:**
+- Provider abstraction layer in `backend/services/ai.py` — `LLMProvider` protocol with `chat()` and `chat_stream()` methods. Ollama becomes one implementation; Claude API and OpenAI become others.
+- Settings UI: user picks provider (local Ollama / Anthropic / OpenAI), pastes API key into a local-only SQLite field, chooses model from that provider's available list.
+- API keys stay on the user's machine — stored in SQLite `settings` table, never transmitted except to the provider itself, never logged.
+- Prompt builder stays unchanged. The structured context and system prompt work identically across providers — that's the whole point of having a clean registration pattern.
+- Token budgets become per-provider: cloud models (Claude Sonnet, GPT-4) have much larger context windows than local Gemma, so the budget function keys off the active provider + model rather than a single default.
+- Cost awareness: cloud providers are paid. Surface estimated per-analysis cost in the AI panel footer, and optionally cap monthly spend with a local counter.
+- Streaming parity — Anthropic and OpenAI both support streaming; use it.
+- Fall-through: if cloud provider fails (network down, rate limit, bad key), fall back to local Ollama if available.
+
+**DB schema additions (v2):**
+- `ai_providers` table: id, provider_name, api_key_encrypted, active, created_at. Encryption at rest (even for local storage) recommended to avoid leaking keys in backups.
+- `ai_usage_log`: tracks per-call token counts and estimated cost, for the in-app spend display.
+
+**Why this is v2, not v1:**
+The architectural boundary for v1 is "100% local, no external services." Shipping cloud support means taking on billing, rate limiting, secret handling, and network-failure UX. All worth it — just not at the expense of getting v1 out the door. v1 proves the core value prop locally; v2 opens the door for power users who want a step up in analysis quality without leaving Parallax.
+
+---
+
+## 7. Other Deferred Items
 
 These came up in earlier discussions and belong in v2 rather than v1:
 
