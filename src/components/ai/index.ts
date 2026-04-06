@@ -23,3 +23,4 @@ export type {
 export { default as AiChatPanel } from "./AiChatPanel";
 export { default as AiSetupGuide } from "./AiSetupGuide";
 export { default as AiModelSelector } from "./AiModelSelector";
+export { default as FibScoreCard } from "./FibScoreCard";

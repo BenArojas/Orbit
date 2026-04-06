@@ -31,6 +31,7 @@ import { useEffect, useRef } from "react";
 import type { CandleData, IndicatorResult, FibonacciResult } from "@/lib/api";
 import type { IndicatorId } from "@/store/chart";
 import { addIndicatorOverlays, removeIndicatorOverlays, type OverlayState } from "./indicatorOverlays";
+import { addFibonacciOverlay, removeFibonacciOverlay, type FibOverlayState } from "./FibonacciOverlay";
 
 // ── Theme colors (match styles.css) ──────────────────────────
 
@@ -64,7 +65,7 @@ export interface ChartContainerProps {
 export default function ChartContainer({
   candles,
   indicators,
-  fibonacci: _fibonacci, // Used by FibonacciOverlay in task 4.4
+  fibonacci,
   activeIndicators,
   liveTick,
 }: ChartContainerProps) {
@@ -73,6 +74,7 @@ export default function ChartContainer({
   const candleSeriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
   const volumeSeriesRef = useRef<ISeriesApi<"Histogram"> | null>(null);
   const overlayStateRef = useRef<OverlayState>({});
+  const fibOverlayRef = useRef<FibOverlayState>([]);
 
   // ── Create chart instance ──────────────────────────────────
 
@@ -154,6 +156,8 @@ export default function ChartContainer({
       resizeObserver.disconnect();
       removeIndicatorOverlays(chart, overlayStateRef.current);
       overlayStateRef.current = {};
+      removeFibonacciOverlay(chart, fibOverlayRef.current);
+      fibOverlayRef.current = [];
       chart.remove();
       chartRef.current = null;
       candleSeriesRef.current = null;
@@ -231,6 +235,24 @@ export default function ChartContainer({
       activeIndicators,
     );
   }, [indicators, activeIndicators]);
+
+  // ── Fibonacci overlay ──────────────────────────────────────
+
+  useEffect(() => {
+    const chart = chartRef.current;
+    if (!chart) return;
+
+    // Remove previous fib lines
+    removeFibonacciOverlay(chart, fibOverlayRef.current);
+    fibOverlayRef.current = [];
+
+    // Only render if fibonacci toggle is active AND we have fib data
+    if (!activeIndicators.has("fibonacci") || !fibonacci || candles.length === 0) {
+      return;
+    }
+
+    fibOverlayRef.current = addFibonacciOverlay(chart, fibonacci, candles);
+  }, [fibonacci, activeIndicators, candles]);
 
   return (
     <div
