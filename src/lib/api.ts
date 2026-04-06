@@ -226,6 +226,34 @@ export interface IndicatorComputeResponse {
   fibonacci: FibonacciResult | null;
 }
 
+// ── Locked Fibonacci Drawings (Phase 4 — task 4.4) ──────
+
+export interface LockFibonacciRequest {
+  conid: number;
+  timeframe: string;
+  tool_type: "retracement" | "extension";
+  swing_high_price: number;
+  swing_high_time: number;
+  swing_low_price: number;
+  swing_low_time: number;
+  direction: "up" | "down";
+  user_note?: string;
+}
+
+export interface LockedFibonacciResponse {
+  id: number;
+  conid: number;
+  timeframe: string;
+  tool_type: "retracement" | "extension";
+  swing_high_price: number;
+  swing_high_time: number;
+  swing_low_price: number;
+  swing_low_time: number;
+  direction: "up" | "down";
+  user_note: string | null;
+  locked_at: string;
+}
+
 // ── Sectors (Phase 3 — tasks 3.3, 3.4) ──────────────────
 
 export interface SectorPerformance {
@@ -500,4 +528,14 @@ export const api = {
 
   aiChat: (req: ChatRequest) =>
     request<ChatResponse>("POST", "/ai/chat", req),
+
+  // Fibonacci Locks (Phase 4)
+  lockFibonacci: (req: LockFibonacciRequest) =>
+    request<LockedFibonacciResponse>("POST", "/fibonacci/lock", req),
+
+  unlockFibonacci: (id: number) =>
+    request<{ deleted: boolean; id: number }>("DELETE", `/fibonacci/lock/${id}`),
+
+  getLockedFibs: (conid: number) =>
+    request<LockedFibonacciResponse[]>("GET", `/fibonacci/locks/${conid}`),
 } as const;

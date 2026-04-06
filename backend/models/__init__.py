@@ -403,6 +403,42 @@ class IndicatorComputeResponse(BaseModel):
 
 
 # ═══════════════════════════════════════════════════════════════
+#  Fibonacci Locked Drawings (Phase 4 — task 4.4)
+# ═══════════════════════════════════════════════════════════════
+
+
+class LockFibonacciRequest(BaseModel):
+    """
+    Lock a fib drawing so it persists across app restarts and shows on
+    ALL timeframes (per Ofek's spec: "locked fibs show on all TFs").
+    """
+    conid: int
+    timeframe: str                    # Timeframe this fib was drawn on
+    tool_type: str = "retracement"    # "retracement" or "extension"
+    swing_high_price: float
+    swing_high_time: int
+    swing_low_price: float
+    swing_low_time: int
+    direction: str                    # "up" or "down"
+    user_note: Optional[str] = None   # Optional annotation
+
+
+class LockedFibonacciResponse(BaseModel):
+    """A locked fib drawing as returned from the DB."""
+    id: int
+    conid: int
+    timeframe: str
+    tool_type: str
+    swing_high_price: float
+    swing_high_time: int
+    swing_low_price: float
+    swing_low_time: int
+    direction: str
+    user_note: Optional[str] = None
+    locked_at: str
+
+
+# ═══════════════════════════════════════════════════════════════
 #  Sectors (Phase 3 — tasks 3.3, 3.4)
 # ═══════════════════════════════════════════════════════════════
 
