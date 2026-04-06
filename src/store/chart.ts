@@ -30,6 +30,15 @@ export type IndicatorId =
   | "obv"
   | "adx";
 
+/** Mode for fib manual draw. null = not drawing. */
+export type FibDrawMode = "retracement" | "extension";
+
+/** The two click points captured during manual fib drawing. */
+export interface FibDrawPoint {
+  time: number;  // Unix seconds
+  price: number;
+}
+
 interface ChartState {
   /** Currently viewed instrument (null = nothing selected) */
   activeConid: number | null;
@@ -43,6 +52,12 @@ interface ChartState {
   /** Set of toggled-on indicator IDs */
   activeIndicators: Set<IndicatorId>;
 
+  /** Fibonacci manual draw mode — null when not drawing */
+  fibDrawMode: FibDrawMode | null;
+
+  /** First click captured (swing point A); null until user clicks */
+  fibDrawPointA: FibDrawPoint | null;
+
   /** Actions */
   setActiveConid: (conid: number) => void;
   setActiveSymbol: (symbol: string) => void;
@@ -50,6 +65,9 @@ interface ChartState {
   toggleIndicator: (id: IndicatorId) => void;
   setIndicators: (ids: IndicatorId[]) => void;
   clearChart: () => void;
+  enterFibDrawMode: (mode: FibDrawMode) => void;
+  setFibDrawPointA: (pt: FibDrawPoint) => void;
+  exitFibDrawMode: () => void;
 }
 
 /** Default indicators toggled on for new sessions */
@@ -67,6 +85,8 @@ export const useChartStore = create<ChartState>()((set) => ({
   activeSymbol: "",
   timeframe: "1D",
   activeIndicators: new Set<IndicatorId>(DEFAULT_INDICATORS),
+  fibDrawMode: null,
+  fibDrawPointA: null,
 
   setActiveConid: (conid) => set({ activeConid: conid }),
 
@@ -94,5 +114,16 @@ export const useChartStore = create<ChartState>()((set) => ({
       activeSymbol: "",
       timeframe: "1D",
       activeIndicators: new Set<IndicatorId>(DEFAULT_INDICATORS),
+      fibDrawMode: null,
+      fibDrawPointA: null,
     }),
+
+  enterFibDrawMode: (mode) =>
+    set({ fibDrawMode: mode, fibDrawPointA: null }),
+
+  setFibDrawPointA: (pt) =>
+    set({ fibDrawPointA: pt }),
+
+  exitFibDrawMode: () =>
+    set({ fibDrawMode: null, fibDrawPointA: null }),
 }));

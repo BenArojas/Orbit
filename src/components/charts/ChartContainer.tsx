@@ -32,6 +32,8 @@ import type { CandleData, IndicatorResult, FibonacciResult } from "@/lib/api";
 import type { IndicatorId } from "@/store/chart";
 import { addIndicatorOverlays, removeIndicatorOverlays, type OverlayState } from "./indicatorOverlays";
 import { addFibonacciOverlay, removeFibonacciOverlay, type FibOverlayState } from "./FibonacciOverlay";
+import FibDrawMode from "./FibDrawMode";
+import type { Timeframe } from "@/store/chart";
 
 // ── Theme colors (match styles.css) ──────────────────────────
 
@@ -58,6 +60,10 @@ export interface ChartContainerProps {
   activeIndicators: Set<IndicatorId>;
   /** Called when a live tick updates the last candle */
   liveTick?: { last: number; volume: number; high: number; low: number } | null;
+  /** Active instrument conid (for fib draw-mode lock) */
+  conid?: number | null;
+  /** Current timeframe string (for fib draw-mode lock) */
+  timeframe?: Timeframe;
 }
 
 // ── Component ────────────────────────────────────────────────
@@ -68,6 +74,8 @@ export default function ChartContainer({
   fibonacci,
   activeIndicators,
   liveTick,
+  conid = null,
+  timeframe = "1D",
 }: ChartContainerProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
@@ -259,6 +267,14 @@ export default function ChartContainer({
       ref={containerRef}
       className="relative h-full w-full"
       style={{ minHeight: 300 }}
-    />
+    >
+      <FibDrawMode
+        chart={chartRef.current}
+        candleSeries={candleSeriesRef.current}
+        candles={candles}
+        conid={conid}
+        timeframe={timeframe}
+      />
+    </div>
   );
 }
