@@ -210,10 +210,23 @@ def test_level_labels_mark_golden_pocket():
         assert "GP" in lvl.label
 
 
-def test_trend_alias_matches_direction():
-    """Backwards-compat .trend property should mirror .direction."""
+def test_direction_field_present():
+    """FibonacciResult must have a direction field (up or down)."""
     svc = IndicatorService()
     candles = clean_uptrend_swing()
     _, fib = svc.compute(candles, indicators=["fibonacci"])
     assert fib is not None
-    assert fib.trend == fib.direction
+    assert fib.direction in ("up", "down")
+
+
+def test_flat_candles_zero_price_range():
+    """Flat candles (same high/low everywhere) should not crash — returns None or valid result."""
+    svc = IndicatorService()
+    # All bars at exactly the same price → price_range = 0 for every swing candidate
+    candles = [
+        make_candle(t=1_700_000_000 + i * 86400, o=100, h=100, l=100, c=100)
+        for i in range(30)
+    ]
+    results, fib = svc.compute(candles, indicators=["fibonacci"])
+    # Either None (no valid swing) or a valid result — must not raise
+    assert fib is None or isinstance(fib, FibonacciResult)

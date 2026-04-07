@@ -139,7 +139,7 @@ class IndicatorService:
                 result = compute_fn(df)
                 if result is not None:
                     results.append(result)
-            except Exception as exc:
+            except (ValueError, KeyError, TypeError, ZeroDivisionError) as exc:
                 log.error("Error computing %s: %s", name, exc)
 
         return results, fibonacci

@@ -380,12 +380,6 @@ class FibonacciResult(BaseModel):
     reasoning: str                  # Human-readable explanation for the LLM
     source: str = "auto"            # "auto", "manual", or "locked"
 
-    # ── Backwards-compat alias ──────────────────────────────────
-    # Older callers/tests read `.trend`; keep it working via property.
-    @property
-    def trend(self) -> str:
-        return self.direction
-
 
 class IndicatorComputeResponse(BaseModel):
     """

@@ -80,13 +80,33 @@ export default function FibDrawMode({
     ghostSeriesRef.current = [];
   }, [chart]);
 
-  // ── Draw ghost preview at cursor price ───────────────────
+  // ── Ensure ghost series exist (one per level, reused across moves) ──
+
+  const ensureGhostSeries = useCallback(() => {
+    if (!chart || ghostSeriesRef.current.length === GHOST_LEVELS.length) return;
+
+    // Create series once — they'll be reused via setData on each move
+    clearGhost();
+    for (let i = 0; i < GHOST_LEVELS.length; i++) {
+      const series = chart.addSeries(LineSeries, {
+        color: GHOST_COLOR,
+        lineWidth: 1,
+        lineStyle: 2, // dashed
+        priceLineVisible: false,
+        lastValueVisible: false,
+        crosshairMarkerVisible: false,
+      });
+      ghostSeriesRef.current.push(series);
+    }
+  }, [chart, clearGhost]);
+
+  // ── Draw ghost preview at cursor price (reuses existing series) ──
 
   const drawGhost = useCallback(
     (pointA: FibDrawPoint, cursorPrice: number) => {
       if (!chart || candles.length === 0) return;
 
-      clearGhost();
+      ensureGhostSeries();
 
       const swingLow = Math.min(pointA.price, cursorPrice);
       const swingHigh = Math.max(pointA.price, cursorPrice);
@@ -97,32 +117,22 @@ export default function FibDrawMode({
       const firstTime = candles[0].time as Time;
       const lastTime = candles[candles.length - 1].time as Time;
 
-      for (const ratio of GHOST_LEVELS) {
-        let price: number;
-        if (direction === "up") {
-          price = swingHigh - range * ratio;
-        } else {
-          price = swingLow + range * ratio;
-        }
+      for (let i = 0; i < GHOST_LEVELS.length; i++) {
+        const ratio = GHOST_LEVELS[i];
+        const price = direction === "up"
+          ? swingHigh - range * ratio
+          : swingLow + range * ratio;
 
         const data: LineData<Time>[] = [
           { time: firstTime, value: price },
           { time: lastTime, value: price },
         ];
 
-        const series = chart.addSeries(LineSeries, {
-          color: GHOST_COLOR,
-          lineWidth: 1,
-          lineStyle: 2, // dashed
-          priceLineVisible: false,
-          lastValueVisible: false,
-          crosshairMarkerVisible: false,
-        });
-        series.setData(data);
-        ghostSeriesRef.current.push(series);
+        // Reuse the pre-created series — just update data
+        ghostSeriesRef.current[i]?.setData(data);
       }
     },
-    [chart, candles, clearGhost],
+    [chart, candles, ensureGhostSeries],
   );
 
   // ── Chart click handler ──────────────────────────────────

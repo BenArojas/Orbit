@@ -248,7 +248,7 @@ def _format_fibonacci(
     if fibonacci.levels:
         lines.append("  Retracement:")
         for level in fibonacci.levels:
-            proximity = abs(last.close - level.price) / last.close * 100 if last.close else 0
+            proximity = abs(last.close - level.price) / last.close * 100 if last.close > 0.01 else 0
             marker = " ← NEAR" if proximity < 1.0 else ""
             gp_tag = " [GP]" if level.golden_pocket else ""
             lines.append(f"    {level.label}: ${level.price:.2f}{gp_tag}{marker}")
@@ -642,7 +642,7 @@ WATCHLIST_FRAMING: dict[str, str] = {
 }
 
 
-def _build_watchlist_framing(watchlist: str) -> Optional[str]:
+def _build_watchlist_framing(watchlist: str) -> str:
     """
     Match a watchlist name to a known archetype and return framing text.
     Returns None if the watchlist doesn't match any known pattern.

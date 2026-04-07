@@ -7,7 +7,8 @@
  *   - SubChartPanel (4.3) — RSI, MACD, Stochastic, OBV, ADX below chart
  *   - IndicatorToolbar (4.6) — pill toggles in the toolbar
  *   - AiChatPanel (4.9) — full AI panel (config, signal, chat, setup guide)
- *   - Fibonacci (4.4–4.5) — TODO
+ *   - FibonacciOverlay (4.4) — auto-detected fib levels on chart + FibScoreCard in AI panel
+ *   - FibDrawMode (4.5) — two-click manual fib drawing with ghost preview
  *
  * Layout from mockup: grid with chart area + 340px AI panel
  *   Left: toolbar (symbol input, timeframe bar, indicator pills),
