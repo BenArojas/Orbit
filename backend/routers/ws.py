@@ -115,7 +115,7 @@ async def ws_endpoint(ws: WebSocket):
 
             except json.JSONDecodeError:
                 log.warning("Invalid JSON from frontend: %s", data[:100])
-            except Exception as exc:
+            except (ValueError, KeyError, TypeError) as exc:
                 log.error("Error processing WebSocket command: %s", exc)
 
     except (WebSocketDisconnect, RuntimeError):

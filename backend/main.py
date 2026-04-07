@@ -86,7 +86,7 @@ async def lifespan(app: FastAPI):
             log.info("Ollama ready — AI features available (model: %s)", ollama.selected_model)
         else:
             log.info("Ollama state: %s — frontend will guide setup", ollama.state.value)
-    except Exception as e:
+    except (OllamaConnectionError, AIError, OSError) as e:
         log.error("Ollama startup failed: %s", e)
 
     # AI service — stateless wrapper for Ollama chat/analysis.

@@ -11,6 +11,7 @@
  */
 
 import { create } from "zustand";
+import { API_BASE } from "@/config/endpoints";
 interface SettingsState {
   /** Scanner polling interval in seconds */
   scanInterval: number;
@@ -61,7 +62,7 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
     try {
       // Fetch all settings from backend
       // The backend seeds defaults on first run, so these should always exist
-      const response = await fetch("http://localhost:8000/settings");
+      const response = await fetch(`${API_BASE}/settings`);
       if (response.ok) {
         const settings: Array<{ key: string; value: string }> =
           await response.json();
@@ -83,7 +84,7 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
 
   persistSetting: async (key, value) => {
     try {
-      await fetch("http://localhost:8000/settings", {
+      await fetch(`${API_BASE}/settings`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ key, value }),

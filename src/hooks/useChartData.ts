@@ -42,10 +42,10 @@ function indicatorIdsToBackendNames(ids: Set<IndicatorId>): string[] {
     ema200: "ema_200",
     fibonacci: "fibonacci",
     volume: "volume",
-    bollinger: "bollinger_bands",
+    bollinger: "bbands",
     vwap: "vwap",
     atr: "atr",
-    stochastic: "stochastic",
+    stochastic: "stoch",
     obv: "obv",
     adx: "adx",
   };

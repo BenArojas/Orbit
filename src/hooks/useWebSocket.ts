@@ -33,6 +33,8 @@
 
 import { useEffect, useRef, useCallback, useState } from "react";
 
+import { WS_URL } from "@/config/endpoints";
+
 // ── Types ───────────────────────────────────────────────────
 
 export type WsStatus = "disconnected" | "connecting" | "connected";
@@ -44,8 +46,6 @@ export interface WsMessage {
 }
 
 type MessageHandler = (msg: WsMessage) => void;
-
-const WS_URL = "ws://localhost:8000/ws";
 const MAX_RECONNECT_DELAY = 30_000;
 
 // ── Hook ────────────────────────────────────────────────────

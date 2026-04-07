@@ -2,7 +2,7 @@
 
 Local desktop trading decision-support tool for US equities/ETFs. Connects to Interactive Brokers Client Portal Web API. Not a trading bot — technical analysis, screening, and watchlists with trigger-based alerts.
 
-**Stack**: Tauri v2 + React 19/TS + Tailwind/shadcn | Python FastAPI sidecar + Polars + ibind + Ollama | SQLite
+**Stack**: Tauri v2 + React 19/TS + Tailwind/shadcn | Python FastAPI sidecar (httpx + websockets for IBKR) + Polars + pandas-ta bridge + Ollama | SQLite
 
 ## Rules
 

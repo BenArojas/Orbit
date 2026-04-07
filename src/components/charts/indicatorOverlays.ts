@@ -54,7 +54,7 @@ const INDICATOR_NAME_MAP: Record<string, string> = {
   ema21: "ema_21",
   ema50: "ema_50",
   ema200: "ema_200",
-  bollinger: "bollinger_bands",
+  bollinger: "bbands",
   vwap: "vwap",
 };
 
