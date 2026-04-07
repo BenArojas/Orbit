@@ -221,7 +221,7 @@ class IBKRService:
                     log.warning("Tickle failed — IBKR session may have expired.")
             except asyncio.CancelledError:
                 break
-            except Exception as exc:
+            except (OSError, ConnectionError, IBKRConnectionError) as exc:
                 log.error("Tickle loop error: %s", exc)
                 await asyncio.sleep(5)  # Brief pause before retry
 
@@ -446,7 +446,7 @@ class IBKRService:
 
             except websockets.exceptions.ConnectionClosed as exc:
                 log.warning("IBKR WebSocket closed: %s", exc)
-            except Exception as exc:
+            except (OSError, ConnectionError, asyncio.TimeoutError) as exc:
                 log.error("IBKR WebSocket error: %s", exc)
             finally:
                 self.state.ws_connected = False

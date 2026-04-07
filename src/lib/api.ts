@@ -17,7 +17,7 @@
 
 // ── Base URL ────────────────────────────────────────────────
 
-const API_BASE = "http://localhost:8000";
+import { API_BASE } from "@/config/endpoints";
 
 // ── Types ───────────────────────────────────────────────────
 // Mirror the Pydantic models from backend/models/__init__.py.

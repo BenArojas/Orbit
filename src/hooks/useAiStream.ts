@@ -16,7 +16,7 @@
 import { useCallback, useRef } from "react";
 import { useAiStore } from "@/store";
 
-const API_BASE = "http://localhost:8000";
+import { API_BASE } from "@/config/endpoints";
 
 /** Generate a simple unique ID for messages */
 function msgId(): string {
@@ -77,15 +77,20 @@ export function useAiStream() {
         const reader = resp.body.getReader();
         const decoder = new TextDecoder();
         let fullResponse = "";
+        let buffer = ""; // Buffer for partial lines split across chunks
 
         while (true) {
           const { done, value } = await reader.read();
           if (done) break;
 
-          const chunk = decoder.decode(value, { stream: true });
+          buffer += decoder.decode(value, { stream: true });
 
           // SSE format: each line is "data: <token>\n\n"
-          const lines = chunk.split("\n");
+          // Split on newlines but keep the last segment in the buffer
+          // in case it's a partial line split across chunks.
+          const lines = buffer.split("\n");
+          buffer = lines.pop() ?? ""; // Last element may be incomplete
+
           for (const line of lines) {
             if (line.startsWith("data: ")) {
               const token = line.slice(6);
@@ -93,6 +98,15 @@ export function useAiStream() {
               fullResponse += token;
               appendStreamingContent(token);
             }
+          }
+        }
+
+        // Process any remaining buffered content
+        if (buffer.startsWith("data: ")) {
+          const token = buffer.slice(6);
+          if (token !== "[DONE]") {
+            fullResponse += token;
+            appendStreamingContent(token);
           }
         }
 
