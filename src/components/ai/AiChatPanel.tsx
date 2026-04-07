@@ -21,6 +21,7 @@ import { useState, useRef, useEffect, useCallback, type KeyboardEvent } from "re
 import { useMutation } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { useAiStore, type ChatMessage } from "@/store";
+import type { IndicatorId } from "@/store/chart";
 import { useAiStatus } from "@/hooks/useAiStatus";
 import { useAiStream } from "@/hooks/useAiStream";
 import AiConfigPanel, { type AiTimeframe, type AiIndicator, type AiMode } from "./AiConfigPanel";
@@ -39,6 +40,8 @@ interface AiChatPanelProps {
   activeSymbol: string;
   /** Current Fibonacci auto-detection result (null if not computed or disabled) */
   fibonacci?: FibonacciResult | null;
+  /** Currently active indicators on the chart (used as AI config defaults) */
+  chartIndicators?: Set<IndicatorId>;
 }
 
 /* ── Message bubble sub-component ── */
@@ -80,7 +83,7 @@ function StreamingBubble({ content }: { content: string }) {
 
 /* ── Main component ── */
 
-export default function AiChatPanel({ activeConid, activeSymbol, fibonacci }: AiChatPanelProps) {
+export default function AiChatPanel({ activeConid, activeSymbol, fibonacci, chartIndicators }: AiChatPanelProps) {
   const [inputValue, setInputValue] = useState("");
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
@@ -244,8 +247,11 @@ export default function AiChatPanel({ activeConid, activeSymbol, fibonacci }: Ai
       {/* ── Ready state: config + signal + chat ── */}
       {showChat && (
         <>
-          {/* Config panel (existing component) */}
-          <AiConfigPanel onRunAnalysis={handleRunAnalysis} />
+          {/* Config panel — defaults to whatever indicators are on the chart */}
+          <AiConfigPanel
+            onRunAnalysis={handleRunAnalysis}
+            chartIndicators={chartIndicators}
+          />
 
           {/* Signal card */}
           <ActionSignalCard signal={signal} />

@@ -70,15 +70,14 @@ interface ChartState {
   exitFibDrawMode: () => void;
 }
 
-/** Default indicators toggled on for new sessions */
-const DEFAULT_INDICATORS: IndicatorId[] = [
-  "ema9",
-  "ema21",
-  "ema50",
-  "volume",
-  "rsi",
-  "fibonacci",
-];
+/**
+ * Default indicators toggled on for new sessions.
+ *
+ * Empty by design — the chart loads clean (candles only) so the trader
+ * can read price action without visual clutter. Indicators are opt-in
+ * via the toolbar pills.
+ */
+const DEFAULT_INDICATORS: IndicatorId[] = [];
 
 export const useChartStore = create<ChartState>()((set) => ({
   activeConid: null,

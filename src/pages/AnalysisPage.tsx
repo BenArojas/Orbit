@@ -234,7 +234,12 @@ export default function AnalysisPage() {
       </div>
 
       {/* ── Right: AI Panel ── */}
-      <AiChatPanel activeConid={activeConid} activeSymbol={activeSymbol} fibonacci={fibonacci} />
+      <AiChatPanel
+        activeConid={activeConid}
+        activeSymbol={activeSymbol}
+        fibonacci={fibonacci}
+        chartIndicators={activeIndicators}
+      />
     </div>
   );
 }
