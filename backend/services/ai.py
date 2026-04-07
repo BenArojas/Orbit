@@ -46,11 +46,14 @@ MAX_SESSIONS = 50
 # ═══════════════════════════════════════════════════════════════
 
 from services.prompt_builder import (
-    build_indicator_context,      # noqa: F401 — re-export for backwards compat
-    build_multi_timeframe_context, # noqa: F401
+    build_indicator_context,        # noqa: F401 — re-export for backwards compat
+    build_multi_timeframe_context,  # noqa: F401
+    build_analysis_user_message,
     build_system_prompt,
     get_budget_for_model,
     truncate_context,
+    SIGNAL_EXTRACTION_PROMPT,
+    SIGNAL_JSON_SCHEMA,
 )
 
 
@@ -64,8 +67,10 @@ def parse_signal_from_response(text: str) -> Optional[dict]:
     Extract the JSON signal block from an AI response.
     Returns the parsed dict or None if no valid signal found.
 
-    The AI is instructed to wrap its signal in ```json ... ``` blocks.
-    We also try to find raw JSON objects as a fallback.
+    Two fallbacks:
+      1. Look for ```json ... ``` code blocks (the standard format)
+      2. Find any JSON object containing "direction" (handles models
+         that skip the backtick wrapping). Uses nested-aware regex.
     """
     # Try to find JSON in code blocks first
     json_match = re.search(r"```json\s*\n?(.*?)\n?\s*```", text, re.DOTALL)
@@ -75,15 +80,8 @@ def parse_signal_from_response(text: str) -> Optional[dict]:
         except json.JSONDecodeError:
             log.warning("Found JSON block but couldn't parse it")
 
-    # Fallback: find any JSON object with "direction" key
-    obj_match = re.search(r'\{[^{}]*"direction"[^{}]*\}', text, re.DOTALL)
-    if obj_match:
-        try:
-            return json.loads(obj_match.group(0))
-        except json.JSONDecodeError:
-            pass
-
-    # Last resort: try to find a larger JSON block
+    # Fallback: find any JSON object with "direction" key.
+    # This regex handles one level of nesting (entry, stop, target are dicts).
     for match in re.finditer(r'\{(?:[^{}]|\{[^{}]*\})*\}', text, re.DOTALL):
         try:
             data = json.loads(match.group(0))
@@ -276,6 +274,52 @@ class AiService:
         except httpx.HTTPStatusError as e:
             raise RuntimeError(f"Ollama returned error: {e.response.status_code}")
 
+    async def chat_structured(
+        self,
+        messages: list[dict[str, str]],
+        model: str,
+        json_schema: dict,
+    ) -> dict:
+        """
+        Send a chat request with Ollama's structured output (format parameter).
+
+        The model is constrained to produce JSON matching the provided schema.
+        This guarantees valid JSON — no regex parsing needed.
+
+        Uses the reasoning_steps-first pattern: the schema's first property
+        is a chain-of-thought field so the model reasons before committing
+        to structured signal fields.
+
+        model: the Ollama model name to use.
+        json_schema: JSON Schema dict passed to Ollama's `format` parameter.
+        """
+        payload = {
+            "model": model,
+            "messages": messages,
+            "stream": False,
+            "format": json_schema,
+            "options": {
+                "temperature": 0.2,     # Even lower temp for structured output
+                "num_predict": 2048,
+            },
+        }
+
+        try:
+            resp = await self._http.post("/api/chat", json=payload)
+            resp.raise_for_status()
+            data = resp.json()
+            content = data.get("message", {}).get("content", "")
+            return json.loads(content)
+        except httpx.ConnectError:
+            raise ConnectionError("Cannot connect to Ollama server")
+        except httpx.TimeoutException:
+            raise TimeoutError("Ollama request timed out (>120s)")
+        except httpx.HTTPStatusError as e:
+            raise RuntimeError(f"Ollama returned error: {e.response.status_code}")
+        except json.JSONDecodeError as e:
+            log.warning("Structured output returned invalid JSON: %s", e)
+            raise ValueError(f"Model returned invalid JSON despite schema: {e}")
+
     async def chat_stream(
         self,
         messages: list[dict[str, str]],
@@ -336,11 +380,25 @@ class AiService:
         """
         Run a full technical analysis for a stock.
 
-        1. Build dynamic system prompt from enabled indicators + watchlist context
-        2. Build structured context from indicator data (with truncation)
-        3. Create a new chat session with prompt + context
-        4. Ask the model to analyze and produce a signal
-        5. Parse the signal from the response
+        Two-call approach:
+          Call 1 (narrative): Free-text analysis with reasoning. The model
+              reads the indicator data and produces a natural-language analysis
+              with entry/stop/target reasoning. No JSON required.
+          Call 2 (signal): Structured JSON via Ollama's format parameter.
+              The model has its own narrative in context and produces a
+              guaranteed-valid signal using the reasoning_steps-first pattern
+              (chain of thought before structured fields).
+
+        This approach is more reliable than asking for JSON in free text:
+          - Narrative quality improves (model isn't distracted by JSON syntax)
+          - Signal extraction is guaranteed valid JSON (schema-constrained)
+          - Small models work reliably (no regex fallback needed)
+          - The reasoning_steps field gives the model CoT space even in
+            the structured call
+
+        Fallback: if structured output fails (old Ollama version or model
+        doesn't support format), falls back to parsing JSON from the
+        narrative response using regex.
 
         Args:
             watchlist: optional name of the watchlist this ticker came from.
@@ -375,44 +433,63 @@ class AiService:
             indicator_priority=indicator_priority,
         )
 
-        # Set up conversation
-        session.add_system(system_prompt)
-        session.add_user(
-            f"Analyze {symbol} and provide a trading signal.\n\n"
-            f"Here is the current technical data:\n\n{context}\n\n"
-            f"Indicators requested for analysis: {', '.join(indicators_requested)}\n\n"
-            f"Provide your analysis with a JSON signal block."
+        # Enriched user message with analysis structure and focus guidance
+        user_message = build_analysis_user_message(
+            symbol=symbol,
+            context=context,
+            timeframes=list(timeframe_data.keys()),
+            indicators_requested=indicators_requested,
+            indicator_priority=indicator_priority,
         )
 
-        # Call Ollama with the user's selected model
+        # Set up conversation
+        session.add_system(system_prompt)
+        session.add_user(user_message)
+
+        # ── Call 1: Narrative analysis (free text) ──
         response_text = await self.chat(session.get_messages(), model=model)
         session.add_assistant(response_text)
 
-        # Parse signal — try to extract JSON block from response
-        raw_signal = parse_signal_from_response(response_text)
+        # ── Call 2: Signal extraction (structured output) ──
+        raw_signal = None
 
-        if not raw_signal:
-            # The model didn't include a properly formatted JSON block.
-            # This happens occasionally with quantized models. Ask it to retry.
-            log.info(
-                "No signal JSON found in response for %s — requesting reformat...",
-                symbol,
-            )
-            session.add_user(
-                "Your response didn't include the JSON signal block I need. "
-                "Please provide ONLY the JSON block now, wrapped in ```json ... ```, "
-                "following the exact format specified. Include all required fields: "
-                "direction, confidence, description, entry, stop, target, "
-                "confirmations, cautions, meta."
-            )
-            retry_response = await self.chat(session.get_messages(), model=model)
-            session.add_assistant(retry_response)
-            raw_signal = parse_signal_from_response(retry_response)
+        try:
+            # Add the signal extraction prompt to the conversation
+            signal_messages = session.get_messages() + [
+                {"role": "user", "content": SIGNAL_EXTRACTION_PROMPT}
+            ]
 
-            if raw_signal:
-                log.info("Signal parsed successfully on retry for %s", symbol)
-            else:
-                log.warning("Signal parse failed on retry for %s — showing text only", symbol)
+            raw_signal = await self.chat_structured(
+                signal_messages,
+                model=model,
+                json_schema=SIGNAL_JSON_SCHEMA,
+            )
+            log.info("Structured signal extracted for %s via Ollama format", symbol)
+        except (ValueError, ConnectionError, TimeoutError, RuntimeError) as e:
+            # Structured output failed — fall back to parsing from narrative
+            log.warning(
+                "Structured output failed for %s (%s) — falling back to regex parse",
+                symbol, e,
+            )
+            raw_signal = parse_signal_from_response(response_text)
+
+            if not raw_signal:
+                # Last resort: ask the model to produce JSON in free text
+                log.info("Regex parse also failed for %s — requesting reformat", symbol)
+                session.add_user(
+                    "Please provide a trading signal as a JSON block wrapped in "
+                    "```json ... ```. Include: direction, confidence, description, "
+                    "entry (price + note), stop (price + note), target (price + note), "
+                    "confirmations, cautions."
+                )
+                retry_response = await self.chat(session.get_messages(), model=model)
+                session.add_assistant(retry_response)
+                raw_signal = parse_signal_from_response(retry_response)
+
+        # Strip reasoning_steps from the signal before sending to frontend
+        # (it was for the model's chain-of-thought, not for display)
+        if raw_signal and "reasoning_steps" in raw_signal:
+            del raw_signal["reasoning_steps"]
 
         frontend_signal = signal_to_frontend_format(raw_signal) if raw_signal else None
         session.signal = frontend_signal

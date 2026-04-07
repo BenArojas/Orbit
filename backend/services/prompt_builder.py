@@ -1,22 +1,29 @@
 """
 Prompt builder — assembles structured context for AI analysis.
 
-This module handles three things:
+This module handles five things:
   1. Per-indicator formatting via a registration pattern (no if/elif chain)
   2. Dynamic system prompt that adapts to the enabled indicator set
   3. Watchlist-aware framing when the ticker comes from a specific watchlist
   4. Prompt length budget + graceful truncation
+  5. Structured user message builder (analysis guidance, timeframe weighting)
 
 Architecture:
   Each indicator has a formatter function registered in INDICATOR_FORMATTERS.
-  To add a new indicator (e.g., Fibonacci, Ichimoku), just write a new
-  format_xxx function and add it to the registry dict. No touching the
-  core builder logic.
+  To add a new indicator (e.g., Ichimoku), just write a new format_xxx
+  function and add it to the registry dict. No touching the core builder logic.
 
 Prompt budget:
   Smaller models (e2b, e4b) have limited context windows. We estimate
-  token count ≈ chars/3.5 and truncate the oldest timeframe data first
-  if the prompt exceeds the budget.
+  token count ≈ chars/2.8 (tuned for financial data density) and truncate
+  the oldest timeframe data first if the prompt exceeds the budget.
+
+Signal extraction:
+  The AI service uses a two-call approach:
+    Call 1 (narrative): free-text analysis with reasoning
+    Call 2 (signal): structured JSON via Ollama's format parameter
+  This guarantees valid JSON and lets the model reason before committing
+  to a signal (chain-of-thought before structured output).
 """
 
 import logging
@@ -33,13 +40,17 @@ log = logging.getLogger("parallax.prompt")
 
 # Default budget in estimated tokens. Ollama models vary from 2K to 128K
 # context, but the actual usable budget for the prompt + system + response
-# is much smaller. We target ~3000 tokens for the indicator context as a
+# is much smaller. We target ~3500 tokens for the indicator context as a
 # safe default (leaves room for system prompt, chat history, and model
 # output). Per-model overrides live in _MODEL_BUDGETS below.
-DEFAULT_CONTEXT_BUDGET = 3000
+DEFAULT_CONTEXT_BUDGET = 3500
 
-# Approximate chars per token for English text (conservative estimate)
-CHARS_PER_TOKEN = 3.5
+# Approximate chars per token for financial data.
+# Standard English prose is ~4 chars/token, but financial data is denser:
+# prices like "$185.20", indicator values, percentages — these tokenize
+# at roughly 1 token per 2-3 chars. Using 2.8 prevents underestimating
+# token usage that leads to silent context overflow on smaller models.
+CHARS_PER_TOKEN = 2.8
 
 
 def _estimate_tokens(text: str) -> int:
@@ -69,22 +80,22 @@ def _estimate_tokens(text: str) -> int:
 # matching doesn't collapse "27b" onto "7b". "e2b" / "e4b" are listed early
 # because they're unambiguous two-character tokens unique to tiny Gemma.
 _MODEL_BUDGETS: list[tuple[str, int]] = [
-    # Tiniest Gemma variants
-    ("e2b",   1500),
-    ("e4b",   2500),
+    # Tiniest Gemma variants — aggressive truncation, keep only essentials
+    ("e2b",   1800),
+    ("e4b",   2800),
     # Heavyweight first (so "70b" hits before "7b", "27b" before "7b", etc.)
-    ("72b",   8000),
-    ("70b",   8000),
-    ("32b",   6000),
-    ("31b",   6000),
-    ("27b",   4500),
-    ("26b",   4500),
-    ("14b",   3500),
-    ("13b",   3500),
+    ("72b",   9500),
+    ("70b",   9500),
+    ("32b",   7000),
+    ("31b",   7000),
+    ("27b",   5500),
+    ("26b",   5500),
+    ("14b",   4000),
+    ("13b",   4000),
     # 7-8B class comes last because its tokens are short substrings of
     # the larger-tier tokens above.
-    ("8b",    3000),
-    ("7b",    3000),
+    ("8b",    3500),
+    ("7b",    3500),
 ]
 
 
@@ -478,40 +489,36 @@ def truncate_context(
 #  Dynamic System Prompt
 # ═══════════════════════════════════════════════════════════════
 
-# Base system prompt — always present
-_SYSTEM_BASE = """You are Parallax AI, an expert technical analysis assistant for experienced stock and ETF traders. You analyze charts using technical indicators and provide actionable trading signals.
+# Base system prompt — always present.
+#
+# Structure: narrative analysis first, then the signal is extracted
+# separately via Ollama structured output. The model never needs to
+# produce JSON in free text — that's handled by a second focused call.
+_SYSTEM_BASE = """You are Parallax AI, an expert technical analysis assistant for experienced US equity and ETF traders. You analyze charts using technical indicators and provide actionable trading signals.
 
 Your role:
-- Analyze indicator data and identify trading setups
+- Analyze the provided indicator data and identify trading setups
 - Provide clear direction (STRONG LONG, LONG, NEUTRAL, SHORT, STRONG SHORT)
-- Give specific entry, stop-loss, and target levels
+- Give specific entry, stop-loss, and target levels with reasoning
 - List confirmation factors and caution flags
 - Be concise and data-driven — no fluff, no disclaimers about "not financial advice"
 
-When providing a trading signal, you MUST respond with a JSON block in this exact format:
+DIRECTION CRITERIA — use these thresholds consistently:
+- STRONG LONG: 3+ primary indicators align bullish, no major cautions, trend confirmed by ADX > 25 or strong EMA stack
+- LONG: Majority of indicators lean bullish, minor cautions acceptable
+- NEUTRAL: Mixed signals, no clear edge, or conflicting timeframes
+- SHORT: Majority of indicators lean bearish, minor bullish outliers acceptable
+- STRONG SHORT: 3+ primary indicators align bearish, no major bullish signals, trend confirmed
 
-```json
-{
-  "direction": "STRONG LONG" | "LONG" | "NEUTRAL" | "SHORT" | "STRONG SHORT",
-  "confidence": <number 0-100>,
-  "description": "<1-2 sentence summary of the setup>",
-  "entry": {"price": <number>, "note": "<brief note>"},
-  "stop": {"price": <number>, "note": "<brief note>"},
-  "target": {"price": <number>, "note": "<brief note>"},
-  "confirmations": ["<factor 1>", "<factor 2>", ...],
-  "cautions": ["<risk 1>", "<risk 2>", ...],
-  "meta": {
-    "risk_reward": "<e.g. 2.5:1>",
-    "score": "<e.g. 7/10>",
-    "adx_trend": "<e.g. Strong (28.5)>",
-    "volume_signal": "<e.g. Above avg>"
-  }
-}
-```
+RESPONSE FORMAT:
+1. Start with a 2-3 paragraph analysis explaining what the indicators show
+2. Structure your analysis: higher timeframe trend first, then lower timeframe entry timing
+3. Be explicit about entry price, stop-loss, and target with brief reasoning for each
+4. List what confirms the setup and what could go wrong
 
-After the JSON block, provide a brief analysis paragraph explaining your reasoning.
+After your analysis, the system will ask you to produce a structured signal separately — you do NOT need to include JSON in your narrative response.
 
-For follow-up questions, respond conversationally — only include a JSON signal block if the user asks for an updated signal."""
+For follow-up questions, respond conversationally about the chart and setup."""
 
 
 # Per-indicator analysis hints — appended to system prompt when that
@@ -645,7 +652,7 @@ WATCHLIST_FRAMING: dict[str, str] = {
 def _build_watchlist_framing(watchlist: str) -> str:
     """
     Match a watchlist name to a known archetype and return framing text.
-    Returns None if the watchlist doesn't match any known pattern.
+    Returns empty string if the watchlist doesn't match any known pattern.
     """
     lower = watchlist.lower()
     for pattern, framing in WATCHLIST_FRAMING.items():
@@ -659,3 +666,187 @@ def _build_watchlist_framing(watchlist: str) -> str:
         f"The trader has placed it in this list intentionally — consider what "
         f"the watchlist name implies about their thesis."
     )
+
+
+# ═══════════════════════════════════════════════════════════════
+#  User Message Builder (Task 5 — enriched analysis request)
+# ═══════════════════════════════════════════════════════════════
+
+# Timeframe hierarchy — higher timeframes carry more weight for trend,
+# lower timeframes for entry timing. Used to structure the analysis request.
+_TIMEFRAME_WEIGHT: dict[str, int] = {
+    "1H": 1, "4H": 2, "D": 3, "W": 4, "M": 5,
+}
+
+
+def build_analysis_user_message(
+    symbol: str,
+    context: str,
+    timeframes: list[str],
+    indicators_requested: list[str],
+    indicator_priority: Optional[list[str]] = None,
+) -> str:
+    """
+    Build the user message for the initial analysis request.
+
+    This is the core prompt the model receives alongside the system prompt
+    and indicator context. It provides:
+      1. What to analyze (symbol + context)
+      2. How to structure the analysis (higher TF → lower TF flow)
+      3. What to focus on (indicators, priority if set)
+      4. What "done" looks like (specific levels, actionable output)
+    """
+    # Determine primary timeframe (highest in hierarchy among selected)
+    sorted_tfs = sorted(timeframes, key=lambda tf: _TIMEFRAME_WEIGHT.get(tf, 0), reverse=True)
+    primary_tf = sorted_tfs[0] if sorted_tfs else "D"
+    entry_tf = sorted_tfs[-1] if len(sorted_tfs) > 1 else primary_tf
+
+    parts = [
+        f"Analyze {symbol} across the provided timeframes and identify the best trading setup.",
+        "",
+        f"Here is the current technical data:\n\n{context}",
+        "",
+    ]
+
+    # Analysis structure guidance
+    if len(timeframes) > 1:
+        parts.append(
+            f"ANALYSIS STRUCTURE:\n"
+            f"1. Start with the {primary_tf} timeframe to establish the dominant trend direction\n"
+            f"2. Then examine {entry_tf} for precise entry timing and immediate price action\n"
+            f"3. Note any conflicts between timeframes — if {primary_tf} is bullish but {entry_tf} "
+            f"shows short-term weakness, address whether it's a pullback opportunity or a warning"
+        )
+    else:
+        parts.append(
+            f"ANALYSIS STRUCTURE:\n"
+            f"Focus on the {primary_tf} timeframe. Identify the trend, key support/resistance "
+            f"levels, and where price sits relative to them."
+        )
+
+    # Indicator focus
+    parts.append("")
+    indicator_list = ", ".join(indicators_requested)
+    parts.append(f"Indicators provided: {indicator_list}")
+
+    if indicator_priority:
+        display_names = []
+        for name in indicator_priority:
+            if name.startswith("ema_"):
+                display_names.append(f"EMA {name.split('_')[1]}")
+            else:
+                display_names.append(name.upper())
+        priority_text = " > ".join(display_names)
+        parts.append(f"Trader's priority ranking: {priority_text}")
+        parts.append("Weigh the first-listed indicators most heavily.")
+
+    # What "done" looks like — define the output clearly
+    parts.append("")
+    parts.append(
+        "REQUIRED OUTPUT:\n"
+        "- Clear direction call with reasoning\n"
+        "- Specific entry price with rationale (e.g., pullback to EMA 21, break above resistance)\n"
+        "- Stop-loss price with rationale (e.g., below swing low, 1.5x ATR)\n"
+        "- Target price with rationale (e.g., next resistance, Fibonacci extension)\n"
+        "- 2-4 confirmation factors supporting the setup\n"
+        "- 1-3 caution flags or risks to watch"
+    )
+
+    return "\n".join(parts)
+
+
+# ═══════════════════════════════════════════════════════════════
+#  Signal Extraction Prompt + Schema (Ollama structured output)
+# ═══════════════════════════════════════════════════════════════
+#
+# After the model produces a free-text narrative analysis, we make a
+# second focused call with Ollama's `format` parameter to extract a
+# structured signal. This guarantees valid JSON and uses the
+# reasoning_steps-first pattern from CoT research: the model reasons
+# before committing to structured fields.
+
+SIGNAL_EXTRACTION_PROMPT = (
+    "Based on your analysis above, produce a structured trading signal. "
+    "Think step by step: first summarize your reasoning, then fill in "
+    "the signal fields."
+)
+
+# JSON schema for Ollama's `format` parameter.
+# reasoning_steps MUST be first — the model generates it before the
+# structured signal fields, giving it chain-of-thought space.
+SIGNAL_JSON_SCHEMA: dict = {
+    "type": "object",
+    "properties": {
+        "reasoning_steps": {
+            "type": "string",
+            "description": (
+                "Think step by step before filling the signal. "
+                "Summarize what the indicators show, which direction they favor, "
+                "and what price levels matter. End with: "
+                "'The signal is <DIRECTION> with <CONFIDENCE>% confidence.'"
+            ),
+        },
+        "direction": {
+            "type": "string",
+            "enum": ["STRONG LONG", "LONG", "NEUTRAL", "SHORT", "STRONG SHORT"],
+            "description": "Trading direction based on the analysis",
+        },
+        "confidence": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 100,
+            "description": "Confidence level 0-100",
+        },
+        "description": {
+            "type": "string",
+            "description": "1-2 sentence summary of the setup",
+        },
+        "entry": {
+            "type": "object",
+            "properties": {
+                "price": {"type": "number"},
+                "note": {"type": "string"},
+            },
+            "required": ["price", "note"],
+        },
+        "stop": {
+            "type": "object",
+            "properties": {
+                "price": {"type": "number"},
+                "note": {"type": "string"},
+            },
+            "required": ["price", "note"],
+        },
+        "target": {
+            "type": "object",
+            "properties": {
+                "price": {"type": "number"},
+                "note": {"type": "string"},
+            },
+            "required": ["price", "note"],
+        },
+        "confirmations": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "2-4 factors that confirm the setup",
+        },
+        "cautions": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "1-3 risks or warning signs",
+        },
+        "meta": {
+            "type": "object",
+            "properties": {
+                "risk_reward": {"type": "string", "description": "e.g. 2.5:1"},
+                "score": {"type": "string", "description": "e.g. 7/10"},
+                "adx_trend": {"type": "string", "description": "e.g. Strong (28.5)"},
+                "volume_signal": {"type": "string", "description": "e.g. Above avg"},
+            },
+        },
+    },
+    "required": [
+        "reasoning_steps", "direction", "confidence", "description",
+        "entry", "stop", "target", "confirmations", "cautions",
+    ],
+}
