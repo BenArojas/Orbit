@@ -17,6 +17,8 @@ export {
   useChartStore,
   type Timeframe,
   type IndicatorId,
+  type FibDrawMode,
+  type FibDrawPoint,
 } from "./chart";
 export {
   useWatchlistStore,

@@ -7,7 +7,8 @@
  *   - SubChartPanel (4.3) — RSI, MACD, Stochastic, OBV, ADX below chart
  *   - IndicatorToolbar (4.6) — pill toggles in the toolbar
  *   - AiChatPanel (4.9) — full AI panel (config, signal, chat, setup guide)
- *   - Fibonacci (4.4–4.5) — TODO
+ *   - FibonacciOverlay (4.4) — auto-detected fib levels on chart + FibScoreCard in AI panel
+ *   - FibDrawMode (4.5) — two-click manual fib drawing with ghost preview
  *
  * Layout from mockup: grid with chart area + 340px AI panel
  *   Left: toolbar (symbol input, timeframe bar, indicator pills),
@@ -56,6 +57,9 @@ export default function AnalysisPage() {
     setActiveConid,
     setActiveSymbol,
     setTimeframe,
+    fibDrawMode,
+    enterFibDrawMode,
+    exitFibDrawMode,
   } = useChartStore();
 
   const [symbolInput, setSymbolInput] = useState(activeSymbol || "");
@@ -143,6 +147,34 @@ export default function AnalysisPage() {
 
           {/* Indicator pills (task 4.6 — Ofek's IndicatorToolbar) */}
           <IndicatorToolbar />
+
+          {/* Fib draw mode buttons (task 4.5) */}
+          <div className="mx-1 h-5 w-px bg-[var(--border)]" />
+          {fibDrawMode ? (
+            <button
+              onClick={exitFibDrawMode}
+              className="rounded-full border border-[var(--clr-red)] bg-[rgba(255,68,102,0.1)] px-2.5 py-1 font-data text-[10px] font-medium text-[var(--clr-red)] transition-all hover:bg-[rgba(255,68,102,0.2)]"
+            >
+              Cancel Draw
+            </button>
+          ) : (
+            <>
+              <button
+                onClick={() => enterFibDrawMode("retracement")}
+                className="rounded-full border border-[var(--border)] px-2.5 py-1 font-data text-[10px] font-medium text-[var(--text-3)] transition-all hover:border-[var(--clr-green)] hover:text-[var(--clr-green)]"
+                title="Draw Fibonacci retracement — click two points on the chart"
+              >
+                Draw Fib
+              </button>
+              <button
+                onClick={() => enterFibDrawMode("extension")}
+                className="rounded-full border border-[var(--border)] px-2.5 py-1 font-data text-[10px] font-medium text-[var(--text-3)] transition-all hover:border-[var(--clr-purple)] hover:text-[var(--clr-purple)]"
+                title="Draw Fibonacci extension — click two points on the chart"
+              >
+                Draw Ext
+              </button>
+            </>
+          )}
         </div>
 
         {/* Main chart */}
@@ -157,6 +189,8 @@ export default function AnalysisPage() {
               fibonacci={fibonacci}
               activeIndicators={activeIndicators}
               liveTick={liveTick}
+              conid={activeConid}
+              timeframe={timeframe}
             />
           ) : (
             <div className="flex h-full items-center justify-center">
@@ -200,7 +234,7 @@ export default function AnalysisPage() {
       </div>
 
       {/* ── Right: AI Panel ── */}
-      <AiChatPanel activeConid={activeConid} activeSymbol={activeSymbol} />
+      <AiChatPanel activeConid={activeConid} activeSymbol={activeSymbol} fibonacci={fibonacci} />
     </div>
   );
 }

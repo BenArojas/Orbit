@@ -232,9 +232,11 @@ app.include_router(ws_router)
 
 from routers.triggers import router as triggers_router
 from routers.ai import router as ai_router
+from routers.fibonacci import router as fibonacci_router
 
 app.include_router(triggers_router)
 app.include_router(ai_router)
+app.include_router(fibonacci_router)
 
 # Future routers (uncomment as they're built):
 # from routers.screener import router as screener_router

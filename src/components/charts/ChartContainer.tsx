@@ -31,6 +31,9 @@ import { useEffect, useRef } from "react";
 import type { CandleData, IndicatorResult, FibonacciResult } from "@/lib/api";
 import type { IndicatorId } from "@/store/chart";
 import { addIndicatorOverlays, removeIndicatorOverlays, type OverlayState } from "./indicatorOverlays";
+import { addFibonacciOverlay, removeFibonacciOverlay, type FibOverlayState } from "./FibonacciOverlay";
+import FibDrawMode from "./FibDrawMode";
+import type { Timeframe } from "@/store/chart";
 
 // ── Theme colors (match styles.css) ──────────────────────────
 
@@ -57,6 +60,10 @@ export interface ChartContainerProps {
   activeIndicators: Set<IndicatorId>;
   /** Called when a live tick updates the last candle */
   liveTick?: { last: number; volume: number; high: number; low: number } | null;
+  /** Active instrument conid (for fib draw-mode lock) */
+  conid?: number | null;
+  /** Current timeframe string (for fib draw-mode lock) */
+  timeframe?: Timeframe;
 }
 
 // ── Component ────────────────────────────────────────────────
@@ -64,15 +71,18 @@ export interface ChartContainerProps {
 export default function ChartContainer({
   candles,
   indicators,
-  fibonacci: _fibonacci, // Used by FibonacciOverlay in task 4.4
+  fibonacci,
   activeIndicators,
   liveTick,
+  conid = null,
+  timeframe = "1D",
 }: ChartContainerProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const candleSeriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
   const volumeSeriesRef = useRef<ISeriesApi<"Histogram"> | null>(null);
   const overlayStateRef = useRef<OverlayState>({});
+  const fibOverlayRef = useRef<FibOverlayState>([]);
 
   // ── Create chart instance ──────────────────────────────────
 
@@ -154,6 +164,8 @@ export default function ChartContainer({
       resizeObserver.disconnect();
       removeIndicatorOverlays(chart, overlayStateRef.current);
       overlayStateRef.current = {};
+      removeFibonacciOverlay(chart, fibOverlayRef.current);
+      fibOverlayRef.current = [];
       chart.remove();
       chartRef.current = null;
       candleSeriesRef.current = null;
@@ -232,11 +244,37 @@ export default function ChartContainer({
     );
   }, [indicators, activeIndicators]);
 
+  // ── Fibonacci overlay ──────────────────────────────────────
+
+  useEffect(() => {
+    const chart = chartRef.current;
+    if (!chart) return;
+
+    // Remove previous fib lines
+    removeFibonacciOverlay(chart, fibOverlayRef.current);
+    fibOverlayRef.current = [];
+
+    // Only render if fibonacci toggle is active AND we have fib data
+    if (!activeIndicators.has("fibonacci") || !fibonacci || candles.length === 0) {
+      return;
+    }
+
+    fibOverlayRef.current = addFibonacciOverlay(chart, fibonacci, candles);
+  }, [fibonacci, activeIndicators, candles]);
+
   return (
     <div
       ref={containerRef}
       className="relative h-full w-full"
       style={{ minHeight: 300 }}
-    />
+    >
+      <FibDrawMode
+        chart={chartRef.current}
+        candleSeries={candleSeriesRef.current}
+        candles={candles}
+        conid={conid}
+        timeframe={timeframe}
+      />
+    </div>
   );
 }

@@ -305,34 +305,80 @@ class IndicatorResult(BaseModel):
 
 class FibonacciLevel(BaseModel):
     """
-    A single Fibonacci retracement level.
+    A single Fibonacci level (retracement OR extension).
 
-    Fibonacci levels are horizontal lines on a chart at specific percentages
-    between a swing high (peak) and swing low (bottom). Traders use them
-    to predict where price might bounce or reverse.
+    Levels are horizontal lines on a chart at specific percentages of a
+    swing range. Traders watch them for reactions (bounces, rejections,
+    breakouts).
 
-    Standard levels: 0%, 23.6%, 38.2%, 50%, 61.8%, 78.6%, 100%
+    Retracement levels used in Parallax: 0, 0.382, 0.5, 0.618, 0.65, 0.716, 1.0.
+    The 0.618 / 0.65 / 0.716 band is the "golden pocket" — the primary
+    reaction zone for most setups. 0.236 and 0.786 are intentionally NOT
+    rendered — they are not part of Ofek's methodology.
+
+    Extension levels: 1.272, 1.414, 1.5, 1.618, 1.786, 2, 2.618, 3, 3.618, 4, 4.618.
     """
-    level: float        # The percentage (0.0, 0.236, 0.382, 0.5, 0.618, 0.786, 1.0)
-    price: float        # The actual price at this level
-    label: str          # Display label (e.g., "61.8%")
+    level: float              # Ratio (e.g., 0.618, 1.618)
+    price: float              # Actual price at this level
+    label: str                # Display label (e.g., "0.618", "Golden Pocket")
+    kind: str                 # "retracement" or "extension"
+    golden_pocket: bool = False  # True for 0.618 / 0.65 / 0.716
+
+
+class FibonacciCandidate(BaseModel):
+    """
+    A swing candidate the algorithm considered.
+
+    The top-scoring candidate becomes the active fib; lower-scoring
+    candidates are returned for transparency (so the LLM and the user
+    can see what else was in play).
+    """
+    swing_high: float
+    swing_low: float
+    swing_high_time: int
+    swing_low_time: int
+    direction: str                # "up" or "down"
+    score: float                  # 0-100 composite confidence
+    swing_clarity: float          # 0-1 — clean V-shape vs choppy
+    multi_touch_count: int        # touches of golden pocket levels after swing
+    rejection_intensity: float    # 0-1 — max reaction strength at fib levels
+    stretched_penalty: float      # 0-1 — 0=far from price (penalized), 1=close
+    recency: float                # 0-1 — 1=most recent, 0=oldest
+    is_nested: bool = False       # True if entirely inside a higher-scoring candidate
+    parent_index: Optional[int] = None  # Index of parent candidate if nested
 
 
 class FibonacciResult(BaseModel):
     """
-    Fibonacci retracement analysis for a stock.
+    Fibonacci analysis for one timeframe.
 
-    swing_high / swing_low:  The peak and bottom the levels are drawn between
-    swing_high_time / swing_low_time:  When those peaks occurred
-    levels:  The calculated price levels
-    trend:   "up" (low→high) or "down" (high→low)
+    The service auto-detects the highest-scoring swing, computes BOTH
+    retracement and extension levels from it, and reports every candidate
+    swing it considered along with the full scoring breakdown. The LLM
+    reads this to build narrative analysis; the frontend renders the
+    active fib on the chart.
+
+    This result is fib-only — it does NOT reach into EMAs, watchlists, or
+    other indicators. Cross-indicator confluence (fib sitting on an EMA,
+    watchlist framing) happens in the AI prompt layer, not here.
     """
+    tool_mode: str = "retracement"  # "retracement" or "extension" (which is primary)
     swing_high: float
     swing_low: float
-    swing_high_time: int         # Unix timestamp
-    swing_low_time: int          # Unix timestamp
-    levels: list[FibonacciLevel]
-    trend: str                   # "up" or "down"
+    swing_high_time: int            # Unix timestamp (seconds)
+    swing_low_time: int             # Unix timestamp (seconds)
+    direction: str                  # "up" (low→high) or "down" (high→low)
+    levels: list[FibonacciLevel]         # Retracement levels
+    extensions: list[FibonacciLevel]     # Extension levels
+    score: float                    # 0-100 confidence of the active swing
+    swing_clarity: float            # 0-1
+    timeframe_clarity: str          # "clean" or "choppy"
+    candidates: list[FibonacciCandidate]  # All considered swings (sorted by score desc)
+    convergence_zones: list[dict] = []    # Cross-TF fib-to-fib convergences (populated post-hoc)
+    is_nested: bool = False         # Active fib is nested inside a larger parent
+    parent_fib_id: Optional[str] = None   # Future hook for locked-parent linking
+    reasoning: str                  # Human-readable explanation for the LLM
+    source: str = "auto"            # "auto", "manual", or "locked"
 
 
 class IndicatorComputeResponse(BaseModel):
@@ -348,6 +394,42 @@ class IndicatorComputeResponse(BaseModel):
     candles: list[CandleData]                          # The raw price data used
     indicators: list[IndicatorResult]                  # Computed indicator values
     fibonacci: Optional[FibonacciResult] = None        # Fibonacci levels (if requested)
+
+
+# ═══════════════════════════════════════════════════════════════
+#  Fibonacci Locked Drawings (Phase 4 — task 4.4)
+# ═══════════════════════════════════════════════════════════════
+
+
+class LockFibonacciRequest(BaseModel):
+    """
+    Lock a fib drawing so it persists across app restarts and shows on
+    ALL timeframes (per Ofek's spec: "locked fibs show on all TFs").
+    """
+    conid: int
+    timeframe: str                    # Timeframe this fib was drawn on
+    tool_type: str = "retracement"    # "retracement" or "extension"
+    swing_high_price: float
+    swing_high_time: int
+    swing_low_price: float
+    swing_low_time: int
+    direction: str                    # "up" or "down"
+    user_note: Optional[str] = None   # Optional annotation
+
+
+class LockedFibonacciResponse(BaseModel):
+    """A locked fib drawing as returned from the DB."""
+    id: int
+    conid: int
+    timeframe: str
+    tool_type: str
+    swing_high_price: float
+    swing_high_time: int
+    swing_low_price: float
+    swing_low_time: int
+    direction: str
+    user_note: Optional[str] = None
+    locked_at: str
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -444,6 +526,10 @@ class AnalyzeRequest(BaseModel):
     The frontend sends this when the user clicks "Run Analysis" in the AI panel.
     It includes which timeframes and indicators to analyze.
 
+    watchlist is optional — not every ticker comes from a watchlist.
+    When present, the prompt builder adds watchlist-specific framing
+    to guide the AI's analysis style (e.g., RS Leaders → trend continuation).
+
     Example: "Analyze AAPL on 4H and D timeframes using RSI, MACD, EMA Stack"
     """
     conid: int                                          # IBKR contract ID
@@ -457,6 +543,8 @@ class AnalyzeRequest(BaseModel):
         description="Indicator names to include in analysis",
     )
     session_id: Optional[str] = None                    # Resume existing session or None for new
+    watchlist: Optional[str] = None                     # Originating watchlist name (if any)
+    indicator_priority: Optional[list[str]] = None      # Ordered list — first = most important. None = let AI decide.
 
 
 class ChatMessage(BaseModel):

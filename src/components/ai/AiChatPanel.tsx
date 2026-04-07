@@ -27,6 +27,8 @@ import AiConfigPanel, { type AiTimeframe, type AiIndicator, type AiMode } from "
 import ActionSignalCard from "./ActionSignalCard";
 import AiSetupGuide from "./AiSetupGuide";
 import AiModelSelector from "./AiModelSelector";
+import FibScoreCard from "./FibScoreCard";
+import type { FibonacciResult } from "@/lib/api";
 
 /* ── Types ── */
 
@@ -35,6 +37,8 @@ interface AiChatPanelProps {
   activeConid: number | null;
   /** Currently active symbol string */
   activeSymbol: string;
+  /** Current Fibonacci auto-detection result (null if not computed or disabled) */
+  fibonacci?: FibonacciResult | null;
 }
 
 /* ── Message bubble sub-component ── */
@@ -76,7 +80,7 @@ function StreamingBubble({ content }: { content: string }) {
 
 /* ── Main component ── */
 
-export default function AiChatPanel({ activeConid, activeSymbol }: AiChatPanelProps) {
+export default function AiChatPanel({ activeConid, activeSymbol, fibonacci }: AiChatPanelProps) {
   const [inputValue, setInputValue] = useState("");
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
@@ -245,6 +249,13 @@ export default function AiChatPanel({ activeConid, activeSymbol }: AiChatPanelPr
 
           {/* Signal card */}
           <ActionSignalCard signal={signal} />
+
+          {/* Fibonacci score card (below signal, above chat) */}
+          {fibonacci && (
+            <div className="px-3 pb-1">
+              <FibScoreCard fibonacci={fibonacci} />
+            </div>
+          )}
 
           {/* Chat messages */}
           <div className="flex flex-1 flex-col overflow-hidden">

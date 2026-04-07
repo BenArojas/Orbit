@@ -171,15 +171,51 @@ export interface FibonacciLevel {
   level: number;
   price: number;
   label: string;
+  kind: "retracement" | "extension";
+  golden_pocket: boolean;
 }
 
-export interface FibonacciResult {
+export interface FibonacciCandidate {
   swing_high: number;
   swing_low: number;
   swing_high_time: number;
   swing_low_time: number;
+  direction: "up" | "down";
+  score: number;
+  swing_clarity: number;
+  multi_touch_count: number;
+  rejection_intensity: number;
+  stretched_penalty: number;
+  recency: number;
+  is_nested: boolean;
+  parent_index: number | null;
+}
+
+export interface FibonacciConvergenceZone {
+  price: number;
+  timeframes: string[];
+}
+
+export interface FibonacciResult {
+  tool_mode: "retracement" | "extension";
+  swing_high: number;
+  swing_low: number;
+  swing_high_time: number;
+  swing_low_time: number;
+  direction: "up" | "down";
+  /** Retracement levels (always computed) */
   levels: FibonacciLevel[];
-  trend: "up" | "down";
+  /** Extension levels (always computed) */
+  extensions: FibonacciLevel[];
+  score: number;
+  swing_clarity: number;
+  timeframe_clarity: "clean" | "choppy";
+  candidates: FibonacciCandidate[];
+  convergence_zones: FibonacciConvergenceZone[];
+  is_nested: boolean;
+  parent_fib_id: string | null;
+  reasoning: string;
+  source: "auto" | "manual" | "locked";
 }
 
 export interface IndicatorComputeResponse {
@@ -188,6 +224,34 @@ export interface IndicatorComputeResponse {
   candles: CandleData[];
   indicators: IndicatorResult[];
   fibonacci: FibonacciResult | null;
+}
+
+// ── Locked Fibonacci Drawings (Phase 4 — task 4.4) ──────
+
+export interface LockFibonacciRequest {
+  conid: number;
+  timeframe: string;
+  tool_type: "retracement" | "extension";
+  swing_high_price: number;
+  swing_high_time: number;
+  swing_low_price: number;
+  swing_low_time: number;
+  direction: "up" | "down";
+  user_note?: string;
+}
+
+export interface LockedFibonacciResponse {
+  id: number;
+  conid: number;
+  timeframe: string;
+  tool_type: "retracement" | "extension";
+  swing_high_price: number;
+  swing_high_time: number;
+  swing_low_price: number;
+  swing_low_time: number;
+  direction: "up" | "down";
+  user_note: string | null;
+  locked_at: string;
 }
 
 // ── Sectors (Phase 3 — tasks 3.3, 3.4) ──────────────────
@@ -250,6 +314,10 @@ export interface AnalyzeRequest {
   timeframes: string[];
   indicators: string[];
   session_id?: string;
+  /** Originating watchlist name (if any). Adds context to the AI prompt. */
+  watchlist?: string;
+  /** Ordered indicator priority — first = most important. Omit to let AI decide. */
+  indicator_priority?: string[];
 }
 
 export interface ChatRequest {
@@ -460,4 +528,14 @@ export const api = {
 
   aiChat: (req: ChatRequest) =>
     request<ChatResponse>("POST", "/ai/chat", req),
+
+  // Fibonacci Locks (Phase 4)
+  lockFibonacci: (req: LockFibonacciRequest) =>
+    request<LockedFibonacciResponse>("POST", "/fibonacci/lock", req),
+
+  unlockFibonacci: (id: number) =>
+    request<{ deleted: boolean; id: number }>("DELETE", `/fibonacci/lock/${id}`),
+
+  getLockedFibs: (conid: number) =>
+    request<LockedFibonacciResponse[]>("GET", `/fibonacci/locks/${conid}`),
 } as const;

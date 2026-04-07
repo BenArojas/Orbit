@@ -222,6 +222,34 @@ class DatabaseService:
 
             CREATE INDEX IF NOT EXISTS idx_instruments_symbol
                 ON instruments(symbol);
+
+            -- ─── Locked Fibonacci Drawings ─────────────────────────
+            -- When the user "locks" a fib drawing, it persists across
+            -- app restarts and renders on ALL timeframes (per Ofek's
+            -- spec). Unlocked fibs are ephemeral — they live only in
+            -- the frontend state and get recomputed on chart load.
+            --
+            -- conid + timeframe + tool_type + swing pair uniquely
+            -- identifies a locked fib. The UNIQUE constraint prevents
+            -- accidentally locking the exact same swing twice.
+            CREATE TABLE IF NOT EXISTS locked_fibonacci_drawings (
+                id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+                conid              INTEGER NOT NULL,
+                timeframe          TEXT NOT NULL,          -- "1D", "1W", "1M"
+                tool_type          TEXT NOT NULL DEFAULT 'retracement', -- "retracement" | "extension"
+                swing_high_price   REAL NOT NULL,
+                swing_high_time    INTEGER NOT NULL,       -- Unix seconds
+                swing_low_price    REAL NOT NULL,
+                swing_low_time     INTEGER NOT NULL,       -- Unix seconds
+                direction          TEXT NOT NULL,           -- "up" | "down"
+                user_note          TEXT,                    -- Optional user annotation
+                locked_at          TEXT DEFAULT (datetime('now')),
+
+                UNIQUE(conid, timeframe, tool_type, swing_high_time, swing_low_time)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_locked_fibs_conid
+                ON locked_fibonacci_drawings(conid);
         """)
         self._conn.commit()
         log.info("Database tables verified/created.")
@@ -620,6 +648,88 @@ class DatabaseService:
                WHERE symbol LIKE ? OR company_name LIKE ?
                ORDER BY symbol LIMIT 20""",
             (pattern, pattern),
+        )
+
+    # ── Locked Fibonacci CRUD ─────────────────────────────────
+
+    async def save_locked_fib(
+        self,
+        conid: int,
+        timeframe: str,
+        tool_type: str,
+        swing_high_price: float,
+        swing_high_time: int,
+        swing_low_price: float,
+        swing_low_time: int,
+        direction: str,
+        user_note: str | None = None,
+    ) -> int:
+        """
+        Lock a fib drawing. Returns the new row ID.
+
+        If the exact same swing (conid + timeframe + tool_type + timestamps)
+        is already locked, the INSERT is rejected by the UNIQUE constraint
+        and we return the existing row's ID.
+        """
+        def _insert() -> int:
+            try:
+                cursor = self._execute(
+                    """INSERT INTO locked_fibonacci_drawings
+                       (conid, timeframe, tool_type, swing_high_price, swing_high_time,
+                        swing_low_price, swing_low_time, direction, user_note)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (conid, timeframe, tool_type, swing_high_price, swing_high_time,
+                     swing_low_price, swing_low_time, direction, user_note),
+                )
+                assert self._conn is not None
+                self._conn.commit()
+                assert cursor.lastrowid is not None
+                return cursor.lastrowid
+            except sqlite3.IntegrityError:
+                # Already locked — find and return the existing row
+                row = self._fetchone(
+                    """SELECT id FROM locked_fibonacci_drawings
+                       WHERE conid=? AND timeframe=? AND tool_type=?
+                         AND swing_high_time=? AND swing_low_time=?""",
+                    (conid, timeframe, tool_type, swing_high_time, swing_low_time),
+                )
+                return row["id"] if row else -1
+
+        return await asyncio.to_thread(_insert)
+
+    async def delete_locked_fib(self, lock_id: int) -> bool:
+        """Unlock (delete) a locked fib by its row ID."""
+        def _delete() -> bool:
+            cursor = self._execute(
+                "DELETE FROM locked_fibonacci_drawings WHERE id = ?", (lock_id,)
+            )
+            assert self._conn is not None
+            self._conn.commit()
+            return cursor.rowcount > 0
+
+        return await asyncio.to_thread(_delete)
+
+    async def list_locked_fibs(self, conid: int) -> list[dict]:
+        """
+        Get all locked fib drawings for a given instrument (by conid).
+
+        Locked fibs show on ALL timeframes, so the frontend fetches them
+        once per instrument — not per timeframe.
+        """
+        return await asyncio.to_thread(
+            self._fetchall,
+            """SELECT * FROM locked_fibonacci_drawings
+               WHERE conid = ?
+               ORDER BY locked_at DESC""",
+            (conid,),
+        )
+
+    async def get_locked_fib(self, lock_id: int) -> dict | None:
+        """Get a single locked fib by ID."""
+        return await asyncio.to_thread(
+            self._fetchone,
+            "SELECT * FROM locked_fibonacci_drawings WHERE id = ?",
+            (lock_id,),
         )
 
     # ── Seed default settings ────────────────────────────────

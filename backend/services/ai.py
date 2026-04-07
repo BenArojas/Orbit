@@ -28,7 +28,7 @@ from typing import AsyncIterator, Optional
 import httpx
 
 from config import OLLAMA_HOST
-from models import CandleData, IndicatorResult, FibonacciResult
+from models import CandleData
 
 log = logging.getLogger("parallax.ai")
 
@@ -42,187 +42,16 @@ MAX_SESSIONS = 50
 
 
 # ═══════════════════════════════════════════════════════════════
-#  Prompt Templates
+#  Prompt Builder (extracted to services/prompt_builder.py)
 # ═══════════════════════════════════════════════════════════════
 
-SYSTEM_PROMPT = """You are Parallax AI, an expert technical analysis assistant for experienced stock and ETF traders. You analyze charts using technical indicators and provide actionable trading signals.
-
-Your role:
-- Analyze indicator data and identify trading setups
-- Provide clear direction (STRONG LONG, LONG, NEUTRAL, SHORT, STRONG SHORT)
-- Give specific entry, stop-loss, and target levels
-- List confirmation factors and caution flags
-- Be concise and data-driven — no fluff, no disclaimers about "not financial advice"
-
-When providing a trading signal, you MUST respond with a JSON block in this exact format:
-
-```json
-{
-  "direction": "STRONG LONG" | "LONG" | "NEUTRAL" | "SHORT" | "STRONG SHORT",
-  "confidence": <number 0-100>,
-  "description": "<1-2 sentence summary of the setup>",
-  "entry": {"price": <number>, "note": "<brief note>"},
-  "stop": {"price": <number>, "note": "<brief note>"},
-  "target": {"price": <number>, "note": "<brief note>"},
-  "confirmations": ["<factor 1>", "<factor 2>", ...],
-  "cautions": ["<risk 1>", "<risk 2>", ...],
-  "meta": {
-    "risk_reward": "<e.g. 2.5:1>",
-    "score": "<e.g. 7/10>",
-    "adx_trend": "<e.g. Strong (28.5)>",
-    "volume_signal": "<e.g. Above avg>"
-  }
-}
-```
-
-After the JSON block, provide a brief analysis paragraph explaining your reasoning.
-
-For follow-up questions, respond conversationally — only include a JSON signal block if the user asks for an updated signal.
-"""
-
-
-def build_indicator_context(
-    symbol: str,
-    timeframe: str,
-    candles: list[CandleData],
-    indicators: list[IndicatorResult],
-    fibonacci: Optional[FibonacciResult] = None,
-) -> str:
-    """
-    Convert computed indicator data into a structured text context
-    that the LLM can easily interpret.
-
-    We extract the LATEST values from each indicator and present them
-    as a concise summary rather than raw arrays.
-    """
-    if not candles:
-        return f"No candle data available for {symbol} on {timeframe} timeframe."
-
-    # Current price info from the last candle
-    last = candles[-1]
-    prev = candles[-2] if len(candles) > 1 else last
-    price_change = ((last.close - prev.close) / prev.close * 100) if prev.close else 0
-
-    lines = [
-        f"=== {symbol} — {timeframe} Timeframe ===",
-        f"Current Price: ${last.close:.2f} ({price_change:+.2f}%)",
-        f"Open: ${last.open:.2f} | High: ${last.high:.2f} | Low: ${last.low:.2f}",
-        f"Volume: {last.volume:,.0f}",
-        f"Candles analyzed: {len(candles)}",
-        "",
-    ]
-
-    # Extract latest value from each indicator
-    for ind in indicators:
-        name = ind.name.upper()
-        if not ind.values:
-            lines.append(f"{name}: No data")
-            continue
-
-        latest = ind.values[-1]
-
-        if ind.name == "rsi":
-            val = latest.value
-            zone = "OVERSOLD" if val and val < 30 else "OVERBOUGHT" if val and val > 70 else "NEUTRAL"
-            lines.append(f"RSI(14): {val:.1f} [{zone}]")
-
-        elif ind.name == "macd":
-            lines.append(
-                f"MACD: Line={latest.value:.4f}, Signal={latest.signal:.4f}, "
-                f"Histogram={latest.histogram:.4f} "
-                f"[{'BULLISH' if latest.histogram and latest.histogram > 0 else 'BEARISH'}]"
-            )
-
-        elif ind.name.startswith("ema_"):
-            period = ind.name.split("_")[1]
-            val = latest.value
-            if val:
-                pos = "ABOVE" if last.close > val else "BELOW"
-                lines.append(f"EMA({period}): ${val:.2f} [Price {pos}]")
-
-        elif ind.name == "bbands":
-            lines.append(
-                f"Bollinger Bands: Upper=${latest.upper:.2f}, "
-                f"Middle=${latest.value:.2f}, Lower=${latest.lower:.2f}"
-            )
-            if latest.upper and latest.lower:
-                width = (latest.upper - latest.lower) / latest.value * 100 if latest.value else 0
-                lines.append(f"  Band Width: {width:.1f}%")
-
-        elif ind.name == "vwap":
-            val = latest.value
-            if val:
-                pos = "ABOVE" if last.close > val else "BELOW"
-                lines.append(f"VWAP: ${val:.2f} [Price {pos}]")
-
-        elif ind.name == "atr":
-            lines.append(f"ATR(14): ${latest.value:.2f}")
-
-        elif ind.name == "stoch":
-            lines.append(
-                f"Stochastic: %K={latest.value:.1f}, %D={latest.signal:.1f} "
-                f"[{'OVERSOLD' if latest.value and latest.value < 20 else 'OVERBOUGHT' if latest.value and latest.value > 80 else 'NEUTRAL'}]"
-            )
-
-        elif ind.name == "obv":
-            lines.append(f"OBV: {latest.value:,.0f}")
-
-        elif ind.name == "adx":
-            val = latest.value
-            strength = (
-                "STRONG TREND" if val and val > 25
-                else "WEAK/NO TREND"
-            )
-            lines.append(f"ADX(14): {val:.1f} [{strength}]")
-
-        elif ind.name == "volume":
-            if latest.signal:  # Volume MA
-                ratio = latest.value / latest.signal if latest.signal else 0
-                lines.append(
-                    f"Volume: {latest.value:,.0f} (MA: {latest.signal:,.0f}, "
-                    f"Ratio: {ratio:.2f}x) "
-                    f"[{'ABOVE AVG' if ratio > 1.0 else 'BELOW AVG'}]"
-                )
-            else:
-                lines.append(f"Volume: {latest.value:,.0f}")
-
-        else:
-            lines.append(f"{name}: {latest.value}")
-
-    # Fibonacci levels
-    if fibonacci:
-        lines.append("")
-        lines.append(f"Fibonacci ({fibonacci.trend.upper()} trend):")
-        lines.append(f"  Swing High: ${fibonacci.swing_high:.2f}")
-        lines.append(f"  Swing Low: ${fibonacci.swing_low:.2f}")
-        for level in fibonacci.levels:
-            proximity = abs(last.close - level.price) / last.close * 100
-            marker = " ← NEAR" if proximity < 1.0 else ""
-            lines.append(f"  {level.label}: ${level.price:.2f}{marker}")
-
-    return "\n".join(lines)
-
-
-def build_multi_timeframe_context(
-    symbol: str,
-    timeframe_data: dict[str, dict],
-) -> str:
-    """
-    Build context from multiple timeframes for a comprehensive analysis.
-    timeframe_data is a dict of timeframe → {"candles": [...], "indicators": [...], "fibonacci": ...}
-    """
-    sections = []
-    for tf, data in timeframe_data.items():
-        section = build_indicator_context(
-            symbol=symbol,
-            timeframe=tf,
-            candles=data.get("candles", []),
-            indicators=data.get("indicators", []),
-            fibonacci=data.get("fibonacci"),
-        )
-        sections.append(section)
-
-    return "\n\n".join(sections)
+from services.prompt_builder import (
+    build_indicator_context,      # noqa: F401 — re-export for backwards compat
+    build_multi_timeframe_context, # noqa: F401
+    build_system_prompt,
+    get_budget_for_model,
+    truncate_context,
+)
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -501,15 +330,22 @@ class AiService:
         indicators_requested: list[str],
         model: str,
         session_id: Optional[str] = None,
+        watchlist: Optional[str] = None,
+        indicator_priority: Optional[list[str]] = None,
     ) -> dict:
         """
         Run a full technical analysis for a stock.
 
-        1. Build structured context from indicator data
-        2. Create a new chat session with system prompt + context
-        3. Ask the model to analyze and produce a signal
-        4. Parse the signal from the response
-        5. Return signal + raw text for display
+        1. Build dynamic system prompt from enabled indicators + watchlist context
+        2. Build structured context from indicator data (with truncation)
+        3. Create a new chat session with prompt + context
+        4. Ask the model to analyze and produce a signal
+        5. Parse the signal from the response
+
+        Args:
+            watchlist: optional name of the watchlist this ticker came from.
+                       When present, the system prompt gets watchlist-specific
+                       framing (e.g., "RS Leaders" → favor trend continuation).
 
         Returns: {
             "session_id": str,
@@ -521,11 +357,26 @@ class AiService:
         session.symbol = symbol
         session.clear()
 
-        # Build the context from all timeframes
-        context = build_multi_timeframe_context(symbol, timeframe_data)
+        # Build the context from all timeframes, then truncate if needed.
+        # If priority is set, indicators are reordered so prioritized ones
+        # appear first in the context (models attend more to earlier content).
+        context = build_multi_timeframe_context(
+            symbol, timeframe_data, indicator_priority=indicator_priority,
+        )
+        # Per-model token budget — smaller models get aggressive truncation,
+        # beefier models get breathing room. See prompt_builder._MODEL_BUDGETS.
+        budget = get_budget_for_model(model)
+        context = truncate_context(context, budget_tokens=budget)
+
+        # Dynamic system prompt — tailored to indicators, priority, + watchlist
+        system_prompt = build_system_prompt(
+            indicators=indicators_requested,
+            watchlist=watchlist,
+            indicator_priority=indicator_priority,
+        )
 
         # Set up conversation
-        session.add_system(SYSTEM_PROMPT)
+        session.add_system(system_prompt)
         session.add_user(
             f"Analyze {symbol} and provide a trading signal.\n\n"
             f"Here is the current technical data:\n\n{context}\n\n"
