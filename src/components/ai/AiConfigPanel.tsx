@@ -13,7 +13,8 @@
  * be passed to the analysis API call.
  */
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
+import type { IndicatorId } from "@/store/chart";
 
 /* ── Types ── */
 
@@ -41,7 +42,40 @@ const INDICATORS: AiIndicator[] = [
 ];
 
 const DEFAULT_TIMEFRAMES: AiTimeframe[] = ["4H", "D"];
-const DEFAULT_INDICATORS: AiIndicator[] = ["EMA Stack", "RSI", "Fibonacci", "Volume"];
+
+/**
+ * Map chart-level IndicatorIds → AI-panel display names.
+ *
+ * EMA variants (ema9, ema21, ema50, ema200) all collapse into
+ * "EMA Stack" since the AI always gets the full stack when any
+ * EMA is enabled.
+ */
+const CHART_TO_AI_INDICATOR: Partial<Record<IndicatorId, AiIndicator>> = {
+  ema9: "EMA Stack",
+  ema21: "EMA Stack",
+  ema50: "EMA Stack",
+  ema200: "EMA Stack",
+  rsi: "RSI",
+  fibonacci: "Fibonacci",
+  volume: "Volume",
+  macd: "MACD",
+  bollinger: "BB",
+  adx: "ADX",
+  stochastic: "Stochastic",
+  vwap: "VWAP",
+  obv: "OBV",
+};
+
+/** Convert chart indicator set → AI indicator set */
+function chartIndicatorsToAi(chartIds?: Set<IndicatorId>): Set<AiIndicator> {
+  if (!chartIds || chartIds.size === 0) return new Set();
+  const aiSet = new Set<AiIndicator>();
+  for (const id of chartIds) {
+    const mapped = CHART_TO_AI_INDICATOR[id];
+    if (mapped) aiSet.add(mapped);
+  }
+  return aiSet;
+}
 
 /* ── Chip sub-component ── */
 
@@ -84,16 +118,32 @@ interface AiConfigPanelProps {
     indicators: AiIndicator[];
     mode: AiMode;
   }) => void;
+  /** Chart-level active indicators — used as default AI selection.
+   *  When the trader toggles indicators on the chart, the AI panel
+   *  mirrors their selection so the analysis covers what they're looking at. */
+  chartIndicators?: Set<IndicatorId>;
 }
 
-export default function AiConfigPanel({ onRunAnalysis }: AiConfigPanelProps) {
+export default function AiConfigPanel({ onRunAnalysis, chartIndicators }: AiConfigPanelProps) {
   const [mode, setMode] = useState<AiMode>("assist");
   const [selectedTf, setSelectedTf] = useState<Set<AiTimeframe>>(
     () => new Set(DEFAULT_TIMEFRAMES)
   );
   const [selectedInd, setSelectedInd] = useState<Set<AiIndicator>>(
-    () => new Set(DEFAULT_INDICATORS)
+    () => chartIndicatorsToAi(chartIndicators)
   );
+
+  // Track whether the user has manually toggled any AI indicator.
+  // Once they have, we stop auto-syncing from the chart so their
+  // manual choices aren't overwritten.
+  const userOverrodeRef = useRef(false);
+
+  // Sync AI indicator selection from chart indicators — but only
+  // if the user hasn't manually overridden the AI selection yet.
+  useEffect(() => {
+    if (userOverrodeRef.current) return;
+    setSelectedInd(chartIndicatorsToAi(chartIndicators));
+  }, [chartIndicators]);
 
   const toggleTf = useCallback((tf: AiTimeframe) => {
     setSelectedTf((prev) => {
@@ -105,6 +155,7 @@ export default function AiConfigPanel({ onRunAnalysis }: AiConfigPanelProps) {
   }, []);
 
   const toggleInd = useCallback((ind: AiIndicator) => {
+    userOverrodeRef.current = true; // User manually changed AI selection
     setSelectedInd((prev) => {
       const next = new Set(prev);
       if (next.has(ind)) next.delete(ind);
