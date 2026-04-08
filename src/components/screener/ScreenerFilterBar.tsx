@@ -13,6 +13,7 @@ import { Plus, X, Play, Loader2, ChevronDown, RotateCcw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { api } from "@/lib/api";
 import { useScreenerStore, type ActiveFilter } from "@/store/screener";
+import { PresetSkeleton } from "./ScreenerSkeleton";
 
 // ── Filter catalogue ─────────────────────────────────────────
 
@@ -43,6 +44,7 @@ const FILTER_CATEGORIES: FilterCategory[] = [
       { label: "EPS Chg TTM", aboveCode: "minEpsChangePercent", belowCode: "maxEpsChangePercent", unit: "%", placeholder: "10" },
       { label: "Price/Book", aboveCode: "minPriceBook", belowCode: "maxPriceBook", placeholder: "1" },
       { label: "Quick Ratio", aboveCode: "minQuickRatio", belowCode: "maxQuickRatio", placeholder: "1" },
+      { label: "Earnings Within (days)", aboveCode: "wshEarningsDate", belowCode: "wshEarningsDate", unit: "days", placeholder: "5" },
     ],
   },
   {
@@ -309,13 +311,15 @@ export default function ScreenerFilterBar({
     filters,
     selectedPreset,
     isScanning,
+    scannerSort,
     addFilter,
     removeFilter,
     clearFilters,
     setPreset,
+    setScannerSort,
   } = useScreenerStore();
 
-  const { data: presets } = useQuery({
+  const { data: presets, isLoading: presetsLoading } = useQuery({
     queryKey: ["screener-presets"],
     queryFn: () => api.screenerPresets(),
     staleTime: 60_000 * 60,
@@ -340,21 +344,56 @@ export default function ScreenerFilterBar({
       </span>
 
       {/* Preset selector */}
+      {presetsLoading ? (
+        <PresetSkeleton />
+      ) : (
+        <select
+          value={presetKey}
+          onChange={handlePresetChange}
+          className="rounded-md border border-[var(--border)] bg-[var(--bg-2)] px-2.5 py-1 font-data text-[11px] text-[var(--text-1)] outline-none transition-colors focus:border-[var(--clr-cyan)]"
+        >
+          <option value="">Select preset…</option>
+          {presets?.map((p) => (
+            <option
+              key={`${p.instrument}:${p.scan_type}:${p.location}:${p.display_name}`}
+              value={`${p.instrument}:${p.scan_type}:${p.location}`}
+            >
+              {p.display_name}
+            </option>
+          ))}
+        </select>
+      )}
+
+      {/* Scanner sort (server-side) */}
       <select
-        value={presetKey}
-        onChange={handlePresetChange}
-        className="rounded-md border border-[var(--border)] bg-[var(--bg-2)] px-2.5 py-1 font-data text-[11px] text-[var(--text-1)] outline-none transition-colors focus:border-[var(--clr-cyan)]"
+        value={scannerSort.field}
+        onChange={(e) =>
+          setScannerSort({ field: e.target.value, direction: scannerSort.direction })
+        }
+        className="rounded-md border border-[var(--border)] bg-[var(--bg-2)] px-2 py-1 font-data text-[10px] text-[var(--text-2)] outline-none transition-colors focus:border-[var(--clr-cyan)]"
       >
-        <option value="">Select preset…</option>
-        {presets?.map((p) => (
-          <option
-            key={`${p.instrument}:${p.scan_type}:${p.location}`}
-            value={`${p.instrument}:${p.scan_type}:${p.location}`}
-          >
-            {p.display_name}
-          </option>
-        ))}
+        <option value="">Sort: Default</option>
+        <option value="changePercAbove">Sort: Chg%</option>
+        <option value="volumeAbove">Sort: Volume</option>
+        <option value="marketCapAbove1e6">Sort: Mkt Cap</option>
+        <option value="priceAbove">Sort: Price</option>
+        <option value="minPeRatio">Sort: P/E</option>
       </select>
+
+      {/* Sort direction toggle */}
+      {scannerSort.field && (
+        <button
+          onClick={() =>
+            setScannerSort({
+              field: scannerSort.field,
+              direction: scannerSort.direction === "desc" ? "asc" : "desc",
+            })
+          }
+          className="rounded border border-[var(--border)] px-1.5 py-1 font-data text-[10px] text-[var(--text-3)] transition-colors hover:text-[var(--text-1)]"
+        >
+          {scannerSort.direction === "desc" ? "↓ Desc" : "↑ Asc"}
+        </button>
+      )}
 
       {/* Separator */}
       <div className="h-4 w-px bg-[var(--border)]" />

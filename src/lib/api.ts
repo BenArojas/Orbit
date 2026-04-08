@@ -417,6 +417,7 @@ export interface ScannerPreset {
   scan_type: string;
   location: string;
   display_name: string;
+  default_filters?: IbkrFilterItem[];
 }
 
 /** A native IBKR scanner filter — passed directly to the scanner endpoint */
@@ -431,6 +432,10 @@ export interface ScanRequest {
   location?: string;
   filters?: IbkrFilterItem[];
   max_results?: number;
+  sort_field?: string;
+  sort_direction?: "asc" | "desc";
+  page?: number;
+  page_size?: number;
 }
 
 export interface ScreenerResultRow {
@@ -450,6 +455,27 @@ export interface ScanResponse {
   total_matched: number;
   scan_type: string;
   location: string;
+  page: number;
+  page_size: number;
+  total_pages: number;
+}
+
+/** Contract details from IBKR — used in screener quick-peek slide-over */
+export interface ContractInfoResponse {
+  conid: number;
+  symbol: string;
+  company_name: string;
+  sec_type: string;
+  exchange: string;
+  currency: string;
+  industry: string;
+  category: string;
+  avg_volume: number | null;
+  market_cap: number | null;
+  high_52w: number | null;
+  low_52w: number | null;
+  pe_ratio: number | null;
+  dividend_yield: number | null;
 }
 
 export interface ScannerParamsResponse {
@@ -597,4 +623,7 @@ export const api = {
 
   screenerParams: () =>
     request<ScannerParamsResponse>("GET", "/screener/params"),
+
+  screenerContractInfo: (conid: number) =>
+    request<ContractInfoResponse>("GET", `/screener/contract/${conid}`),
 } as const;

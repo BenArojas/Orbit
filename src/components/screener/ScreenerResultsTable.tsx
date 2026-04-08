@@ -18,7 +18,7 @@ import {
 } from "@/components/ui/table";
 import type { ScreenerResultRow } from "@/lib/api";
 import { useScreenerStore, type SortDir } from "@/store/screener";
-import { useNavigationStore } from "@/store";
+import { TableSkeleton } from "./ScreenerSkeleton";
 
 // ── Helpers ───────────────────────────────────────────────────
 
@@ -184,14 +184,15 @@ function EmptyState({ hasPreset }: { hasPreset: boolean }) {
 export default function ScreenerResultsTable() {
   const {
     results,
+    isScanning,
     totalScanned,
     totalMatched,
     sortBy,
     sortDir,
     setSort,
     selectedPreset,
+    setPeekConid,
   } = useScreenerStore();
-  const navigateToAnalysis = useNavigationStore((s) => s.navigateToAnalysis);
 
   const sorted = useMemo(() => {
     if (!results.length) return [];
@@ -211,6 +212,11 @@ export default function ScreenerResultsTable() {
   const handleSort = (col: string) => {
     setSort(col, sortBy === col && sortDir === "desc" ? "asc" : "desc");
   };
+
+  // Show skeleton while scanning
+  if (isScanning) {
+    return <TableSkeleton rows={15} />;
+  }
 
   if (!results.length) {
     return <EmptyState hasPreset={!!selectedPreset} />;
@@ -255,7 +261,7 @@ export default function ScreenerResultsTable() {
             {sorted.map((row) => (
               <TableRow
                 key={row.conid}
-                onClick={() => navigateToAnalysis(row.conid)}
+                onClick={() => setPeekConid(row.conid)}
                 className="cursor-pointer border-b border-border/50 transition-colors hover:bg-[var(--bg-3)]"
               >
                 {COLUMNS.map((col) => (

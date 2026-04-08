@@ -15,6 +15,7 @@ Performance notes:
 """
 
 import logging
+import math
 from typing import Any
 
 from constants import (
@@ -93,6 +94,13 @@ DEFAULT_PRESETS: list[dict[str, str]] = [
         "location": "STK.HK.SEHK",
         "display_name": "Most Active — Hong Kong",
     },
+    {
+        "instrument": "STK",
+        "scan_type": "MOST_ACTIVE",
+        "location": "STK.US.MAJOR",
+        "display_name": "Earnings This Week — US Stocks",
+        "default_filters": [{"code": "wshEarningsDate", "value": "5"}],
+    },
 ]
 
 # Snapshot fields for screener results
@@ -124,14 +132,19 @@ class ScreenerService:
         scan_type: str,
         location: str,
         filters: list[IbkrFilterItem],
-        max_results: int = 50,
+        max_results: int = 200,
+        sort_field: str = "",
+        sort_direction: str = "desc",
+        page: int = 1,
+        page_size: int = 25,
     ) -> ScanResponse:
         """
         Run a screener scan.
 
         1. Call IBKR scanner with native filters
         2. Batch-fetch snapshot quotes
-        3. Return enriched rows
+        3. Paginate results
+        4. Return enriched rows
         """
         # Build IBKR filter array
         ibkr_filters = (
@@ -139,9 +152,16 @@ class ScreenerService:
             if filters else None
         )
 
+        # Build sort code if provided
+        sort_code = ""
+        if sort_field:
+            sort_code = sort_field
+            if sort_direction == "asc":
+                sort_code += "Asc"
+
         log.info(
-            "Running scanner: %s / %s / %s  filters=%d",
-            instrument, scan_type, location, len(filters),
+            "Running scanner: %s / %s / %s  filters=%d sort=%s",
+            instrument, scan_type, location, len(filters), sort_code,
         )
 
         raw_results = await self.ibkr.scanner_run(
@@ -149,6 +169,7 @@ class ScreenerService:
             scan_type=scan_type,
             location=location,
             filters=ibkr_filters,
+            sort=sort_code,
         )
 
         if not raw_results:
@@ -167,6 +188,9 @@ class ScreenerService:
                 total_matched=0,
                 scan_type=scan_type,
                 location=location,
+                page=page,
+                page_size=page_size,
+                total_pages=1,
             )
 
         # Fetch snapshot quotes for all conids
@@ -179,12 +203,21 @@ class ScreenerService:
             for item in universe
         ]
 
+        # Paginate results
+        total_pages = max(1, math.ceil(len(rows) / page_size))
+        start_idx = (page - 1) * page_size
+        end_idx = start_idx + page_size
+        paginated_rows = rows[start_idx:end_idx]
+
         return ScanResponse(
-            results=rows,
+            results=paginated_rows,
             total_scanned=total_scanned,
             total_matched=len(rows),
             scan_type=scan_type,
             location=location,
+            page=page,
+            page_size=page_size,
+            total_pages=total_pages,
         )
 
     def _parse_scanner_results(

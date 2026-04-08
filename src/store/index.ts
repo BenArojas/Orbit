@@ -29,6 +29,7 @@ export {
   useScreenerStore,
   type ActiveFilter,
   type SortDir,
+  type ScannerSort,
 } from "./screener";
 export { useSettingsStore } from "./settings";
 export {

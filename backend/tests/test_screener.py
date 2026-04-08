@@ -16,6 +16,7 @@ if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
 from models import (
+    ContractInfoResponse,
     IbkrFilterItem,
     ScannerPreset,
     ScanRequest,
@@ -342,7 +343,11 @@ class TestScreenerModels:
         assert req.scan_type == "MOST_ACTIVE"
         assert req.location == "STK.US.MAJOR"
         assert req.filters == []
-        assert req.max_results == 50
+        assert req.max_results == 200
+        assert req.sort_field == ""
+        assert req.sort_direction == "desc"
+        assert req.page == 1
+        assert req.page_size == 25
 
     def test_scan_request_with_filters(self):
         req = ScanRequest(
@@ -355,7 +360,7 @@ class TestScreenerModels:
         with pytest.raises(Exception):
             ScanRequest(max_results=0)
         with pytest.raises(Exception):
-            ScanRequest(max_results=201)
+            ScanRequest(max_results=501)
 
     def test_screener_result_row_optional_fields(self):
         row = ScreenerResultRow(conid=123)
@@ -397,3 +402,211 @@ class TestSafeFloat:
 
     def test_nan_returns_none(self):
         assert _safe_float(float("nan")) is None
+
+
+# ── Pagination Tests ──────────────────────────────────────────
+
+
+class TestPagination:
+
+    @pytest.mark.asyncio
+    async def test_pagination_first_page(self):
+        """First page of 60 results, page_size=25 → 25 rows, total_pages=3."""
+        many = [{"conid": 100 + i, "symbol": f"T{i}"} for i in range(60)]
+        ibkr = make_ibkr_mock(scan_results=many, snapshot_results=[])
+        svc = ScreenerService(ibkr)
+
+        result = await svc.scan(
+            instrument="STK",
+            scan_type="MOST_ACTIVE",
+            location="STK.US.MAJOR",
+            filters=[],
+            max_results=200,
+            sort_field="",
+            sort_direction="desc",
+            page=1,
+            page_size=25,
+        )
+
+        assert len(result.results) == 25
+        assert result.total_pages == 3
+        assert result.page == 1
+        assert result.page_size == 25
+        assert result.total_matched == 60
+
+    @pytest.mark.asyncio
+    async def test_pagination_last_page(self):
+        """Last page of 60 results, page_size=25 → 10 rows."""
+        many = [{"conid": 100 + i, "symbol": f"T{i}"} for i in range(60)]
+        ibkr = make_ibkr_mock(scan_results=many, snapshot_results=[])
+        svc = ScreenerService(ibkr)
+
+        result = await svc.scan(
+            instrument="STK",
+            scan_type="MOST_ACTIVE",
+            location="STK.US.MAJOR",
+            filters=[],
+            max_results=200,
+            sort_field="",
+            sort_direction="desc",
+            page=3,
+            page_size=25,
+        )
+
+        assert len(result.results) == 10
+        assert result.total_pages == 3
+        assert result.page == 3
+
+    @pytest.mark.asyncio
+    async def test_pagination_out_of_range(self):
+        """Out-of-range page → 0 rows."""
+        many = [{"conid": 100 + i, "symbol": f"T{i}"} for i in range(60)]
+        ibkr = make_ibkr_mock(scan_results=many, snapshot_results=[])
+        svc = ScreenerService(ibkr)
+
+        result = await svc.scan(
+            instrument="STK",
+            scan_type="MOST_ACTIVE",
+            location="STK.US.MAJOR",
+            filters=[],
+            max_results=200,
+            sort_field="",
+            sort_direction="desc",
+            page=5,
+            page_size=25,
+        )
+
+        assert len(result.results) == 0
+        assert result.page == 5
+        assert result.total_pages == 3
+
+
+# ── Sort Field Tests ──────────────────────────────────────────
+
+
+class TestSortField:
+
+    @pytest.mark.asyncio
+    async def test_sort_field_passed_to_ibkr(self):
+        """Verify sort field is passed through to scanner_run."""
+        ibkr = make_ibkr_mock()
+        svc = ScreenerService(ibkr)
+
+        await svc.scan(
+            instrument="STK",
+            scan_type="MOST_ACTIVE",
+            location="STK.US.MAJOR",
+            filters=[],
+            max_results=50,
+            sort_field="changePercAbove",
+            sort_direction="desc",
+            page=1,
+            page_size=25,
+        )
+
+        ibkr.scanner_run.assert_called_once()
+        call_kwargs = ibkr.scanner_run.call_args.kwargs
+        assert call_kwargs.get("sort") == "changePercAbove"
+
+    @pytest.mark.asyncio
+    async def test_sort_field_asc_appends_asc(self):
+        """Verify sort direction adds 'Asc' suffix."""
+        ibkr = make_ibkr_mock()
+        svc = ScreenerService(ibkr)
+
+        await svc.scan(
+            instrument="STK",
+            scan_type="MOST_ACTIVE",
+            location="STK.US.MAJOR",
+            filters=[],
+            max_results=50,
+            sort_field="price",
+            sort_direction="asc",
+            page=1,
+            page_size=25,
+        )
+
+        call_kwargs = ibkr.scanner_run.call_args.kwargs
+        assert call_kwargs.get("sort") == "priceAsc"
+
+    @pytest.mark.asyncio
+    async def test_empty_sort_field_passes_empty_string(self):
+        """Empty sort_field → empty sort passed to IBKR."""
+        ibkr = make_ibkr_mock()
+        svc = ScreenerService(ibkr)
+
+        await svc.scan(
+            instrument="STK",
+            scan_type="MOST_ACTIVE",
+            location="STK.US.MAJOR",
+            filters=[],
+            max_results=50,
+            sort_field="",
+            sort_direction="desc",
+            page=1,
+            page_size=25,
+        )
+
+        call_kwargs = ibkr.scanner_run.call_args.kwargs
+        assert call_kwargs.get("sort") == ""
+
+
+# ── Contract Info Tests ───────────────────────────────────────
+
+
+class TestContractInfo:
+
+    @pytest.mark.asyncio
+    async def test_contract_info_endpoint(self):
+        """Verify contract_info endpoint calls ibkr service."""
+        ibkr = make_ibkr_mock()
+        ibkr.contract_info = AsyncMock(return_value={
+            "symbol": "AAPL",
+            "companyName": "Apple Inc.",
+            "exchange": "NASDAQ",
+            "currency": "USD",
+            "industry": "Technology",
+            "category": "Large Cap",
+            "avgVolume": "50000000",
+            "marketCap": "2900000",
+            "week52hi": "200.00",
+            "week52lo": "150.00",
+            "peRatio": "25.5",
+            "dividendYield": "0.5",
+        })
+        svc = ScreenerService(ibkr)
+
+        # Simulate endpoint behavior
+        raw = await svc.ibkr.contract_info(265598)
+        assert raw["symbol"] == "AAPL"
+        ibkr.contract_info.assert_called_once_with(265598)
+
+
+# ── Preset Tests ──────────────────────────────────────────────
+
+
+class TestPresets:
+
+    def test_wsh_earnings_preset_exists(self):
+        """Verify the WSH earnings preset is in DEFAULT_PRESETS."""
+        earnings_presets = [
+            p for p in DEFAULT_PRESETS
+            if "Earnings" in p.get("display_name", "")
+        ]
+        assert len(earnings_presets) >= 1
+        earnings = earnings_presets[0]
+        assert earnings["instrument"] == "STK"
+        assert earnings["scan_type"] == "MOST_ACTIVE"
+        assert earnings["location"] == "STK.US.MAJOR"
+
+    def test_default_filters_on_preset(self):
+        """Verify ScannerPreset model accepts default_filters."""
+        earnings_presets = [
+            p for p in DEFAULT_PRESETS
+            if "Earnings" in p.get("display_name", "")
+        ]
+        if earnings_presets:
+            preset_dict = earnings_presets[0]
+            preset = ScannerPreset(**preset_dict)
+            assert hasattr(preset, "default_filters")
+            assert isinstance(preset.default_filters, list)

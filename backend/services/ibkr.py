@@ -315,6 +315,16 @@ class IBKRService:
             "GET", "/iserver/marketdata/history", params=params
         )
 
+    @cached(ttl=3600)
+    async def contract_info(self, conid: int) -> dict:
+        """
+        Fetch full contract details for a conid.
+        Returns exchange, currency, sector, industry, etc.
+        Used by the screener quick-peek slide-over.
+        """
+        await self.ensure_accounts()
+        return await self._request("GET", f"/iserver/contract/{conid}/info")
+
     # ── Watchlist Methods (Step 3.5) ───────────────────────────
 
     @cached(ttl=60)
@@ -367,6 +377,7 @@ class IBKRService:
         scan_type: str,
         location: str,
         filters: list[dict] | None = None,
+        sort: str = "",
     ) -> list[dict]:
         """
         Run an IBKR market scanner.
@@ -377,6 +388,7 @@ class IBKRService:
             location: Market location — "STK.US.MAJOR", "STK.EU", etc.
             filters: Optional price/volume filters, e.g.:
                      [{"code": "priceAbove", "value": 5}]
+            sort: Optional sort code (e.g., "changePercAbove")
 
         Returns:
             List of scanner result dicts with conid, symbol, etc.
@@ -389,6 +401,8 @@ class IBKRService:
         }
         if filters:
             body["filter"] = filters
+        if sort:
+            body["sort"] = sort
 
         data = await self._request("POST", "/iserver/scanner/run", json=body)
 

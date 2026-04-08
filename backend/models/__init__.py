@@ -697,6 +697,7 @@ class ScannerPreset(BaseModel):
     scan_type: str                                      # "TOP_PERC_GAIN", "MOST_ACTIVE", etc.
     location: str                                       # "STK.US.MAJOR", "STK.EU", etc.
     display_name: str                                   # Human-readable name
+    default_filters: list["IbkrFilterItem"] = []       # Optional preset filters
 
 
 class IbkrFilterItem(BaseModel):
@@ -732,7 +733,11 @@ class ScanRequest(BaseModel):
     scan_type: str = "MOST_ACTIVE"                      # IBKR scanner sort/preset
     location: str = "STK.US.MAJOR"                      # Market location
     filters: list[IbkrFilterItem] = []                  # Native IBKR filter codes
-    max_results: int = Field(default=50, ge=1, le=200)  # Cap results
+    max_results: int = Field(default=200, ge=1, le=500) # Cap results
+    sort_field: str = ""                                # IBKR sort code (e.g., "changePercAbove")
+    sort_direction: str = "desc"                        # "asc" or "desc"
+    page: int = 1                                       # Page number (1-indexed)
+    page_size: int = 25                                 # Results per page
 
 
 class ScreenerResultRow(BaseModel):
@@ -759,6 +764,9 @@ class ScanResponse(BaseModel):
     total_matched: int                                  # Same as total_scanned (filters are native)
     scan_type: str                                      # Which preset was used
     location: str                                       # Which market was scanned
+    page: int = 1                                       # Current page
+    page_size: int = 25                                 # Results per page
+    total_pages: int = 1                                # Total number of pages
 
 
 class ScannerParamsResponse(BaseModel):
@@ -770,3 +778,21 @@ class ScannerParamsResponse(BaseModel):
     locations: list[dict] = []                          # Available market locations
     scan_types: list[dict] = []                         # Available scan types
     filters: list[dict] = []                            # Available filter codes
+
+
+class ContractInfoResponse(BaseModel):
+    """Contract details from IBKR — used in screener quick-peek."""
+    conid: int
+    symbol: str = ""
+    company_name: str = ""
+    sec_type: str = ""
+    exchange: str = ""
+    currency: str = ""
+    industry: str = ""
+    category: str = ""
+    avg_volume: Optional[float] = None
+    market_cap: Optional[float] = None
+    high_52w: Optional[float] = None
+    low_52w: Optional[float] = None
+    pe_ratio: Optional[float] = None
+    dividend_yield: Optional[float] = None

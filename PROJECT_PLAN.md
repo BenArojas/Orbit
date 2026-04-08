@@ -1,7 +1,7 @@
 # Parallax — Project Plan
 
 > Last updated: 2026-04-08
-> Status: Phase 1–4 complete. Phase 5 built (feature/screener-page) — **blocked pending code review and Q9 resolution (TWS API vs IBKR Gateway)**.
+> Status: Phase 1–4 complete. Phase 5A built (feature/screener-page) — **blocked pending code review and Q9 resolution (TWS API vs IBKR Gateway)**. Phase 5B/5C scoped and ready to start after 5A review.
 
 ---
 
@@ -106,21 +106,43 @@ These are locked in. Don't revisit unless something breaks.
 
 ### Phase 5: Screener
 
-> Goal: Filter instruments by indicator criteria, display results table.
+> Goal: Filter instruments via IBKR native scanner filters, display paginated results, AI-assisted filter creation.
 > Universe source: IBKR Scanner API presets (top gainers, most active, etc.).
 > Scan mode: On-demand only (user clicks Scan). Background scan is Phase 6.
 
+#### 5A — Core (built, in review)
+
 | # | Task | Owner | Status | Notes |
 |---|---|---|---|---|
-| 5.1 | Screener filter bar | Ofek | REVIEW | Built — IBKR native filter codes, grouped dropdown (Fundamental/Technical/Analyst/Short Interest) |
-| 5.2 | Screener results table | Ofek | REVIEW | Built — Symbol, Name, Type, Price, Chg%, Volume, Mkt Cap; sortable |
-| 5.3 | Screener backend service | Ben | REVIEW | Built — scanner_run with native filters + batch snapshots; no indicator computation |
-| 5.4 | Screener router | Ben | REVIEW | Built — POST /screener/scan, GET /screener/presets |
-| 5.5 | Click result → Analysis | Both | REVIEW | Built — navigateToAnalysis(conid) on row click |
-| 5.6 | Universe via IBKR Scanner API | Ben | REVIEW | Built — /iserver/scanner/params + /iserver/scanner/run |
+| 5.1 | Screener filter bar | Ofek | REVIEW | IBKR native filter codes, grouped dropdown (Fundamental/Technical/Analyst/Short Interest) |
+| 5.2 | Screener results table | Ofek | REVIEW | Symbol, Name, Type, Price, Chg%, Volume, Mkt Cap; sortable |
+| 5.3 | Screener backend service | Ben | REVIEW | scanner_run with native filters + batch snapshots; no indicator computation |
+| 5.4 | Screener router | Ben | REVIEW | POST /screener/scan, GET /screener/presets |
+| 5.5 | Click result → Analysis | Both | REVIEW | navigateToAnalysis(conid) on row click |
+| 5.6 | Universe via IBKR Scanner API | Ben | REVIEW | /iserver/scanner/params + /iserver/scanner/run |
 
-> ⚠️ **Phase 5 blocked — awaiting code review and resolution of Q9 (TWS API vs IBKR Gateway Web API).** Do not merge `feature/screener-page` until Q9 is decided.
+> ⚠️ **5A blocked — awaiting code review and resolution of Q9 (TWS API vs IBKR Gateway Web API).** Do not merge `feature/screener-page` until Q9 is decided.
 > 🧹 **Cleanup needed on branch:** `docker-compose.yml` and `ibkr-gateway/` were committed to `feature/screener-page` by mistake — move to a dedicated `infra/ibkr-gateway` branch or root config area before merge.
+
+#### 5B — Enhancements (after 5A review passes)
+
+| # | Task | Owner | Status | Notes |
+|---|---|---|---|---|
+| 5.7 | Quick-peek slide-over | Both | TODO | Right-side sheet (~400px) on row click: mini chart (5-day), key stats (P/E, 52W range, avg vol), sector/industry via `/iserver/contract/{conid}/info`. Two CTAs: "Open in Analysis" + "Add to Watchlist". |
+| 5.8 | Skeleton loaders | Ofek | TODO | Shimmer rows in results table during scan, skeleton in slide-over while data loads, skeleton for preset dropdown on first mount |
+| 5.9 | Persist last scan | Ben | TODO | Keep results + filters in Zustand across page navigations (persist middleware or keep store alive). Navigating to Analysis and back should restore the scan. |
+| 5.10 | Pagination + uncap results | Ben | TODO | Remove local 50 cap. Backend requests up to `max_results` from IBKR (default 200). Frontend paginates — 25 rows/page with page controls. `ScanRequest.max_results` field now user-configurable (25/50/100/200). |
+| 5.11 | Scanner sort codes | Ben | TODO | Pass IBKR `sort` parameter to `/iserver/scanner/run`. Let user pick sort field (price, chg%, volume, market cap, P/E, etc.) + direction. IBKR sorts server-side before returning. Add sort dropdown to filter bar. |
+| 5.12 | WSH earnings date preset | Ben | TODO | Add preset: "Earnings This Week — US Stocks" using WSH earnings calendar filter. Add `wshEarningsDate` filter code to the Fundamental category so users can filter by upcoming earnings window. |
+
+#### 5C — AI-Assisted Filters (after 5B)
+
+| # | Task | Owner | Status | Notes |
+|---|---|---|---|---|
+| 5.13 | AI screener side panel (UI) | Ofek | TODO | Collapsible right panel (same pattern as Analysis AI chat). Freeform text input + preset quick-question chips ("Oversold large caps", "High momentum small caps", "Earnings this week + high IV"). |
+| 5.14 | AI screener backend endpoint | Ben | TODO | POST `/screener/ai-filters` — sends user query + full filter catalogue (from `scanner_params`) to Ollama. Model returns structured JSON array of `{code, value}` pairs. Prompt includes all available IBKR filter codes with descriptions so model knows what exists. |
+| 5.15 | AI → filter bar wiring | Both | TODO | AI response auto-populates filter bar with pills. User can tweak/remove any filter before hitting Scan. Show AI's reasoning ("I chose Market Cap < $2B because you said 'small caps'...") in the chat panel. |
+| 5.16 | Prompt engineering for filter generation | Ben | TODO | Build prompt template: system prompt with filter catalogue + descriptions, user query, output schema `{filters: [{code, value, reasoning}]}`. Test with Gemma 4 26B. Edge cases: ambiguous queries, conflicting filters, filters that don't exist in IBKR. |
 
 ---
 
