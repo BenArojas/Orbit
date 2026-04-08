@@ -349,6 +349,57 @@ class IBKRService:
             return []
         return []
 
+    # ── Scanner Methods (Step 5.6) ────────────────────────────
+
+    @cached(ttl=3600)
+    async def scanner_params(self) -> dict:
+        """
+        Fetch available scanner parameters from IBKR.
+        Returns instruments, locations, scan types, and filter codes
+        the user can build scans from.
+        """
+        await self.ensure_accounts()
+        return await self._request("GET", "/iserver/scanner/params")
+
+    async def scanner_run(
+        self,
+        instrument: str,
+        scan_type: str,
+        location: str,
+        filters: list[dict] | None = None,
+    ) -> list[dict]:
+        """
+        Run an IBKR market scanner.
+
+        Args:
+            instrument: Security type — "STK", "FUT", "IND", etc.
+            scan_type: Scanner preset — "TOP_PERC_GAIN", "MOST_ACTIVE", etc.
+            location: Market location — "STK.US.MAJOR", "STK.EU", etc.
+            filters: Optional price/volume filters, e.g.:
+                     [{"code": "priceAbove", "value": 5}]
+
+        Returns:
+            List of scanner result dicts with conid, symbol, etc.
+        """
+        await self.ensure_accounts()
+        body: dict = {
+            "instrument": instrument,
+            "type": scan_type,
+            "location": location,
+        }
+        if filters:
+            body["filter"] = filters
+
+        data = await self._request("POST", "/iserver/scanner/run", json=body)
+
+        # IBKR returns: {"Contracts": {"Contract": [...]}} or a list
+        if isinstance(data, dict):
+            contracts = data.get("Contracts", data)
+            if isinstance(contracts, dict):
+                return contracts.get("Contract", [])
+            return contracts if isinstance(contracts, list) else []
+        return data if isinstance(data, list) else []
+
     # ── WebSocket (Step 1.6) ─────────────────────────────────
     # The IBKR WebSocket streams real-time market data.
     # Frontend connects to our FastAPI /ws endpoint.

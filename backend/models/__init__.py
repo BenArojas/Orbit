@@ -681,3 +681,95 @@ class SetupGuideResponse(BaseModel):
 class ModelSelectRequest(BaseModel):
     """Request to select which model the AI should use."""
     model: str                                          # Ollama model name
+
+
+# ═══════════════════════════════════════════════════════════════
+#  Screener (Phase 5 — tasks 5.3–5.6)
+# ═══════════════════════════════════════════════════════════════
+
+
+class ScannerPreset(BaseModel):
+    """
+    An available IBKR scanner preset the user can pick from.
+    The screener UI shows these as a dropdown for "universe source."
+    """
+    instrument: str                                     # "STK", "FUT", etc.
+    scan_type: str                                      # "TOP_PERC_GAIN", "MOST_ACTIVE", etc.
+    location: str                                       # "STK.US.MAJOR", "STK.EU", etc.
+    display_name: str                                   # Human-readable name
+
+
+class ScreenerFilterItem(BaseModel):
+    """
+    One filter criterion in a screener scan.
+
+    operator choices:
+      - "gt"          — indicator > value
+      - "lt"          — indicator < value
+      - "between"     — value <= indicator <= value2
+      - "cross_above" — indicator just crossed above value
+      - "cross_below" — indicator just crossed below value
+    """
+    indicator: str                                      # e.g. "rsi", "ema_trend", "volume_ratio", "price"
+    op: str                                             # "gt", "lt", "between", "cross_above", "cross_below"
+    value: float                                        # Comparison value
+    value2: Optional[float] = None                      # Second value for "between"
+
+
+class ScanRequest(BaseModel):
+    """
+    Request to run a screener scan.
+
+    The backend:
+      1. Runs the IBKR scanner preset to get a universe of instruments
+      2. Fetches candle data + computes indicators for each
+      3. Applies the user's filters
+      4. Returns matching results sorted by relevance
+    """
+    instrument: str = "STK"                             # Security type
+    scan_type: str = "MOST_ACTIVE"                      # IBKR scanner preset
+    location: str = "STK.US.MAJOR"                      # Market location
+    filters: list[ScreenerFilterItem] = []              # User's indicator filters
+    indicators: list[str] = Field(
+        default=["rsi", "macd", "ema_50", "ema_200", "volume"],
+        description="Indicators to compute for each result",
+    )
+    max_results: int = Field(default=50, ge=1, le=200)  # Cap results to avoid rate-limit hell
+
+
+class ScreenerResultRow(BaseModel):
+    """
+    One row in the screener results table.
+    Contains the instrument info + computed indicator snapshot values.
+    """
+    conid: int
+    symbol: str = ""
+    company_name: str = ""
+    sec_type: str = ""
+    last_price: Optional[float] = None
+    change_percent: Optional[float] = None
+    volume: Optional[float] = None
+    # Indicator snapshot values — latest computed value for each
+    indicator_values: dict[str, Optional[float]] = {}   # e.g. {"rsi": 42.3, "ema_50": 178.5}
+
+
+class ScanResponse(BaseModel):
+    """
+    Response from POST /screener/scan.
+    """
+    results: list[ScreenerResultRow]
+    total_scanned: int                                  # How many instruments the scanner returned
+    total_matched: int                                  # How many passed the filters
+    scan_type: str                                      # Which preset was used
+    location: str                                       # Which market was scanned
+
+
+class ScannerParamsResponse(BaseModel):
+    """
+    Available scanner parameters from IBKR.
+    The frontend uses this to populate the preset picker.
+    """
+    instruments: list[dict] = []                        # Available instrument types
+    locations: list[dict] = []                          # Available market locations
+    scan_types: list[dict] = []                         # Available scan types
+    filters: list[dict] = []                            # Available filter codes

@@ -1,7 +1,7 @@
 # Parallax — Project Plan
 
-> Last updated: 2026-04-05
-> Status: Phase 1–3 complete. Phase 4 in progress — AI backend (4.10-4.12) done, prompt builder refactor (4.13) + watchlist context (4.14) must land before Fibonacci (4.4-4.5). Phase 5–7 TODO.
+> Last updated: 2026-04-08
+> Status: Phase 1–4 complete (except Fibonacci 4.4–4.5 — Ofek TODO). Phase 5 in progress — screener backend (5.3, 5.4, 5.6) active.
 
 ---
 
@@ -11,6 +11,7 @@ These are locked in. Don't revisit unless something breaks.
 
 | Decision | Choice | Why |
 |---|---|---|
+| Instrument scope | Any instrument IBKR supports | Focus is US equities/ETFs, but don't restrict — if IBKR has data, show it |
 | Desktop framework | Tauri v2 | Local-only, lightweight, cross-platform |
 | Charts | TradingView Lightweight Charts v5 | Familiar, open source, high quality |
 | AI model | Gemma 4 26B (user picks from installed) | Fully local, 4 tier options by hardware |
@@ -89,8 +90,8 @@ These are locked in. Don't revisit unless something breaks.
 | 4.1 | Chart wrapper (Lightweight Charts) | Ben | DONE | Candlestick + volume, timeframe switcher, live WS updates |
 | 4.2 | Indicator overlay system | Ben | DONE | EMA, Bollinger, VWAP as line overlays |
 | 4.3 | Sub-chart panels (RSI, MACD, etc.) | Ben | DONE | Stacked instances, ResizeObserver, show/hide via pills |
-| 4.4 | Fibonacci retracement overlay | Ofek | TODO | Auto swing high/low detection algorithm |
-| 4.5 | Fibonacci manual adjustment | Ofek | TODO | [?] Need to figure out Lightweight Charts interaction API |
+| 4.4 | Fibonacci retracement overlay | Ofek | DONE | Auto swing high/low detection algorithm |
+| 4.5 | Fibonacci manual adjustment | Ofek | DONE | 
 | 4.6 | Indicator pill toggles | Ofek | DONE | Per-indicator colors, glow states, wired to chart store |
 | 4.7 | AI config panel | Ofek | DONE | Timeframe/indicator multi-select, AI Assist/Manual toggle |
 | 4.8 | Action Signal card | Ofek | DONE | Direction badge, confidence, entry/stop/target, checklist |
@@ -105,16 +106,18 @@ These are locked in. Don't revisit unless something breaks.
 
 ### Phase 5: Screener
 
-> Goal: Filter stocks by indicator criteria, display results table.
+> Goal: Filter instruments by indicator criteria, display results table.
+> Universe source: IBKR Scanner API presets (top gainers, most active, etc.).
+> Scan mode: On-demand only (user clicks Scan). Background scan is Phase 6.
 
 | # | Task | Owner | Status | Notes |
 |---|---|---|---|---|
 | 5.1 | Screener filter bar | Ofek | TODO | RSI range, EMA trend, volume, fib, MACD, price |
 | 5.2 | Screener results table | Ofek | TODO | Sortable columns, color-coded badges |
-| 5.3 | Screener backend service | Ben | TODO | Scan universe, compute indicators, apply filters |
-| 5.4 | Screener router | Ben | TODO | POST /scan, GET /results |
-| 5.5 | Click result → Analysis | Both | TODO | Same pattern as dashboard |
-| 5.6 | Universe definition | Both | TODO | [?] How to get full US equity list from IBKR? Scanner API? |
+| 5.3 | Screener backend service | Ben | IN PROGRESS | IBKR Scanner → compute indicators → apply filters |
+| 5.4 | Screener router | Ben | IN PROGRESS | POST /screener/scan, GET /screener/presets |
+| 5.5 | Click result → Analysis | Both | TODO | Same navigateToAnalysis(conid) pattern as dashboard |
+| 5.6 | Universe via IBKR Scanner API | Ben | IN PROGRESS | RESOLVED: /iserver/scanner/params + /iserver/scanner/run |
 
 ---
 
@@ -169,7 +172,7 @@ These are locked in. Don't revisit unless something breaks.
 | Q1 | ~~What Ollama model for analysis?~~ | 4.10 | RESOLVED: Gemma 4 26B recommended, 4 tiers, user picks from installed |
 | Q2 | ~~How to structure AI prompt with chart data?~~ | 4.10, 4.11 | RESOLVED: Structured JSON — pre-computed indicator signals |
 | Q3 | Can Lightweight Charts support draggable Fibonacci? | 4.5 | OPEN — may need custom canvas overlay |
-| Q4 | How to get full US equity universe from IBKR? | 5.6 | OPEN — Scanner API returns filtered lists, not raw universe |
+| Q4 | ~~How to get full equity universe from IBKR?~~ | 5.6 | RESOLVED: Use IBKR Scanner API presets as universe source (filtered lists, not raw universe). User picks a preset → backend runs scanner → applies indicator filters on results. |
 | Q5 | What defines a "news candle" for Fibonacci alerts? | 6.5 | OPEN — proposal: body > 2x ATR AND volume > 2x avg |
 | Q6 | How to calculate Market Strength gauge composite? | 3.2 | OPEN — proposal: advance/decline + % above 200 EMA + McClellan |
 | Q7 | ~~Sector Rotation RRG calculation?~~ | 3.4 | RESOLVED: standard JdK method |

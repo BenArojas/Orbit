@@ -26,9 +26,11 @@ from exceptions import (
     IBKRRequestError,
     OllamaConnectionError,
     ParallaxError,
+    ScreenerError,
 )
 from services.db import DatabaseService
 from services.ibkr import IBKRService
+from services.screener import ScreenerService
 from services.sectors import SectorService
 from services.ai import AiService
 from services.ollama import OllamaLifecycle
@@ -69,6 +71,9 @@ async def lifespan(app: FastAPI):
     # Create the sector service singleton (Step 3.3–3.4)
     # Must be a singleton so the conid cache persists across requests
     app.state.sectors = SectorService(ibkr)
+
+    # Screener service (Phase 5)
+    app.state.screener = ScreenerService(ibkr)
 
     # Ollama lifecycle — detect binary, start server, list models (Step 4.12)
     # This NEVER downloads or installs anything. It detects what the user
@@ -202,6 +207,17 @@ async def ai_error_handler(request: Request, exc: AIError):
     )
 
 
+@app.exception_handler(ScreenerError)
+async def screener_error_handler(request: Request, exc: ScreenerError):
+    return JSONResponse(
+        status_code=422,
+        content={
+            "error": "screener_error",
+            "message": exc.message,
+        },
+    )
+
+
 @app.exception_handler(ParallaxError)
 async def parallax_error_handler(request: Request, exc: ParallaxError):
     """Catch-all for any ParallaxError subclass not handled above."""
@@ -238,8 +254,8 @@ app.include_router(triggers_router)
 app.include_router(ai_router)
 app.include_router(fibonacci_router)
 
-# Future routers (uncomment as they're built):
-# from routers.screener import router as screener_router
+from routers.screener import router as screener_router
+app.include_router(screener_router)
 
 
 # ── Health endpoint ──────────────────────────────────────────

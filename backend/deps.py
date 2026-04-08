@@ -11,6 +11,7 @@ from fastapi import Request
 
 from services.db import DatabaseService
 from services.ibkr import IBKRService
+from services.screener import ScreenerService
 from services.sectors import SectorService
 from services.ai import AiService
 from services.ollama import OllamaLifecycle
@@ -39,3 +40,8 @@ def get_ai(request: Request) -> AiService:
 def get_ollama(request: Request) -> OllamaLifecycle:
     """Get the Ollama lifecycle manager from app.state during lifespan."""
     return request.app.state.ollama
+
+
+def get_screener(request: Request) -> ScreenerService:
+    """Get the screener service singleton stashed on app.state during lifespan."""
+    return request.app.state.screener
