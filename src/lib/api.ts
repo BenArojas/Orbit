@@ -419,19 +419,17 @@ export interface ScannerPreset {
   display_name: string;
 }
 
-export interface ScreenerFilterItem {
-  indicator: string;
-  op: "gt" | "lt" | "between" | "cross_above" | "cross_below";
-  value: number;
-  value2?: number;
+/** A native IBKR scanner filter — passed directly to the scanner endpoint */
+export interface IbkrFilterItem {
+  code: string;   // IBKR filter code e.g. "marketCapAbove1e6", "minPeRatio"
+  value: string;  // String value e.g. "1000", "5"
 }
 
 export interface ScanRequest {
   instrument?: string;
   scan_type?: string;
   location?: string;
-  filters?: ScreenerFilterItem[];
-  indicators?: string[];
+  filters?: IbkrFilterItem[];
   max_results?: number;
 }
 
@@ -443,7 +441,7 @@ export interface ScreenerResultRow {
   last_price: number | null;
   change_percent: number | null;
   volume: number | null;
-  indicator_values: Record<string, number | null>;
+  market_cap: number | null;  // In $M (IBKR field 7289)
 }
 
 export interface ScanResponse {

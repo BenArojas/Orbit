@@ -1,0 +1,11 @@
+version: '3.8'
+
+services:
+  ibkr-gateway:
+    build:
+      context: ./ibkr-gateway
+    container_name: parallax-ibkr-gateway
+    restart: unless-stopped
+    ports:
+      # Expose on localhost:5000 — Parallax backend connects here
+      - "5000:5000"

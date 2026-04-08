@@ -38,22 +38,19 @@ async def run_scan(
 
     The frontend sends:
       - instrument/scan_type/location: Which IBKR scanner preset to use
-      - filters: Indicator filter criteria (RSI > 30, EMA trend, etc.)
-      - indicators: Which indicators to compute for each result
+      - filters: Native IBKR filter codes (e.g. marketCapAbove1e6, minPeRatio)
       - max_results: Cap on how many instruments to process
 
     The backend:
-      1. Runs the IBKR scanner to get a universe of instruments
-      2. Fetches quotes + computes indicators for each
-      3. Applies the user's filters
-      4. Returns matching rows with indicator snapshot values
+      1. Runs the IBKR scanner with native filters (server-side filtering)
+      2. Batch-fetches snapshot quotes (price, chg%, volume, market cap)
+      3. Returns enriched rows
     """
     return await screener.scan(
         instrument=request.instrument,
         scan_type=request.scan_type,
         location=request.location,
         filters=request.filters,
-        indicators=request.indicators,
         max_results=request.max_results,
     )
 

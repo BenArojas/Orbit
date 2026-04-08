@@ -27,8 +27,7 @@ export {
 } from "./watchlist";
 export {
   useScreenerStore,
-  type ScreenerFilter,
-  type FilterOp,
+  type ActiveFilter,
   type SortDir,
 } from "./screener";
 export { useSettingsStore } from "./settings";

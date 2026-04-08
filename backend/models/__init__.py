@@ -699,48 +699,46 @@ class ScannerPreset(BaseModel):
     display_name: str                                   # Human-readable name
 
 
-class ScreenerFilterItem(BaseModel):
+class IbkrFilterItem(BaseModel):
     """
-    One filter criterion in a screener scan.
+    One native IBKR scanner filter criterion.
 
-    operator choices:
-      - "gt"          — indicator > value
-      - "lt"          — indicator < value
-      - "between"     — value <= indicator <= value2
-      - "cross_above" — indicator just crossed above value
-      - "cross_below" — indicator just crossed below value
+    The code is an IBKR filter code (e.g., "marketCapAbove1e6", "minPeRatio").
+    The value is always a string — IBKR scanner API expects string values.
+
+    Examples:
+      {"code": "marketCapAbove1e6", "value": "1000"}   # Market cap > $1B
+      {"code": "maxPeRatio", "value": "20"}            # P/E < 20
+      {"code": "minRetnOnEq", "value": "15"}           # ROE > 15%
+      {"code": "changePercAbove", "value": "2"}        # Day change > 2%
     """
-    indicator: str                                      # e.g. "rsi", "ema_trend", "volume_ratio", "price"
-    op: str                                             # "gt", "lt", "between", "cross_above", "cross_below"
-    value: float                                        # Comparison value
-    value2: Optional[float] = None                      # Second value for "between"
+    code: str                                           # IBKR filter code
+    value: str                                          # Filter value (string)
 
 
 class ScanRequest(BaseModel):
     """
     Request to run a screener scan.
 
-    The backend:
-      1. Runs the IBKR scanner preset to get a universe of instruments
-      2. Fetches candle data + computes indicators for each
-      3. Applies the user's filters
-      4. Returns matching results sorted by relevance
+    The backend passes native IBKR filter codes directly to the scanner endpoint.
+    IBKR pre-filters the results server-side — no local indicator computation needed.
+
+    Flow:
+      1. POST /iserver/scanner/run with instrument, scan_type, location, filters
+      2. Batch-fetch snapshot quotes (price, chg%, volume, market cap)
+      3. Return enriched rows
     """
     instrument: str = "STK"                             # Security type
-    scan_type: str = "MOST_ACTIVE"                      # IBKR scanner preset
+    scan_type: str = "MOST_ACTIVE"                      # IBKR scanner sort/preset
     location: str = "STK.US.MAJOR"                      # Market location
-    filters: list[ScreenerFilterItem] = []              # User's indicator filters
-    indicators: list[str] = Field(
-        default=["rsi", "macd", "ema_50", "ema_200", "volume"],
-        description="Indicators to compute for each result",
-    )
-    max_results: int = Field(default=50, ge=1, le=200)  # Cap results to avoid rate-limit hell
+    filters: list[IbkrFilterItem] = []                  # Native IBKR filter codes
+    max_results: int = Field(default=50, ge=1, le=200)  # Cap results
 
 
 class ScreenerResultRow(BaseModel):
     """
     One row in the screener results table.
-    Contains the instrument info + computed indicator snapshot values.
+    Contains instrument info + snapshot quote data.
     """
     conid: int
     symbol: str = ""
@@ -749,8 +747,7 @@ class ScreenerResultRow(BaseModel):
     last_price: Optional[float] = None
     change_percent: Optional[float] = None
     volume: Optional[float] = None
-    # Indicator snapshot values — latest computed value for each
-    indicator_values: dict[str, Optional[float]] = {}   # e.g. {"rsi": 42.3, "ema_50": 178.5}
+    market_cap: Optional[float] = None                  # In $M (IBKR field 7289)
 
 
 class ScanResponse(BaseModel):
@@ -758,8 +755,8 @@ class ScanResponse(BaseModel):
     Response from POST /screener/scan.
     """
     results: list[ScreenerResultRow]
-    total_scanned: int                                  # How many instruments the scanner returned
-    total_matched: int                                  # How many passed the filters
+    total_scanned: int                                  # How many the scanner returned
+    total_matched: int                                  # Same as total_scanned (filters are native)
     scan_type: str                                      # Which preset was used
     location: str                                       # Which market was scanned
 
@@ -767,7 +764,7 @@ class ScanResponse(BaseModel):
 class ScannerParamsResponse(BaseModel):
     """
     Available scanner parameters from IBKR.
-    The frontend uses this to populate the preset picker.
+    The frontend uses this to populate the preset/filter pickers.
     """
     instruments: list[dict] = []                        # Available instrument types
     locations: list[dict] = []                          # Available market locations

@@ -1,0 +1,20 @@
+# We're running in a container, no need to restrict based on IP location
+ip2loc: false
+
+# Listen on port 5000 for API requests
+listenPort: 5000
+listenSsl: true
+
+# These are default values for the self-signed certificate provided by IBKR
+sslCert: "vertx.jks"
+sslPwd: "mywebapi"
+
+# Add these extra properties with default/empty values to prevent errors
+proxyRemoteHost: "https://api.ibkr.com"
+svcEnvironment: "v1"
+portalBaseURL: ""
+
+# Allow API requests from any IP address *within the Docker network*.
+ips:
+  allow:
+    - "*"

@@ -1,33 +1,25 @@
 /**
  * Screener Store — Filter state + results for the stock screener
  *
- * Tracks which indicator filters are active, the selected scanner preset,
- * scan results, and sort state. The actual scan computation happens in
- * the backend (services/screener.py).
+ * Tracks which IBKR native filters are active, the selected scanner preset,
+ * scan results, and sort state. All filtering happens server-side via IBKR.
  */
 
 import { create } from "zustand";
-import type { ScreenerResultRow, ScannerPreset } from "@/lib/api";
+import type { IbkrFilterItem, ScreenerResultRow, ScannerPreset } from "@/lib/api";
 
-/** Filter condition operators */
-export type FilterOp = "gt" | "lt" | "between" | "cross_above" | "cross_below";
-
-/** A single filter criterion */
-export interface ScreenerFilter {
-  id: string;
-  indicator: string; // e.g. "rsi", "ema_50", "volume", "price", "change_percent"
-  op: FilterOp;
-  value: number;
-  value2?: number; // for "between" operator
-  enabled: boolean;
+/** An active filter with a local ID for React key + removal */
+export interface ActiveFilter extends IbkrFilterItem {
+  id: string;           // Local UUID for React key / removal
+  display_label: string; // Human-readable label e.g. "Market Cap > $1B"
 }
 
 /** Sort direction for results table */
 export type SortDir = "asc" | "desc";
 
 interface ScreenerState {
-  /** Active filter criteria */
-  filters: ScreenerFilter[];
+  /** Active native IBKR filter criteria */
+  filters: ActiveFilter[];
 
   /** Selected scanner preset */
   selectedPreset: ScannerPreset | null;
@@ -45,10 +37,8 @@ interface ScreenerState {
   sortDir: SortDir;
 
   /** Actions */
-  addFilter: (filter: ScreenerFilter) => void;
+  addFilter: (filter: ActiveFilter) => void;
   removeFilter: (id: string) => void;
-  updateFilter: (id: string, patch: Partial<ScreenerFilter>) => void;
-  toggleFilter: (id: string) => void;
   clearFilters: () => void;
   setPreset: (preset: ScannerPreset) => void;
   setScanning: (v: boolean) => void;
@@ -64,8 +54,8 @@ export const useScreenerStore = create<ScreenerState>()((set) => ({
   results: [],
   totalScanned: 0,
   totalMatched: 0,
-  sortBy: "symbol",
-  sortDir: "asc",
+  sortBy: "change_percent",
+  sortDir: "desc",
 
   addFilter: (filter) =>
     set((state) => ({ filters: [...state.filters, filter] })),
@@ -73,20 +63,6 @@ export const useScreenerStore = create<ScreenerState>()((set) => ({
   removeFilter: (id) =>
     set((state) => ({
       filters: state.filters.filter((f) => f.id !== id),
-    })),
-
-  updateFilter: (id, patch) =>
-    set((state) => ({
-      filters: state.filters.map((f) =>
-        f.id === id ? { ...f, ...patch } : f
-      ),
-    })),
-
-  toggleFilter: (id) =>
-    set((state) => ({
-      filters: state.filters.map((f) =>
-        f.id === id ? { ...f, enabled: !f.enabled } : f
-      ),
     })),
 
   clearFilters: () => set({ filters: [] }),

@@ -1,20 +1,20 @@
 /**
- * Screener Page — Filter instruments by indicator criteria
+ * Screener Page — Filter instruments via IBKR native scanner filters
  *
  * Layout: filter bar (top sticky) + results table (scrollable main)
  * Clicking a result navigates to Analysis with that instrument.
  *
  * Flow:
  *   1. User picks a scanner preset (Most Active, Top Gainers, etc.)
- *   2. User optionally adds indicator filters (RSI < 30, Price > 5, etc.)
+ *   2. User optionally adds IBKR native filter codes (Market Cap ≥ 1B, P/E ≤ 20, etc.)
  *   3. User clicks "Scan" → POST /screener/scan
- *   4. Results render in sortable table
+ *   4. Results render in sortable table (Symbol, Name, Type, Price, Chg%, Volume, Mkt Cap)
  *   5. Click any row → Analysis page for that conid
  */
 
 import { useCallback } from "react";
 import { useMutation } from "@tanstack/react-query";
-import { api, type ScanRequest, type ScreenerFilterItem } from "@/lib/api";
+import { api, type ScanRequest } from "@/lib/api";
 import { useScreenerStore } from "@/store/screener";
 import ScreenerFilterBar from "@/components/screener/ScreenerFilterBar";
 import ScreenerResultsTable from "@/components/screener/ScreenerResultsTable";
@@ -28,7 +28,6 @@ export default function ScreenerPage() {
     setResults,
   } = useScreenerStore();
 
-  // Scan mutation — fires POST /screener/scan
   const scanMutation = useMutation({
     mutationFn: (req: ScanRequest) => api.screenerScan(req),
     onMutate: () => setScanning(true),
@@ -41,26 +40,16 @@ export default function ScreenerPage() {
   const handleScan = useCallback(() => {
     if (!selectedPreset || isScanning) return;
 
-    // Build the scan request
-    const enabledFilters = filters.filter((f) => f.enabled);
-    const filterItems: ScreenerFilterItem[] = enabledFilters.map((f) => ({
-      indicator: f.indicator,
-      op: f.op,
-      value: f.value,
-      ...(f.op === "between" && f.value2 != null ? { value2: f.value2 } : {}),
-    }));
-
     const req: ScanRequest = {
       instrument: selectedPreset.instrument,
       scan_type: selectedPreset.scan_type,
       location: selectedPreset.location,
-      filters: filterItems,
-      indicators: ["rsi", "macd", "ema_50", "ema_200", "volume", "adx"],
+      filters: filters.map((f) => ({ code: f.code, value: f.value })),
       max_results: 50,
     };
 
     scanMutation.mutate(req);
-  }, [selectedPreset, filters, isScanning, scanMutation, setResults]);
+  }, [selectedPreset, filters, isScanning, scanMutation]);
 
   return (
     <div className="flex h-full flex-col">
