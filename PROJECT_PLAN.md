@@ -1,7 +1,7 @@
 # Parallax — Project Plan
 
 > Last updated: 2026-04-08
-> Status: Phase 1–4 complete (except Fibonacci 4.4–4.5 — Ofek TODO). Phase 5 in progress — screener backend (5.3, 5.4, 5.6) active.
+> Status: Phase 1–4 complete. Phase 5 built (feature/screener-page) — **blocked pending code review and Q9 resolution (TWS API vs IBKR Gateway)**.
 
 ---
 
@@ -112,12 +112,15 @@ These are locked in. Don't revisit unless something breaks.
 
 | # | Task | Owner | Status | Notes |
 |---|---|---|---|---|
-| 5.1 | Screener filter bar | Ofek | TODO | RSI range, EMA trend, volume, fib, MACD, price |
-| 5.2 | Screener results table | Ofek | TODO | Sortable columns, color-coded badges |
-| 5.3 | Screener backend service | Ben | IN PROGRESS | IBKR Scanner → compute indicators → apply filters |
-| 5.4 | Screener router | Ben | IN PROGRESS | POST /screener/scan, GET /screener/presets |
-| 5.5 | Click result → Analysis | Both | TODO | Same navigateToAnalysis(conid) pattern as dashboard |
-| 5.6 | Universe via IBKR Scanner API | Ben | IN PROGRESS | RESOLVED: /iserver/scanner/params + /iserver/scanner/run |
+| 5.1 | Screener filter bar | Ofek | REVIEW | Built — IBKR native filter codes, grouped dropdown (Fundamental/Technical/Analyst/Short Interest) |
+| 5.2 | Screener results table | Ofek | REVIEW | Built — Symbol, Name, Type, Price, Chg%, Volume, Mkt Cap; sortable |
+| 5.3 | Screener backend service | Ben | REVIEW | Built — scanner_run with native filters + batch snapshots; no indicator computation |
+| 5.4 | Screener router | Ben | REVIEW | Built — POST /screener/scan, GET /screener/presets |
+| 5.5 | Click result → Analysis | Both | REVIEW | Built — navigateToAnalysis(conid) on row click |
+| 5.6 | Universe via IBKR Scanner API | Ben | REVIEW | Built — /iserver/scanner/params + /iserver/scanner/run |
+
+> ⚠️ **Phase 5 blocked — awaiting code review and resolution of Q9 (TWS API vs IBKR Gateway Web API).** Do not merge `feature/screener-page` until Q9 is decided.
+> 🧹 **Cleanup needed on branch:** `docker-compose.yml` and `ibkr-gateway/` were committed to `feature/screener-page` by mistake — move to a dedicated `infra/ibkr-gateway` branch or root config area before merge.
 
 ---
 
@@ -177,3 +180,21 @@ These are locked in. Don't revisit unless something breaks.
 | Q6 | How to calculate Market Strength gauge composite? | 3.2 | OPEN — proposal: advance/decline + % above 200 EMA + McClellan |
 | Q7 | ~~Sector Rotation RRG calculation?~~ | 3.4 | RESOLVED: standard JdK method |
 | Q8 | ~~Can Ollama be bundled into Tauri?~~ | 4.12 | RESOLVED: detect-only, never auto-install. Guide user instead |
+| Q9 | **TWS API or IBKR Client Portal Web API?** | ALL | **OPEN — project paused** |
+
+**Q9 Detail:**
+
+The current backend is built against the **IBKR Client Portal Web API** (REST/WebSocket, requires Docker gateway on port 5001, session-based auth). The alternative is the **TWS API** (socket-based, requires TWS or IB Gateway desktop app running, uses `ibapi` Python client).
+
+Key trade-offs to decide:
+
+| Factor | Client Portal Web API | TWS API |
+|---|---|---|
+| Data model | REST/JSON, easy HTTP | Raw socket, callback-based |
+| Auth | Browser session (fragile, expires) | TWS app login (persistent) |
+| Scanner | ✅ Native `/iserver/scanner/run` | ❌ No scanner endpoint — must build own universe |
+| Streaming | WebSocket (gateway managed) | Direct socket (lower latency) |
+| Setup friction | Docker + gateway + browser auth | TWS/IB Gateway app always running |
+| Backend rewrite scope | Current state | **Full IBKRService rewrite** — all REST calls replaced with `ibapi` callbacks |
+
+**If TWS API is chosen:** `IBKRService`, all routers touching market data, screener service (scanner unavailable — need alternative universe source), and the WebSocket layer must be rewritten. Estimated scope: Phase 1 backend equivalent of work.
