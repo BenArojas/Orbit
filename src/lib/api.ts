@@ -410,6 +410,57 @@ export interface ModelSelectRequest {
   model: string;
 }
 
+// ── Screener (Phase 5 — tasks 5.1–5.6) ────────────────────
+
+export interface ScannerPreset {
+  instrument: string;
+  scan_type: string;
+  location: string;
+  display_name: string;
+}
+
+export interface ScreenerFilterItem {
+  indicator: string;
+  op: "gt" | "lt" | "between" | "cross_above" | "cross_below";
+  value: number;
+  value2?: number;
+}
+
+export interface ScanRequest {
+  instrument?: string;
+  scan_type?: string;
+  location?: string;
+  filters?: ScreenerFilterItem[];
+  indicators?: string[];
+  max_results?: number;
+}
+
+export interface ScreenerResultRow {
+  conid: number;
+  symbol: string;
+  company_name: string;
+  sec_type: string;
+  last_price: number | null;
+  change_percent: number | null;
+  volume: number | null;
+  indicator_values: Record<string, number | null>;
+}
+
+export interface ScanResponse {
+  results: ScreenerResultRow[];
+  total_scanned: number;
+  total_matched: number;
+  scan_type: string;
+  location: string;
+}
+
+export interface ScannerParamsResponse {
+  instruments: Record<string, unknown>[];
+  locations: Record<string, unknown>[];
+  scan_types: Record<string, unknown>[];
+  filters: Record<string, unknown>[];
+}
+
 // ── API Error ───────────────────────────────────────────────
 
 export class ApiError extends Error {
@@ -538,4 +589,14 @@ export const api = {
 
   getLockedFibs: (conid: number) =>
     request<LockedFibonacciResponse[]>("GET", `/fibonacci/locks/${conid}`),
+
+  // Screener (Phase 5)
+  screenerScan: (req: ScanRequest) =>
+    request<ScanResponse>("POST", "/screener/scan", req),
+
+  screenerPresets: () =>
+    request<ScannerPreset[]>("GET", "/screener/presets"),
+
+  screenerParams: () =>
+    request<ScannerParamsResponse>("GET", "/screener/params"),
 } as const;
