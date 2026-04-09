@@ -780,6 +780,28 @@ class ScannerParamsResponse(BaseModel):
     filters: list[dict] = []                            # Available filter codes
 
 
+class AiFilterRequest(BaseModel):
+    """Request to generate IBKR filter codes from a natural language query."""
+    query: str                        # e.g. "oversold large caps with strong earnings"
+    model: str                        # Ollama model name (from user's selection)
+    preset_context: Optional[str] = None  # e.g. "Most Active — US Stocks" (helps AI understand universe)
+
+
+class AiFilterSuggestion(BaseModel):
+    """One AI-suggested filter."""
+    code: str          # IBKR filter code e.g. "marketCapAbove1e6"
+    value: str         # Filter value as string e.g. "10000"
+    display_label: str # Human-readable e.g. "Market Cap ≥ $10B"
+    reasoning: str     # Why the AI chose this filter
+
+
+class AiFilterResponse(BaseModel):
+    """Response from POST /screener/ai-filters."""
+    filters: list[AiFilterSuggestion]
+    summary: str       # One sentence summary of what the query translates to
+    raw_query: str     # Echoed back for reference
+
+
 class ContractInfoResponse(BaseModel):
     """Contract details from IBKR — used in screener quick-peek."""
     conid: int

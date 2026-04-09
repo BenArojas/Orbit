@@ -14,6 +14,8 @@ from fastapi import APIRouter, Depends
 
 from deps import get_screener
 from models import (
+    AiFilterRequest,
+    AiFilterResponse,
     ContractInfoResponse,
     ScannerParamsResponse,
     ScannerPreset,
@@ -138,3 +140,29 @@ async def scanner_params(
         scan_types=raw.get("scan_type_list", []),
         filters=raw.get("filter_list", []),
     )
+
+
+# ── POST /screener/ai-filters ───────────────────────────────
+
+
+@router.post("/ai-filters", response_model=AiFilterResponse)
+async def ai_generate_filters(request: AiFilterRequest):
+    """
+    Translate a natural language query into IBKR scanner filter codes using Ollama.
+
+    The AI reads the filter catalogue and returns structured filter codes
+    that can be applied directly to the filter bar.
+    """
+    from services.screener_ai import ScreenerAiService
+
+    # ScreenerAiService is stateless — create per-request (cheap, no state)
+    svc = ScreenerAiService()
+    try:
+        result = await svc.generate_filters(
+            query=request.query,
+            model=request.model,
+            preset_context=request.preset_context or "",
+        )
+        return AiFilterResponse(**result)
+    finally:
+        await svc.shutdown()

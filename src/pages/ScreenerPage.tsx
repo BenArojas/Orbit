@@ -1,18 +1,26 @@
 /**
  * Screener Page — Filter instruments via IBKR native scanner filters
  *
- * Layout: filter bar (top sticky) + results table (scrollable) + pagination (bottom) + peek panel (right)
+ * Layout:
+ *   ┌─────────────────────────────────────────────────┐
+ *   │ Filter bar (sticky top, full width)             │
+ *   ├────────────────────────────┬────────────────────┤
+ *   │ Results table (scrollable) │ AI panel (300px)   │
+ *   ├────────────────────────────┤ collapsible        │
+ *   │ Pagination (bottom)        │                    │
+ *   └────────────────────────────┴────────────────────┘
+ *   + ScreenerPeekPanel (right overlay on row click)
  *
  * Flow:
  *   1. User picks a scanner preset (Most Active, Top Gainers, etc.)
- *   2. User optionally adds IBKR native filter codes (Market Cap ≥ 1B, P/E ≤ 20, etc.)
+ *   2. User optionally adds IBKR native filter codes (or uses AI panel)
  *   3. User optionally picks server-side sort field + direction
  *   4. User clicks "Scan" → POST /screener/scan
  *   5. Results render in sortable, paginated table
  *   6. Click any row → quick-peek slide-over with key stats + "Open in Analysis" CTA
  */
 
-import { useCallback } from "react";
+import { useState, useCallback } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { api, type ScanRequest } from "@/lib/api";
 import { useScreenerStore } from "@/store/screener";
@@ -20,8 +28,11 @@ import ScreenerFilterBar from "@/components/screener/ScreenerFilterBar";
 import ScreenerResultsTable from "@/components/screener/ScreenerResultsTable";
 import ScreenerPagination from "@/components/screener/ScreenerPagination";
 import ScreenerPeekPanel from "@/components/screener/ScreenerPeekPanel";
+import ScreenerAiPanel from "@/components/screener/ScreenerAiPanel";
 
 export default function ScreenerPage() {
+  const [aiPanelOpen, setAiPanelOpen] = useState(false);
+
   const {
     selectedPreset,
     filters,
@@ -77,8 +88,12 @@ export default function ScreenerPage() {
 
   return (
     <div className="flex h-full flex-col">
-      {/* Filter bar — sticky top */}
-      <ScreenerFilterBar onScan={handleScan} />
+      {/* Filter bar — sticky top, full width */}
+      <ScreenerFilterBar
+        onScan={handleScan}
+        aiPanelOpen={aiPanelOpen}
+        onToggleAiPanel={() => setAiPanelOpen((v) => !v)}
+      />
 
       {/* Error state */}
       {scanMutation.isError && (
@@ -89,13 +104,19 @@ export default function ScreenerPage() {
         </div>
       )}
 
-      {/* Results table — scrollable */}
-      <ScreenerResultsTable />
+      {/* Main content — results left, AI panel right */}
+      <div className="flex flex-1 overflow-hidden">
+        {/* Left column: results + pagination */}
+        <div className="flex flex-1 flex-col overflow-hidden">
+          <ScreenerResultsTable />
+          <ScreenerPagination onPageChange={handlePageChange} />
+        </div>
 
-      {/* Pagination — bottom */}
-      <ScreenerPagination onPageChange={handlePageChange} />
+        {/* Right column: AI panel (collapsible) */}
+        <ScreenerAiPanel isOpen={aiPanelOpen} />
+      </div>
 
-      {/* Quick-peek slide-over */}
+      {/* Quick-peek slide-over (overlay) */}
       <ScreenerPeekPanel />
     </div>
   );

@@ -485,6 +485,27 @@ export interface ScannerParamsResponse {
   filters: Record<string, unknown>[];
 }
 
+// ── AI Screener (Phase 5C) ────────────────────────────────────
+
+export interface AiFilterRequest {
+  query: string;
+  model: string;
+  preset_context?: string;
+}
+
+export interface AiFilterSuggestion {
+  code: string;
+  value: string;
+  display_label: string;
+  reasoning: string;
+}
+
+export interface AiFilterResponse {
+  filters: AiFilterSuggestion[];
+  summary: string;
+  raw_query: string;
+}
+
 // ── API Error ───────────────────────────────────────────────
 
 export class ApiError extends Error {
@@ -626,4 +647,7 @@ export const api = {
 
   screenerContractInfo: (conid: number) =>
     request<ContractInfoResponse>("GET", `/screener/contract/${conid}`),
+
+  screenerAiFilters: (req: AiFilterRequest) =>
+    request<AiFilterResponse>("POST", "/screener/ai-filters", req),
 } as const;

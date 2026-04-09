@@ -1,7 +1,7 @@
 # Parallax — Project Plan
 
-> Last updated: 2026-04-08
-> Status: Phase 1–4 complete. Phase 5A built (feature/screener-page) — **blocked pending code review and Q9 resolution (TWS API vs IBKR Gateway)**. Phase 5B/5C scoped and ready to start after 5A review.
+> Last updated: 2026-04-09
+> Status: Phase 1–4 complete. Phase 5A/5B built (feature/screener-page) — awaiting code review. Phase 5C in progress.
 
 ---
 
@@ -19,7 +19,7 @@ These are locked in. Don't revisit unless something breaks.
 | AI scope | Full chat + signal card | Signal card on first response, then follow-up chat |
 | Ollama lifecycle | Detect-only, never auto-install | Guide user, don't decide for them |
 | Persistence | SQLite (local) | Survives restarts, shared across Hub modules |
-| Market data | IBKR Client Portal Web API via ibind | Already paying for data |
+| Market data | IBKR Client Portal Web API (port 5001) | Staying with this — TWS API rejected (no scanner, callback model). ibind client. |
 | Multi-timeframe | Single chart + timeframe switcher | Simpler UX |
 | Background scanner | Runs while app is open only | No system tray mode |
 | Dynamic watchlists | Auto-populated by trigger rules | Separate from master IBKR watchlist |
@@ -121,28 +121,28 @@ These are locked in. Don't revisit unless something breaks.
 | 5.5 | Click result → Analysis | Both | REVIEW | navigateToAnalysis(conid) on row click |
 | 5.6 | Universe via IBKR Scanner API | Ben | REVIEW | /iserver/scanner/params + /iserver/scanner/run |
 
-> ⚠️ **5A blocked — awaiting code review and resolution of Q9 (TWS API vs IBKR Gateway Web API).** Do not merge `feature/screener-page` until Q9 is decided.
+> ⏳ **5A awaiting code review.** Do not merge `feature/screener-page` until review passes.
 > 🧹 **Cleanup needed on branch:** `docker-compose.yml` and `ibkr-gateway/` were committed to `feature/screener-page` by mistake — move to a dedicated `infra/ibkr-gateway` branch or root config area before merge.
 
-#### 5B — Enhancements (after 5A review passes)
+#### 5B — Enhancements — DONE
 
 | # | Task | Owner | Status | Notes |
 |---|---|---|---|---|
-| 5.7 | Quick-peek slide-over | Both | TODO | Right-side sheet (~400px) on row click: mini chart (5-day), key stats (P/E, 52W range, avg vol), sector/industry via `/iserver/contract/{conid}/info`. Two CTAs: "Open in Analysis" + "Add to Watchlist". |
-| 5.8 | Skeleton loaders | Ofek | TODO | Shimmer rows in results table during scan, skeleton in slide-over while data loads, skeleton for preset dropdown on first mount |
-| 5.9 | Persist last scan | Ben | TODO | Keep results + filters in Zustand across page navigations (persist middleware or keep store alive). Navigating to Analysis and back should restore the scan. |
-| 5.10 | Pagination + uncap results | Ben | TODO | Remove local 50 cap. Backend requests up to `max_results` from IBKR (default 200). Frontend paginates — 25 rows/page with page controls. `ScanRequest.max_results` field now user-configurable (25/50/100/200). |
-| 5.11 | Scanner sort codes | Ben | TODO | Pass IBKR `sort` parameter to `/iserver/scanner/run`. Let user pick sort field (price, chg%, volume, market cap, P/E, etc.) + direction. IBKR sorts server-side before returning. Add sort dropdown to filter bar. |
-| 5.12 | WSH earnings date preset | Ben | TODO | Add preset: "Earnings This Week — US Stocks" using WSH earnings calendar filter. Add `wshEarningsDate` filter code to the Fundamental category so users can filter by upcoming earnings window. |
+| 5.7 | Quick-peek slide-over | Both | DONE | 400px right panel, contract info endpoint, 52W range bar, "Open in Analysis" + "Add to Watchlist" |
+| 5.8 | Skeleton loaders | Ofek | DONE | Shimmer table rows during scan, slide-over skeleton, preset dropdown skeleton |
+| 5.9 | Persist last scan | Ben | DONE | Zustand store is module-scoped — results survive page navigation without persist middleware |
+| 5.10 | Pagination + uncap results | Ben | DONE | Backend paginates server-side up to 200 from IBKR. Frontend page controls (25/50/100/page) |
+| 5.11 | Scanner sort codes | Ben | DONE | IBKR server-side sort via `sort` param. Frontend sort dropdown + direction toggle in filter bar |
+| 5.12 | WSH earnings date preset | Ben | DONE | "Earnings This Week" preset with `wshEarningsDate` default filter. Added to Fundamental category |
 
-#### 5C — AI-Assisted Filters (after 5B)
+#### 5C — AI-Assisted Filters — IN PROGRESS
 
 | # | Task | Owner | Status | Notes |
 |---|---|---|---|---|
-| 5.13 | AI screener side panel (UI) | Ofek | TODO | Collapsible right panel (same pattern as Analysis AI chat). Freeform text input + preset quick-question chips ("Oversold large caps", "High momentum small caps", "Earnings this week + high IV"). |
-| 5.14 | AI screener backend endpoint | Ben | TODO | POST `/screener/ai-filters` — sends user query + full filter catalogue (from `scanner_params`) to Ollama. Model returns structured JSON array of `{code, value}` pairs. Prompt includes all available IBKR filter codes with descriptions so model knows what exists. |
-| 5.15 | AI → filter bar wiring | Both | TODO | AI response auto-populates filter bar with pills. User can tweak/remove any filter before hitting Scan. Show AI's reasoning ("I chose Market Cap < $2B because you said 'small caps'...") in the chat panel. |
-| 5.16 | Prompt engineering for filter generation | Ben | TODO | Build prompt template: system prompt with filter catalogue + descriptions, user query, output schema `{filters: [{code, value, reasoning}]}`. Test with Gemma 4 26B. Edge cases: ambiguous queries, conflicting filters, filters that don't exist in IBKR. |
+| 5.13 | AI screener side panel (UI) | Ofek | IN PROGRESS | Collapsible right panel. Freeform text input + preset quick-question chips. Shows reasoning per filter. |
+| 5.14 | AI screener backend endpoint | Ben | IN PROGRESS | POST `/screener/ai-filters` — query + filter catalogue → Ollama → `{filters: [{code, value, reasoning}]}` |
+| 5.15 | AI → filter bar wiring | Both | IN PROGRESS | AI response auto-populates filter bar pills. User tweaks/removes before scan. |
+| 5.16 | Prompt engineering | Ben | IN PROGRESS | System prompt with IBKR filter catalogue, output schema, edge case handling (ambiguous/conflicting/unknown filters) |
 
 ---
 
@@ -202,21 +202,4 @@ These are locked in. Don't revisit unless something breaks.
 | Q6 | How to calculate Market Strength gauge composite? | 3.2 | OPEN — proposal: advance/decline + % above 200 EMA + McClellan |
 | Q7 | ~~Sector Rotation RRG calculation?~~ | 3.4 | RESOLVED: standard JdK method |
 | Q8 | ~~Can Ollama be bundled into Tauri?~~ | 4.12 | RESOLVED: detect-only, never auto-install. Guide user instead |
-| Q9 | **TWS API or IBKR Client Portal Web API?** | ALL | **OPEN — project paused** |
-
-**Q9 Detail:**
-
-The current backend is built against the **IBKR Client Portal Web API** (REST/WebSocket, requires Docker gateway on port 5001, session-based auth). The alternative is the **TWS API** (socket-based, requires TWS or IB Gateway desktop app running, uses `ibapi` Python client).
-
-Key trade-offs to decide:
-
-| Factor | Client Portal Web API | TWS API |
-|---|---|---|
-| Data model | REST/JSON, easy HTTP | Raw socket, callback-based |
-| Auth | Browser session (fragile, expires) | TWS app login (persistent) |
-| Scanner | ✅ Native `/iserver/scanner/run` | ❌ No scanner endpoint — must build own universe |
-| Streaming | WebSocket (gateway managed) | Direct socket (lower latency) |
-| Setup friction | Docker + gateway + browser auth | TWS/IB Gateway app always running |
-| Backend rewrite scope | Current state | **Full IBKRService rewrite** — all REST calls replaced with `ibapi` callbacks |
-
-**If TWS API is chosen:** `IBKRService`, all routers touching market data, screener service (scanner unavailable — need alternative universe source), and the WebSocket layer must be rewritten. Estimated scope: Phase 1 backend equivalent of work.
+| Q9 | ~~TWS API or IBKR Client Portal Web API?~~ | ALL | RESOLVED: staying with Client Portal Web API. TWS API rejected — no scanner endpoint, callback model would require full backend rewrite. |
