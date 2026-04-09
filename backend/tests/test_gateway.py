@@ -48,20 +48,23 @@ def _make_fake_jre(jre_dir: Path, macos_bundle: bool = False) -> None:
     java.chmod(0o755)
 
 
-def _make_fake_gateway(gw_dir: Path) -> None:
-    """Create a fake Gateway directory structure that _find_gateway_jar() will find."""
-    dist_dir = gw_dir / "root" / "dist"
+def _make_fake_gateway(gateway_home: Path) -> None:
+    """
+    Create a fake Gateway directory structure that _find_gateway_jar() will find.
+    IBKR Gateway zip extracts flat — jar lives at home/dist/*.jar.
+    """
+    dist_dir = gateway_home / "dist"
     dist_dir.mkdir(parents=True, exist_ok=True)
     jar = dist_dir / "ibgroup.web.core.iblink.router.clientportal.gw.jar"
     jar.write_bytes(b"PK\x03\x04fake jar")
 
 
-def _make_fake_zip(inner_dir_name: str = "clientportal.gw") -> bytes:
-    """Create a zip archive containing a fake directory structure."""
+def _make_fake_zip() -> bytes:
+    """Create a zip archive matching IBKR's flat layout."""
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w") as zf:
         zf.writestr(
-            f"{inner_dir_name}/root/dist/ibgroup.web.core.iblink.router.clientportal.gw.jar",
+            "dist/ibgroup.web.core.iblink.router.clientportal.gw.jar",
             b"PK\x03\x04fake jar",
         )
         zf.writestr(f"{inner_dir_name}/root/conf.yaml", "listenPort: 5000\n")
@@ -182,7 +185,7 @@ class TestGatewayDetection:
     def test_provisioned_with_files(self, tmp_path):
         gw = GatewayLifecycle(gateway_home=str(tmp_path))
         _make_fake_jre(gw.jre_dir)
-        _make_fake_gateway(gw.gw_dir)
+        _make_fake_gateway(gw.home)
         assert gw.is_provisioned()
 
     def test_only_jre_not_provisioned(self, tmp_path):
@@ -192,14 +195,14 @@ class TestGatewayDetection:
 
     def test_only_gateway_not_provisioned(self, tmp_path):
         gw = GatewayLifecycle(gateway_home=str(tmp_path))
-        _make_fake_gateway(gw.gw_dir)
+        _make_fake_gateway(gw.home)
         assert not gw.is_provisioned()
 
     def test_provisioned_with_macos_bundle_layout(self, tmp_path):
         """macOS JREs use Contents/Home/bin/java — ensure detection works."""
         gw = GatewayLifecycle(gateway_home=str(tmp_path))
         _make_fake_jre(gw.jre_dir, macos_bundle=True)
-        _make_fake_gateway(gw.gw_dir)
+        _make_fake_gateway(gw.home)
         assert gw.is_provisioned()
         java = gw._find_java_binary()
         assert java is not None
@@ -214,7 +217,7 @@ class TestConfYaml:
 
     def test_creates_conf_when_missing(self, tmp_path):
         gw = GatewayLifecycle(gateway_home=str(tmp_path))
-        root_dir = gw.gw_dir / "root"
+        root_dir = gw.home / "root"
         root_dir.mkdir(parents=True)
         gw._ensure_conf_yaml()
         conf = root_dir / "conf.yaml"
@@ -224,7 +227,7 @@ class TestConfYaml:
 
     def test_preserves_existing_conf(self, tmp_path):
         gw = GatewayLifecycle(gateway_home=str(tmp_path))
-        root_dir = gw.gw_dir / "root"
+        root_dir = gw.home / "root"
         root_dir.mkdir(parents=True)
         conf = root_dir / "conf.yaml"
         conf.write_text("custom: config\n")
@@ -299,7 +302,7 @@ class TestGatewayStart:
     async def test_stop_no_process_is_noop(self, tmp_path):
         gw = GatewayLifecycle(gateway_home=str(tmp_path))
         _make_fake_jre(gw.jre_dir)
-        _make_fake_gateway(gw.gw_dir)
+        _make_fake_gateway(gw.home)
         await gw.stop()
         assert gw.state == GatewayState.PROVISIONED
 
@@ -320,7 +323,7 @@ class TestGatewayStartup:
     async def test_startup_already_provisioned_no_autostart(self, tmp_path):
         gw = GatewayLifecycle(gateway_home=str(tmp_path))
         _make_fake_jre(gw.jre_dir)
-        _make_fake_gateway(gw.gw_dir)
+        _make_fake_gateway(gw.home)
         await gw.startup(auto_start=False)
         assert gw.state == GatewayState.PROVISIONED
 
@@ -329,7 +332,7 @@ class TestGatewayStartup:
         """auto_start=True should not crash if start fails."""
         gw = GatewayLifecycle(gateway_home=str(tmp_path))
         _make_fake_jre(gw.jre_dir)
-        _make_fake_gateway(gw.gw_dir)
+        _make_fake_gateway(gw.home)
         # Mock the health check to always fail + subprocess to fail
         gw._http = AsyncMock()
         gw._http.get = AsyncMock(side_effect=httpx.ConnectError("refused"))
@@ -355,9 +358,9 @@ class TestGatewayProvision:
         """Idempotent: if files exist, skip downloads."""
         gw = GatewayLifecycle(gateway_home=str(tmp_path))
         _make_fake_jre(gw.jre_dir)
-        _make_fake_gateway(gw.gw_dir)
+        _make_fake_gateway(gw.home)
         # conf.yaml dir must exist for _ensure_conf_yaml
-        (gw.gw_dir / "root").mkdir(parents=True, exist_ok=True)
+        (gw.home / "root").mkdir(parents=True, exist_ok=True)
 
         await gw.provision(force=False)
         assert gw.state == GatewayState.PROVISIONED

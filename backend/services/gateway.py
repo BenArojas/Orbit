@@ -167,8 +167,10 @@ class GatewayLifecycle:
     def __init__(self, gateway_home: str = GATEWAY_HOME) -> None:
         self.home = Path(gateway_home)
         self.jre_dir = self.home / "jre"
-        self.gw_dir = self.home / "clientportal.gw"
-        self.conf_path = self.gw_dir / "root" / "conf.yaml"
+        # IBKR Gateway zip extracts flat — no wrapper dir.
+        # Layout: ~/.parallax/gateway/{bin,build,dist,doc,root}/
+        self.root_dir = self.home / "root"
+        self.conf_path = self.root_dir / "conf.yaml"
         self.state: GatewayState = GatewayState.NOT_PROVISIONED
         self.error_message: str = ""
         self.progress = ProvisionProgress()
@@ -210,19 +212,19 @@ class GatewayLifecycle:
         return None
 
     def _find_gateway_jar(self) -> Optional[Path]:
-        """Find the Gateway runnable jar."""
-        root = self.gw_dir / "root"
-        if not root.exists():
-            return None
-        # The jar is at root/bin/run.sh but we call java directly
-        # The main jar is root/dist/ibgroup.web.core.iblink.router.clientportal.gw.jar
-        # or we can use the run.sh approach. Let's find the jar.
-        dist = root / "dist"
+        """
+        Find the Gateway runnable jar.
+
+        IBKR Gateway zip extracts flat into GATEWAY_HOME:
+          ~/.parallax/gateway/dist/*.jar   ← jar lives here
+          ~/.parallax/gateway/root/        ← conf.yaml, run.sh live here
+          ~/.parallax/gateway/jre/         ← our managed JRE
+        """
+        dist = self.home / "dist"
         if dist.exists():
             jars = list(dist.glob("*.jar"))
             if jars:
                 return jars[0]
-
         return None
 
     def is_provisioned(self) -> bool:
@@ -369,9 +371,13 @@ class GatewayLifecycle:
                         "IBKR Client Portal Gateway",
                     )
 
-                # Clear old gateway if re-provisioning
-                if self.gw_dir.exists():
-                    shutil.rmtree(self.gw_dir)
+                # Clear old gateway dirs if re-provisioning.
+                # Preserve jre/ — that's our managed JRE, not part of the Gateway zip.
+                _GW_DIRS = ("bin", "build", "dist", "doc", "root")
+                for d in _GW_DIRS:
+                    target = self.home / d
+                    if target.exists():
+                        shutil.rmtree(target)
                 # Gateway zip extracts a top-level "clientportal.gw" folder
                 # We extract to self.home so it becomes self.home/clientportal.gw/
                 self._extract_zip(gw_data, self.home)
@@ -398,9 +404,8 @@ class GatewayLifecycle:
 
     def _ensure_conf_yaml(self) -> None:
         """Write conf.yaml if it doesn't exist yet."""
-        conf_dir = self.gw_dir / "root"
-        conf_dir.mkdir(parents=True, exist_ok=True)
-        conf_file = conf_dir / "conf.yaml"
+        self.root_dir.mkdir(parents=True, exist_ok=True)
+        conf_file = self.root_dir / "conf.yaml"
         if not conf_file.exists():
             conf_file.write_text(_DEFAULT_CONF_YAML)
             log.info("Wrote default conf.yaml to %s", conf_file)
@@ -437,7 +442,6 @@ class GatewayLifecycle:
         if not java or not jar:
             raise GatewayStartError("Cannot find java binary or gateway jar")
 
-        root_dir = self.gw_dir / "root"
         self.state = GatewayState.STARTING
         self.error_message = ""
 
@@ -451,9 +455,9 @@ class GatewayLifecycle:
                     "-Djava.net.preferIPv4Stack=true",
                     "-jar",
                     str(jar),
-                    str(root_dir),
+                    str(self.root_dir),
                 ],
-                cwd=str(root_dir),
+                cwd=str(self.root_dir),
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
             )
