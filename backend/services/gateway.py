@@ -181,18 +181,31 @@ class GatewayLifecycle:
     # ── Detection ──────────────────────────────────────────────
 
     def _find_java_binary(self) -> Optional[Path]:
-        """Find the java binary inside our managed JRE."""
+        """
+        Find the java binary inside our managed JRE.
+
+        Adoptium tar.gz layout differs by platform:
+          - Linux:   jdk-17.0.x+y-jre/bin/java
+          - macOS:   jdk-17.0.x+y-jre/Contents/Home/bin/java  (Apple bundle)
+          - Windows: jdk-17.0.x+y-jre/bin/java.exe
+        """
         if not self.jre_dir.exists():
             return None
 
-        # Adoptium extracts into a versioned subdirectory
-        # e.g. jdk-17.0.x+y-jre/ on Linux/Mac, jdk-17.0.x+y-jre\ on Windows
+        java_name = "java.exe" if platform.system() == "Windows" else "java"
+
         for child in self.jre_dir.iterdir():
-            if child.is_dir() and child.name.startswith("jdk-"):
-                bin_dir = child / "bin"
-                java = bin_dir / ("java.exe" if platform.system() == "Windows" else "java")
-                if java.is_file():
-                    return java
+            if not child.is_dir() or not child.name.startswith("jdk-"):
+                continue
+
+            # Candidate paths in priority order
+            candidates = [
+                child / "bin" / java_name,                      # Linux / Windows
+                child / "Contents" / "Home" / "bin" / java_name, # macOS bundle
+            ]
+            for path in candidates:
+                if path.is_file():
+                    return path
 
         return None
 

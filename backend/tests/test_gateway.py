@@ -33,9 +33,15 @@ from exceptions import (
 # ── Helpers ────────────────────────────────────────────────────
 
 
-def _make_fake_jre(jre_dir: Path) -> None:
-    """Create a fake JRE directory structure that _find_java_binary() will find."""
-    java_bin_dir = jre_dir / "jdk-17.0.99+1-jre" / "bin"
+def _make_fake_jre(jre_dir: Path, macos_bundle: bool = False) -> None:
+    """
+    Create a fake JRE directory structure that _find_java_binary() will find.
+    macos_bundle=True simulates the macOS Contents/Home layout.
+    """
+    if macos_bundle:
+        java_bin_dir = jre_dir / "jdk-17.0.99+1-jre" / "Contents" / "Home" / "bin"
+    else:
+        java_bin_dir = jre_dir / "jdk-17.0.99+1-jre" / "bin"
     java_bin_dir.mkdir(parents=True, exist_ok=True)
     java = java_bin_dir / "java"
     java.write_text("#!/bin/sh\necho fake java")
@@ -188,6 +194,16 @@ class TestGatewayDetection:
         gw = GatewayLifecycle(gateway_home=str(tmp_path))
         _make_fake_gateway(gw.gw_dir)
         assert not gw.is_provisioned()
+
+    def test_provisioned_with_macos_bundle_layout(self, tmp_path):
+        """macOS JREs use Contents/Home/bin/java — ensure detection works."""
+        gw = GatewayLifecycle(gateway_home=str(tmp_path))
+        _make_fake_jre(gw.jre_dir, macos_bundle=True)
+        _make_fake_gateway(gw.gw_dir)
+        assert gw.is_provisioned()
+        java = gw._find_java_binary()
+        assert java is not None
+        assert "Contents" in str(java)
 
 
 # ── GatewayLifecycle — conf.yaml ───────────────────────────────
