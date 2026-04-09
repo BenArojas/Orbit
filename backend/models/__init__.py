@@ -681,3 +681,140 @@ class SetupGuideResponse(BaseModel):
 class ModelSelectRequest(BaseModel):
     """Request to select which model the AI should use."""
     model: str                                          # Ollama model name
+
+
+# ═══════════════════════════════════════════════════════════════
+#  Screener (Phase 5 — tasks 5.3–5.6)
+# ═══════════════════════════════════════════════════════════════
+
+
+class ScannerPreset(BaseModel):
+    """
+    An available IBKR scanner preset the user can pick from.
+    The screener UI shows these as a dropdown for "universe source."
+    """
+    instrument: str                                     # "STK", "FUT", etc.
+    scan_type: str                                      # "TOP_PERC_GAIN", "MOST_ACTIVE", etc.
+    location: str                                       # "STK.US.MAJOR", "STK.EU", etc.
+    display_name: str                                   # Human-readable name
+    default_filters: list["IbkrFilterItem"] = []       # Optional preset filters
+
+
+class IbkrFilterItem(BaseModel):
+    """
+    One native IBKR scanner filter criterion.
+
+    The code is an IBKR filter code (e.g., "marketCapAbove1e6", "minPeRatio").
+    The value is always a string — IBKR scanner API expects string values.
+
+    Examples:
+      {"code": "marketCapAbove1e6", "value": "1000"}   # Market cap > $1B
+      {"code": "maxPeRatio", "value": "20"}            # P/E < 20
+      {"code": "minRetnOnEq", "value": "15"}           # ROE > 15%
+      {"code": "changePercAbove", "value": "2"}        # Day change > 2%
+    """
+    code: str                                           # IBKR filter code
+    value: str                                          # Filter value (string)
+
+
+class ScanRequest(BaseModel):
+    """
+    Request to run a screener scan.
+
+    The backend passes native IBKR filter codes directly to the scanner endpoint.
+    IBKR pre-filters the results server-side — no local indicator computation needed.
+
+    Flow:
+      1. POST /iserver/scanner/run with instrument, scan_type, location, filters
+      2. Batch-fetch snapshot quotes (price, chg%, volume, market cap)
+      3. Return enriched rows
+    """
+    instrument: str = "STK"                             # Security type
+    scan_type: str = "MOST_ACTIVE"                      # IBKR scanner sort/preset
+    location: str = "STK.US.MAJOR"                      # Market location
+    filters: list[IbkrFilterItem] = []                  # Native IBKR filter codes
+    max_results: int = Field(default=200, ge=1, le=500) # Cap results
+    sort_field: str = ""                                # IBKR sort code (e.g., "changePercAbove")
+    sort_direction: str = "desc"                        # "asc" or "desc"
+    page: int = 1                                       # Page number (1-indexed)
+    page_size: int = 25                                 # Results per page
+
+
+class ScreenerResultRow(BaseModel):
+    """
+    One row in the screener results table.
+    Contains instrument info + snapshot quote data.
+    """
+    conid: int
+    symbol: str = ""
+    company_name: str = ""
+    sec_type: str = ""
+    last_price: Optional[float] = None
+    change_percent: Optional[float] = None
+    volume: Optional[float] = None
+    market_cap: Optional[float] = None                  # In $M (IBKR field 7289)
+
+
+class ScanResponse(BaseModel):
+    """
+    Response from POST /screener/scan.
+    """
+    results: list[ScreenerResultRow]
+    total_scanned: int                                  # How many the scanner returned
+    total_matched: int                                  # Same as total_scanned (filters are native)
+    scan_type: str                                      # Which preset was used
+    location: str                                       # Which market was scanned
+    page: int = 1                                       # Current page
+    page_size: int = 25                                 # Results per page
+    total_pages: int = 1                                # Total number of pages
+
+
+class ScannerParamsResponse(BaseModel):
+    """
+    Available scanner parameters from IBKR.
+    The frontend uses this to populate the preset/filter pickers.
+    """
+    instruments: list[dict] = []                        # Available instrument types
+    locations: list[dict] = []                          # Available market locations
+    scan_types: list[dict] = []                         # Available scan types
+    filters: list[dict] = []                            # Available filter codes
+
+
+class AiFilterRequest(BaseModel):
+    """Request to generate IBKR filter codes from a natural language query."""
+    query: str                        # e.g. "oversold large caps with strong earnings"
+    model: str                        # Ollama model name (from user's selection)
+    preset_context: Optional[str] = None  # e.g. "Most Active — US Stocks" (helps AI understand universe)
+
+
+class AiFilterSuggestion(BaseModel):
+    """One AI-suggested filter."""
+    code: str          # IBKR filter code e.g. "marketCapAbove1e6"
+    value: str         # Filter value as string e.g. "10000"
+    display_label: str # Human-readable e.g. "Market Cap ≥ $10B"
+    reasoning: str     # Why the AI chose this filter
+
+
+class AiFilterResponse(BaseModel):
+    """Response from POST /screener/ai-filters."""
+    filters: list[AiFilterSuggestion]
+    summary: str       # One sentence summary of what the query translates to
+    raw_query: str     # Echoed back for reference
+
+
+class ContractInfoResponse(BaseModel):
+    """Contract details from IBKR — used in screener quick-peek."""
+    conid: int
+    symbol: str = ""
+    company_name: str = ""
+    sec_type: str = ""
+    exchange: str = ""
+    currency: str = ""
+    industry: str = ""
+    category: str = ""
+    avg_volume: Optional[float] = None
+    market_cap: Optional[float] = None
+    high_52w: Optional[float] = None
+    low_52w: Optional[float] = None
+    pe_ratio: Optional[float] = None
+    dividend_yield: Optional[float] = None

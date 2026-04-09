@@ -410,6 +410,102 @@ export interface ModelSelectRequest {
   model: string;
 }
 
+// ── Screener (Phase 5 — tasks 5.1–5.6) ────────────────────
+
+export interface ScannerPreset {
+  instrument: string;
+  scan_type: string;
+  location: string;
+  display_name: string;
+  default_filters?: IbkrFilterItem[];
+}
+
+/** A native IBKR scanner filter — passed directly to the scanner endpoint */
+export interface IbkrFilterItem {
+  code: string;   // IBKR filter code e.g. "marketCapAbove1e6", "minPeRatio"
+  value: string;  // String value e.g. "1000", "5"
+}
+
+export interface ScanRequest {
+  instrument?: string;
+  scan_type?: string;
+  location?: string;
+  filters?: IbkrFilterItem[];
+  max_results?: number;
+  sort_field?: string;
+  sort_direction?: "asc" | "desc";
+  page?: number;
+  page_size?: number;
+}
+
+export interface ScreenerResultRow {
+  conid: number;
+  symbol: string;
+  company_name: string;
+  sec_type: string;
+  last_price: number | null;
+  change_percent: number | null;
+  volume: number | null;
+  market_cap: number | null;  // In $M (IBKR field 7289)
+}
+
+export interface ScanResponse {
+  results: ScreenerResultRow[];
+  total_scanned: number;
+  total_matched: number;
+  scan_type: string;
+  location: string;
+  page: number;
+  page_size: number;
+  total_pages: number;
+}
+
+/** Contract details from IBKR — used in screener quick-peek slide-over */
+export interface ContractInfoResponse {
+  conid: number;
+  symbol: string;
+  company_name: string;
+  sec_type: string;
+  exchange: string;
+  currency: string;
+  industry: string;
+  category: string;
+  avg_volume: number | null;
+  market_cap: number | null;
+  high_52w: number | null;
+  low_52w: number | null;
+  pe_ratio: number | null;
+  dividend_yield: number | null;
+}
+
+export interface ScannerParamsResponse {
+  instruments: Record<string, unknown>[];
+  locations: Record<string, unknown>[];
+  scan_types: Record<string, unknown>[];
+  filters: Record<string, unknown>[];
+}
+
+// ── AI Screener (Phase 5C) ────────────────────────────────────
+
+export interface AiFilterRequest {
+  query: string;
+  model: string;
+  preset_context?: string;
+}
+
+export interface AiFilterSuggestion {
+  code: string;
+  value: string;
+  display_label: string;
+  reasoning: string;
+}
+
+export interface AiFilterResponse {
+  filters: AiFilterSuggestion[];
+  summary: string;
+  raw_query: string;
+}
+
 // ── API Error ───────────────────────────────────────────────
 
 export class ApiError extends Error {
@@ -538,4 +634,20 @@ export const api = {
 
   getLockedFibs: (conid: number) =>
     request<LockedFibonacciResponse[]>("GET", `/fibonacci/locks/${conid}`),
+
+  // Screener (Phase 5)
+  screenerScan: (req: ScanRequest) =>
+    request<ScanResponse>("POST", "/screener/scan", req),
+
+  screenerPresets: () =>
+    request<ScannerPreset[]>("GET", "/screener/presets"),
+
+  screenerParams: () =>
+    request<ScannerParamsResponse>("GET", "/screener/params"),
+
+  screenerContractInfo: (conid: number) =>
+    request<ContractInfoResponse>("GET", `/screener/contract/${conid}`),
+
+  screenerAiFilters: (req: AiFilterRequest) =>
+    request<AiFilterResponse>("POST", "/screener/ai-filters", req),
 } as const;

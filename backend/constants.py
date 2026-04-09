@@ -21,6 +21,7 @@ FIELD_VOLUME = "7762"
 FIELD_PRIOR_CLOSE = "7741"
 FIELD_MARKET_DATA_AVAIL = "6509"
 FIELD_OPEN = "7295"
+FIELD_MARKET_CAP = "7289"       # Market cap in $M
 
 # Default fields for a standard quote snapshot
 DEFAULT_QUOTE_FIELDS = [

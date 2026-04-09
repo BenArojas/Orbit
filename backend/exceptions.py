@@ -98,3 +98,24 @@ class AIAnalysisError(AIError):
 
     def __init__(self, message: str = "Analysis failed"):
         super().__init__(message)
+
+
+# ── Screener Errors ─────────────────────────────────────────
+
+
+class ScreenerError(ParallaxError):
+    """Base for screener-related errors."""
+
+
+class ScannerUnavailableError(ScreenerError):
+    """IBKR scanner API returned no results or is unavailable."""
+
+    def __init__(self, message: str = "Scanner returned no results"):
+        super().__init__(message)
+
+
+class ScannerFilterError(ScreenerError):
+    """Invalid filter configuration in a scan request."""
+
+    def __init__(self, message: str = "Invalid screener filter"):
+        super().__init__(message)

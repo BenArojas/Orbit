@@ -7,7 +7,7 @@ import os
 
 # IBKR Client Portal Gateway
 IBKR_GATEWAY_HOST = os.getenv("IBKR_GATEWAY_HOST", "localhost")
-IBKR_GATEWAY_PORT = int(os.getenv("IBKR_GATEWAY_PORT", "5000"))
+IBKR_GATEWAY_PORT = int(os.getenv("IBKR_GATEWAY_PORT", "5001"))
 IBKR_GATEWAY_BASE_URL = f"https://{IBKR_GATEWAY_HOST}:{IBKR_GATEWAY_PORT}"
 IBKR_API_BASE_URL = f"{IBKR_GATEWAY_BASE_URL}/v1/api"
 

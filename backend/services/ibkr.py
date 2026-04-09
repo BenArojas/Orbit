@@ -315,6 +315,16 @@ class IBKRService:
             "GET", "/iserver/marketdata/history", params=params
         )
 
+    @cached(ttl=3600)
+    async def contract_info(self, conid: int) -> dict:
+        """
+        Fetch full contract details for a conid.
+        Returns exchange, currency, sector, industry, etc.
+        Used by the screener quick-peek slide-over.
+        """
+        await self.ensure_accounts()
+        return await self._request("GET", f"/iserver/contract/{conid}/info")
+
     # ── Watchlist Methods (Step 3.5) ───────────────────────────
 
     @cached(ttl=60)
@@ -348,6 +358,61 @@ class IBKRService:
                 return instruments_data.get("instruments", [])
             return []
         return []
+
+    # ── Scanner Methods (Step 5.6) ────────────────────────────
+
+    @cached(ttl=3600)
+    async def scanner_params(self) -> dict:
+        """
+        Fetch available scanner parameters from IBKR.
+        Returns instruments, locations, scan types, and filter codes
+        the user can build scans from.
+        """
+        await self.ensure_accounts()
+        return await self._request("GET", "/iserver/scanner/params")
+
+    async def scanner_run(
+        self,
+        instrument: str,
+        scan_type: str,
+        location: str,
+        filters: list[dict] | None = None,
+        sort: str = "",
+    ) -> list[dict]:
+        """
+        Run an IBKR market scanner.
+
+        Args:
+            instrument: Security type — "STK", "FUT", "IND", etc.
+            scan_type: Scanner preset — "TOP_PERC_GAIN", "MOST_ACTIVE", etc.
+            location: Market location — "STK.US.MAJOR", "STK.EU", etc.
+            filters: Optional price/volume filters, e.g.:
+                     [{"code": "priceAbove", "value": 5}]
+            sort: Optional sort code (e.g., "changePercAbove")
+
+        Returns:
+            List of scanner result dicts with conid, symbol, etc.
+        """
+        await self.ensure_accounts()
+        body: dict = {
+            "instrument": instrument,
+            "type": scan_type,
+            "location": location,
+        }
+        if filters:
+            body["filter"] = filters
+        if sort:
+            body["sort"] = sort
+
+        data = await self._request("POST", "/iserver/scanner/run", json=body)
+
+        # IBKR returns: {"Contracts": {"Contract": [...]}} or a list
+        if isinstance(data, dict):
+            contracts = data.get("Contracts", data)
+            if isinstance(contracts, dict):
+                return contracts.get("Contract", [])
+            return contracts if isinstance(contracts, list) else []
+        return data if isinstance(data, list) else []
 
     # ── WebSocket (Step 1.6) ─────────────────────────────────
     # The IBKR WebSocket streams real-time market data.
