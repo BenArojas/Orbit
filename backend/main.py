@@ -20,6 +20,7 @@ from starlette.middleware.cors import CORSMiddleware
 from config import FRONTEND_ORIGIN
 from exceptions import (
     AIError,
+    GatewayError,
     IBKRAuthError,
     IBKRConnectionError,
     IBKRRateLimitError,
@@ -29,6 +30,7 @@ from exceptions import (
     ScreenerError,
 )
 from services.db import DatabaseService
+from services.gateway import GatewayLifecycle
 from services.ibkr import IBKRService
 from services.screener import ScreenerService
 from services.sectors import SectorService
@@ -57,6 +59,18 @@ async def lifespan(app: FastAPI):
     Cleans everything up on shutdown.
     """
     log.info("Parallax backend starting (v%s)...", APP_VERSION)
+
+    # Gateway lifecycle — provision JRE + IBKR Gateway, manage process
+    # Must start before IBKRService since IBKR talks to the running Gateway.
+    # On first launch with no provisioned files, it stays in NOT_PROVISIONED
+    # and the frontend triggers /gateway/provision to show progress UI.
+    gateway = GatewayLifecycle()
+    app.state.gateway = gateway
+    try:
+        await gateway.startup(auto_start=True)
+        log.info("Gateway state: %s", gateway.state.value)
+    except GatewayError as e:
+        log.warning("Gateway startup: %s (non-fatal, user can set up later)", e.message)
 
     # Create the IBKR service and stash it on app.state
     ibkr = IBKRService()
@@ -108,6 +122,7 @@ async def lifespan(app: FastAPI):
     await ollama.shutdown()
     await db.close()
     await ibkr.shutdown()
+    await gateway.shutdown()
     log.info("Shutdown complete.")
 
 
@@ -218,6 +233,17 @@ async def screener_error_handler(request: Request, exc: ScreenerError):
     )
 
 
+@app.exception_handler(GatewayError)
+async def gateway_error_handler(request: Request, exc: GatewayError):
+    return JSONResponse(
+        status_code=502,
+        content={
+            "error": "gateway_error",
+            "message": exc.message,
+        },
+    )
+
+
 @app.exception_handler(ParallaxError)
 async def parallax_error_handler(request: Request, exc: ParallaxError):
     """Catch-all for any ParallaxError subclass not handled above."""
@@ -257,6 +283,9 @@ app.include_router(fibonacci_router)
 from routers.screener import router as screener_router
 app.include_router(screener_router)
 
+from routers.gateway import router as gateway_router
+app.include_router(gateway_router)
+
 
 # ── Health endpoint ──────────────────────────────────────────
 
@@ -267,10 +296,13 @@ async def health(request: Request):
     Also reports IBKR connection status so the UI can show appropriate state.
     """
     ibkr: IBKRService = request.app.state.ibkr
+    gw: GatewayLifecycle = request.app.state.gateway
     return {
         "status": "ok" if ibkr.state.authenticated else "degraded",
         "ibkr_connected": ibkr.state.authenticated,
         "ibkr_authenticated": ibkr.state.authenticated,
         "ws_ready": ibkr.state.ws_connected,
+        "gateway_running": gw.state.value == "running",
+        "gateway_state": gw.state.value,
         "version": APP_VERSION,
     }

@@ -1,0 +1,39 @@
+# Parallax — Docker Compose (developer/power-user Gateway option)
+#
+# This runs only the IBKR Client Portal Gateway in a container.
+# The Parallax app itself (Tauri + Python sidecar) runs natively.
+#
+# Usage:
+#   docker-compose up -d          # Start the Gateway
+#   docker-compose logs -f        # Watch Gateway logs
+#   docker-compose down           # Stop the Gateway
+#
+# After starting, authenticate at: https://localhost:5000
+# The Parallax backend connects to the Gateway automatically.
+#
+# NOTE: Most users don't need this — Parallax auto-provisions the
+# Gateway on first launch. This is for developers who prefer Docker
+# or need to run multiple Gateway instances.
+
+services:
+  ibkr-gateway:
+    container_name: parallax-ibkr-gateway
+    build:
+      context: ./ibkr-gateway
+      dockerfile: Dockerfile
+    ports:
+      - "127.0.0.1:5000:5000"
+    restart: unless-stopped
+    volumes:
+      # Persist IBKR session tokens across container restarts
+      - gateway-sessions:/opt/clientportal.gw/root
+    healthcheck:
+      test: ["CMD", "curl", "-fsk", "https://localhost:5000/v1/api/iserver/auth/status"]
+      interval: 30s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
+
+volumes:
+  gateway-sessions:
+    driver: local

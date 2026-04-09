@@ -106,7 +106,8 @@ class IBKRService:
                 )
                 if attempt >= max_retries - 1:
                     raise IBKRConnectionError(
-                        f"Cannot reach IBKR Gateway at {self.base_url}"
+                        f"Cannot reach IBKR Gateway at {self.base_url}. "
+                        "Check /gateway/status — the Gateway may not be running or provisioned."
                     ) from exc
                 await asyncio.sleep(delay)
 

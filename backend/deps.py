@@ -14,6 +14,7 @@ from services.ibkr import IBKRService
 from services.screener import ScreenerService
 from services.sectors import SectorService
 from services.ai import AiService
+from services.gateway import GatewayLifecycle
 from services.ollama import OllamaLifecycle
 
 
@@ -45,3 +46,8 @@ def get_ollama(request: Request) -> OllamaLifecycle:
 def get_screener(request: Request) -> ScreenerService:
     """Get the screener service singleton stashed on app.state during lifespan."""
     return request.app.state.screener
+
+
+def get_gateway(request: Request) -> GatewayLifecycle:
+    """Get the Gateway lifecycle manager from app.state during lifespan."""
+    return request.app.state.gateway

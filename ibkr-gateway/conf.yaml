@@ -1,0 +1,26 @@
+# IBKR Client Portal Gateway — Docker configuration
+# Used by the Dockerfile for the containerized Gateway option.
+# For the auto-provisioned (non-Docker) setup, conf.yaml is generated
+# by backend/services/gateway.py at ~/.parallax/gateway/clientportal.gw/root/conf.yaml
+
+listenPort: 5000
+listenSsl: true
+
+# Allow connections from any IP within the Docker network.
+# Safe because the container only exposes the port to localhost via docker-compose.
+ips:
+  allow:
+    - 0.0.0.0
+  deny: []
+
+# Disable IP geolocation restriction (not needed inside Docker).
+ip2loc: ""
+
+# IBKR production API endpoint.
+proxyRemoteHost: "https://api.ibkr.com"
+proxyRemotePort: 443
+
+# Auto-restart on crash.
+autoRestart: true
+autoRestartInterval: 1200
+autoRestartCount: 3
