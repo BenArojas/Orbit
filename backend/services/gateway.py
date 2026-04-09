@@ -227,6 +227,20 @@ class GatewayLifecycle:
                 return jars[0]
         return None
 
+    def _find_run_script(self) -> Optional[Path]:
+        """
+        Find IBKR's run script in bin/.
+        The script correctly sets the classpath — we don't reconstruct it ourselves.
+        """
+        candidates = [
+            self.home / "bin" / "run.sh",   # macOS / Linux
+            self.home / "bin" / "run.bat",  # Windows
+        ]
+        for path in candidates:
+            if path.is_file():
+                return path
+        return None
+
     def is_provisioned(self) -> bool:
         """Check if JRE and Gateway files exist on disk."""
         return self._find_java_binary() is not None and self._find_gateway_jar() is not None
@@ -438,32 +452,45 @@ class GatewayLifecycle:
             raise GatewayNotProvisionedError()
 
         java = self._find_java_binary()
-        jar = self._find_gateway_jar()
-        if not java or not jar:
-            raise GatewayStartError("Cannot find java binary or gateway jar")
+        if not java:
+            raise GatewayStartError("Cannot find java binary in managed JRE")
+
+        # Use IBKR's own run.sh / run.bat — it sets the correct classpath.
+        # The jar is NOT a fat jar and cannot be launched with java -jar directly.
+        run_script = self._find_run_script()
+        if not run_script:
+            raise GatewayStartError(
+                "Cannot find Gateway run script (bin/run.sh or bin/run.bat)"
+            )
 
         self.state = GatewayState.STARTING
         self.error_message = ""
 
+        # Point JAVA_HOME at our managed JRE so run.sh uses it.
+        # The script checks JAVA_HOME before falling back to PATH.
+        java_home = java.parent.parent  # bin/java → parent → Contents/Home or jdk-*/
+        # macOS bundle: .../jdk-17-jre/Contents/Home/bin/java → JAVA_HOME = .../jdk-17-jre/Contents/Home
+        # Linux/Windows: .../jdk-17-jre/bin/java → JAVA_HOME = .../jdk-17-jre
+        env = os.environ.copy()
+        env["JAVA_HOME"] = str(java_home)
+
         try:
-            log.info("Starting Gateway: %s -jar %s", java, jar)
+            log.info("Starting Gateway via %s (JAVA_HOME=%s)", run_script, java_home)
+            cmd = (
+                ["cmd", "/c", str(run_script)]
+                if platform.system() == "Windows"
+                else ["/bin/sh", str(run_script)]
+            )
             self._process = subprocess.Popen(
-                [
-                    str(java),
-                    "-server",
-                    f"-Dvertx.disableDnsResolver=true",
-                    "-Djava.net.preferIPv4Stack=true",
-                    "-jar",
-                    str(jar),
-                    str(self.root_dir),
-                ],
-                cwd=str(self.root_dir),
+                cmd,
+                cwd=str(self.home),
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
+                env=env,
             )
         except OSError as e:
             self.state = GatewayState.ERROR
-            self.error_message = f"Failed to launch java: {e}"
+            self.error_message = f"Failed to launch Gateway: {e}"
             raise GatewayStartError(self.error_message) from e
 
         # Wait for Gateway to become healthy (up to 45 seconds — it's Java)
