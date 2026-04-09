@@ -476,10 +476,13 @@ class GatewayLifecycle:
 
         try:
             log.info("Starting Gateway via %s (JAVA_HOME=%s)", run_script, java_home)
+            # run.sh requires the conf.yaml path as its only argument.
+            # It must be relative to cwd (self.home), so just "root/conf.yaml".
+            conf_arg = str(self.root_dir / "conf.yaml")
             cmd = (
-                ["cmd", "/c", str(run_script)]
+                ["cmd", "/c", str(run_script), conf_arg]
                 if platform.system() == "Windows"
-                else ["/bin/sh", str(run_script)]
+                else ["/bin/sh", str(run_script), conf_arg]
             )
             self._process = subprocess.Popen(
                 cmd,
