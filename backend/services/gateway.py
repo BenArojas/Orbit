@@ -239,16 +239,30 @@ class GatewayLifecycle:
         """
         Download a URL with progress tracking.
         Returns the raw bytes. Follows redirects (Adoptium API redirects).
+
+        Uses a browser User-Agent — some CDNs (including IBKR's) block
+        automated requests without one.
         """
         self.progress.step = step_name
         self.progress.bytes_downloaded = 0
         self.progress.bytes_total = 0
 
+        headers = {
+            "User-Agent": (
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/124.0.0.0 Safari/537.36"
+            ),
+            "Accept": "*/*",
+        }
+
         log.info("Downloading %s from %s", step_name, url)
         buf = io.BytesIO()
 
         try:
-            async with self._http.stream("GET", url, follow_redirects=True) as resp:
+            async with self._http.stream(
+                "GET", url, follow_redirects=True, headers=headers
+            ) as resp:
                 if resp.status_code != 200:
                     raise GatewayProvisionError(
                         f"Download failed for {step_name}: HTTP {resp.status_code}"
@@ -338,15 +352,23 @@ class GatewayLifecycle:
 
         # Step 2: Gateway
         jar = self._find_gateway_jar()
+        manual_zip = self.home / "clientportal.gw.zip"
+
         if jar and not force:
             log.info("Gateway already provisioned at %s", jar)
         else:
             self.state = GatewayState.DOWNLOADING_GW
             try:
-                gw_data = await self._download_file(
-                    GATEWAY_ZIP_URL,
-                    "IBKR Client Portal Gateway",
-                )
+                if manual_zip.exists() and not force:
+                    # User manually placed the zip — skip download
+                    log.info("Using manually placed Gateway zip at %s", manual_zip)
+                    gw_data = manual_zip.read_bytes()
+                else:
+                    gw_data = await self._download_file(
+                        GATEWAY_ZIP_URL,
+                        "IBKR Client Portal Gateway",
+                    )
+
                 # Clear old gateway if re-provisioning
                 if self.gw_dir.exists():
                     shutil.rmtree(self.gw_dir)
@@ -358,6 +380,11 @@ class GatewayLifecycle:
                 if not jar:
                     raise GatewayProvisionError("Gateway extracted but jar not found")
                 log.info("Gateway extracted to %s", jar)
+
+                # Clean up manual zip after successful extraction
+                if manual_zip.exists():
+                    manual_zip.unlink()
+
             except GatewayProvisionError:
                 self.state = GatewayState.ERROR
                 raise
