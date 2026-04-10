@@ -28,6 +28,7 @@ import os
 import platform
 import re
 import shutil
+import signal
 import socket
 import stat
 import subprocess
@@ -89,19 +90,25 @@ def _jre_download_url() -> str:
 
 # ── Default conf.yaml ──────────────────────────────────────────
 
-_DEFAULT_CONF_YAML = f"""\
+def _default_conf_yaml(port: int) -> str:
+    """
+    Build the default conf.yaml content for the given port.
+
+    Called at write-time (not import-time) so tests that monkeypatch
+    IBKR_GATEWAY_PORT always get the correct value in brand-new conf files.
+    """
+    return f"""\
 # Parallax-managed IBKR Client Portal Gateway configuration.
 # Auto-generated — edits will be preserved across re-provisions.
 
-listenPort: {IBKR_GATEWAY_PORT}
+listenPort: {port}
 listenSsl: true
 
-# Allow connections from localhost and Docker network.
+# Allow connections from localhost only.
 # Safe because this Gateway only listens on the loopback interface.
 ips:
   allow:
     - 127.0.0.1
-    - 0.0.0.0
   deny: []
 
 # Disable IP geolocation restriction (not needed for local use).
@@ -173,10 +180,17 @@ class GatewayLifecycle:
         # Layout: ~/.parallax/gateway/{bin,build,dist,doc,root}/
         self.root_dir = self.home / "root"
         self.conf_path = self.root_dir / "conf.yaml"
+        # Gateway stdout/stderr land here instead of a PIPE.
+        # PIPE buffers (~64 KB) fill quickly with Java logs, causing Gateway
+        # to block on write and never become healthy.  A log file has no limit.
+        self.log_path = self.home / "gateway.log"
         self.state: GatewayState = GatewayState.NOT_PROVISIONED
         self.error_message: str = ""
         self.progress = ProvisionProgress()
         self._process: Optional[subprocess.Popen] = None
+        # process-group id — set to the child's pgid on POSIX so we can
+        # kill the entire Java process tree on stop(), not just the shell.
+        self._process_pgid: Optional[int] = None
         self._http: httpx.AsyncClient = httpx.AsyncClient(
             verify=False,  # Gateway uses self-signed cert
             timeout=httpx.Timeout(10.0, connect=5.0),
@@ -430,7 +444,7 @@ class GatewayLifecycle:
         self.root_dir.mkdir(parents=True, exist_ok=True)
         conf_file = self.root_dir / "conf.yaml"
         if not conf_file.exists():
-            conf_file.write_text(_DEFAULT_CONF_YAML)
+            conf_file.write_text(_default_conf_yaml(IBKR_GATEWAY_PORT))
             log.info("Wrote default conf.yaml to %s", conf_file)
         else:
             content = conf_file.read_text()
@@ -448,17 +462,66 @@ class GatewayLifecycle:
     # ── Process lifecycle ──────────────────────────────────────
 
     async def _is_gateway_healthy(self) -> bool:
-        """Check if the Gateway is responding to health checks."""
+        """
+        Check if the Gateway servlet is responding.
+
+        Uses POST /iserver/auth/status — the correct HTTP method for this
+        endpoint.  Any non-connection-error response means the Gateway is up:
+          - 200 → authenticated
+          - 401 → up but session not authenticated yet
+          - 500 → Gateway internal error (still up, Java is running)
+        A ConnectError / timeout means the port is dark.
+        """
         try:
             url = f"https://{IBKR_GATEWAY_HOST}:{IBKR_GATEWAY_PORT}/v1/api/iserver/auth/status"
-            resp = await self._http.get(
+            resp = await self._http.post(
                 url,
                 timeout=httpx.Timeout(1.0, connect=0.25),
             )
-            # 401 means the Gateway is up but the user has not authenticated yet.
-            return resp.status_code in (200, 401)
+            return resp.status_code in (200, 401, 500)
         except (httpx.ConnectError, httpx.TimeoutException):
             return False
+
+    def _kill_process_group(self) -> None:
+        """
+        Kill the Gateway process and all its children (e.g. the Java JVM).
+
+        On POSIX we stored the process-group id at launch (start_new_session=True
+        ensures the shell and the Java child share a pgid).  Sending SIGTERM to
+        the group terminates everything; SIGKILL follows if they don't exit.
+
+        On Windows we use taskkill /T /F to forcibly kill the process tree.
+        """
+        if not self._process:
+            return
+
+        if platform.system() == "Windows":
+            try:
+                subprocess.run(
+                    ["taskkill", "/T", "/F", "/PID", str(self._process.pid)],
+                    capture_output=True,
+                )
+            except OSError as e:
+                log.warning("taskkill failed: %s", e)
+        else:
+            pgid = self._process_pgid or self._process.pid
+            for sig in (signal.SIGTERM, signal.SIGKILL):
+                try:
+                    os.killpg(pgid, sig)
+                except ProcessLookupError:
+                    break  # already gone
+                except OSError as e:
+                    log.warning("killpg(%d, %s): %s", pgid, sig, e)
+                    break
+
+        # Reap the process entry so it doesn't become a zombie
+        try:
+            self._process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            pass  # SIGKILL was sent — OS will clean up
+
+        self._process = None
+        self._process_pgid = None
 
     def _is_port_in_use(self, host: str, port: int) -> bool:
         """Return True if something else is already listening on the target port."""
@@ -515,25 +578,51 @@ class GatewayLifecycle:
         env = os.environ.copy()
         env["JAVA_HOME"] = str(java_home)
 
+        # Rotate the log file so each start is clean and debuggable.
+        self.home.mkdir(parents=True, exist_ok=True)
+        log_file = open(self.log_path, "w", buffering=1)  # noqa: WPS515
+
         try:
-            log.info("Starting Gateway via %s (JAVA_HOME=%s)", run_script, java_home)
+            log.info(
+                "Starting Gateway via %s (JAVA_HOME=%s, log=%s)",
+                run_script, java_home, self.log_path,
+            )
             # run.sh requires the conf.yaml path as its only argument.
             # It must be relative to cwd (self.home), so just "root/conf.yaml".
             conf_arg = str(Path("root") / "conf.yaml")
-            # conf_arg = str(self.conf_path.absolute())
             cmd = (
                 ["cmd", "/c", str(run_script), conf_arg]
                 if platform.system() == "Windows"
                 else ["/bin/sh", str(run_script), conf_arg]
             )
-            self._process = subprocess.Popen(
-                cmd,
+
+            # ── A1: process-group isolation ─────────────────────────────
+            # run.sh forks Java as a child.  Without a separate process group,
+            # terminate() kills the shell but leaves Java running as a zombie.
+            # start_new_session=True calls setsid() so the entire group
+            # (shell + Java + any GC threads) can be signalled together.
+            kwargs: dict = dict(
                 cwd=str(self.home),
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
+                # ── A2: log file instead of PIPE ────────────────────────
+                # PIPE buffers (~64 KB) fill quickly with Java output and
+                # block the Gateway process, preventing it from becoming healthy.
+                stdout=log_file,
+                stderr=log_file,
                 env=env,
             )
+            if platform.system() != "Windows":
+                kwargs["start_new_session"] = True  # POSIX: new session/pgid
+            else:
+                kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
+
+            self._process = subprocess.Popen(cmd, **kwargs)
+            self._process_pgid = (
+                os.getpgid(self._process.pid)
+                if platform.system() != "Windows"
+                else None
+            )
         except OSError as e:
+            log_file.close()
             self.state = GatewayState.ERROR
             self.error_message = f"Failed to launch Gateway: {e}"
             raise GatewayStartError(self.error_message) from e
@@ -543,25 +632,63 @@ class GatewayLifecycle:
             await asyncio.sleep(1)
 
             if self._process.poll() is not None:
-                stderr = self._process.stderr
-                err = stderr.read().decode()[:500] if stderr else "unknown"
+                # Read the last 1000 chars of the log for a useful error snippet
+                try:
+                    log_tail = self.log_path.read_text()[-1000:]
+                except OSError:
+                    log_tail = "unavailable"
                 self.state = GatewayState.ERROR
-                self.error_message = f"Gateway process exited unexpectedly: {err}"
+                self.error_message = (
+                    f"Gateway process exited unexpectedly. "
+                    f"Check {self.log_path} for details. Tail: {log_tail[-300:]}"
+                )
                 raise GatewayStartError(self.error_message)
 
             if await self._is_gateway_healthy():
                 self.state = GatewayState.RUNNING
                 log.info("Gateway healthy after %ds", attempt + 1)
+                # E1: warm-up request — IBKR's servlet is slow on the very
+                # first request after JVM startup (JIT, class loading).
+                # Fire one background GET on the root so the user's browser
+                # gets a fast response when they click "Open IBKR Login".
+                asyncio.ensure_future(self._warmup_gateway())
                 return
 
-        # Timeout — kill the process
-        self._process.terminate()
+        # Timeout — kill the whole process group so Java doesn't linger
+        self._kill_process_group()
         self.state = GatewayState.ERROR
-        self.error_message = "Gateway did not become healthy within 45 seconds"
+        self.error_message = (
+            f"Gateway did not become healthy within 45 seconds. "
+            f"Check {self.log_path} for details."
+        )
         raise GatewayStartError(self.error_message)
 
+    async def _warmup_gateway(self) -> None:
+        """
+        Fire a background request to the Gateway root page to warm up the JVM.
+
+        IBKR's servlet is cold on first access after startup — JIT compilation
+        and class loading add 5-10 s to the first page load.  Hitting the root
+        now means the user gets a fast response when they click "Open IBKR Login".
+        """
+        try:
+            url = f"https://{IBKR_GATEWAY_HOST}:{IBKR_GATEWAY_PORT}/"
+            await self._http.get(
+                url,
+                timeout=httpx.Timeout(15.0, connect=5.0),
+                follow_redirects=True,
+            )
+            log.info("Gateway warm-up request complete")
+        except Exception as e:  # noqa: BLE001
+            log.debug("Gateway warm-up request failed (non-fatal): %s", e)
+
     async def stop(self) -> None:
-        """Stop the Gateway process if we started it."""
+        """
+        Stop the Gateway and its entire Java process tree.
+
+        Uses _kill_process_group() so the JVM child (spawned by run.sh)
+        is also terminated — not just the shell wrapper.
+        """
         if not self._process or self._process.poll() is not None:
             log.info("No managed Gateway process to stop")
             if self.is_provisioned():
@@ -569,18 +696,10 @@ class GatewayLifecycle:
             return
 
         self.state = GatewayState.STOPPING
-        log.info("Stopping Gateway process (pid=%d)...", self._process.pid)
-        self._process.terminate()
-
-        try:
-            self._process.wait(timeout=15)
-            log.info("Gateway stopped gracefully")
-        except subprocess.TimeoutExpired:
-            log.warning("Gateway didn't stop in 15s, killing...")
-            self._process.kill()
-            self._process.wait(timeout=5)
-
-        self._process = None
+        log.info("Stopping Gateway process group (pid=%d)...", self._process.pid)
+        # _kill_process_group handles SIGTERM→SIGKILL escalation and reaping
+        self._kill_process_group()
+        log.info("Gateway stopped")
         self.state = GatewayState.PROVISIONED
 
     # ── Startup sequence ───────────────────────────────────────

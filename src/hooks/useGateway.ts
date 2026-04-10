@@ -10,6 +10,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, GatewayStatusResponse, GatewayState } from "@/lib/api";
 
+// How long (ms) we stay at the fast poll interval while waiting for login
+// before backing off to SLOW_POLL_MS to reduce noise.
+const FAST_POLL_MS = 2_000;
+const SLOW_POLL_MS = 30_000;
+const FAST_POLL_LIMIT_MS = 90_000; // back off after 90 s
+
 interface UseGatewayReturn {
   /** Current Gateway state from the backend */
   status: GatewayStatusResponse | null;
@@ -44,6 +50,8 @@ export function useGateway(): UseGatewayReturn {
   const [actionError, setActionError] = useState<string | null>(null);
   const [actionLoading, setActionLoading] = useState(false);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // Track when we entered the "waiting for login" fast-poll window
+  const fastPollStartRef = useRef<number | null>(null);
 
   const isProvisioning = status
     ? PROVISIONING_STATES.includes(status.state)
@@ -66,8 +74,22 @@ export function useGateway(): UseGatewayReturn {
   useEffect(() => {
     fetchStatus();
 
-    // Poll faster during provisioning/starting, slower when stable
-    const ms = isProvisioning || needsLogin ? 2000 : 30000;
+    // Poll faster during provisioning/starting.
+    // While needsLogin we start fast then back off after FAST_POLL_LIMIT_MS
+    // to avoid drowning the Gateway in auth probes.
+    const wantsFast = isProvisioning || needsLogin;
+    if (!wantsFast) {
+      fastPollStartRef.current = null;
+    } else if (fastPollStartRef.current === null) {
+      fastPollStartRef.current = Date.now();
+    }
+
+    const elapsed = fastPollStartRef.current
+      ? Date.now() - fastPollStartRef.current
+      : 0;
+    const ms =
+      wantsFast && elapsed < FAST_POLL_LIMIT_MS ? FAST_POLL_MS : SLOW_POLL_MS;
+
     intervalRef.current = setInterval(fetchStatus, ms);
 
     return () => {

@@ -7,7 +7,7 @@ and stashed on app.state. These helpers let any router grab them
 without knowing how they were created.
 """
 
-from fastapi import Request
+from fastapi import Depends, HTTPException, Request, status
 
 from services.db import DatabaseService
 from services.ibkr import IBKRService
@@ -51,3 +51,30 @@ def get_screener(request: Request) -> ScreenerService:
 def get_gateway(request: Request) -> GatewayLifecycle:
     """Get the Gateway lifecycle manager from app.state during lifespan."""
     return request.app.state.gateway
+
+
+async def require_ibkr_auth(ibkr: IBKRService = Depends(get_ibkr)) -> IBKRService:
+    """
+    Dependency that gates IBKR-backed routes behind authentication.
+
+    Returns the IBKRService if authenticated.
+    Raises 503 (not 401) so the frontend can distinguish "not yet authed"
+    from "bad credentials" — 401 is reserved for token expiry mid-session.
+
+    Usage:
+        @router.get("/my-route")
+        async def my_route(ibkr: IBKRService = Depends(require_ibkr_auth)):
+            ...
+    """
+    if not ibkr.state.authenticated:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={
+                "error": "ibkr_not_authenticated",
+                "message": (
+                    "IBKR session is not authenticated. "
+                    "Start and log into the Gateway first."
+                ),
+            },
+        )
+    return ibkr

@@ -8,13 +8,25 @@ These endpoints let the frontend:
   - Get provisioning progress during downloads
 """
 
+import asyncio
+import logging
+
 from fastapi import APIRouter, Depends
 
 from deps import get_gateway, get_ibkr
 from services.gateway import GatewayLifecycle
 from services.ibkr import IBKRService
 
+log = logging.getLogger("parallax.routers.gateway")
+
 router = APIRouter(prefix="/gateway", tags=["gateway"])
+
+# ── B4: in-flight auth probe lock ────────────────────────────────────────────
+# The frontend polls /gateway/status every 2 s while needsLogin is true.
+# Each poll triggers ibkr.auth_status() → POST to the Gateway.
+# Under fast polling this can overlap.  A simple lock serialises probes so we
+# never fire two concurrent auth checks to the same Gateway endpoint.
+_auth_probe_lock = asyncio.Lock()
 
 
 @router.get("/status")
@@ -28,17 +40,34 @@ async def gateway_status(
       - not_provisioned → "Set up" button
       - downloading_* → progress bar
       - provisioned → "Start" button
-      - running → green indicator
+      - running → green indicator (+ auth state)
       - error → error message + retry
+
+    When the Gateway is running this endpoint also probes IBKR auth status
+    and, on first successful auth, starts the session keep-alive tickle loop.
     """
     status = gw.status()
 
     authenticated = False
     auth_message = "Gateway not running."
+
     if status["running"]:
-        auth = await ibkr.auth_status()
-        authenticated = auth["authenticated"]
-        auth_message = auth["message"]
+        # B4: serialise concurrent polls — skip if a probe is already in flight
+        if _auth_probe_lock.locked():
+            # Return last known auth state from ibkr service state
+            authenticated = ibkr.state.authenticated
+            auth_message = "Checking auth status..."
+        else:
+            async with _auth_probe_lock:
+                auth = await ibkr.auth_status()
+                authenticated = auth["authenticated"]
+                auth_message = auth["message"]
+
+                # B1: start tickle loop here too — not only from /auth/status.
+                # This ensures the session stays alive regardless of which
+                # endpoint the frontend uses to detect auth.
+                if authenticated:
+                    await ibkr.start_tickle_loop()
 
     status["authenticated"] = authenticated
     status["auth_required"] = status["running"] and not authenticated

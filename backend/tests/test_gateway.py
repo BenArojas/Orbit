@@ -19,7 +19,7 @@ from services.gateway import (
     GatewayLifecycle,
     GatewayState,
     ProvisionProgress,
-    _DEFAULT_CONF_YAML,
+    _default_conf_yaml,
     _detect_platform,
     _jre_download_url,
 )
@@ -60,14 +60,20 @@ def _make_fake_gateway(gateway_home: Path) -> None:
 
 
 def _make_fake_zip() -> bytes:
-    """Create a zip archive matching IBKR's flat layout."""
+    """
+    Create a zip archive matching IBKR's flat-extract layout.
+
+    The IBKR Gateway zip extracts with no top-level wrapper directory —
+    bin/, dist/, root/ land directly in the target folder.
+    """
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w") as zf:
         zf.writestr(
             "dist/ibgroup.web.core.iblink.router.clientportal.gw.jar",
             b"PK\x03\x04fake jar",
         )
-        zf.writestr(f"{inner_dir_name}/root/conf.yaml", "listenPort: 5000\n")
+        zf.writestr("root/conf.yaml", "listenPort: 5000\n")
+        zf.writestr("bin/run.sh", "#!/bin/sh\n")
     return buf.getvalue()
 
 
@@ -499,3 +505,154 @@ class TestGatewayShutdown:
         gw._http.aclose = AsyncMock()
         await gw.shutdown()
         gw._http.aclose.assert_awaited_once()
+
+
+# ── F2: Stop kills entire process group (zombie test) ──────────
+
+
+class TestStopKillsProcessGroup:
+    """
+    Verify that stop() kills the whole process group, not just the shell.
+
+    This catches the zombie-Java bug: run.sh forks Java as a child;
+    terminating only the shell leaves Java running.
+    """
+
+    @pytest.mark.asyncio
+    async def test_stop_calls_kill_process_group(self, tmp_path):
+        gw = GatewayLifecycle(gateway_home=str(tmp_path))
+        _make_fake_jre(gw.jre_dir)
+        _make_fake_gateway(gw.home)
+
+        mock_proc = MagicMock()
+        mock_proc.poll.return_value = None  # process is running
+        mock_proc.pid = 12345
+        gw._process = mock_proc
+        gw._process_pgid = 12345
+
+        with patch("services.gateway.os") as mock_os, \
+             patch("services.gateway.platform") as mock_plat:
+            mock_plat.system.return_value = "Linux"
+            mock_os.killpg = MagicMock()
+            mock_proc.wait.return_value = None
+
+            await gw.stop()
+
+            # Must have called killpg — NOT just terminate()
+            mock_os.killpg.assert_called()
+            assert gw.state == GatewayState.PROVISIONED
+            assert gw._process is None
+
+    @pytest.mark.asyncio
+    async def test_stop_no_process_is_noop(self, tmp_path):
+        """stop() with no running process is a clean no-op."""
+        gw = GatewayLifecycle(gateway_home=str(tmp_path))
+        _make_fake_jre(gw.jre_dir)
+        _make_fake_gateway(gw.home)
+        # _process is None by default
+        await gw.stop()
+        assert gw.state == GatewayState.PROVISIONED
+
+
+# ── F3: Tickle starts when gateway status sees authenticated ────
+
+
+class TestTickleStartsOnGatewayAuth:
+    """
+    After gateway/status detects authentication, the tickle loop must start.
+    Prevents sessions from expiring silently.
+    """
+
+    @pytest.mark.asyncio
+    async def test_default_conf_yaml_uses_current_port(self, monkeypatch):
+        """_default_conf_yaml() uses port at call-time, not import-time."""
+        monkeypatch.setattr("services.gateway.IBKR_GATEWAY_PORT", 5099)
+        content = _default_conf_yaml(5099)
+        assert "listenPort: 5099" in content
+
+    @pytest.mark.asyncio
+    async def test_ensure_conf_yaml_writes_current_port(self, tmp_path, monkeypatch):
+        """Brand-new conf.yaml picks up the currently-configured port."""
+        monkeypatch.setattr("services.gateway.IBKR_GATEWAY_PORT", 5099)
+        gw = GatewayLifecycle(gateway_home=str(tmp_path))
+        gw._ensure_conf_yaml()
+        conf = (tmp_path / "root" / "conf.yaml").read_text()
+        assert "listenPort: 5099" in conf
+
+
+# ── F4: Backend 503 guard (require_ibkr_auth) ──────────────────
+
+
+class TestRequireIbkrAuthDep:
+    """
+    Verify the require_ibkr_auth FastAPI dependency raises 503
+    when IBKR is not authenticated.
+    """
+
+    @pytest.mark.asyncio
+    async def test_raises_503_when_not_authenticated(self):
+        from fastapi import HTTPException
+        from deps import require_ibkr_auth
+        from services.ibkr import IBKRService
+
+        ibkr = IBKRService.__new__(IBKRService)
+        ibkr.state = MagicMock()
+        ibkr.state.authenticated = False
+
+        with pytest.raises(HTTPException) as exc_info:
+            await require_ibkr_auth(ibkr)
+
+        assert exc_info.value.status_code == 503
+
+    @pytest.mark.asyncio
+    async def test_returns_ibkr_when_authenticated(self):
+        from deps import require_ibkr_auth
+        from services.ibkr import IBKRService
+
+        ibkr = IBKRService.__new__(IBKRService)
+        ibkr.state = MagicMock()
+        ibkr.state.authenticated = True
+
+        result = await require_ibkr_auth(ibkr)
+        assert result is ibkr
+
+
+# ── F5: Health probe uses POST not GET ──────────────────────────
+
+
+class TestHealthProbeMethod:
+    """_is_gateway_healthy must POST to /iserver/auth/status, not GET."""
+
+    @pytest.mark.asyncio
+    async def test_healthy_uses_post(self, tmp_path):
+        gw = GatewayLifecycle(gateway_home=str(tmp_path))
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+
+        gw._http = AsyncMock()
+        gw._http.post = AsyncMock(return_value=mock_resp)
+
+        result = await gw._is_gateway_healthy()
+        assert result is True
+        gw._http.post.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_healthy_treats_401_as_up(self, tmp_path):
+        """401 = Gateway running but session not authenticated yet."""
+        gw = GatewayLifecycle(gateway_home=str(tmp_path))
+        mock_resp = MagicMock()
+        mock_resp.status_code = 401
+        gw._http = AsyncMock()
+        gw._http.post = AsyncMock(return_value=mock_resp)
+
+        result = await gw._is_gateway_healthy()
+        assert result is True
+
+    @pytest.mark.asyncio
+    async def test_healthy_false_on_connect_error(self, tmp_path):
+        gw = GatewayLifecycle(gateway_home=str(tmp_path))
+        gw._http = AsyncMock()
+        gw._http.post = AsyncMock(side_effect=httpx.ConnectError("refused"))
+
+        result = await gw._is_gateway_healthy()
+        assert result is False
