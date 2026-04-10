@@ -10,7 +10,7 @@
  *
  * Designed to sit in the Dashboard or a settings panel.
  * Once the Gateway is running, the user authenticates via the IBKR
- * login page at https://localhost:5000.
+ * login page at the backend-provided gateway_url.
  */
 
 import { useGateway } from "@/hooks/useGateway";
@@ -64,6 +64,8 @@ export function GatewaySetup() {
   const {
     status,
     isRunning,
+    isAuthenticated,
+    needsLogin,
     isProvisioning,
     provision,
     start,
@@ -96,7 +98,11 @@ export function GatewaySetup() {
           IBKR Gateway
         </span>
         <span className="text-[10px] text-[var(--text-3)]">
-          {status.state.replace(/_/g, " ")}
+          {isRunning
+            ? isAuthenticated
+              ? "authenticated"
+              : "login required"
+            : status.state.replace(/_/g, " ")}
         </span>
       </div>
 
@@ -154,8 +160,15 @@ export function GatewaySetup() {
       {isRunning && (
         <div>
           <p className="mb-2 text-[11px] text-[var(--text-2)]">
-            Gateway is running. Authenticate to start trading.
+            {needsLogin
+              ? "Gateway is running. Open the IBKR login page and sign in to finish connecting."
+              : "Gateway is running and authenticated. IBKR features are ready."}
           </p>
+          {status.auth_message && (
+            <p className="mb-2 text-[10px] text-[var(--text-3)]">
+              {status.auth_message}
+            </p>
+          )}
           <a
             href={status.gateway_url}
             target="_blank"
@@ -166,7 +179,7 @@ export function GatewaySetup() {
               color: "var(--clr-cyan)",
             }}
           >
-            Open IBKR Login
+            {needsLogin ? "Open IBKR Login" : "Open Gateway"}
           </a>
         </div>
       )}

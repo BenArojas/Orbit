@@ -56,6 +56,9 @@ export interface GatewayStatusResponse {
   state: GatewayState;
   provisioned: boolean;
   running: boolean;
+  authenticated: boolean;
+  auth_required: boolean;
+  auth_message: string;
   gateway_url: string;
   gateway_home: string;
   error: string | null;

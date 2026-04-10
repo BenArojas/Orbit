@@ -234,6 +234,16 @@ class TestConfYaml:
         gw._ensure_conf_yaml()
         assert conf.read_text() == "custom: config\n"
 
+    def test_updates_existing_listen_port(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("services.gateway.IBKR_GATEWAY_PORT", 5001)
+        gw = GatewayLifecycle(gateway_home=str(tmp_path))
+        root_dir = gw.home / "root"
+        root_dir.mkdir(parents=True)
+        conf = root_dir / "conf.yaml"
+        conf.write_text("listenPort: 5000\nlistenSsl: true\n")
+        gw._ensure_conf_yaml()
+        assert conf.read_text() == "listenPort: 5001\nlistenSsl: true\n"
+
 
 # ── GatewayLifecycle — status ──────────────────────────────────
 
@@ -299,12 +309,80 @@ class TestGatewayStart:
         assert gw.state == GatewayState.RUNNING
 
     @pytest.mark.asyncio
+    async def test_start_treats_401_as_running_gateway(self, tmp_path):
+        """401 from auth/status means the Gateway is up but login is still required."""
+        gw = GatewayLifecycle(gateway_home=str(tmp_path))
+        gw._http = AsyncMock()
+        mock_resp = MagicMock()
+        mock_resp.status_code = 401
+        gw._http.get = AsyncMock(return_value=mock_resp)
+
+        await gw.start()
+        assert gw.state == GatewayState.RUNNING
+
+    @pytest.mark.asyncio
+    async def test_start_syncs_existing_conf_before_launch(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("services.gateway.IBKR_GATEWAY_PORT", 5001)
+        gw = GatewayLifecycle(gateway_home=str(tmp_path))
+        _make_fake_jre(gw.jre_dir)
+        _make_fake_gateway(gw.home)
+        root_dir = gw.home / "root"
+        root_dir.mkdir(parents=True, exist_ok=True)
+        conf = root_dir / "conf.yaml"
+        conf.write_text("listenPort: 5000\nlistenSsl: true\n")
+
+        gw._http = AsyncMock()
+        gw._http.get = AsyncMock(side_effect=[
+            httpx.ConnectError("refused"),
+            MagicMock(status_code=200),
+        ])
+        run_script = gw.home / "bin" / "run.sh"
+        run_script.parent.mkdir(parents=True, exist_ok=True)
+        run_script.write_text("#!/bin/sh\n")
+
+        with patch("services.gateway.subprocess") as mock_sub:
+            mock_proc = MagicMock()
+            mock_proc.poll.return_value = None
+            mock_sub.Popen.return_value = mock_proc
+
+            await gw.start()
+
+        assert "listenPort: 5001" in conf.read_text()
+
+    @pytest.mark.asyncio
     async def test_stop_no_process_is_noop(self, tmp_path):
         gw = GatewayLifecycle(gateway_home=str(tmp_path))
         _make_fake_jre(gw.jre_dir)
         _make_fake_gateway(gw.home)
         await gw.stop()
         assert gw.state == GatewayState.PROVISIONED
+
+    @pytest.mark.asyncio
+    async def test_start_uses_relative_conf_path_for_run_script(self, tmp_path):
+        """IBKR's launcher expects root/conf.yaml, not an absolute path."""
+        gw = GatewayLifecycle(gateway_home=str(tmp_path))
+        _make_fake_jre(gw.jre_dir)
+        _make_fake_gateway(gw.home)
+        gw._ensure_conf_yaml()
+
+        gw._http = AsyncMock()
+        gw._http.get = AsyncMock(side_effect=[
+            httpx.ConnectError("refused"),
+            MagicMock(status_code=200),
+        ])
+        run_script = gw.home / "bin" / "run.sh"
+        run_script.parent.mkdir(parents=True, exist_ok=True)
+        run_script.write_text("#!/bin/sh\n")
+
+        with patch("services.gateway.subprocess") as mock_sub:
+            mock_proc = MagicMock()
+            mock_proc.poll.return_value = None
+            mock_sub.Popen.return_value = mock_proc
+
+            await gw.start()
+
+            popen_args = mock_sub.Popen.call_args.args[0]
+            assert popen_args[-1] == "root/conf.yaml"
 
 
 # ── GatewayLifecycle — startup sequence ────────────────────────
@@ -390,6 +468,21 @@ class TestGatewayProvision:
         gw._download_file = mock_download
 
         with pytest.raises(GatewayProvisionError, match="Cannot reach"):
+            await gw.provision()
+
+    @pytest.mark.asyncio
+    async def test_provision_gateway_download_error_mentions_manual_zip(self, tmp_path):
+        gw = GatewayLifecycle(gateway_home=str(tmp_path))
+        _make_fake_jre(gw.jre_dir)
+
+        async def mock_download(url, step_name):
+            if step_name == "IBKR Client Portal Gateway":
+                raise GatewayProvisionError("Cannot reach download server for IBKR Client Portal Gateway: no internet")
+            return b"ignored"
+
+        gw._download_file = mock_download
+
+        with pytest.raises(GatewayProvisionError, match="clientportal\\.gw\\.zip"):
             await gw.provision()
 
 

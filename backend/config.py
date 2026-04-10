@@ -4,10 +4,11 @@ No .env file needed for v1 (everything is local).
 """
 
 import os
+import platform
 
 # IBKR Client Portal Gateway
-IBKR_GATEWAY_HOST = os.getenv("IBKR_GATEWAY_HOST", "localhost")
-IBKR_GATEWAY_PORT = int(os.getenv("IBKR_GATEWAY_PORT", "5000"))
+IBKR_GATEWAY_HOST = os.getenv("IBKR_GATEWAY_HOST", "127.0.0.1")
+IBKR_GATEWAY_PORT = int(os.getenv("IBKR_GATEWAY_PORT", 5001 if platform.system() == "Darwin" else 5000))
 IBKR_GATEWAY_BASE_URL = f"https://{IBKR_GATEWAY_HOST}:{IBKR_GATEWAY_PORT}"
 IBKR_API_BASE_URL = f"{IBKR_GATEWAY_BASE_URL}/v1/api"
 

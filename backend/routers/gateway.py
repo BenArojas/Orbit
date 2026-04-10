@@ -10,14 +10,18 @@ These endpoints let the frontend:
 
 from fastapi import APIRouter, Depends
 
-from deps import get_gateway
+from deps import get_gateway, get_ibkr
 from services.gateway import GatewayLifecycle
+from services.ibkr import IBKRService
 
 router = APIRouter(prefix="/gateway", tags=["gateway"])
 
 
 @router.get("/status")
-async def gateway_status(gw: GatewayLifecycle = Depends(get_gateway)) -> dict:
+async def gateway_status(
+    gw: GatewayLifecycle = Depends(get_gateway),
+    ibkr: IBKRService = Depends(get_ibkr),
+) -> dict:
     """
     Current Gateway state.
     Frontend polls this to decide what UI to show:
@@ -27,7 +31,19 @@ async def gateway_status(gw: GatewayLifecycle = Depends(get_gateway)) -> dict:
       - running → green indicator
       - error → error message + retry
     """
-    return gw.status()
+    status = gw.status()
+
+    authenticated = False
+    auth_message = "Gateway not running."
+    if status["running"]:
+        auth = await ibkr.auth_status()
+        authenticated = auth["authenticated"]
+        auth_message = auth["message"]
+
+    status["authenticated"] = authenticated
+    status["auth_required"] = status["running"] and not authenticated
+    status["auth_message"] = auth_message
+    return status
 
 
 @router.post("/provision")

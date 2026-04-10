@@ -15,6 +15,10 @@ interface UseGatewayReturn {
   status: GatewayStatusResponse | null;
   /** Is the Gateway running and healthy? */
   isRunning: boolean;
+  /** Is the IBKR session fully authenticated? */
+  isAuthenticated: boolean;
+  /** Is the Gateway up, but waiting for the user to log in? */
+  needsLogin: boolean;
   /** Is a download/setup in progress? */
   isProvisioning: boolean;
   /** Trigger first-time provisioning (download JRE + Gateway) */
@@ -45,6 +49,8 @@ export function useGateway(): UseGatewayReturn {
     ? PROVISIONING_STATES.includes(status.state)
     : false;
   const isRunning = status?.running ?? false;
+  const isAuthenticated = status?.authenticated ?? false;
+  const needsLogin = status?.auth_required ?? false;
 
   // ── Polling ──────────────────────────────────────────────
 
@@ -61,13 +67,13 @@ export function useGateway(): UseGatewayReturn {
     fetchStatus();
 
     // Poll faster during provisioning/starting, slower when stable
-    const ms = isProvisioning ? 2000 : 30000;
+    const ms = isProvisioning || needsLogin ? 2000 : 30000;
     intervalRef.current = setInterval(fetchStatus, ms);
 
     return () => {
       if (intervalRef.current) clearInterval(intervalRef.current);
     };
-  }, [fetchStatus, isProvisioning]);
+  }, [fetchStatus, isProvisioning, needsLogin]);
 
   // ── Actions ──────────────────────────────────────────────
 
@@ -120,6 +126,8 @@ export function useGateway(): UseGatewayReturn {
   return {
     status,
     isRunning,
+    isAuthenticated,
+    needsLogin,
     isProvisioning,
     provision,
     start,

@@ -26,7 +26,9 @@ import io
 import logging
 import os
 import platform
+import re
 import shutil
+import socket
 import stat
 import subprocess
 import zipfile
@@ -380,10 +382,17 @@ class GatewayLifecycle:
                     log.info("Using manually placed Gateway zip at %s", manual_zip)
                     gw_data = manual_zip.read_bytes()
                 else:
-                    gw_data = await self._download_file(
-                        GATEWAY_ZIP_URL,
-                        "IBKR Client Portal Gateway",
-                    )
+                    try:
+                        gw_data = await self._download_file(
+                            GATEWAY_ZIP_URL,
+                            "IBKR Client Portal Gateway",
+                        )
+                    except GatewayProvisionError as e:
+                        raise GatewayProvisionError(
+                            f"{e.message}. "
+                            f"You can manually download {GATEWAY_ZIP_URL} and save it as "
+                            f"{manual_zip} , then click Set Up Gateway again."
+                        ) from e
 
                 # Clear old gateway dirs if re-provisioning.
                 # Preserve jre/ — that's our managed JRE, not part of the Gateway zip.
@@ -424,7 +433,17 @@ class GatewayLifecycle:
             conf_file.write_text(_DEFAULT_CONF_YAML)
             log.info("Wrote default conf.yaml to %s", conf_file)
         else:
-            log.info("conf.yaml already exists, preserving user edits")
+            content = conf_file.read_text()
+            updated = re.sub(
+                r"(?m)^(\s*listenPort:\s*)\d+\s*$",
+                rf"\g<1>{IBKR_GATEWAY_PORT}",
+                content,
+            )
+            if updated != content:
+                conf_file.write_text(updated)
+                log.info("Updated existing conf.yaml listenPort to %s", IBKR_GATEWAY_PORT)
+            else:
+                log.info("conf.yaml already exists, preserving user edits")
 
     # ── Process lifecycle ──────────────────────────────────────
 
@@ -432,10 +451,20 @@ class GatewayLifecycle:
         """Check if the Gateway is responding to health checks."""
         try:
             url = f"https://{IBKR_GATEWAY_HOST}:{IBKR_GATEWAY_PORT}/v1/api/iserver/auth/status"
-            resp = await self._http.get(url)
-            return resp.status_code == 200
+            resp = await self._http.get(
+                url,
+                timeout=httpx.Timeout(1.0, connect=0.25),
+            )
+            # 401 means the Gateway is up but the user has not authenticated yet.
+            return resp.status_code in (200, 401)
         except (httpx.ConnectError, httpx.TimeoutException):
             return False
+
+    def _is_port_in_use(self, host: str, port: int) -> bool:
+        """Return True if something else is already listening on the target port."""
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.settimeout(0.2)
+            return sock.connect_ex((host, port)) == 0
 
     async def start(self) -> None:
         """
@@ -451,9 +480,21 @@ class GatewayLifecycle:
         if not self.is_provisioned():
             raise GatewayNotProvisionedError()
 
+        # Keep the Gateway config aligned with current app settings even when
+        # the install already exists from a previous run.
+        self._ensure_conf_yaml()
+
         java = self._find_java_binary()
         if not java:
             raise GatewayStartError("Cannot find java binary in managed JRE")
+
+        if self._is_port_in_use(IBKR_GATEWAY_HOST, IBKR_GATEWAY_PORT):
+            self.state = GatewayState.ERROR
+            self.error_message = (
+                f"Port {IBKR_GATEWAY_PORT} is already in use on {IBKR_GATEWAY_HOST}. "
+                "Another app is blocking the IBKR Gateway."
+            )
+            raise GatewayStartError(self.error_message)
 
         # Use IBKR's own run.sh / run.bat — it sets the correct classpath.
         # The jar is NOT a fat jar and cannot be launched with java -jar directly.
@@ -478,7 +519,8 @@ class GatewayLifecycle:
             log.info("Starting Gateway via %s (JAVA_HOME=%s)", run_script, java_home)
             # run.sh requires the conf.yaml path as its only argument.
             # It must be relative to cwd (self.home), so just "root/conf.yaml".
-            conf_arg = str(self.root_dir / "conf.yaml")
+            conf_arg = str(Path("root") / "conf.yaml")
+            # conf_arg = str(self.conf_path.absolute())
             cmd = (
                 ["cmd", "/c", str(run_script), conf_arg]
                 if platform.system() == "Windows"
