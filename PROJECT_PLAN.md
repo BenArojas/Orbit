@@ -1,7 +1,7 @@
 # Parallax — Project Plan
 
 > Last updated: 2026-04-09
-> Status: Phase 1–4 complete. Phase 5A/5B built (feature/screener-page) — awaiting code review. Phase 5C in progress.
+> Status: Phase 1–5 completed.
 
 ---
 
