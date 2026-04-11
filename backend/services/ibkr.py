@@ -138,6 +138,16 @@ class IBKRService:
                 "ws_ready": self.state.ws_connected,
                 "message": data.get("message", "Status checked."),
             }
+        except IBKRAuthError:
+            # 401 on /iserver/auth/status is normal when the user hasn't
+            # logged in yet — not an error, just "not authenticated".
+            self.state.authenticated = False
+            self.state.session_token = None
+            return {
+                "authenticated": False,
+                "ws_ready": False,
+                "message": "Session not authenticated. Please log in via the IBKR Gateway.",
+            }
         except IBKRConnectionError:
             self.state.authenticated = False
             return {

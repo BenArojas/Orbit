@@ -244,18 +244,13 @@ class GatewayLifecycle:
         return None
 
     def _find_run_script(self) -> Optional[Path]:
-        """
-        Find IBKR's run script in bin/.
-        The script correctly sets the classpath — we don't reconstruct it ourselves.
-        """
-        candidates = [
-            self.home / "bin" / "run.sh",   # macOS / Linux
-            self.home / "bin" / "run.bat",  # Windows
-        ]
-        for path in candidates:
-            if path.is_file():
-                return path
-        return None
+        """Return the correct run script based on the operating system."""
+        # Windows MUST use run.bat; macOS/Linux use run.sh
+        if platform.system() == "Windows":
+            script = self.home / "bin" / "run.bat"
+        else:
+            script = self.home / "bin" / "run.sh"
+        return script if script.is_file() else None
 
     def is_provisioned(self) -> bool:
         """Check if JRE and Gateway files exist on disk."""

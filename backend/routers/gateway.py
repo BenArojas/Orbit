@@ -29,6 +29,21 @@ router = APIRouter(prefix="/gateway", tags=["gateway"])
 _auth_probe_lock = asyncio.Lock()
 
 
+def _enrich_status(status: dict) -> dict:
+    """Ensure all frontend-expected auth fields are present on any status dict.
+
+    The base ``gw.status()`` dict only has lifecycle fields.  The frontend's
+    ``GatewayStatusResponse`` type always expects ``authenticated``,
+    ``auth_required``, and ``auth_message``.  Action endpoints (provision,
+    start, stop) that skip the auth probe still need these keys set to safe
+    defaults so the frontend doesn't see ``undefined``.
+    """
+    status.setdefault("authenticated", False)
+    status.setdefault("auth_required", status.get("running", False))
+    status.setdefault("auth_message", "")
+    return status
+
+
 @router.get("/status")
 async def gateway_status(
     gw: GatewayLifecycle = Depends(get_gateway),
@@ -86,7 +101,7 @@ async def gateway_provision(
     After provisioning, the Gateway is ready to start but not yet running.
     """
     await gw.provision(force=force)
-    return gw.status()
+    return _enrich_status(gw.status())
 
 
 @router.post("/start")
@@ -97,7 +112,7 @@ async def gateway_start(gw: GatewayLifecycle = Depends(get_gateway)) -> dict:
     Raises 400 if not provisioned.
     """
     await gw.start()
-    return gw.status()
+    return _enrich_status(gw.status())
 
 
 @router.post("/stop")
@@ -107,7 +122,7 @@ async def gateway_stop(gw: GatewayLifecycle = Depends(get_gateway)) -> dict:
     No-op if Gateway was started externally.
     """
     await gw.stop()
-    return gw.status()
+    return _enrich_status(gw.status())
 
 
 @router.post("/reprovision")
@@ -119,4 +134,4 @@ async def gateway_reprovision(gw: GatewayLifecycle = Depends(get_gateway)) -> di
     """
     await gw.stop()
     await gw.provision(force=True)
-    return gw.status()
+    return _enrich_status(gw.status())
