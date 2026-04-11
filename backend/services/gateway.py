@@ -104,19 +104,21 @@ def _default_conf_yaml(port: int) -> str:
 listenPort: {port}
 listenSsl: true
 
-# Allow connections from localhost only.
-# Safe because this Gateway only listens on the loopback interface.
+# Allow connections from any local IP.
+# The Gateway only listens on loopback, so this is safe.
 ips:
   allow:
-    - 127.0.0.1
+    - "*"
   deny: []
 
 # Disable IP geolocation restriction (not needed for local use).
-ip2loc: ""
+# Must be boolean false, not empty string — Gateway treats "" as enabled.
+ip2loc: false
 
 # IBKR production API endpoint.
 proxyRemoteHost: "https://api.ibkr.com"
 proxyRemotePort: 443
+svcEnvironment: "v1"
 
 # Auto-restart on crash (up to 3 times per hour).
 autoRestart: true
@@ -427,8 +429,11 @@ class GatewayLifecycle:
                 self.state = GatewayState.ERROR
                 raise
 
-        # Step 3: conf.yaml — write only if missing (don't overwrite user edits)
-        self._ensure_conf_yaml()
+        # Step 3: conf.yaml — always overwrite after a fresh extraction.
+        # The IBKR zip ships its own root/conf.yaml with broken defaults
+        # (ip2loc: "US", restrictive ips.allow) that cause login resets.
+        # User edits are preserved on subsequent starts via _ensure_conf_yaml().
+        self.reset_conf_yaml()
 
         self.state = GatewayState.PROVISIONED
         self.progress.step = "done"
@@ -453,6 +458,22 @@ class GatewayLifecycle:
                 log.info("Updated existing conf.yaml listenPort to %s", IBKR_GATEWAY_PORT)
             else:
                 log.info("conf.yaml already exists, preserving user edits")
+
+    def reset_conf_yaml(self) -> Path:
+        """
+        Overwrite conf.yaml with the current defaults regardless of what's on disk.
+
+        Use this to recover from a broken or stale config (e.g. leftover ip2loc
+        restriction, wrong ips.allow list, missing svcEnvironment) without
+        requiring the user to manually delete the file.
+
+        Returns the path of the written file.
+        """
+        self.root_dir.mkdir(parents=True, exist_ok=True)
+        conf_file = self.root_dir / "conf.yaml"
+        conf_file.write_text(_default_conf_yaml(IBKR_GATEWAY_PORT))
+        log.info("Reset conf.yaml to defaults at %s", conf_file)
+        return conf_file
 
     # ── Process lifecycle ──────────────────────────────────────
 

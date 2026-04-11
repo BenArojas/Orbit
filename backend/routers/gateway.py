@@ -135,3 +135,19 @@ async def gateway_reprovision(gw: GatewayLifecycle = Depends(get_gateway)) -> di
     await gw.stop()
     await gw.provision(force=True)
     return _enrich_status(gw.status())
+
+
+@router.post("/reset-conf")
+async def gateway_reset_conf(gw: GatewayLifecycle = Depends(get_gateway)) -> dict:
+    """
+    Overwrite conf.yaml with the built-in defaults.
+
+    Use when the on-disk config is broken or stale (e.g. wrong ip2loc,
+    restrictive ips.allow, missing svcEnvironment).  The Gateway must be
+    restarted after this for the new config to take effect.
+    """
+    conf_path = gw.reset_conf_yaml()
+    status = _enrich_status(gw.status())
+    status["conf_reset"] = True
+    status["conf_path"] = str(conf_path)
+    return status

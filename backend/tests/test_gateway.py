@@ -443,11 +443,34 @@ class TestGatewayProvision:
         gw = GatewayLifecycle(gateway_home=str(tmp_path))
         _make_fake_jre(gw.jre_dir)
         _make_fake_gateway(gw.home)
-        # conf.yaml dir must exist for _ensure_conf_yaml
+        # conf.yaml dir must exist for reset_conf_yaml
         (gw.home / "root").mkdir(parents=True, exist_ok=True)
 
         await gw.provision(force=False)
         assert gw.state == GatewayState.PROVISIONED
+
+    @pytest.mark.asyncio
+    async def test_provision_overwrites_ibkr_default_conf(self, tmp_path):
+        """
+        provision() must overwrite the conf.yaml that ships inside the IBKR zip.
+        The bundled config has ip2loc: "US" and restrictive ips.allow which
+        cause the login page to reset after 2FA. Our defaults fix this.
+        """
+        gw = GatewayLifecycle(gateway_home=str(tmp_path))
+        _make_fake_jre(gw.jre_dir)
+        _make_fake_gateway(gw.home)
+
+        # Simulate the stale IBKR-bundled conf.yaml already on disk
+        conf_file = tmp_path / "root" / "conf.yaml"
+        conf_file.parent.mkdir(parents=True, exist_ok=True)
+        conf_file.write_text('ip2loc: "US"\nips:\n  allow:\n    - 127.0.0.1\n')
+
+        await gw.provision(force=False)
+
+        content = conf_file.read_text()
+        assert "ip2loc: false" in content, "provision() must overwrite IBKR's ip2loc: US"
+        assert '"*"' in content, "provision() must reset ips.allow to wildcard"
+        assert 'ip2loc: "US"' not in content
 
     @pytest.mark.asyncio
     async def test_provision_download_timeout_raises(self, tmp_path):
@@ -578,6 +601,37 @@ class TestTickleStartsOnGatewayAuth:
         gw._ensure_conf_yaml()
         conf = (tmp_path / "root" / "conf.yaml").read_text()
         assert "listenPort: 5099" in conf
+
+    def test_default_conf_yaml_has_correct_auth_settings(self):
+        """Default conf.yaml must use ip2loc: false and allow all IPs."""
+        content = _default_conf_yaml(5001)
+        assert "ip2loc: false" in content, "ip2loc must be boolean false, not empty string"
+        assert '"*"' in content, "ips.allow must contain wildcard to avoid blocking browser session"
+        assert 'svcEnvironment: "v1"' in content, "svcEnvironment must be set"
+
+    def test_reset_conf_yaml_overwrites_existing(self, tmp_path, monkeypatch):
+        """reset_conf_yaml() replaces whatever is on disk with current defaults."""
+        monkeypatch.setattr("services.gateway.IBKR_GATEWAY_PORT", 5001)
+        gw = GatewayLifecycle(gateway_home=str(tmp_path))
+        conf_file = tmp_path / "root" / "conf.yaml"
+        conf_file.parent.mkdir(parents=True, exist_ok=True)
+
+        # Write a broken config (old ip2loc, restricted IPs)
+        conf_file.write_text('ip2loc: "US"\nips:\n  allow:\n    - 127.0.0.1\n')
+
+        returned_path = gw.reset_conf_yaml()
+
+        assert returned_path == conf_file
+        content = conf_file.read_text()
+        assert "ip2loc: false" in content
+        assert '"*"' in content
+        assert 'ip2loc: "US"' not in content
+
+    def test_reset_conf_yaml_creates_dirs_if_missing(self, tmp_path):
+        """reset_conf_yaml() creates the root dir if it doesn't exist yet."""
+        gw = GatewayLifecycle(gateway_home=str(tmp_path / "fresh"))
+        gw.reset_conf_yaml()
+        assert (tmp_path / "fresh" / "root" / "conf.yaml").exists()
 
 
 # ── F4: Backend 503 guard (require_ibkr_auth) ──────────────────
