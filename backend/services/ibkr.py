@@ -99,6 +99,18 @@ class IBKRService:
 
                 return resp.json()
 
+            except httpx.TimeoutException as exc:
+                log.warning(
+                    "IBKR request timed out (attempt %d/%d): %s %s",
+                    attempt + 1, max_retries, method, endpoint,
+                )
+                if attempt >= max_retries - 1:
+                    raise IBKRConnectionError(
+                        f"IBKR Gateway timed out on {method} {endpoint}. "
+                        "Gateway may be starting up or overloaded."
+                    ) from exc
+                await asyncio.sleep(delay)
+
             except httpx.ConnectError as exc:
                 log.error(
                     "IBKR connection error (attempt %d/%d): %s",

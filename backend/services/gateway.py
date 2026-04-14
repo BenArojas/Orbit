@@ -94,36 +94,38 @@ def _default_conf_yaml(port: int) -> str:
     """
     Build the default conf.yaml content for the given port.
 
+    Mirrors the MoonMarket configuration that's known to work end-to-end
+    (proper 302 redirect after 2FA instead of a 200-back-to-login loop).
+    Kept intentionally minimal — every extra property the IBKR Gateway
+    doesn't recognise causes a hard crash on startup.
+
     Called at write-time (not import-time) so tests that monkeypatch
     IBKR_GATEWAY_PORT always get the correct value in brand-new conf files.
     """
     return f"""\
 # Parallax-managed IBKR Client Portal Gateway configuration.
-# Auto-generated — edits will be preserved across re-provisions.
+# Auto-generated on every start — do not edit manually.
 
+# We're running locally, no need to restrict based on IP location
+ip2loc: false
+
+# Listen on this port for API requests
 listenPort: {port}
 listenSsl: true
 
-# Allow connections from any local IP.
-# The Gateway only listens on loopback, so this is safe.
+# Default values for the self-signed certificate provided by IBKR
+sslCert: "vertx.jks"
+sslPwd: "mywebapi"
+
+# Required properties (empty/default) to prevent startup errors
+proxyRemoteHost: "https://api.ibkr.com"
+svcEnvironment: "v1"
+portalBaseURL: ""
+
+# Allow API requests from any IP — the Gateway only listens on localhost.
 ips:
   allow:
     - "*"
-  deny: []
-
-# Disable IP geolocation restriction (not needed for local use).
-# Must be boolean false, not empty string — Gateway treats "" as enabled.
-ip2loc: false
-
-# IBKR production API endpoint.
-proxyRemoteHost: "https://api.ibkr.com"
-proxyRemotePort: 443
-svcEnvironment: "v1"
-
-# Auto-restart on crash (up to 3 times per hour).
-autoRestart: true
-autoRestartInterval: 1200
-autoRestartCount: 3
 """
 
 
@@ -439,26 +441,6 @@ class GatewayLifecycle:
         self.progress.step = "done"
         log.info("Gateway provisioning complete")
 
-    def _ensure_conf_yaml(self) -> None:
-        """Write conf.yaml if it doesn't exist yet."""
-        self.root_dir.mkdir(parents=True, exist_ok=True)
-        conf_file = self.root_dir / "conf.yaml"
-        if not conf_file.exists():
-            conf_file.write_text(_default_conf_yaml(IBKR_GATEWAY_PORT))
-            log.info("Wrote default conf.yaml to %s", conf_file)
-        else:
-            content = conf_file.read_text()
-            updated = re.sub(
-                r"(?m)^(\s*listenPort:\s*)\d+\s*$",
-                rf"\g<1>{IBKR_GATEWAY_PORT}",
-                content,
-            )
-            if updated != content:
-                conf_file.write_text(updated)
-                log.info("Updated existing conf.yaml listenPort to %s", IBKR_GATEWAY_PORT)
-            else:
-                log.info("conf.yaml already exists, preserving user edits")
-
     def reset_conf_yaml(self) -> Path:
         """
         Overwrite conf.yaml with the current defaults regardless of what's on disk.
@@ -561,7 +543,7 @@ class GatewayLifecycle:
 
         # Keep the Gateway config aligned with current app settings even when
         # the install already exists from a previous run.
-        self._ensure_conf_yaml()
+        self.reset_conf_yaml()
 
         java = self._find_java_binary()
         if not java:

@@ -223,22 +223,22 @@ class TestConfYaml:
 
     def test_creates_conf_when_missing(self, tmp_path):
         gw = GatewayLifecycle(gateway_home=str(tmp_path))
-        root_dir = gw.home / "root"
-        root_dir.mkdir(parents=True)
-        gw._ensure_conf_yaml()
-        conf = root_dir / "conf.yaml"
+        gw.reset_conf_yaml()
+        conf = gw.home / "root" / "conf.yaml"
         assert conf.exists()
         content = conf.read_text()
-        assert "listenPort: 5000" in content
+        assert "listenPort: 5001" in content
 
-    def test_preserves_existing_conf(self, tmp_path):
+    def test_overwrites_existing_conf(self, tmp_path):
+        """We own conf.yaml — any user/IBKR-shipped content gets replaced."""
         gw = GatewayLifecycle(gateway_home=str(tmp_path))
         root_dir = gw.home / "root"
         root_dir.mkdir(parents=True)
         conf = root_dir / "conf.yaml"
         conf.write_text("custom: config\n")
-        gw._ensure_conf_yaml()
-        assert conf.read_text() == "custom: config\n"
+        gw.reset_conf_yaml()
+        assert "custom: config" not in conf.read_text()
+        assert "listenPort:" in conf.read_text()
 
     def test_updates_existing_listen_port(self, tmp_path, monkeypatch):
         monkeypatch.setattr("services.gateway.IBKR_GATEWAY_PORT", 5001)
@@ -247,8 +247,8 @@ class TestConfYaml:
         root_dir.mkdir(parents=True)
         conf = root_dir / "conf.yaml"
         conf.write_text("listenPort: 5000\nlistenSsl: true\n")
-        gw._ensure_conf_yaml()
-        assert conf.read_text() == "listenPort: 5001\nlistenSsl: true\n"
+        gw.reset_conf_yaml()
+        assert "listenPort: 5001" in conf.read_text()
 
 
 # ── GatewayLifecycle — status ──────────────────────────────────
@@ -369,7 +369,7 @@ class TestGatewayStart:
         gw = GatewayLifecycle(gateway_home=str(tmp_path))
         _make_fake_jre(gw.jre_dir)
         _make_fake_gateway(gw.home)
-        gw._ensure_conf_yaml()
+        gw.reset_conf_yaml()
 
         gw._http = AsyncMock()
         gw._http.get = AsyncMock(side_effect=[
@@ -594,20 +594,24 @@ class TestTickleStartsOnGatewayAuth:
         assert "listenPort: 5099" in content
 
     @pytest.mark.asyncio
-    async def test_ensure_conf_yaml_writes_current_port(self, tmp_path, monkeypatch):
+    async def test_reset_conf_yaml_writes_current_port(self, tmp_path, monkeypatch):
         """Brand-new conf.yaml picks up the currently-configured port."""
         monkeypatch.setattr("services.gateway.IBKR_GATEWAY_PORT", 5099)
         gw = GatewayLifecycle(gateway_home=str(tmp_path))
-        gw._ensure_conf_yaml()
+        gw.reset_conf_yaml()
         conf = (tmp_path / "root" / "conf.yaml").read_text()
         assert "listenPort: 5099" in conf
 
     def test_default_conf_yaml_has_correct_auth_settings(self):
-        """Default conf.yaml must use ip2loc: false and allow all IPs."""
+        """Default conf.yaml must use only gateway-supported properties."""
         content = _default_conf_yaml(5001)
+        # Auth-critical settings
         assert "ip2loc: false" in content, "ip2loc must be boolean false, not empty string"
         assert '"*"' in content, "ips.allow must contain wildcard to avoid blocking browser session"
         assert 'svcEnvironment: "v1"' in content, "svcEnvironment must be set"
+        # Properties not supported by the Apr 2023 gateway build — crash on load
+        assert "proxyRemotePort" not in content, "proxyRemotePort is not a valid gateway property"
+        assert "autoRestart" not in content, "autoRestart is not a valid gateway property"
 
     def test_reset_conf_yaml_overwrites_existing(self, tmp_path, monkeypatch):
         """reset_conf_yaml() replaces whatever is on disk with current defaults."""

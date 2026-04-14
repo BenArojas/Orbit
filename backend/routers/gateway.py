@@ -14,6 +14,7 @@ import logging
 from fastapi import APIRouter, Depends
 
 from deps import get_gateway, get_ibkr
+from exceptions import IBKRConnectionError
 from services.gateway import GatewayLifecycle
 from services.ibkr import IBKRService
 
@@ -74,15 +75,23 @@ async def gateway_status(
             auth_message = "Checking auth status..."
         else:
             async with _auth_probe_lock:
-                auth = await ibkr.auth_status()
-                authenticated = auth["authenticated"]
-                auth_message = auth["message"]
+                try:
+                    auth = await ibkr.auth_status()
+                    authenticated = auth["authenticated"]
+                    auth_message = auth["message"]
 
-                # B1: start tickle loop here too — not only from /auth/status.
-                # This ensures the session stays alive regardless of which
-                # endpoint the frontend uses to detect auth.
-                if authenticated:
-                    await ibkr.start_tickle_loop()
+                    # B1: start tickle loop here too — not only from /auth/status.
+                    # This ensures the session stays alive regardless of which
+                    # endpoint the frontend uses to detect auth.
+                    if authenticated:
+                        await ibkr.start_tickle_loop()
+                except IBKRConnectionError as exc:
+                    # Gateway is running (port is up) but not yet ready to answer
+                    # auth probes — e.g. JVM still warming up. Return a clean status
+                    # instead of crashing the ASGI handler with a ReadTimeout.
+                    log.warning("Auth probe failed (Gateway not ready yet): %s", exc)
+                    authenticated = False
+                    auth_message = "Gateway starting up — auth check pending."
 
     status["authenticated"] = authenticated
     status["auth_required"] = status["running"] and not authenticated
