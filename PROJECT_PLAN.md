@@ -197,12 +197,30 @@ These are locked in. Don't revisit unless something breaks.
 
 | # | Task | Owner | Status | Notes |
 |---|---|---|---|---|
-| 7.1 | IBKR disconnect detection + re-auth | Ben | TODO | Detect stale session, show UI prompt |
-| 7.2 | Error states for all components | Both | TODO | Skeleton loaders, error boundaries |
-| 7.3 | Settings page | Ofek | TODO | Scan interval, timeframe, theme — SQLite persisted |
-| 7.4 | Keyboard shortcuts | Ofek | TODO | [?] Define shortcut map |
-| 7.5 | Performance optimization | Both | TODO | Virtualized lists, memoized computations |
-| 7.6 | End-to-end testing | Both | TODO | Manual testing with live IBKR connection |
+| 7.1 | IBKR disconnect detection + re-auth | Both | TODO | Poll session validity; on stale session show non-blocking banner with "Reconnect" CTA; typed `IBKRAuthError` / `IBKRSessionExpiredError`; backend retries with backoff before surfacing to UI |
+| 7.2 | Error states + toast system | Both | TODO | Skeleton loaders for all async components; React error boundaries per major panel; toasts for transient errors (WS drop, scan fail, trigger eval error); reuse shared `<EmptyState>` component |
+| 7.3 | Settings page + theme fixes | Both | TODO | Scan interval, default timeframe, Ollama model selector, IBKR gateway URL — all SQLite-persisted. Add light mode. Fix dark mode contrast (bg `#111827`, borders `#27303f`, secondary text lighter). Settings modal or dedicated route. |
+| 7.4 | Performance optimization | Both | TODO | Scope: (1) react-window virtualization for watchlist/scanner tables >100 rows, (2) memoize indicator computations keyed by conid+timeframe+bar_count, (3) debounce chart re-renders on timeframe switch, (4) backend: cache indicator results in SQLite with TTL, (5) WS tick batching per 100ms window |
+| 7.5 | Health status strip + diagnostics | Both | TODO | Persistent status strip (🟢/🟡/🔴) in app shell. Click opens modal with named health checks: IBKR Gateway, Ollama, Scanner (last run), Database, Background Triggers. Each row: icon + name + one-line plain-English status. "Copy diagnostics" button exports minimal JSON snapshot (typed error class + context) to clipboard — for devs, not shown raw in UI. No log viewer. |
+| 7.6 | Empty states | Both | TODO | Shared `<EmptyState icon title description cta?>` component. Cover: empty watchlist, chart with no symbol, scanner before first run, scanner zero results (with "reset filters" CTA), empty trigger list, Ollama chat with no history (prompt chips), alert log empty |
+| 7.7 | Release packaging | Both | TODO | Tauri bundler: macOS universal .dmg (Intel + ARM), Windows .msi. PyInstaller sidecar → single binary in Tauri resources. Code signing: Apple notarization required (blocks launch without it); Windows EV cert optional. Distribution via GitHub Releases (private). No auto-updater in v1 — manual download. Fresh-install smoke test on clean VM before each release. |
+
+---
+
+### Phase 8: End-to-End Testing
+
+> Goal: Verified correct behaviour across all critical flows with a live IBKR connection.
+
+| # | Task | Owner | Status | Notes |
+|---|---|---|---|---|
+| 8.1 | IBKR connection lifecycle | Both | TODO | Cold start, gateway down, session expiry, re-auth banner, reconnect success |
+| 8.2 | Ollama detection walkthrough | Both | TODO | Not installed, installed but no model, model switch mid-session, Ollama crash recovery |
+| 8.3 | Scanner flow | Both | TODO | Preset → filters → results → add to watchlist → trigger rule created |
+| 8.4 | Trigger firing | Both | TODO | All 4 news candle methods under live data; watchlist move + return; dedup across intervals |
+| 8.5 | Chart + indicator accuracy | Both | TODO | Cross-check indicator values vs TradingView on 5 symbols across 3 timeframes |
+| 8.6 | Settings persistence | Both | TODO | All settings survive app restart; theme applies on cold launch |
+| 8.7 | Error + empty state coverage | Both | TODO | Force each error condition manually; verify correct state renders, no blank screens |
+| 8.8 | Fresh-install run-through | Both | TODO | Clean macOS VM + clean Windows VM; gateway setup → first symbol → first trigger |
 
 ---
 
@@ -215,6 +233,8 @@ These are locked in. Don't revisit unless something breaks.
 - Ichimoku Cloud, Supertrend, 52-Week indicators
 - Export analysis as PDF/image
 - Mobile companion (read-only dashboard)
+- Keyboard shortcuts
+- Backup / restore SQLite (watchlists, triggers, settings export)
 
 > **Inflect (trading journal)** is Phase 4 of the Hub roadmap, built after Parallax and MoonMarket.
 
