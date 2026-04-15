@@ -100,6 +100,34 @@ class AIAnalysisError(AIError):
         super().__init__(message)
 
 
+# ── Gateway Errors ──────────────────────────────────────────
+
+
+class GatewayError(ParallaxError):
+    """Base for IBKR Gateway provisioning / lifecycle errors."""
+
+
+class GatewayProvisionError(GatewayError):
+    """Failed to download or extract JRE / Gateway files."""
+
+    def __init__(self, message: str = "Gateway provisioning failed"):
+        super().__init__(message)
+
+
+class GatewayStartError(GatewayError):
+    """Gateway process failed to start or become healthy."""
+
+    def __init__(self, message: str = "Gateway failed to start"):
+        super().__init__(message)
+
+
+class GatewayNotProvisionedError(GatewayError):
+    """Attempted to start Gateway before provisioning."""
+
+    def __init__(self, message: str = "Gateway not provisioned — run provisioning first"):
+        super().__init__(message)
+
+
 # ── Screener Errors ─────────────────────────────────────────
 
 

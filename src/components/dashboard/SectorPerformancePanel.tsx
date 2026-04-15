@@ -10,13 +10,16 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { api, type SectorPerformance } from "../../lib/api";
+import { useIbkrReady } from "@/context/GatewayContext";
 
 export default function SectorPerformancePanel() {
+  const ibkrReady = useIbkrReady();
   const { data: sectors, isLoading, error } = useQuery({
     queryKey: ["sectors", "performance"],
     queryFn: api.sectorPerformance,
     staleTime: 60_000, // 1 minute — sector data doesn't change fast
     refetchInterval: 5 * 60_000, // Refresh every 5 minutes
+    enabled: ibkrReady,
   });
 
   return (

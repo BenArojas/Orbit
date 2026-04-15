@@ -16,6 +16,7 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { api, type QuoteResponse, type ConidResponse, type TriggerRule, type TriggerHit } from "@/lib/api";
+import { useIbkrReady } from "@/context/GatewayContext";
 
 // ── Arc SVG constants ──────────────────────────────────────
 
@@ -136,11 +137,14 @@ function vixFillPercent(vix: number): number {
 // ── The Four Gauges Row ────────────────────────────────────
 
 export default function ArcGaugeRow() {
+  const ibkrReady = useIbkrReady();
+
   // Resolve VIX conid at runtime (works across paper/live accounts)
   const { data: vixResolved } = useQuery<ConidResponse>({
     queryKey: ["conid", "VIX"],
     queryFn: () => api.resolveConid("VIX"),
     staleTime: Infinity,
+    enabled: ibkrReady,
   });
 
   const vixConid = vixResolved?.conid;
@@ -149,11 +153,11 @@ export default function ArcGaugeRow() {
   const { data: vixQuote } = useQuery<QuoteResponse>({
     queryKey: ["quote", vixConid],
     queryFn: () => api.quote(vixConid!),
-    enabled: vixConid != null,
+    enabled: ibkrReady && vixConid != null,
     refetchInterval: 15_000,
   });
 
-  // Fetch trigger rules + hits for the Triggers gauge
+  // Fetch trigger rules + hits for the Triggers gauge — local SQLite, always ok
   const { data: rules } = useQuery<TriggerRule[]>({
     queryKey: ["trigger-rules"],
     queryFn: () => api.getTriggerRules(),

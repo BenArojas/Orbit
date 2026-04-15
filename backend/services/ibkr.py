@@ -99,6 +99,18 @@ class IBKRService:
 
                 return resp.json()
 
+            except httpx.TimeoutException as exc:
+                log.warning(
+                    "IBKR request timed out (attempt %d/%d): %s %s",
+                    attempt + 1, max_retries, method, endpoint,
+                )
+                if attempt >= max_retries - 1:
+                    raise IBKRConnectionError(
+                        f"IBKR Gateway timed out on {method} {endpoint}. "
+                        "Gateway may be starting up or overloaded."
+                    ) from exc
+                await asyncio.sleep(delay)
+
             except httpx.ConnectError as exc:
                 log.error(
                     "IBKR connection error (attempt %d/%d): %s",
@@ -106,7 +118,8 @@ class IBKRService:
                 )
                 if attempt >= max_retries - 1:
                     raise IBKRConnectionError(
-                        f"Cannot reach IBKR Gateway at {self.base_url}"
+                        f"Cannot reach IBKR Gateway at {self.base_url}. "
+                        "Check /gateway/status — the Gateway may not be running or provisioned."
                     ) from exc
                 await asyncio.sleep(delay)
 
@@ -136,6 +149,16 @@ class IBKRService:
                 "authenticated": is_valid,
                 "ws_ready": self.state.ws_connected,
                 "message": data.get("message", "Status checked."),
+            }
+        except IBKRAuthError:
+            # 401 on /iserver/auth/status is normal when the user hasn't
+            # logged in yet — not an error, just "not authenticated".
+            self.state.authenticated = False
+            self.state.session_token = None
+            return {
+                "authenticated": False,
+                "ws_ready": False,
+                "message": "Session not authenticated. Please log in via the IBKR Gateway.",
             }
         except IBKRConnectionError:
             self.state.authenticated = False

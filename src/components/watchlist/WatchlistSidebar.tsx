@@ -19,17 +19,21 @@ import { api, type WatchlistItemResponse } from "../../lib/api";
 import { useNavigationStore } from "../../store/navigation";
 import { useWatchlistStore } from "../../store/watchlist";
 import { ScrollArea } from "../ui/scroll-area";
+import { useIbkrReady } from "@/context/GatewayContext";
 
 export default function WatchlistSidebar() {
   const [selectedWatchlistId, setSelectedWatchlistId] = useState<string | null>(null);
   const { searchQuery, setSearchQuery, setMasterWatchlist } = useWatchlistStore();
   const navigateToAnalysis = useNavigationStore((s) => s.navigateToAnalysis);
 
+  const ibkrReady = useIbkrReady();
+
   // Fetch all IBKR watchlists
   const { data: watchlists } = useQuery({
     queryKey: ["watchlists"],
     queryFn: api.getWatchlists,
     staleTime: 60_000,
+    enabled: ibkrReady,
   });
 
   // Auto-select first watchlist
@@ -43,7 +47,7 @@ export default function WatchlistSidebar() {
   const { data: watchlistData, isLoading, error } = useQuery({
     queryKey: ["watchlist", selectedWatchlistId],
     queryFn: () => api.getWatchlistItems(selectedWatchlistId!),
-    enabled: !!selectedWatchlistId,
+    enabled: ibkrReady && !!selectedWatchlistId,
     staleTime: 30_000,
     refetchInterval: 30_000, // Refresh quotes every 30s
   });

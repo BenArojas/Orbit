@@ -28,7 +28,42 @@ export interface HealthResponse {
   ibkr_connected: boolean;
   ibkr_authenticated: boolean;
   ws_ready: boolean;
+  gateway_running: boolean;
+  gateway_state: GatewayState;
   version: string;
+}
+
+// ── Gateway types ──────────────────────────────────────────
+
+export type GatewayState =
+  | "not_provisioned"
+  | "downloading_jre"
+  | "downloading_gw"
+  | "provisioned"
+  | "starting"
+  | "running"
+  | "stopping"
+  | "error";
+
+export interface GatewayProgress {
+  step: string;
+  bytes_downloaded: number;
+  bytes_total: number;
+  percent: number;
+}
+
+export interface GatewayStatusResponse {
+  state: GatewayState;
+  provisioned: boolean;
+  running: boolean;
+  authenticated: boolean;
+  auth_required: boolean;
+  auth_message: string;
+  gateway_url: string;
+  gateway_home: string;
+  error: string | null;
+  platform: string;
+  progress?: GatewayProgress;
 }
 
 export interface AuthStatusResponse {
@@ -650,4 +685,20 @@ export const api = {
 
   screenerAiFilters: (req: AiFilterRequest) =>
     request<AiFilterResponse>("POST", "/screener/ai-filters", req),
+
+  // Gateway (IBKR Client Portal lifecycle)
+  gatewayStatus: () =>
+    request<GatewayStatusResponse>("GET", "/gateway/status"),
+
+  gatewayProvision: (force = false) =>
+    request<GatewayStatusResponse>("POST", `/gateway/provision?force=${force}`),
+
+  gatewayStart: () =>
+    request<GatewayStatusResponse>("POST", "/gateway/start"),
+
+  gatewayStop: () =>
+    request<GatewayStatusResponse>("POST", "/gateway/stop"),
+
+  gatewayReprovision: () =>
+    request<GatewayStatusResponse>("POST", "/gateway/reprovision"),
 } as const;

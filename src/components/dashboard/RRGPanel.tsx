@@ -19,6 +19,7 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { api, type RRGDataPoint } from "../../lib/api";
+import { useIbkrReady } from "@/context/GatewayContext";
 
 // Colors per quadrant (matching the mockup)
 const QUADRANT_COLORS: Record<string, string> = {
@@ -29,11 +30,13 @@ const QUADRANT_COLORS: Record<string, string> = {
 };
 
 export default function RRGPanel() {
+  const ibkrReady = useIbkrReady();
   const { data: rrg, isLoading, error } = useQuery({
     queryKey: ["sectors", "rrg"],
     queryFn: api.sectorRRG,
     staleTime: 60_000,
     refetchInterval: 5 * 60_000,
+    enabled: ibkrReady,
   });
 
   return (

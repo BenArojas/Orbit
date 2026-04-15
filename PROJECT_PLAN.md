@@ -1,7 +1,34 @@
 # Parallax — Project Plan
 
-> Last updated: 2026-04-09
-> Status: Phase 1–4 complete. Phase 5A/5B built (feature/screener-page) — awaiting code review. Phase 5C in progress.
+> Last updated: 2026-04-14
+> Status: Phase 1–5 completed. IBKR Gateway auto-provision working.
+
+---
+
+## IBKR Gateway — What We Learned (2026-04-14)
+
+The auto-provision path (Option B: app downloads JRE + Gateway on first launch) is working. Key findings from getting it to authenticate end-to-end:
+
+**The root cause of the Dispatcher 200 loop (post-2FA redirect back to login):**
+
+Browsers block cookies whose `Domain` is a bare IP address (RFC 6265). The IBKR Gateway proxies session cookies from IBKR's servers (`.ibkr.com`) and remaps them to the local host. When the browser was at `https://127.0.0.1:5001`, the remapped cookies were silently dropped — the browser never stored the `JSESSIONID`. So when Dispatcher was called after 2FA, there was no session cookie → IBKR saw an unauthenticated request → returned 200 (login page).
+
+**The fix:** `IBKR_GATEWAY_HOST = "localhost"` everywhere. `localhost` is a valid cookie domain; `127.0.0.1` is not. MoonMarket worked because Docker port-maps to `localhost`, not `127.0.0.1`.
+
+**Other changes made during this work:**
+
+- `conf.yaml` — mirrored MoonMarket's working config exactly: `ip2loc: false`, `ips.allow: ["*"]`, minimal property set. IBKR Gateway crashes on unknown properties — we stripped everything not confirmed to work (removed `authDelay`, `cors`, `serverOptions`, `ccp`, `proxyRemoteSsl`, `autoRestart`)
+- Port — `5001` on all OSes. Port 5000 collides with macOS AirPlay Receiver
+- Java 17 — kept. IBKR Gateway (Apr 2023 build, Vert.x/Netty) breaks on newer JVMs. Java 17 LTS is the safe choice
+- Removed Docker files — `docker-compose.yml`, `ibkr-gateway/Dockerfile`, `ibkr-gateway/conf.yaml`. The auto-provision path owns the full lifecycle; Docker option was confusing and diverged
+- `_ensure_conf_yaml` duplication removed — `reset_conf_yaml()` is the single write path
+- `httpx.ReadTimeout` in `IBKRService._request` was unhandled — now caught and raised as `IBKRConnectionError`. `/gateway/status` catches it and returns a clean JSON response instead of crashing the ASGI handler
+
+**What did NOT fix it (documented to avoid re-trying):**
+
+- `ip2loc: false` alone — necessary but not sufficient
+- `-Djava.net.preferIPv4Stack=true` JVM flag — not the issue
+- Port 5001 vs 5000 — not the issue
 
 ---
 

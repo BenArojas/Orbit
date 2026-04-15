@@ -19,6 +19,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { queryClient } from "@/lib/query";
 import { useNavigationStore, type Screen } from "@/store";
 import { useSidecar } from "@/hooks/useSidecar";
+import { GatewayProvider } from "@/context/GatewayContext";
 import { DashboardPage, AnalysisPage, ScreenerPage } from "@/pages";
 import "./styles.css";
 
@@ -70,6 +71,10 @@ export default function App() {
 
   return (
     <QueryClientProvider client={queryClient}>
+      {/* GatewayProvider must be inside QueryClientProvider so useGateway
+          can use TanStack Query internally if needed, and so all child
+          components can call useIbkrReady() to gate IBKR queries. */}
+      <GatewayProvider>
       <TooltipProvider>
         <div className="flex h-screen flex-col overflow-hidden">
           {/* ── Nav bar (44px) ── */}
@@ -109,6 +114,7 @@ export default function App() {
           </main>
         </div>
       </TooltipProvider>
+      </GatewayProvider>
     </QueryClientProvider>
   );
 }

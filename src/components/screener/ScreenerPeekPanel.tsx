@@ -17,6 +17,7 @@ import { api } from "@/lib/api";
 import { useScreenerStore } from "@/store/screener";
 import { useNavigationStore } from "@/store";
 import { SlideOverSkeleton } from "./ScreenerSkeleton";
+import { useIbkrReady } from "@/context/GatewayContext";
 
 // ── Formatters ────────────────────────────────────────────────
 
@@ -126,11 +127,13 @@ export default function ScreenerPeekPanel() {
   // Find the row in existing results for quick data
   const row = results.find((r) => r.conid === peekConid);
 
+  const ibkrReady = useIbkrReady();
+
   // Fetch full contract details
   const { data: contract, isLoading } = useQuery({
     queryKey: ["contract-info", peekConid],
     queryFn: () => api.screenerContractInfo(peekConid!),
-    enabled: !!peekConid,
+    enabled: ibkrReady && !!peekConid,
     staleTime: 60_000 * 30, // 30 min — contract details don't change
   });
 

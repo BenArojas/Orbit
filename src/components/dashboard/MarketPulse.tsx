@@ -19,6 +19,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { api, type QuoteResponse, type CandleData, type ConidResponse } from "@/lib/api";
 import { useNavigationStore } from "@/store";
+import { useIbkrReady } from "@/context/GatewayContext";
 
 /** The market symbols we show in the pulse bar */
 const PULSE_SYMBOLS = ["SPX", "VIX", "QQQ", "DIA", "IWM", "TLT", "GLD", "USO"];
@@ -57,12 +58,14 @@ function MiniSparkline({ candles, isUp }: { candles: CandleData[]; isUp: boolean
 /** One pulse item — symbol, price, change, sparkline */
 function PulseItem({ symbol }: { symbol: string }) {
   const navigateToAnalysis = useNavigationStore((s) => s.navigateToAnalysis);
+  const ibkrReady = useIbkrReady();
 
   // Step 1: Resolve symbol → conid at runtime (cached indefinitely)
   const { data: resolved } = useQuery<ConidResponse>({
     queryKey: ["conid", symbol],
     queryFn: () => api.resolveConid(symbol),
     staleTime: Infinity, // conid never changes within a session
+    enabled: ibkrReady,
   });
 
   const conid = resolved?.conid;
@@ -71,7 +74,7 @@ function PulseItem({ symbol }: { symbol: string }) {
   const { data: quote } = useQuery<QuoteResponse>({
     queryKey: ["quote", conid],
     queryFn: () => api.quote(conid!),
-    enabled: conid != null,
+    enabled: ibkrReady && conid != null,
     refetchInterval: 10_000,
   });
 
@@ -79,7 +82,7 @@ function PulseItem({ symbol }: { symbol: string }) {
   const { data: candles } = useQuery<CandleData[]>({
     queryKey: ["candles", conid, "5D"],
     queryFn: () => api.candles(conid!, "5D"),
-    enabled: conid != null,
+    enabled: ibkrReady && conid != null,
     staleTime: 60_000,
   });
 

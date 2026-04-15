@@ -15,6 +15,7 @@ import { useEffect, useState, useCallback, useRef } from "react";
 import { api, type IndicatorComputeResponse } from "@/lib/api";
 import type { Timeframe, IndicatorId } from "@/store/chart";
 import { useWebSocket, type WsMessage } from "./useWebSocket";
+import { useIbkrReady } from "@/context/GatewayContext";
 
 // ── Map frontend timeframe → backend period ──────────────────
 // The backend PERIOD_BAR dict uses these keys.
@@ -81,6 +82,8 @@ export function useChartData(
 
   // ── TanStack Query: fetch candles + indicators ─────────────
 
+  const ibkrReady = useIbkrReady();
+
   const query = useQuery<IndicatorComputeResponse>({
     queryKey: ["chart-data", conid, period, indicatorKey],
     queryFn: () =>
@@ -89,7 +92,7 @@ export function useChartData(
         period,
         indicators: indicatorIdsToBackendNames(activeIndicators),
       }),
-    enabled: conid != null,
+    enabled: ibkrReady && conid != null,
     staleTime: 60_000, // 1 min — chart data doesn't need to be as fresh
     gcTime: 5 * 60_000,
   });
