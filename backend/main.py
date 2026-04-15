@@ -36,6 +36,7 @@ from services.screener import ScreenerService
 from services.sectors import SectorService
 from services.ai import AiService
 from services.ollama import OllamaLifecycle
+from services.scanner import ScannerService
 
 # ── Logging setup (must be first) ────────────────────────────
 
@@ -113,11 +114,41 @@ async def lifespan(app: FastAPI):
     ai = AiService()
     app.state.ai = ai
 
+    # Background trigger scanner (Phase 6.1 / 6.2)
+    # Evaluates active trigger rules every N minutes while the app is open.
+    scanner = ScannerService(ibkr=ibkr, db=db)
+    app.state.scanner = scanner
+
+    # Wire scanner hits → WebSocket broadcast so the frontend can show
+    # desktop notifications and update the alert log in real time (Phase 6.5).
+    # Import inside lifespan to avoid circular module-level deps.
+    from routers.ws import broadcast as ws_broadcast
+
+    async def _on_trigger_fired(rule: dict, hit_id: int, actual_value: float) -> None:
+        await ws_broadcast({
+            "type": "trigger_alert",
+            "hit_id": hit_id,
+            "rule_id": rule["id"],
+            "rule_name": rule.get("name"),
+            "symbol": rule["symbol"],
+            "conid": rule["conid"],
+            "indicator": rule["indicator"],
+            "condition": rule["condition"],
+            "threshold": float(rule["threshold"]),
+            "actual_value": float(actual_value),
+            "source_watchlist": rule.get("source_watchlist"),
+            "target_watchlist": rule.get("target_watchlist"),
+        })
+
+    scanner.on_trigger_fired = _on_trigger_fired
+    scanner.start()
+
     log.info("Backend ready. Waiting for frontend connections.")
     yield
 
     # Shutdown
     log.info("Parallax backend shutting down...")
+    await scanner.stop()
     await ai.shutdown()
     await ollama.shutdown()
     await db.close()
@@ -285,6 +316,9 @@ app.include_router(screener_router)
 
 from routers.gateway import router as gateway_router
 app.include_router(gateway_router)
+
+from routers.watchlist_config import router as watchlist_config_router
+app.include_router(watchlist_config_router)
 
 
 # ── Health endpoint ──────────────────────────────────────────

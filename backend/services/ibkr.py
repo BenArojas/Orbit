@@ -382,6 +382,224 @@ class IBKRService:
             return []
         return []
 
+    # ── Watchlist Mutation Methods (Phase 6.3) ────────────────
+    #
+    # IBKR has no atomic "add one item" endpoint.  The only way to modify a
+    # watchlist is the read → modify → delete → recreate pattern:
+    #
+    #   1.  GET  /iserver/watchlists          → find ID by name
+    #   2.  GET  /iserver/watchlist?id=<id>   → read current rows
+    #   3.  Modify the rows list in-memory
+    #   4.  DELETE /iserver/watchlist?id=<id> → remove the old list
+    #   5.  POST /iserver/watchlist            → recreate with new rows
+    #
+    # IBKR assigns a new ID on every POST, so we always look up watchlists
+    # by *name*, never by ID across calls.  The get_watchlists() cache is
+    # invalidated after every mutation so the next lookup gets fresh IDs.
+
+    async def resolve_watchlist_id(self, name: str) -> str | None:
+        """
+        Find an IBKR watchlist's numeric ID by its display name.
+        Returns None if no watchlist with that name exists.
+
+        Bypasses the @cached TTL by re-fetching if a fresh lookup is needed
+        — call after any mutation to get the new IDs.
+        """
+        watchlists = await self.get_watchlists()
+        for wl in watchlists:
+            if wl.get("name") == name:
+                return str(wl.get("id", ""))
+        return None
+
+    async def get_watchlist_raw(self, watchlist_id: str) -> dict:
+        """
+        Fetch a single watchlist's full raw response.
+        Used internally before mutations — not cached so reads are always fresh.
+        """
+        await self.ensure_accounts()
+        return await self._request(
+            "GET", "/iserver/watchlist", params={"id": watchlist_id}
+        )
+
+    @staticmethod
+    def _extract_rows_from_raw(raw: dict) -> list[dict]:
+        """
+        Convert a raw GET /iserver/watchlist response into the POST rows format.
+
+        IBKR row types:
+          {"C": <conid_int>}  — a security (C = Contract)
+          {"H": "<text>"}     — a section header/divider
+
+        Supports two response shapes:
+          Newer API: {"rows": [...]}
+          Older API: {"data": {"instruments": [{"conid": 265598, ...}, ...]}}
+        """
+        # Newer API: rows key at top level
+        if "rows" in raw:
+            return list(raw["rows"])
+
+        # Older API: data.instruments
+        data = raw.get("data", {})
+        if isinstance(data, dict):
+            instruments = data.get("instruments", [])
+            rows = []
+            for inst in instruments:
+                conid = inst.get("conid")
+                if conid is not None:
+                    rows.append({"C": int(conid)})
+            return rows
+
+        return []
+
+    async def _overwrite_watchlist(
+        self,
+        watchlist_id: str,
+        name: str,
+        rows: list[dict],
+    ) -> None:
+        """
+        Replace a watchlist's contents by deleting it and recreating it.
+
+        Because IBKR assigns a new ID on POST, the old ID is dead after this
+        call.  Always re-resolve by name when you need the ID afterward.
+        Invalidates the get_watchlists() cache so the next lookup is fresh.
+        """
+        from cache import cache as _cache
+
+        # Step 1: delete the old watchlist (best-effort — may already be gone)
+        try:
+            await self._request(
+                "DELETE", "/iserver/watchlist", params={"id": watchlist_id}
+            )
+        except IBKRRequestError as exc:
+            if exc.status_code == 404:
+                pass  # already gone — proceed to recreate
+            else:
+                raise  # propagate 5xx and other unexpected errors
+
+        # Step 2: recreate with the modified rows
+        await self._request(
+            "POST",
+            "/iserver/watchlist",
+            json={"id": watchlist_id, "name": name, "rows": rows},
+        )
+
+        # Step 3: invalidate the watchlist cache so the next lookup is fresh
+        await _cache.delete("get_watchlists")
+        log.debug("Watchlist '%s' overwritten — cache invalidated", name)
+
+    async def add_to_watchlist(
+        self,
+        watchlist_id: str,
+        name: str,
+        conid: int,
+    ) -> bool:
+        """
+        Add a conid to an IBKR watchlist.
+
+        Returns True if the conid was added, False if it was already present
+        (idempotent — safe to call multiple times).
+        """
+        raw = await self.get_watchlist_raw(watchlist_id)
+        rows = self._extract_rows_from_raw(raw)
+
+        existing = {int(r["C"]) for r in rows if "C" in r}
+        if conid in existing:
+            log.debug("conid %d already in watchlist '%s' — skipping add", conid, name)
+            return False
+
+        rows.append({"C": conid})
+        await self._overwrite_watchlist(watchlist_id, name, rows)
+        log.info("Added conid %d to watchlist '%s'", conid, name)
+        return True
+
+    async def remove_from_watchlist(
+        self,
+        watchlist_id: str,
+        name: str,
+        conid: int,
+    ) -> bool:
+        """
+        Remove a conid from an IBKR watchlist.
+
+        Returns True if removed, False if the conid wasn't in the list.
+        Section headers (H rows) are preserved.
+        """
+        raw = await self.get_watchlist_raw(watchlist_id)
+        rows = self._extract_rows_from_raw(raw)
+
+        new_rows = [r for r in rows if not ("C" in r and int(r["C"]) == conid)]
+        if len(new_rows) == len(rows):
+            log.debug("conid %d not found in watchlist '%s' — skipping remove", conid, name)
+            return False
+
+        await self._overwrite_watchlist(watchlist_id, name, new_rows)
+        log.info("Removed conid %d from watchlist '%s'", conid, name)
+        return True
+
+    async def move_between_watchlists(
+        self,
+        conid: int,
+        source_name: str,
+        target_name: str,
+    ) -> bool:
+        """
+        Move a conid from one IBKR watchlist to another.
+
+        Steps:
+          1. Resolve source + target names → current IDs
+          2. Add conid to target first (stock always lives somewhere)
+          3. Remove conid from source
+
+        Raises IBKRRequestError (status 404) if either watchlist name doesn't exist.
+        Returns True when the move completes.
+        """
+        source_id = await self.resolve_watchlist_id(source_name)
+        if source_id is None:
+            raise IBKRRequestError(
+                status_code=404,
+                detail=f"Source watchlist '{source_name}' not found",
+            )
+
+        target_id = await self.resolve_watchlist_id(target_name)
+        if target_id is None:
+            raise IBKRRequestError(
+                status_code=404,
+                detail=f"Target watchlist '{target_name}' not found",
+            )
+
+        # Add to target before removing from source — stock is always visible
+        # in at least one watchlist during the two-step operation.
+        try:
+            await self.add_to_watchlist(target_id, target_name, conid)
+        except (IBKRAuthError, IBKRConnectionError, IBKRRateLimitError, IBKRRequestError):
+            # Add failed — source is untouched; re-raise so the caller can decide.
+            log.error(
+                "move_between_watchlists: add to '%s' failed for conid %d — source '%s' unchanged",
+                target_name, conid, source_name,
+            )
+            raise
+
+        # Source ID resolved before the add; the target overwrite invalidated
+        # the watchlist cache but did NOT change source's ID — safe to reuse.
+        try:
+            await self.remove_from_watchlist(source_id, source_name, conid)
+        except (IBKRAuthError, IBKRConnectionError, IBKRRateLimitError, IBKRRequestError):
+            # Remove failed — conid is now in BOTH lists. Log with detail so
+            # ops can identify the duplicate and manually clean up.
+            log.error(
+                "move_between_watchlists: remove from '%s' FAILED after adding to '%s' "
+                "— conid %d is now in both lists. Manual cleanup may be needed.",
+                source_name, target_name, conid,
+            )
+            raise
+
+        log.info(
+            "Moved conid %d: '%s' → '%s'",
+            conid, source_name, target_name,
+        )
+        return True
+
     # ── Scanner Methods (Step 5.6) ────────────────────────────
 
     @cached(ttl=3600)

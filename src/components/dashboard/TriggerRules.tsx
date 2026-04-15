@@ -20,7 +20,13 @@
 
 import { useState, useCallback } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { api, type TriggerRule, type TriggerRuleCreate, type TriggerHit } from "@/lib/api";
+import {
+  api,
+  type TriggerRule,
+  type TriggerRuleCreate,
+  type TriggerHit,
+  type NewsCandleMethod,
+} from "@/lib/api";
 import {
   Dialog,
   DialogContent,
@@ -30,6 +36,7 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { useSettingsStore } from "@/store/settings";
 
 // ── Indicator options for the create form ──────────────────
 
@@ -48,6 +55,7 @@ const INDICATOR_OPTIONS = [
   { value: "stoch", label: "Stochastic" },
   { value: "obv", label: "OBV" },
   { value: "adx", label: "ADX (14)" },
+  { value: "news_candle", label: "News Candle" },
 ];
 
 const CONDITION_OPTIONS = [
@@ -55,6 +63,18 @@ const CONDITION_OPTIONS = [
   { value: "below", label: "Below" },
   { value: "crosses_above", label: "Crosses Above" },
   { value: "crosses_below", label: "Crosses Below" },
+];
+
+// news_candle detection methods (Phase 6.6).
+// Threshold meaning is method-specific:
+//   volume_spike / range_spike — multiplier of the 20-bar average (e.g. 3.0)
+//   gap                         — absolute % gap vs prev close (e.g. 2.0 = 2%)
+//   long_wick                   — wick-to-body ratio (e.g. 3.0)
+const NEWS_CANDLE_METHODS: { value: NewsCandleMethod; label: string; hint: string }[] = [
+  { value: "volume_spike", label: "Volume Spike", hint: "× 20-bar avg volume" },
+  { value: "range_spike", label: "Range Spike", hint: "× 20-bar avg range" },
+  { value: "gap", label: "Gap", hint: "% |open − prev.close|" },
+  { value: "long_wick", label: "Long Wick", hint: "max(wick) ÷ body" },
 ];
 
 // ── Compact Rule Row ───────────────────────────────────────
@@ -109,6 +129,36 @@ function RuleRow({
   );
 }
 
+// ── Global Notifications Toggle ────────────────────────────
+
+/**
+ * Small bell icon in the Trigger Rules header. Flips the global
+ * `notifications_enabled` setting so desktop alerts turn on/off.
+ */
+function NotificationsToggle() {
+  const enabled = useSettingsStore((s) => s.notificationsEnabled);
+  const setEnabled = useSettingsStore((s) => s.setNotificationsEnabled);
+
+  return (
+    <button
+      onClick={() => setEnabled(!enabled)}
+      title={enabled ? "Desktop alerts on — click to mute" : "Desktop alerts muted — click to enable"}
+      className="flex h-5 w-5 items-center justify-center rounded transition-colors hover:bg-[var(--bg-3)]"
+    >
+      <span
+        aria-hidden
+        className="text-[11px] leading-none"
+        style={{
+          color: enabled ? "var(--clr-cyan)" : "var(--text-3)",
+          textShadow: enabled ? "0 0 6px var(--glow-cyan)" : "none",
+        }}
+      >
+        {enabled ? "🔔" : "🔕"}
+      </span>
+    </button>
+  );
+}
+
 // ── Create Rule Modal ──────────────────────────────────────
 
 function CreateRuleModal() {
@@ -124,7 +174,10 @@ function CreateRuleModal() {
     source_watchlist: "",
     timeframe: "1D",
     auto_expire_days: null as number | null,
+    news_candle_method: null as NewsCandleMethod | null,
   });
+
+  const isNewsCandle = form.indicator === "news_candle";
 
   const queryClient = useQueryClient();
 
@@ -164,24 +217,47 @@ function CreateRuleModal() {
       source_watchlist: "",
       timeframe: "1D",
       auto_expire_days: null,
+      news_candle_method: null,
     });
+  }
+
+  function handleIndicatorChange(value: string) {
+    if (value === "news_candle") {
+      // Default news_candle rules to gap detection with the "fires" condition.
+      setForm((prev) => ({
+        ...prev,
+        indicator: value,
+        condition: "fires",
+        news_candle_method: prev.news_candle_method ?? "gap",
+      }));
+    } else {
+      // Leaving news_candle — restore a sane default condition.
+      setForm((prev) => ({
+        ...prev,
+        indicator: value,
+        condition: prev.condition === "fires" ? "below" : prev.condition,
+        news_candle_method: null,
+      }));
+    }
   }
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!form.conid || !form.name || !form.target_watchlist || !form.source_watchlist) return;
+    if (isNewsCandle && !form.news_candle_method) return;
 
     createMutation.mutate({
       name: form.name,
       conid: form.conid,
       symbol: form.symbol,
       indicator: form.indicator,
-      condition: form.condition,
+      condition: isNewsCandle ? "fires" : form.condition,
       threshold: form.threshold,
       target_watchlist: form.target_watchlist,
       source_watchlist: form.source_watchlist,
       timeframe: form.timeframe,
       auto_expire_days: form.auto_expire_days,
+      news_candle_method: isNewsCandle ? form.news_candle_method : null,
     });
   }
 
@@ -242,13 +318,13 @@ function CreateRuleModal() {
             )}
           </div>
 
-          {/* Indicator + Condition + Threshold */}
+          {/* Indicator + (Condition | Method) + Threshold */}
           <div className="grid grid-cols-3 gap-2">
             <div>
               <label className="mb-1 block text-[10px] text-[var(--text-3)]">Indicator</label>
               <select
                 value={form.indicator}
-                onChange={(e) => setForm({ ...form, indicator: e.target.value })}
+                onChange={(e) => handleIndicatorChange(e.target.value)}
                 className="h-8 w-full rounded-md border border-border bg-[var(--bg-1)] px-2 text-[10px] text-[var(--text-1)]"
               >
                 {INDICATOR_OPTIONS.map((opt) => (
@@ -259,18 +335,39 @@ function CreateRuleModal() {
               </select>
             </div>
             <div>
-              <label className="mb-1 block text-[10px] text-[var(--text-3)]">Condition</label>
-              <select
-                value={form.condition}
-                onChange={(e) => setForm({ ...form, condition: e.target.value })}
-                className="h-8 w-full rounded-md border border-border bg-[var(--bg-1)] px-2 text-[10px] text-[var(--text-1)]"
-              >
-                {CONDITION_OPTIONS.map((opt) => (
-                  <option key={opt.value} value={opt.value}>
-                    {opt.label}
-                  </option>
-                ))}
-              </select>
+              <label className="mb-1 block text-[10px] text-[var(--text-3)]">
+                {isNewsCandle ? "Method" : "Condition"}
+              </label>
+              {isNewsCandle ? (
+                <select
+                  value={form.news_candle_method ?? "gap"}
+                  onChange={(e) =>
+                    setForm({
+                      ...form,
+                      news_candle_method: e.target.value as NewsCandleMethod,
+                    })
+                  }
+                  className="h-8 w-full rounded-md border border-border bg-[var(--bg-1)] px-2 text-[10px] text-[var(--text-1)]"
+                >
+                  {NEWS_CANDLE_METHODS.map((opt) => (
+                    <option key={opt.value} value={opt.value}>
+                      {opt.label}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <select
+                  value={form.condition}
+                  onChange={(e) => setForm({ ...form, condition: e.target.value })}
+                  className="h-8 w-full rounded-md border border-border bg-[var(--bg-1)] px-2 text-[10px] text-[var(--text-1)]"
+                >
+                  {CONDITION_OPTIONS.map((opt) => (
+                    <option key={opt.value} value={opt.value}>
+                      {opt.label}
+                    </option>
+                  ))}
+                </select>
+              )}
             </div>
             <div>
               <label className="mb-1 block text-[10px] text-[var(--text-3)]">Threshold</label>
@@ -282,6 +379,17 @@ function CreateRuleModal() {
               />
             </div>
           </div>
+
+          {/* Method hint — only for news_candle */}
+          {isNewsCandle && form.news_candle_method && (
+            <div className="-mt-1 font-data text-[9px] text-[var(--text-3)]">
+              Threshold:{" "}
+              {
+                NEWS_CANDLE_METHODS.find((m) => m.value === form.news_candle_method)
+                  ?.hint
+              }
+            </div>
+          )}
 
           {/* Watchlists */}
           <div className="grid grid-cols-2 gap-2">
@@ -410,7 +518,10 @@ export default function TriggerRules() {
         <span className="text-[10px] font-semibold uppercase tracking-wider text-[var(--text-3)]">
           Trigger Rules
         </span>
-        <CreateRuleModal />
+        <div className="flex items-center gap-1">
+          <NotificationsToggle />
+          <CreateRuleModal />
+        </div>
       </div>
 
       {/* Rule list */}

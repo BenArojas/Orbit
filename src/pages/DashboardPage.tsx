@@ -23,6 +23,8 @@ import {
   ArcGaugeRow,
   TriggerWatchlist,
   TriggerRules,
+  AlertLog,
+  WatchlistConfigSection,
 } from "@/components/dashboard";
 import SectorPerformancePanel from "../components/dashboard/SectorPerformancePanel";
 import RRGPanel from "../components/dashboard/RRGPanel";
@@ -31,8 +33,8 @@ import { GatewaySetup } from "@/components/gateway/GatewaySetup";
 
 export default function DashboardPage() {
   return (
-    <div className="grid h-full grid-cols-[1fr_310px] grid-rows-[54px_1fr]">
-      {/* ── Row 1: Market Pulse bar (full width) ── */}
+    <div className="grid h-full grid-cols-[1fr_310px] grid-rows-[54px_1fr_160px]">
+      {/* ── Row 1: Market Pulse bar (full width, baked-in col-span-2) ── */}
       <MarketPulse />
 
       {/* ── Row 2 Left: Main content area ── */}
@@ -64,6 +66,14 @@ export default function DashboardPage() {
 
         {/* Trigger Rules — compact list + create modal (task 3.7) */}
         <TriggerRules />
+
+        {/* Per-watchlist expiry overrides (task 6.8) */}
+        <WatchlistConfigSection />
+      </div>
+
+      {/* ── Row 3: Alert Log (full width, 160px, task 6.7) ── */}
+      <div className="col-span-2 overflow-hidden">
+        <AlertLog />
       </div>
     </div>
   );

@@ -16,6 +16,7 @@ from services.sectors import SectorService
 from services.ai import AiService
 from services.gateway import GatewayLifecycle
 from services.ollama import OllamaLifecycle
+from services.scanner import ScannerService
 
 
 def get_ibkr(request: Request) -> IBKRService:

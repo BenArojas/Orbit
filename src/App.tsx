@@ -14,14 +14,32 @@
  * replaced by the Hub's global nav, and these pills become sub-tabs.
  */
 
+import { useEffect } from "react";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { queryClient } from "@/lib/query";
-import { useNavigationStore, type Screen } from "@/store";
+import { useNavigationStore, useSettingsStore, type Screen } from "@/store";
 import { useSidecar } from "@/hooks/useSidecar";
 import { GatewayProvider } from "@/context/GatewayContext";
 import { DashboardPage, AnalysisPage, ScreenerPage } from "@/pages";
 import "./styles.css";
+
+/**
+ * Global side-effects: settings hydration + WS trigger-alert bridge.
+ * Mounted inside the providers so the stores are available.
+ */
+function GlobalEffects() {
+  const loadSettings = useSettingsStore((s) => s.loadSettings);
+  const { addHandler } = useWebSocket();
+
+  useEffect(() => {
+    void loadSettings();
+  }, [loadSettings]);
+
+  useTriggerAlerts(addHandler);
+
+  return null;
+}
 
 const NAV_ITEMS: { id: Screen; label: string }[] = [
   { id: "dashboard", label: "Dashboard" },
@@ -76,6 +94,7 @@ export default function App() {
           components can call useIbkrReady() to gate IBKR queries. */}
       <GatewayProvider>
       <TooltipProvider>
+        <GlobalEffects />
         <div className="flex h-screen flex-col overflow-hidden">
           {/* ── Nav bar (44px) ── */}
           <nav className="relative z-10 flex h-11 items-center border-b border-border bg-gradient-to-b from-[var(--bg-1)]/95 to-[var(--bg-1)] px-5">

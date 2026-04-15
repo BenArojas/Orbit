@@ -5,6 +5,10 @@
  * The backend settings table (key-value store) is the source of truth.
  * This store is the in-memory mirror for the frontend.
  *
+ * Backend API shape:
+ *   GET  /settings         → { key: value, ... }   (plain object)
+ *   PUT  /settings/{key}   → body { value: "..." }
+ *
  * Hub integration: Settings are per-module. When Parallax runs inside the Hub,
  * its settings keys are namespaced (e.g. "parallax.scan_interval").
  * MoonMarket and Inflect have their own settings.
@@ -12,6 +16,7 @@
 
 import { create } from "zustand";
 import { API_BASE } from "@/config/endpoints";
+
 interface SettingsState {
   /** Scanner polling interval in seconds */
   scanInterval: number;
@@ -22,6 +27,9 @@ interface SettingsState {
   /** Default candle period for history fetch */
   defaultPeriod: string;
 
+  /** Global on/off toggle for native desktop notifications on trigger alerts */
+  notificationsEnabled: boolean;
+
   /** Whether settings have been loaded from backend */
   isLoaded: boolean;
 
@@ -29,6 +37,7 @@ interface SettingsState {
   setScanInterval: (v: number) => void;
   setDefaultTimeframe: (v: string) => void;
   setDefaultPeriod: (v: string) => void;
+  setNotificationsEnabled: (v: boolean) => void;
 
   /** Load all settings from backend SQLite */
   loadSettings: () => Promise<void>;
@@ -41,6 +50,7 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
   scanInterval: 300,
   defaultTimeframe: "1D",
   defaultPeriod: "3M",
+  notificationsEnabled: true,
   isLoaded: false,
 
   setScanInterval: (v) => {
@@ -58,20 +68,22 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
     get().persistSetting("default_period", v);
   },
 
+  setNotificationsEnabled: (v) => {
+    set({ notificationsEnabled: v });
+    get().persistSetting("notifications_enabled", v ? "true" : "false");
+  },
+
   loadSettings: async () => {
     try {
-      // Fetch all settings from backend
-      // The backend seeds defaults on first run, so these should always exist
       const response = await fetch(`${API_BASE}/settings`);
       if (response.ok) {
-        const settings: Array<{ key: string; value: string }> =
-          await response.json();
-        const map = new Map(settings.map((s) => [s.key, s.value]));
+        const settings = (await response.json()) as Record<string, string>;
 
         set({
-          scanInterval: Number(map.get("scan_interval") ?? 300),
-          defaultTimeframe: map.get("default_timeframe") ?? "1D",
-          defaultPeriod: map.get("default_period") ?? "3M",
+          scanInterval: Number(settings["scan_interval"] ?? 300),
+          defaultTimeframe: settings["default_timeframe"] ?? "1D",
+          defaultPeriod: settings["default_period"] ?? "3M",
+          notificationsEnabled: (settings["notifications_enabled"] ?? "true") === "true",
           isLoaded: true,
         });
       }
@@ -84,10 +96,10 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
 
   persistSetting: async (key, value) => {
     try {
-      await fetch(`${API_BASE}/settings`, {
+      await fetch(`${API_BASE}/settings/${encodeURIComponent(key)}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ key, value }),
+        body: JSON.stringify({ value }),
       });
     } catch {
       console.warn(`Settings: failed to persist ${key}=${value}`);

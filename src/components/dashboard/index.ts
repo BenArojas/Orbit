@@ -12,3 +12,5 @@ export { default as MarketPulse } from "./MarketPulse";
 export { default as ArcGaugeRow } from "./ArcGauge";
 export { default as TriggerWatchlist } from "./TriggerWatchlist";
 export { default as TriggerRules } from "./TriggerRules";
+export { default as AlertLog } from "./AlertLog";
+export { default as WatchlistConfigSection } from "./WatchlistConfigSection";

@@ -18,8 +18,8 @@ Note: Watchlists are managed in IBKR — no local models needed.
 
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
-from typing import Optional
+from pydantic import BaseModel, Field, model_validator
+from typing import Literal, Optional
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -148,16 +148,36 @@ class TriggerRuleCreate(BaseModel):
         target_watchlist="EMA 9 Hits", source_watchlist="My Stocks",
         timeframe="1W", auto_expire_days=5
     """
-    name: str                                       # Human-readable name
-    conid: int                                       # IBKR's unique ID for the stock
-    symbol: str                                      # Ticker for display (AAPL, SPY, etc.)
-    indicator: str                                   # "rsi", "ema_50", "macd", etc.
-    condition: str                                   # "above", "below", "crosses_above", "crosses_below"
-    threshold: float                                 # The value to compare against
-    target_watchlist: str                            # IBKR watchlist to move the stock INTO
-    source_watchlist: str                            # IBKR watchlist to move the stock OUT OF
-    timeframe: str = "1D"                            # Chart timeframe to evaluate
-    auto_expire_days: Optional[int] = None           # NULL = manual removal. N = auto-move back after N days
+    name: str                                        # Human-readable name
+    conid: int                                        # IBKR's unique ID for the stock
+    symbol: str                                       # Ticker for display (AAPL, SPY, etc.)
+    indicator: str                                    # "rsi", "ema_50", "macd", etc.
+    condition: str                                    # "above", "below", "crosses_above", "crosses_below", "fires"
+    threshold: float                                  # The value to compare against
+    target_watchlist: str                             # IBKR watchlist to move the stock INTO
+    source_watchlist: str                             # IBKR watchlist to move the stock OUT OF
+    timeframe: str = "1D"                             # Chart timeframe (user's view; scanner always uses daily bars)
+    auto_expire_days: Optional[int] = None            # NULL = manual removal. N = auto-move back after N days
+    scan_interval_seconds: Optional[int] = None       # NULL = use global default. N = check this rule every N seconds
+    news_candle_method: Optional[Literal["volume_spike", "range_spike", "gap", "long_wick"]] = None
+
+    @model_validator(mode="after")
+    def _validate_news_candle(self) -> "TriggerRuleCreate":
+        if self.indicator == "news_candle":
+            if self.news_candle_method is None:
+                raise ValueError("news_candle_method is required when indicator='news_candle'")
+            if self.condition != "fires":
+                raise ValueError("condition must be 'fires' when indicator='news_candle'")
+        else:
+            valid_conditions = {"above", "below", "crosses_above", "crosses_below"}
+            if self.condition not in valid_conditions:
+                raise ValueError(
+                    f"condition must be one of {sorted(valid_conditions)} "
+                    f"(got '{self.condition}')"
+                )
+            if self.source_watchlist == self.target_watchlist:
+                raise ValueError("source_watchlist and target_watchlist must be different")
+        return self
 
 
 class TriggerRuleUpdate(BaseModel):
@@ -172,7 +192,19 @@ class TriggerRuleUpdate(BaseModel):
     target_watchlist: Optional[str] = None
     source_watchlist: Optional[str] = None
     auto_expire_days: Optional[int] = None
+    scan_interval_seconds: Optional[int] = None
+    news_candle_method: Optional[Literal["volume_spike", "range_spike", "gap", "long_wick"]] = None
     enabled: Optional[bool] = None
+
+    @model_validator(mode="after")
+    def _validate_watchlists_differ(self) -> "TriggerRuleUpdate":
+        if (
+            self.source_watchlist is not None
+            and self.target_watchlist is not None
+            and self.source_watchlist == self.target_watchlist
+        ):
+            raise ValueError("source_watchlist and target_watchlist must be different")
+        return self
 
 
 class TriggerRuleResponse(BaseModel):
@@ -188,6 +220,8 @@ class TriggerRuleResponse(BaseModel):
     target_watchlist: str
     source_watchlist: str
     auto_expire_days: Optional[int] = None
+    scan_interval_seconds: Optional[int] = None
+    news_candle_method: Optional[str] = None
     enabled: bool
     created_at: str
     updated_at: str
@@ -212,6 +246,7 @@ class TriggerHitResponse(BaseModel):
     """
     id: int
     rule_id: int
+    rule_name: Optional[str] = None  # LEFT-joined; None if rule was deleted
     conid: int
     symbol: str
     indicator: str

@@ -118,6 +118,16 @@ export interface Instrument {
   cached_at: string;
 }
 
+/**
+ * news_candle detection methods (Phase 6.6). Only meaningful when
+ * `indicator === "news_candle"`.
+ */
+export type NewsCandleMethod =
+  | "volume_spike"
+  | "range_spike"
+  | "gap"
+  | "long_wick";
+
 export interface TriggerRule {
   id: number;
   name: string;
@@ -130,6 +140,8 @@ export interface TriggerRule {
   target_watchlist: string;
   source_watchlist: string;
   auto_expire_days: number | null;
+  scan_interval_seconds: number | null;
+  news_candle_method: NewsCandleMethod | null;
   enabled: boolean;
   created_at: string;
   updated_at: string;
@@ -146,6 +158,8 @@ export interface TriggerRuleCreate {
   source_watchlist: string;
   timeframe?: string;
   auto_expire_days?: number | null;
+  scan_interval_seconds?: number | null;
+  news_candle_method?: NewsCandleMethod | null;
 }
 
 /** Mirrors backend TriggerRuleUpdate — only updatable fields, all optional */
@@ -160,12 +174,25 @@ export interface TriggerRuleUpdate {
   target_watchlist?: string;
   source_watchlist?: string;
   auto_expire_days?: number | null;
+  scan_interval_seconds?: number | null;
+  news_candle_method?: NewsCandleMethod | null;
   enabled?: boolean;
+}
+
+export interface WatchlistConfig {
+  name: string;
+  auto_expire_days: number | null;
+  updated_at: string | null;
+}
+
+export interface WatchlistConfigUpdate {
+  auto_expire_days: number | null;
 }
 
 export interface TriggerHit {
   id: number;
   rule_id: number;
+  rule_name: string | null;
   conid: number;
   symbol: string;
   indicator: string;
@@ -637,6 +664,19 @@ export const api = {
 
   getTriggerHits: (limit = 50) =>
     request<TriggerHit[]>("GET", `/triggers/hits?limit=${limit}`),
+
+  // Watchlist Config (Phase 6.8) — per-target-watchlist expiry override
+  getWatchlistConfigs: () =>
+    request<WatchlistConfig[]>("GET", "/watchlist-config"),
+
+  getWatchlistConfig: (name: string) =>
+    request<WatchlistConfig>("GET", `/watchlist-config/${encodeURIComponent(name)}`),
+
+  putWatchlistConfig: (name: string, body: WatchlistConfigUpdate) =>
+    request<WatchlistConfig>("PUT", `/watchlist-config/${encodeURIComponent(name)}`, body),
+
+  deleteWatchlistConfig: (name: string) =>
+    request<void>("DELETE", `/watchlist-config/${encodeURIComponent(name)}`),
 
   // AI Analysis (Phase 4)
   aiStatus: () =>

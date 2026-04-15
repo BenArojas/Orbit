@@ -36,7 +36,13 @@ import asyncio
 import logging
 import sqlite3
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 from typing import Any
+
+# Eastern Time — where US equity market sessions are anchored.
+# Dedup keys use ET dates so a rule that fires at 23:59 ET and again at
+# 00:01 ET rolls over correctly relative to market days, not UTC.
+_ET = ZoneInfo("America/New_York")
 
 from config import SQLITE_DB_PATH
 
@@ -67,6 +73,7 @@ class DatabaseService:
         """
         self._conn = await asyncio.to_thread(self._connect)
         await asyncio.to_thread(self._create_tables)
+        await asyncio.to_thread(self._migrate)
         log.info("SQLite database initialized at %s", self.db_path)
 
     async def close(self) -> None:
@@ -131,6 +138,8 @@ class DatabaseService:
                 source_watchlist   TEXT NOT NULL,     -- IBKR watchlist name to MOVE the stock OUT OF when triggered
                 auto_expire_days   INTEGER,           -- NULL = manual removal only. N = auto-move back after N days
                 enabled            INTEGER DEFAULT 1, -- 1 = active, 0 = paused
+                scan_interval_seconds INTEGER,         -- NULL = use global default. N = check this rule every N seconds
+                news_candle_method TEXT,               -- Only for indicator='news_candle': 'volume_spike' | 'range_spike' | 'gap' | 'long_wick'
                 created_at         TEXT DEFAULT (datetime('now')),
                 updated_at         TEXT DEFAULT (datetime('now'))
             );
@@ -223,6 +232,22 @@ class DatabaseService:
             CREATE INDEX IF NOT EXISTS idx_instruments_symbol
                 ON instruments(symbol);
 
+            -- ─── Watchlist Config (Phase 6.8) ──────────────────────
+            -- Per-target-watchlist override for auto-expire.
+            --
+            -- When a rule fires, the stock moves source → target.  If the
+            -- target watchlist has a row here, its auto_expire_days wins
+            -- over the rule's own auto_expire_days. Rules that target a
+            -- watchlist with no config row keep using the per-rule value.
+            --
+            -- This lets the user say "anything that lands in 'Fast Setups'
+            -- expires after 2 days" regardless of which rule put it there.
+            CREATE TABLE IF NOT EXISTS watchlist_config (
+                name               TEXT PRIMARY KEY,
+                auto_expire_days   INTEGER,                 -- NULL = no override (fall back to rule)
+                updated_at         TEXT DEFAULT (datetime('now'))
+            );
+
             -- ─── Locked Fibonacci Drawings ─────────────────────────
             -- When the user "locks" a fib drawing, it persists across
             -- app restarts and renders on ALL timeframes (per Ofek's
@@ -253,6 +278,31 @@ class DatabaseService:
         """)
         self._conn.commit()
         log.info("Database tables verified/created.")
+
+    def _migrate(self) -> None:
+        """
+        Safe incremental migrations for existing databases.
+
+        Each ALTER TABLE here is guarded by a try/except so it's safe to run
+        on every startup — it's a no-op if the column already exists.
+        SQLite doesn't support IF NOT EXISTS on ALTER TABLE, so we catch the
+        OperationalError that fires when you try to add a duplicate column.
+        """
+        assert self._conn is not None
+        migrations = [
+            # Phase 6: per-rule scan interval (NULL = use global default)
+            "ALTER TABLE trigger_rules ADD COLUMN scan_interval_seconds INTEGER",
+            # Phase 6.6: news-candle detection method (only used when indicator='news_candle')
+            #   one of: 'volume_spike', 'range_spike', 'gap', 'long_wick'
+            "ALTER TABLE trigger_rules ADD COLUMN news_candle_method TEXT",
+        ]
+        for sql in migrations:
+            try:
+                self._conn.execute(sql)
+                self._conn.commit()
+                log.info("Migration applied: %s", sql)
+            except sqlite3.OperationalError:
+                pass  # column already exists — safe to skip
 
     # ── Internal helpers ─────────────────────────────────────
 
@@ -312,6 +362,8 @@ class DatabaseService:
         source_watchlist: str,
         timeframe: str = "1D",
         auto_expire_days: int | None = None,
+        scan_interval_seconds: int | None = None,
+        news_candle_method: str | None = None,
     ) -> int:
         """
         Create a new trigger rule. Returns the new rule's ID.
@@ -339,10 +391,12 @@ class DatabaseService:
             cursor = self._execute(
                 """INSERT INTO trigger_rules
                    (name, conid, symbol, indicator, condition, threshold, timeframe,
-                    target_watchlist, source_watchlist, auto_expire_days)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    target_watchlist, source_watchlist, auto_expire_days,
+                    scan_interval_seconds, news_candle_method)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (name, conid, symbol, indicator, condition, threshold, timeframe,
-                 target_watchlist, source_watchlist, auto_expire_days),
+                 target_watchlist, source_watchlist, auto_expire_days,
+                 scan_interval_seconds, news_candle_method),
             )
             assert self._conn is not None
             self._conn.commit()
@@ -360,7 +414,8 @@ class DatabaseService:
         """
         allowed = {"name", "conid", "symbol", "indicator", "condition",
                     "threshold", "timeframe", "target_watchlist",
-                    "source_watchlist", "auto_expire_days", "enabled"}
+                    "source_watchlist", "auto_expire_days", "enabled",
+                    "scan_interval_seconds", "news_candle_method"}
         updates = {k: v for k, v in fields.items() if k in allowed}
         if not updates:
             return False
@@ -410,13 +465,20 @@ class DatabaseService:
         Record that a trigger rule fired. Returns the hit ID,
         or None if this exact condition was already recorded (deduplicated).
 
-        The dedup_key is built from: rule_id + conid + date.
-        This means the same rule can only fire once per stock per day.
+        The dedup_key is built from: rule_id + conid + ET-date.
+        This means the same rule can only fire once per stock per ET market day.
+
+        NOTE — same-day re-fire after auto-move-back is intentionally blocked:
+        if a 1-day auto-expire returns the stock and the condition still holds,
+        the rule will NOT re-fire until the next ET market day. This prevents
+        a tight condition from hammering IBKR watchlists intra-day.
 
         If auto_expire_days is set, calculates expires_at so the
         background scanner knows when to move the stock back.
         """
-        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        # Use Eastern Time date so the dedup window aligns with US market days,
+        # not UTC midnight (which falls mid-session at 19:00 ET).
+        today = datetime.now(_ET).strftime("%Y-%m-%d")
         dedup_key = f"{rule_id}:{conid}:{today}"
 
         # Calculate expiry if auto_expire_days is set
@@ -454,12 +516,24 @@ class DatabaseService:
         """
         Get recent trigger hits (newest first).
         If unacknowledged_only=True, only return hits the user hasn't seen yet.
+
+        SQLite stores booleans as INTEGER (0/1). We cast acknowledged and
+        moved_back to Python bool here so callers see consistent types.
         """
-        sql = "SELECT * FROM trigger_hits"
+        # LEFT JOIN so hits survive if their rule was later deleted.
+        sql = (
+            "SELECT h.*, r.name AS rule_name "
+            "FROM trigger_hits h "
+            "LEFT JOIN trigger_rules r ON r.id = h.rule_id"
+        )
         if unacknowledged_only:
-            sql += " WHERE acknowledged = 0"
-        sql += " ORDER BY triggered_at DESC LIMIT ?"
-        return await asyncio.to_thread(self._fetchall, sql, (limit,))
+            sql += " WHERE h.acknowledged = 0"
+        sql += " ORDER BY h.triggered_at DESC LIMIT ?"
+        rows = await asyncio.to_thread(self._fetchall, sql, (limit,))
+        for row in rows:
+            row["acknowledged"] = bool(row.get("acknowledged", 0))
+            row["moved_back"] = bool(row.get("moved_back", 0))
+        return rows
 
     async def get_trigger_hits_for_rule(self, rule_id: int, limit: int = 20) -> list[dict]:
         """Get recent hits for a specific rule."""
@@ -568,6 +642,63 @@ class DatabaseService:
         def _delete() -> bool:
             cursor = self._execute(
                 "DELETE FROM settings WHERE key = ?", (key,)
+            )
+            assert self._conn is not None
+            self._conn.commit()
+            return cursor.rowcount > 0
+
+        return await asyncio.to_thread(_delete)
+
+    # ── Watchlist Config Operations (Phase 6.8) ─────────────────
+
+    async def get_all_watchlist_configs(self) -> list[dict]:
+        """Return every configured watchlist (name + override days)."""
+        return await asyncio.to_thread(
+            self._fetchall,
+            "SELECT name, auto_expire_days, updated_at FROM watchlist_config ORDER BY name",
+        )
+
+    async def get_watchlist_config(self, name: str) -> dict | None:
+        """Look up a single watchlist's config row. None if not configured."""
+        return await asyncio.to_thread(
+            self._fetchone,
+            "SELECT name, auto_expire_days, updated_at FROM watchlist_config WHERE name = ?",
+            (name,),
+        )
+
+    async def upsert_watchlist_config(
+        self, name: str, auto_expire_days: int | None
+    ) -> None:
+        """
+        Create or update the override for a target watchlist.
+
+        auto_expire_days=None is meaningful here: it stores an explicit
+        "no auto-expire for this watchlist" override that wins over the
+        per-rule value. To remove the override entirely, call
+        delete_watchlist_config().
+        """
+        def _upsert() -> None:
+            self._execute(
+                """INSERT INTO watchlist_config (name, auto_expire_days, updated_at)
+                   VALUES (?, ?, datetime('now'))
+                   ON CONFLICT(name) DO UPDATE SET
+                       auto_expire_days = excluded.auto_expire_days,
+                       updated_at = datetime('now')""",
+                (name, auto_expire_days),
+            )
+            assert self._conn is not None
+            self._conn.commit()
+
+        await asyncio.to_thread(_upsert)
+
+    async def delete_watchlist_config(self, name: str) -> bool:
+        """
+        Remove a watchlist's override. Rules that target this watchlist
+        will fall back to their own auto_expire_days after this.
+        """
+        def _delete() -> bool:
+            cursor = self._execute(
+                "DELETE FROM watchlist_config WHERE name = ?", (name,)
             )
             assert self._conn is not None
             self._conn.commit()
@@ -740,9 +871,10 @@ class DatabaseService:
         Called once during app startup, after tables are created.
         """
         defaults = {
-            "scan_interval": "300",        # 5 minutes (in seconds)
-            "default_timeframe": "1D",     # Default chart timeframe
-            "default_period": "3M",        # Default chart period
+            "scan_interval_seconds": "300",   # Global default per-rule scan interval (seconds)
+            "default_timeframe": "1D",        # Default chart timeframe
+            "default_period": "3M",           # Default chart period
+            "notifications_enabled": "true",  # Phase 6.5: global desktop notification toggle
         }
         for key, value in defaults.items():
             existing = await self.get_setting(key)

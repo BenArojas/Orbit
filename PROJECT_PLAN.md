@@ -1,8 +1,7 @@
 # Parallax — Project Plan
 
-> Last updated: 2026-04-14
-> Status: Phase 1–5 completed. IBKR Gateway auto-provision working.
-
+> Last updated: 2026-04-15
+> Status: Phase 1–6 complete.
 ---
 
 ## IBKR Gateway — What We Learned (2026-04-14)
@@ -51,6 +50,8 @@ These are locked in. Don't revisit unless something breaks.
 | Background scanner | Runs while app is open only | No system tray mode |
 | Dynamic watchlists | Auto-populated by trigger rules | Separate from master IBKR watchlist |
 | Fibonacci | Primary tool — auto swing + manual override | Ofek's core trading method |
+| Trigger watchlist moves | Real IBKR watchlist manipulation | Stocks show in TWS/mobile too, not just Parallax |
+| News candle detection | All 4 methods, user selects per rule | Evaluate which works best in practice |
 
 ---
 
@@ -137,19 +138,16 @@ These are locked in. Don't revisit unless something breaks.
 > Universe source: IBKR Scanner API presets (top gainers, most active, etc.).
 > Scan mode: On-demand only (user clicks Scan). Background scan is Phase 6.
 
-#### 5A — Core (built, in review)
+#### 5A — Core — DONE
 
 | # | Task | Owner | Status | Notes |
 |---|---|---|---|---|
-| 5.1 | Screener filter bar | Ofek | REVIEW | IBKR native filter codes, grouped dropdown (Fundamental/Technical/Analyst/Short Interest) |
-| 5.2 | Screener results table | Ofek | REVIEW | Symbol, Name, Type, Price, Chg%, Volume, Mkt Cap; sortable |
-| 5.3 | Screener backend service | Ben | REVIEW | scanner_run with native filters + batch snapshots; no indicator computation |
-| 5.4 | Screener router | Ben | REVIEW | POST /screener/scan, GET /screener/presets |
-| 5.5 | Click result → Analysis | Both | REVIEW | navigateToAnalysis(conid) on row click |
-| 5.6 | Universe via IBKR Scanner API | Ben | REVIEW | /iserver/scanner/params + /iserver/scanner/run |
-
-> ⏳ **5A awaiting code review.** Do not merge `feature/screener-page` until review passes.
-> 🧹 **Cleanup needed on branch:** `docker-compose.yml` and `ibkr-gateway/` were committed to `feature/screener-page` by mistake — move to a dedicated `infra/ibkr-gateway` branch or root config area before merge.
+| 5.1 | Screener filter bar | Ofek | DONE | IBKR native filter codes, grouped dropdown (Fundamental/Technical/Analyst/Short Interest) |
+| 5.2 | Screener results table | Ofek | DONE | Symbol, Name, Type, Price, Chg%, Volume, Mkt Cap; sortable |
+| 5.3 | Screener backend service | Ben | DONE | scanner_run with native filters + batch snapshots; no indicator computation |
+| 5.4 | Screener router | Ben | DONE | POST /screener/scan, GET /screener/presets |
+| 5.5 | Click result → Analysis | Both | DONE | navigateToAnalysis(conid) on row click |
+| 5.6 | Universe via IBKR Scanner API | Ben | DONE | /iserver/scanner/params + /iserver/scanner/run |
 
 #### 5B — Enhancements — DONE
 
@@ -162,29 +160,34 @@ These are locked in. Don't revisit unless something breaks.
 | 5.11 | Scanner sort codes | Ben | DONE | IBKR server-side sort via `sort` param. Frontend sort dropdown + direction toggle in filter bar |
 | 5.12 | WSH earnings date preset | Ben | DONE | "Earnings This Week" preset with `wshEarningsDate` default filter. Added to Fundamental category |
 
-#### 5C — AI-Assisted Filters — IN PROGRESS
+#### 5C — AI-Assisted Filters — DONE
 
 | # | Task | Owner | Status | Notes |
 |---|---|---|---|---|
-| 5.13 | AI screener side panel (UI) | Ofek | IN PROGRESS | Collapsible right panel. Freeform text input + preset quick-question chips. Shows reasoning per filter. |
-| 5.14 | AI screener backend endpoint | Ben | IN PROGRESS | POST `/screener/ai-filters` — query + filter catalogue → Ollama → `{filters: [{code, value, reasoning}]}` |
-| 5.15 | AI → filter bar wiring | Both | IN PROGRESS | AI response auto-populates filter bar pills. User tweaks/removes before scan. |
-| 5.16 | Prompt engineering | Ben | IN PROGRESS | System prompt with IBKR filter catalogue, output schema, edge case handling (ambiguous/conflicting/unknown filters) |
+| 5.13 | AI screener side panel (UI) | Ofek | DONE | Collapsible right panel. Freeform text input + preset quick-question chips. Shows reasoning per filter. |
+| 5.14 | AI screener backend endpoint | Ben | DONE | POST `/screener/ai-filters` — query + filter catalogue → Ollama → `{filters: [{code, value, reasoning}]}` |
+| 5.15 | AI → filter bar wiring | Both | DONE | AI response auto-populates filter bar pills. User tweaks/removes before scan. |
+| 5.16 | Prompt engineering | Ben | DONE | System prompt with IBKR filter catalogue, output schema, edge case handling (ambiguous/conflicting/unknown filters) |
 
 ---
 
-### Phase 6: Background Scanner + Triggers
+### Phase 6: Background Scanner + Triggers — COMPLETE
 
-> Goal: Periodic scans, trigger detection, desktop notifications.
+> Goal: Periodic scans, trigger detection, IBKR watchlist moves, desktop notifications.
+> Watchlist strategy: Real IBKR watchlist manipulation (read → modify → overwrite via Client Portal API). Stocks move between IBKR watchlists so they show in TWS/mobile too.
+> News candle strategy: Ship all 4 detection methods as selectable options. User picks per-rule. Evaluate which works best in practice.
+> Branch: `feature/phase6-scanner-triggers` — 7 commits, pending PR to dev.
 
 | # | Task | Owner | Status | Notes |
 |---|---|---|---|---|
-| 6.1 | Background scheduler | Ben | TODO | asyncio task in lifespan, configurable interval (default 5 min) |
-| 6.2 | Trigger evaluation engine | Ben | TODO | Compare indicators against rule conditions |
-| 6.3 | Trigger hit persistence + dedup | Ofek | TODO | SQLite, don't re-alert same hit |
-| 6.4 | Desktop notifications | Ofek | TODO | Tauri notification plugin |
-| 6.5 | Fibonacci alert — news candle | Both | TODO | [?] Define criteria (volume + price move %) |
-| 6.6 | Alert log component | Ofek | TODO | Timestamped feed on dashboard |
+| 6.1 | Background scheduler | Ben | DONE | asyncio task in lifespan with auth-wait startup. Per-rule `scan_interval_seconds` (default 300). `next_scan_at` tracks per-rule cadence. Runs while app is open only. |
+| 6.2 | Trigger evaluation engine | Ben | DONE | Groups rules by conid → batch indicator compute → evaluates conditions (above/below/crosses_above/crosses_below/fires). `dedup_key` prevents double-fires within the interval window. |
+| 6.3 | IBKR watchlist moves | Ben | DONE | `move_between_watchlists`: fetch source list → remove conid → overwrite; fetch target list → append conid → overwrite. Uses ibind `create_watchlist`. |
+| 6.4 | Trigger hit persistence + dedup | Ofek | DONE | SQLite `trigger_hits` table with `dedup_key` (rule_id + date + interval). `record_trigger_hit` upserts on conflict. `mark_moved_back` flips the bit on successful return. |
+| 6.5 | Desktop notifications + WS alerts | Ofek | DONE | Tauri notification plugin fires on trigger hit. Backend WS broadcasts `trigger_alert` event to all frontend clients. Frontend WebSocket hook dispatches to `AlertLog` via TanStack Query `invalidateQueries`. |
+| 6.6 | News candle trigger | Both | DONE | 4 methods: `volume_spike` (× 20-bar avg vol), `range_spike` (× 20-bar avg range), `gap` (% vs prev close), `long_wick` (max wick ÷ body). User selects method per rule. `news_candle_method` stored in `trigger_rules`. Frontend `CreateRuleModal` switches to method selector when `indicator = news_candle`. |
+| 6.7 | Alert log dashboard panel | Ofek | DONE | 160px bottom panel, full-width. 5-col grid: Time / Symbol / Rule / Condition→Actual / Source→Target. Indicator colour-coded dots. Click row → `navigateToAnalysis(conid)` + auto-dismiss toast. WS `trigger_alert` live-refreshes via TanStack Query. `get_trigger_hits` LEFT JOINs `trigger_rules` to surface `rule_name`. |
+| 6.8 | Auto-expire return scanner + watchlist config UI | Ofek | DONE | `watchlist_config` SQLite table: per-watchlist `auto_expire_days` override. Override priority: config row (even NULL = no-expire) beats rule value. `_return_expired_hits()` runs each scanner heartbeat: moves symbol back to source on expiry, only marks `moved_back=1` on IBKR success (retries on failure). Frontend: collapsible "Watchlist Expiry" section in sidebar, IBKR watchlist dropdown, inline day editing. 19 backend tests + 3 trigger-hit tests. |
 
 ---
 
@@ -225,7 +228,7 @@ These are locked in. Don't revisit unless something breaks.
 | Q2 | ~~How to structure AI prompt with chart data?~~ | 4.10, 4.11 | RESOLVED: Structured JSON — pre-computed indicator signals |
 | Q3 | Can Lightweight Charts support draggable Fibonacci? | 4.5 | OPEN — may need custom canvas overlay |
 | Q4 | ~~How to get full equity universe from IBKR?~~ | 5.6 | RESOLVED: Use IBKR Scanner API presets as universe source (filtered lists, not raw universe). User picks a preset → backend runs scanner → applies indicator filters on results. |
-| Q5 | What defines a "news candle" for Fibonacci alerts? | 6.5 | OPEN — proposal: body > 2x ATR AND volume > 2x avg |
+| Q5 | ~~What defines a "news candle" for Fibonacci alerts?~~ | 6.6 | RESOLVED: Ship all 4 detection methods as user-selectable options. (A) body > 2× ATR + vol > 2× avg, (B) range > 2× ATR + vol > 1.5× avg, (C) price crosses fib + vol > 1.5× avg, (D) price within X% of fib + configurable filter. Evaluate in practice. |
 | Q6 | How to calculate Market Strength gauge composite? | 3.2 | OPEN — proposal: advance/decline + % above 200 EMA + McClellan |
 | Q7 | ~~Sector Rotation RRG calculation?~~ | 3.4 | RESOLVED: standard JdK method |
 | Q8 | ~~Can Ollama be bundled into Tauri?~~ | 4.12 | RESOLVED: detect-only, never auto-install. Guide user instead |
