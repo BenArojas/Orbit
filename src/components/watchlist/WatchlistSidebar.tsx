@@ -8,18 +8,22 @@
  *   - Search/filter within the watchlist
  *   - Click item → navigate to Analysis with that conid
  *   - Glow left-edge indicators for triggered items (Phase 6)
+ *   - Virtual scrolling via @tanstack/react-virtual (Phase 7.4c)
  *
  * Data: GET /watchlist/lists, GET /watchlist/{id}
  * Live updates: WebSocket subscription for all watchlist conids
  */
 
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import { api, type WatchlistItemResponse } from "../../lib/api";
 import { useNavigationStore } from "../../store/navigation";
 import { useWatchlistStore } from "../../store/watchlist";
-import { ScrollArea } from "../ui/scroll-area";
 import { useIbkrReadyTier } from "@/hooks/useIbkrReadyTier";
+
+// Each WatchlistRow is 40px tall — used by the virtualizer for layout.
+const ROW_HEIGHT = 40;
 
 export default function WatchlistSidebar() {
   const [selectedWatchlistId, setSelectedWatchlistId] = useState<string | null>(null);
@@ -86,10 +90,22 @@ export default function WatchlistSidebar() {
 
   const itemCount = watchlistData?.items?.length ?? 0;
 
+  // ── Virtual scroll setup ───────────────────────────────────────────────────
+  const scrollRef = useRef<HTMLDivElement>(null);
+
+  const virtualizer = useVirtualizer({
+    count: filteredItems.length,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: () => ROW_HEIGHT,
+    overscan: 8, // render 8 extra rows above/below for smooth scrolling
+  });
+
+  const virtualItems = virtualizer.getVirtualItems();
+
   return (
     <div className="flex h-full flex-col overflow-hidden">
       {/* Header with watchlist selector */}
-      <div className="sticky top-0 z-10 border-b border-border bg-[var(--bg-1)]/80 backdrop-blur">
+      <div className="shrink-0 border-b border-border bg-[var(--bg-1)]/80 backdrop-blur">
         <div className="flex items-center justify-between px-3.5 py-2.5">
           <span className="text-[10px] font-semibold uppercase tracking-wider text-[var(--text-3)]">
             Watchlist
@@ -125,41 +141,66 @@ export default function WatchlistSidebar() {
         </div>
       </div>
 
-      {/* Items list */}
-      <ScrollArea className="flex-1">
-        {isLoading && (
-          <div className="flex items-center justify-center py-8">
-            <span className="text-xs text-[var(--text-3)]">Loading...</span>
-          </div>
-        )}
-
-        {error && (
-          <div className="flex flex-col items-center justify-center gap-2 py-8 px-4">
-            <span className="text-xs text-[var(--red)]">Failed to load watchlist</span>
-            <span className="text-[10px] text-[var(--text-3)] text-center">
-              Make sure IBKR Client Portal is running and authenticated.
-            </span>
-          </div>
-        )}
-
-        {!isLoading && !error && filteredItems.length === 0 && (
-          <div className="flex items-center justify-center py-8">
-            <span className="text-xs text-[var(--text-3)]">
-              {searchQuery ? "No matching items" : "Connect IBKR to load watchlist"}
-            </span>
-          </div>
-        )}
-
-        <div className="divide-y divide-border">
-          {filteredItems.map((item) => (
-            <WatchlistRow
-              key={item.conid}
-              item={item}
-              onClick={() => navigateToAnalysis(item.conid)}
-            />
-          ))}
+      {/* State overlays — shown when list is empty */}
+      {isLoading && (
+        <div className="flex flex-1 items-center justify-center">
+          <span className="text-xs text-[var(--text-3)]">Loading...</span>
         </div>
-      </ScrollArea>
+      )}
+
+      {error && (
+        <div className="flex flex-1 flex-col items-center justify-center gap-2 px-4">
+          <span className="text-xs text-[var(--red)]">Failed to load watchlist</span>
+          <span className="text-center text-[10px] text-[var(--text-3)]">
+            Make sure IBKR Client Portal is running and authenticated.
+          </span>
+        </div>
+      )}
+
+      {!isLoading && !error && filteredItems.length === 0 && (
+        <div className="flex flex-1 items-center justify-center">
+          <span className="text-xs text-[var(--text-3)]">
+            {searchQuery ? "No matching items" : "Connect IBKR to load watchlist"}
+          </span>
+        </div>
+      )}
+
+      {/* Virtual list — only renders visible rows */}
+      {filteredItems.length > 0 && (
+        <div
+          ref={scrollRef}
+          className="flex-1 overflow-y-auto"
+          style={{ contain: "strict" }}
+        >
+          {/* Total height spacer so the scrollbar is sized correctly */}
+          <div
+            style={{ height: virtualizer.getTotalSize(), position: "relative" }}
+          >
+            {virtualItems.map((vItem) => {
+              const item = filteredItems[vItem.index];
+              return (
+                <div
+                  key={item.conid}
+                  data-index={vItem.index}
+                  ref={virtualizer.measureElement}
+                  style={{
+                    position: "absolute",
+                    top: 0,
+                    left: 0,
+                    width: "100%",
+                    transform: `translateY(${vItem.start}px)`,
+                  }}
+                >
+                  <WatchlistRow
+                    item={item}
+                    onClick={() => navigateToAnalysis(item.conid)}
+                  />
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -178,7 +219,8 @@ function WatchlistRow({
   return (
     <div
       onClick={onClick}
-      className="grid grid-cols-[1fr_50px_52px] items-center px-3.5 py-[7px] cursor-pointer transition-all hover:bg-[var(--bg-3)] relative"
+      className="grid grid-cols-[1fr_50px_52px] items-center px-3.5 py-[7px] cursor-pointer transition-all hover:bg-[var(--bg-3)] relative border-b border-border"
+      style={{ height: ROW_HEIGHT }}
     >
       {/* Symbol + company name */}
       <div className="min-w-0">
@@ -189,7 +231,6 @@ function WatchlistRow({
           <span className="text-[9px] text-[var(--text-3)] truncate">
             {item.companyName}
           </span>
-          {/* Trigger tags will go here in Phase 6 */}
         </div>
       </div>
 
