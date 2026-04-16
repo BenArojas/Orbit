@@ -320,6 +320,9 @@ app.include_router(gateway_router)
 from routers.watchlist_config import router as watchlist_config_router
 app.include_router(watchlist_config_router)
 
+from routers.health import router as health_router
+app.include_router(health_router)
+
 
 # ── Health endpoint ──────────────────────────────────────────
 
