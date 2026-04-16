@@ -1,7 +1,7 @@
 # Parallax — Project Plan
 
-> Last updated: 2026-04-15
-> Status: Phase 1–6 complete.
+> Last updated: 2026-04-16
+> Status: Phase 1–7 (7.1–7.6) complete. 7.7 (release packaging) + Phase 8 remaining.
 ---
 
 ## IBKR Gateway — What We Learned (2026-04-14)
@@ -191,19 +191,19 @@ These are locked in. Don't revisit unless something breaks.
 
 ---
 
-### Phase 7: Polish + Integration
+### Phase 7: Polish + Integration — IN PROGRESS (7.7 remaining)
 
 > Goal: Everything works together, feels professional.
 
 | # | Task | Owner | Status | Notes |
 |---|---|---|---|---|
-| 7.1 | IBKR disconnect detection + re-auth | Both | TODO | Poll session validity; on stale session show non-blocking banner with "Reconnect" CTA; typed `IBKRAuthError` / `IBKRSessionExpiredError`; backend retries with backoff before surfacing to UI |
-| 7.2 | Error states + toast system | Both | TODO | Skeleton loaders for all async components; React error boundaries per major panel; toasts for transient errors (WS drop, scan fail, trigger eval error); reuse shared `<EmptyState>` component |
-| 7.3 | Settings page + theme fixes | Both | TODO | Scan interval, default timeframe, Ollama model selector, IBKR gateway URL — all SQLite-persisted. Add light mode. Fix dark mode contrast (bg `#111827`, borders `#27303f`, secondary text lighter). Settings modal or dedicated route. |
-| 7.4 | Performance optimization | Both | TODO | Scope: (1) react-window virtualization for watchlist/scanner tables >100 rows, (2) memoize indicator computations keyed by conid+timeframe+bar_count, (3) debounce chart re-renders on timeframe switch, (4) backend: cache indicator results in SQLite with TTL, (5) WS tick batching per 100ms window |
-| 7.5 | Health status strip + diagnostics | Both | TODO | Persistent status strip (🟢/🟡/🔴) in app shell. Click opens modal with named health checks: IBKR Gateway, Ollama, Scanner (last run), Database, Background Triggers. Each row: icon + name + one-line plain-English status. "Copy diagnostics" button exports minimal JSON snapshot (typed error class + context) to clipboard — for devs, not shown raw in UI. No log viewer. |
-| 7.6 | Empty states | Both | TODO | Shared `<EmptyState icon title description cta?>` component. Cover: empty watchlist, chart with no symbol, scanner before first run, scanner zero results (with "reset filters" CTA), empty trigger list, Ollama chat with no history (prompt chips), alert log empty |
-| 7.7 | Release packaging | Both | TODO | Tauri bundler: macOS universal .dmg (Intel + ARM), Windows .msi. PyInstaller sidecar → single binary in Tauri resources. Code signing: Apple notarization required (blocks launch without it); Windows EV cert optional. Distribution via GitHub Releases (private). No auto-updater in v1 — manual download. Fresh-install smoke test on clean VM before each release. |
+| 7.1 | IBKR disconnect detection + re-auth | Both | DONE | Non-blocking banner + Reconnect CTA; `IBKRAuthError` / `IBKRSessionExpiredError`; retries with backoff |
+| 7.2 | Error states + toast system | Both | DONE | Skeleton loaders, error boundaries per panel, Sonner toasts for transient errors |
+| 7.3 | Settings page + theme fixes | Both | DONE | Scan interval, default timeframe, Ollama model selector, IBKR gateway URL — SQLite-persisted |
+| 7.4 | Performance optimization | Both | DONE | 7.4a: query dedup + `useIbkrReadyTier` stagger hook. 7.4b: React.lazy() code splitting for AnalysisPage + ScreenerPage. 7.4c: `@tanstack/react-virtual` for WatchlistSidebar |
+| 7.5 | Health status strip + diagnostics | Both | DONE | 🟢/🟡/🔴 strip in shell. Modal: IBKR Gateway, Ollama, Scanner, Database, Background Triggers — plain-English status. "Copy diagnostics" → minimal JSON to clipboard only. No log viewer |
+| 7.6 | Empty states | Both | DONE | Shared `<EmptyState>` component. Covers: empty watchlist, chart no symbol, scanner pre-run + zero results, empty trigger list, AI chat no history (prompt chips), empty alert log |
+| 7.7 | Release packaging | Both | TODO | Tauri bundler: macOS universal .dmg (Intel + ARM), Windows .msi. PyInstaller sidecar → single binary in Tauri resources. Code signing: Apple notarization required; Windows EV cert optional. Distribution via GitHub Releases (private). No auto-updater in v1. Fresh-install smoke test on clean VM. |
 
 ---
 
