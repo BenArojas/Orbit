@@ -10,16 +10,18 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { api, type SectorPerformance } from "../../lib/api";
-import { useIbkrReady } from "@/context/GatewayContext";
+import { useIbkrReadyTier } from "@/hooks/useIbkrReadyTier";
 
 export default function SectorPerformancePanel() {
-  const ibkrReady = useIbkrReady();
+  // Tier 3 — defer 2 s after IBKR connects so critical quotes load first.
+  // Sector performance hits IBKR for all 11 ETFs — most expensive dashboard call.
+  const ready = useIbkrReadyTier(3);
   const { data: sectors, isLoading, error } = useQuery({
     queryKey: ["sectors", "performance"],
     queryFn: api.sectorPerformance,
-    staleTime: 60_000, // 1 minute — sector data doesn't change fast
-    refetchInterval: 5 * 60_000, // Refresh every 5 minutes
-    enabled: ibkrReady,
+    staleTime: 60_000,
+    refetchInterval: 5 * 60_000,
+    enabled: ready,
   });
 
   return (

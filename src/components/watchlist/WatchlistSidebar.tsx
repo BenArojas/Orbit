@@ -19,21 +19,24 @@ import { api, type WatchlistItemResponse } from "../../lib/api";
 import { useNavigationStore } from "../../store/navigation";
 import { useWatchlistStore } from "../../store/watchlist";
 import { ScrollArea } from "../ui/scroll-area";
-import { useIbkrReady } from "@/context/GatewayContext";
+import { useIbkrReadyTier } from "@/hooks/useIbkrReadyTier";
 
 export default function WatchlistSidebar() {
   const [selectedWatchlistId, setSelectedWatchlistId] = useState<string | null>(null);
   const { searchQuery, setSearchQuery, setMasterWatchlist } = useWatchlistStore();
   const navigateToAnalysis = useNavigationStore((s) => s.navigateToAnalysis);
 
-  const ibkrReady = useIbkrReady();
+  // Tier 1 — watchlist names needed immediately to populate the dropdown.
+  // Tier 2 — items + quotes wait 800ms so market pulse / VIX get bandwidth first.
+  const ibkrReadyT1 = useIbkrReadyTier(1);
+  const ibkrReadyT2 = useIbkrReadyTier(2);
 
   // Fetch all IBKR watchlists
   const { data: watchlists } = useQuery({
     queryKey: ["watchlists"],
     queryFn: api.getWatchlists,
     staleTime: 60_000,
-    enabled: ibkrReady,
+    enabled: ibkrReadyT1,
   });
 
   // Auto-select first watchlist
@@ -47,9 +50,9 @@ export default function WatchlistSidebar() {
   const { data: watchlistData, isLoading, error } = useQuery({
     queryKey: ["watchlist", selectedWatchlistId],
     queryFn: () => api.getWatchlistItems(selectedWatchlistId!),
-    enabled: ibkrReady && !!selectedWatchlistId,
+    enabled: ibkrReadyT2 && !!selectedWatchlistId,
     staleTime: 30_000,
-    refetchInterval: 30_000, // Refresh quotes every 30s
+    refetchInterval: 30_000,
   });
 
   // Sync to Zustand store for other components

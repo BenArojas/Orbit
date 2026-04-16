@@ -166,7 +166,7 @@ export default function ArcGaugeRow() {
 
   const { data: hits } = useQuery<TriggerHit[]>({
     queryKey: ["trigger-hits"],
-    queryFn: () => api.getTriggerHits(100),
+    queryFn: () => api.getTriggerHits(200), // standardised limit — deduplicates with other consumers
     staleTime: 30_000,
   });
 
