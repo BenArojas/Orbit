@@ -279,6 +279,66 @@ class TestGatewayStatus:
         s = gw.status()
         assert s["running"] is True
 
+    def test_status_detects_dead_subprocess(self, tmp_path):
+        """
+        Bug C: if we think we're RUNNING but the managed subprocess has died
+        (user killed java in Activity Monitor, OOM, crash…), status() must
+        detect it on the next poll and transition RUNNING → PROVISIONED so
+        the UI stops lying about `running: true`.
+        """
+        gw = GatewayLifecycle(gateway_home=str(tmp_path))
+        gw.state = GatewayState.RUNNING
+
+        # Fake process that has already exited (poll returns non-None)
+        dead_process = MagicMock()
+        dead_process.poll = MagicMock(return_value=137)  # SIGKILL exit code
+        dead_process.returncode = 137
+        gw._process = dead_process
+        gw._process_pgid = 12345
+
+        s = gw.status()
+
+        assert s["state"] == "provisioned"
+        assert s["running"] is False
+        assert gw.state == GatewayState.PROVISIONED
+        assert gw._process is None
+        assert gw._process_pgid is None
+
+    def test_status_keeps_running_when_subprocess_alive(self, tmp_path):
+        """
+        Bug C: a live subprocess (poll() returns None) must NOT flip state.
+        Guard against overzealous reconciliation.
+        """
+        gw = GatewayLifecycle(gateway_home=str(tmp_path))
+        gw.state = GatewayState.RUNNING
+
+        alive_process = MagicMock()
+        alive_process.poll = MagicMock(return_value=None)  # still running
+        gw._process = alive_process
+
+        s = gw.status()
+
+        assert s["state"] == "running"
+        assert s["running"] is True
+        assert gw.state == GatewayState.RUNNING
+
+    def test_status_ignores_process_when_not_in_running_state(self, tmp_path):
+        """
+        Bug C: reconciliation only applies when state == RUNNING. If we're
+        already in PROVISIONED/ERROR/etc., don't touch anything.
+        """
+        gw = GatewayLifecycle(gateway_home=str(tmp_path))
+        gw.state = GatewayState.PROVISIONED
+        dead_process = MagicMock()
+        dead_process.poll = MagicMock(return_value=0)
+        gw._process = dead_process
+
+        s = gw.status()
+
+        assert s["state"] == "provisioned"
+        # _process is NOT cleared — we only clean up when transitioning out of RUNNING
+        assert gw._process is dead_process
+
     def test_downloading_includes_progress(self, tmp_path):
         gw = GatewayLifecycle(gateway_home=str(tmp_path))
         gw.state = GatewayState.DOWNLOADING_JRE

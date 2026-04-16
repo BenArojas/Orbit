@@ -751,7 +751,29 @@ class GatewayLifecycle:
           - starting → spinner
           - running → green indicator, ready to authenticate
           - error → error message + retry button
+
+        Bug C: if we think we're RUNNING but the managed subprocess has died
+        (user killed java in Activity Monitor, OOM, crash, etc.), detect it
+        here and transition back to PROVISIONED so the UI reflects reality
+        on the very next poll. Without this the state would stay RUNNING
+        until something else tried to talk to the gateway and failed.
         """
+        # Reconcile state with the actual process before reporting
+        if (
+            self.state == GatewayState.RUNNING
+            and self._process is not None
+            and self._process.poll() is not None
+        ):
+            exit_code = self._process.returncode
+            log.warning(
+                "Gateway process exited unexpectedly (code=%s) — "
+                "transitioning RUNNING → PROVISIONED",
+                exit_code,
+            )
+            self._process = None
+            self._process_pgid = None
+            self.state = GatewayState.PROVISIONED
+
         result: dict = {
             "state": self.state.value,
             "provisioned": self.is_provisioned(),

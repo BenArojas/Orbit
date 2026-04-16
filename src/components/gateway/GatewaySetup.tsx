@@ -115,11 +115,18 @@ export function GatewaySetup() {
     isAuthenticated,
     needsLogin,
     isProvisioning,
+    sessionDropped,
     provision,
     start,
     actionError,
     actionLoading,
   } = useGatewayContext();
+
+  // Bug D: when a mid-session disconnect has triggered the IbkrReconnectBanner
+  // above the nav, the "Open IBKR Login" button here becomes redundant — the
+  // banner already has one, louder and more visible. Hide this card's button
+  // in that case so the user only sees a single clear call to action.
+  const bannerIsShowing = sessionDropped && !isAuthenticated;
 
   // D5: auto-clear actionError after 5 s
   const errorTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -253,7 +260,7 @@ export function GatewaySetup() {
               Tauri v2 blocks <a target="_blank"> inside the webview — we must
               call the opener plugin explicitly to open the URL in the user's
               default browser. */}
-          {needsLogin && (
+          {needsLogin && !bannerIsShowing && (
             <button
               type="button"
               onClick={() => {

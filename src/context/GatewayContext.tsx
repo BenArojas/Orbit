@@ -31,6 +31,7 @@ interface GatewayContextValue {
   stop: () => Promise<void>;
   actionError: string | null;
   actionLoading: boolean;
+  refetch: () => Promise<void>;
 }
 
 const GatewayContext = createContext<GatewayContextValue | null>(null);

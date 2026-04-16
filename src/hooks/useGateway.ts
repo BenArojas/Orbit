@@ -39,6 +39,13 @@ interface UseGatewayReturn {
   actionError: string | null;
   /** Is an action (provision/start/stop) currently running? */
   actionLoading: boolean;
+  /**
+   * Force an immediate /gateway/status poll (bypasses the 30 s slow-poll
+   * wait). Used by the IbkrReconnectBanner when a WebSocket
+   * `session_dropped` event arrives — without this, the UI would keep
+   * showing stale `authenticated: true` until the next slow poll.
+   */
+  refetch: () => Promise<void>;
 }
 
 const PROVISIONING_STATES: GatewayState[] = [
@@ -160,5 +167,6 @@ export function useGateway(): UseGatewayReturn {
     stop,
     actionError,
     actionLoading,
+    refetch: fetchStatus,
   };
 }

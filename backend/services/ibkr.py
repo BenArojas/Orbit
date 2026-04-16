@@ -23,7 +23,13 @@ import httpx
 import websockets
 
 from cache import cached
-from config import IBKR_API_BASE_URL, IBKR_GATEWAY_BASE_URL, IBKR_TICKLE_INTERVAL
+from config import (
+    IBKR_API_BASE_URL,
+    IBKR_GATEWAY_BASE_URL,
+    IBKR_GATEWAY_HOST,
+    IBKR_GATEWAY_PORT,
+    IBKR_TICKLE_INTERVAL,
+)
 from constants import DEFAULT_QUOTE_FIELDS_STR, LIVE_STREAM_FIELDS
 from exceptions import (
     IBKRAuthError,
@@ -169,11 +175,33 @@ class IBKRService:
                 "message": "Session not authenticated. Please log in via the IBKR Gateway.",
             }
         except IBKRConnectionError:
+            # Bug A: if we were previously authenticated, flip the session_dropped
+            # flag and broadcast a WS event so the frontend reacts immediately
+            # — don't wait for the slow tickle loop to eventually trip the
+            # threshold (~165s). This covers the case where the user kills the
+            # gateway mid-session: the next /gateway/status poll will try
+            # auth_status, which fails here, and we announce the drop.
+            was_authenticated = self.state.authenticated
             self.state.authenticated = False
+            if was_authenticated and not self.state.session_dropped:
+                self.state.session_dropped = True
+                self.state.tickle_fail_count = TICKLE_FAIL_THRESHOLD
+                log.warning(
+                    "auth_status: gateway unreachable while previously authenticated"
+                    " — declaring session_dropped and broadcasting."
+                )
+                if hasattr(self, "_broadcast") and self._broadcast:
+                    try:
+                        await self._broadcast({"type": "session_dropped"})
+                    except (OSError, ConnectionError) as exc:
+                        log.warning("Failed to broadcast session_dropped: %s", exc)
             return {
                 "authenticated": False,
                 "ws_ready": False,
-                "message": "Cannot reach IBKR Gateway. Is it running on localhost:5000?",
+                "message": (
+                    f"Cannot reach IBKR Gateway. "
+                    f"Is it running on {IBKR_GATEWAY_HOST}:{IBKR_GATEWAY_PORT}?"
+                ),
             }
 
     async def tickle(self) -> bool:

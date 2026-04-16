@@ -26,20 +26,26 @@ interface IbkrReconnectBannerProps {
 }
 
 export function IbkrReconnectBanner({ addHandler }: IbkrReconnectBannerProps) {
-  const { status, isAuthenticated } = useGatewayContext();
+  const { status, isAuthenticated, refetch } = useGatewayContext();
   const [visible, setVisible] = useState(false);
   const dismissedRef = useRef(false);
 
   // ── Detect session drop from WS event (immediate) ─────────────────────────
+  // The WS event tells us the drop happened, but the full status payload
+  // (authenticated, session_dropped, auth_required) only refreshes on the
+  // /gateway/status poll — which may be on the 30 s SLOW interval. Force an
+  // immediate refetch so every downstream consumer of useGatewayContext
+  // (GatewaySetup, useIbkrReady gates, etc.) sees the new truth right away.
   useEffect(() => {
     const off = addHandler((msg: WsMessage) => {
       if (msg.type === "session_dropped") {
         dismissedRef.current = false;
         setVisible(true);
+        void refetch();
       }
     });
     return off;
-  }, [addHandler]);
+  }, [addHandler, refetch]);
 
   // ── Detect session drop from gateway status poll (backup) ─────────────────
   useEffect(() => {
