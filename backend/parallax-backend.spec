@@ -140,9 +140,9 @@ exe = EXE(
     upx=True,
     upx_exclude=[],
     runtime_tmpdir=None,
-    # console=True keeps stdout/stderr visible so logs appear in Tauri dev tools.
-    # Flip to False once stable to suppress the terminal window on Windows.
-    console=True,
+    # console=False suppresses the terminal window on Windows in release builds.
+    # Set to True temporarily if you need to see raw sidecar logs during debugging.
+    console=False,
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,   # Set per-run by the build scripts; None = host arch

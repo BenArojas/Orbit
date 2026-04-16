@@ -32,12 +32,13 @@ if __name__ == "__main__":
     os.environ.setdefault("FRONTEND_ORIGIN", "tauri://localhost")
 
     # Must import AFTER env vars are set so config.py picks them up.
+    from config import BACKEND_PORT  # noqa: E402
     from main import app  # noqa: E402
 
     uvicorn.run(
         app,
         host="127.0.0.1",
-        port=8000,
+        port=BACKEND_PORT,
         log_level="info",
         # Single worker required — backend uses in-process singletons
         # (IBKRService, GatewayService, scanner asyncio task).

@@ -17,3 +17,10 @@ export const API_BASE = `http://${SIDECAR_HOST}:${SIDECAR_PORT}`;
 
 /** WebSocket URL for live market data streaming */
 export const WS_URL = `ws://${SIDECAR_HOST}:${SIDECAR_PORT}/ws`;
+
+/**
+ * IBKR Client Portal Gateway base URL.
+ * Port 5001 is the default — matches backend/config.py IBKR_GATEWAY_PORT.
+ * Port 5000 is intentionally avoided: it collides with macOS AirPlay Receiver.
+ */
+export const IBKR_GATEWAY_BASE_URL = "https://localhost:5001";

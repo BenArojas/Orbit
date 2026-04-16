@@ -196,5 +196,19 @@ jobs:
         with:
           tagName: ${{ github.ref_name }}
           releaseName: "Parallax ${{ github.ref_name }}"
+          releaseBody: |
+            ## Parallax ${{ github.ref_name }}
+
+            ### macOS
+            Download `Parallax_*_universal.dmg`.
+            **First launch:** right-click the app → Open (bypasses Gatekeeper — no code signing in v1).
+
+            ### Windows
+            Download `Parallax_*_x64-setup.exe` (recommended) or the `.msi` installer.
+            WebView2 is downloaded automatically if not already installed.
+
+            ### Data
+            All data (watchlists, settings, triggers) lives in `~/.parallax/`.
+            Safe to reinstall — your data is preserved.
           releaseDraft: true
           prerelease: false

@@ -23,10 +23,10 @@ import { useIbkrReadyTier } from "@/hooks/useIbkrReadyTier";
 
 // Colors per quadrant (matching the mockup)
 const QUADRANT_COLORS: Record<string, string> = {
-  leading: "var(--green)",
-  weakening: "var(--orange)",
-  lagging: "var(--red)",
-  improving: "var(--cyan)",
+  leading: "var(--clr-green)",
+  weakening: "var(--clr-orange)",
+  lagging: "var(--clr-red)",
+  improving: "var(--clr-cyan)",
 };
 
 export default function RRGPanel() {
@@ -47,7 +47,7 @@ export default function RRGPanel() {
         <span className="text-[11px] font-semibold tracking-wide text-[var(--text-2)]">
           Relative Rotation Graph
         </span>
-        <span className="rounded-full bg-[var(--cyan-glow)] px-2 py-0.5 text-[9px] font-medium text-[var(--cyan)]">
+        <span className="rounded-full bg-[var(--glow-cyan)] px-2 py-0.5 text-[9px] font-medium text-[var(--clr-cyan)]">
           vs SPY
         </span>
       </div>
@@ -68,16 +68,16 @@ export default function RRGPanel() {
         <div className="absolute left-1/2 top-0 bottom-0 w-px bg-[var(--border)]" />
 
         {/* Quadrant labels */}
-        <span className="absolute top-2 left-2.5 text-[8px] font-bold uppercase tracking-widest text-[var(--cyan)] opacity-25">
+        <span className="absolute top-2 left-2.5 text-[8px] font-bold uppercase tracking-widest text-[var(--clr-cyan)] opacity-25">
           Improving
         </span>
-        <span className="absolute top-2 right-2.5 text-[8px] font-bold uppercase tracking-widest text-[var(--green)] opacity-25">
+        <span className="absolute top-2 right-2.5 text-[8px] font-bold uppercase tracking-widest text-[var(--clr-green)] opacity-25">
           Leading
         </span>
-        <span className="absolute bottom-2 left-2.5 text-[8px] font-bold uppercase tracking-widest text-[var(--red)] opacity-25">
+        <span className="absolute bottom-2 left-2.5 text-[8px] font-bold uppercase tracking-widest text-[var(--clr-red)] opacity-25">
           Lagging
         </span>
-        <span className="absolute bottom-2 right-2.5 text-[8px] font-bold uppercase tracking-widest text-[var(--orange)] opacity-25">
+        <span className="absolute bottom-2 right-2.5 text-[8px] font-bold uppercase tracking-widest text-[var(--clr-orange)] opacity-25">
           Weakening
         </span>
 

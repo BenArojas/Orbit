@@ -22,6 +22,7 @@ from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel, Field
 
 from deps import get_db, get_ibkr
+from exceptions import IBKRError
 from services.db import DatabaseService
 from services.ibkr import IBKRService
 
@@ -83,7 +84,7 @@ async def put_watchlist_config(
     # dead overrides that will never apply.
     try:
         wl_id = await ibkr.resolve_watchlist_id(name)
-    except Exception:
+    except IBKRError:
         wl_id = None  # IBKR unreachable — allow the write but warn
         log.warning(
             "Could not verify watchlist '%s' in IBKR (IBKR may be offline) — saving anyway",

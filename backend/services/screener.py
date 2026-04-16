@@ -26,7 +26,7 @@ from constants import (
     FIELD_SYMBOL,
     FIELD_VOLUME,
 )
-from exceptions import ScannerUnavailableError
+from exceptions import IBKRError, ScannerUnavailableError
 from models import IbkrFilterItem, ScreenerResultRow, ScanResponse
 from services.ibkr import IBKRService
 
@@ -276,7 +276,7 @@ class ScreenerService:
                     cid = item.get("conid")
                     if cid:
                         quotes[int(cid)] = item
-            except Exception as exc:
+            except IBKRError as exc:
                 log.warning(
                     "Snapshot batch failed (batch %d, size %d): %s",
                     i // SNAPSHOT_BATCH_SIZE, len(batch), exc,

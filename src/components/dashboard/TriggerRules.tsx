@@ -187,15 +187,22 @@ function CreateRuleModal() {
   const resolveSymbol = useCallback(async () => {
     if (!form.symbol) return;
     setSymbolError(null);
+    const attempted = form.symbol.toUpperCase();
     try {
-      const result = await api.resolveConid(form.symbol.toUpperCase());
+      const result = await api.resolveConid(attempted);
       setForm((prev) => ({
         ...prev,
         conid: result.conid,
         symbol: result.symbol,
       }));
-    } catch {
-      setSymbolError(`Symbol "${form.symbol}" not found`);
+    } catch (err) {
+      const isNotFound =
+        err instanceof Error && err.message.toLowerCase().includes("not found");
+      setSymbolError(
+        isNotFound
+          ? `Symbol "${attempted}" not found`
+          : `Could not resolve "${attempted}" — check your connection and try again`,
+      );
     }
   }, [form.symbol]);
 
