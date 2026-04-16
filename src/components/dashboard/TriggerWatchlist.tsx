@@ -103,14 +103,16 @@ function TriggerHitItem({ hit }: { hit: TriggerHit }) {
 
 /** The trigger watchlist section in the sidebar */
 export default function TriggerWatchlist() {
+  // limit=200 matches all other consumers — TanStack Query deduplicates to one request.
+  // Slice client-side to cap the sidebar display.
   const { data: hits, isLoading, isError } = useQuery<TriggerHit[]>({
     queryKey: ["trigger-hits"],
-    queryFn: () => api.getTriggerHits(50),
+    queryFn: () => api.getTriggerHits(200),
     refetchInterval: 30_000,
   });
 
-  // Only show unacknowledged / recent hits
-  const activeHits = hits?.filter((h) => !h.moved_back) ?? [];
+  // Only show unacknowledged / recent hits (cap sidebar at 50)
+  const activeHits = (hits?.filter((h) => !h.moved_back) ?? []).slice(0, 50);
 
   return (
     <div className="flex flex-col">

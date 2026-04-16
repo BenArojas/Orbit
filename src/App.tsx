@@ -14,7 +14,7 @@
  * replaced by the Hub's global nav, and these pills become sub-tabs.
  */
 
-import { useEffect } from "react";
+import { lazy, Suspense, useEffect } from "react";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { queryClient } from "@/lib/query";
@@ -26,8 +26,24 @@ import { GatewayProvider } from "@/context/GatewayContext";
 import { IbkrReconnectBanner } from "@/components/gateway/IbkrReconnectBanner";
 import { HealthStrip } from "@/components/ui/HealthStrip";
 import { Toaster } from "@/components/ui/Toaster";
-import { DashboardPage, AnalysisPage, ScreenerPage, SettingsPage } from "@/pages";
+// Dashboard and Settings are small — keep them eager so the shell feels instant.
+import { DashboardPage, SettingsPage } from "@/pages";
+// Analysis and Screener are heavy (TradingView charts, screener logic).
+// Lazy-load so their JS is only parsed when the user first navigates there.
+const AnalysisPage = lazy(() => import("@/pages/AnalysisPage"));
+const ScreenerPage = lazy(() => import("@/pages/ScreenerPage"));
 import "./styles.css";
+
+/** Minimal full-screen skeleton shown while a lazy page chunk loads. */
+function PageSkeleton() {
+  return (
+    <div className="flex h-full items-center justify-center">
+      <span className="font-data text-[11px] text-[var(--text-3)] animate-pulse">
+        Loading…
+      </span>
+    </div>
+  );
+}
 
 /**
  * Global side-effects: settings hydration + WS trigger-alert bridge.
@@ -63,9 +79,17 @@ function ActivePage() {
     case "dashboard":
       return <DashboardPage />;
     case "analysis":
-      return <AnalysisPage />;
+      return (
+        <Suspense fallback={<PageSkeleton />}>
+          <AnalysisPage />
+        </Suspense>
+      );
     case "screener":
-      return <ScreenerPage />;
+      return (
+        <Suspense fallback={<PageSkeleton />}>
+          <ScreenerPage />
+        </Suspense>
+      );
     case "settings":
       return <SettingsPage />;
   }
