@@ -19,6 +19,7 @@
  */
 
 import { useState, useCallback } from "react";
+import { toast } from "sonner";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   api,
@@ -163,6 +164,7 @@ function NotificationsToggle() {
 
 function CreateRuleModal() {
   const [open, setOpen] = useState(false);
+  const [symbolError, setSymbolError] = useState<string | null>(null);
   const [form, setForm] = useState({
     name: "",
     symbol: "",
@@ -184,6 +186,7 @@ function CreateRuleModal() {
   // Resolve symbol to conid when the user types a symbol
   const resolveSymbol = useCallback(async () => {
     if (!form.symbol) return;
+    setSymbolError(null);
     try {
       const result = await api.resolveConid(form.symbol.toUpperCase());
       setForm((prev) => ({
@@ -192,7 +195,7 @@ function CreateRuleModal() {
         symbol: result.symbol,
       }));
     } catch {
-      // Symbol not found — will show validation error
+      setSymbolError(`Symbol "${form.symbol}" not found`);
     }
   }, [form.symbol]);
 
@@ -200,9 +203,11 @@ function CreateRuleModal() {
     mutationFn: (rule: TriggerRuleCreate) => api.createTriggerRule(rule),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["trigger-rules"] });
+      toast.success("Trigger rule created");
       setOpen(false);
       resetForm();
     },
+    onError: () => toast.error("Failed to create trigger rule"),
   });
 
   function resetForm() {
@@ -314,6 +319,11 @@ function CreateRuleModal() {
             {form.conid > 0 && (
               <span className="mt-0.5 block font-data text-[9px] text-[var(--clr-green)]">
                 conid: {form.conid}
+              </span>
+            )}
+            {symbolError && (
+              <span className="mt-0.5 block text-[9px] text-[var(--clr-red)]">
+                {symbolError}
               </span>
             )}
           </div>
@@ -469,7 +479,7 @@ function CreateRuleModal() {
 export default function TriggerRules() {
   const queryClient = useQueryClient();
 
-  const { data: rules, isLoading } = useQuery<TriggerRule[]>({
+  const { data: rules, isLoading, isError } = useQuery<TriggerRule[]>({
     queryKey: ["trigger-rules"],
     queryFn: () => api.getTriggerRules(),
     staleTime: 30_000,
@@ -492,6 +502,7 @@ export default function TriggerRules() {
     mutationFn: ({ id, enabled }: { id: number; enabled: boolean }) =>
       api.updateTriggerRule(id, { enabled }),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["trigger-rules"] }),
+    onError: () => toast.error("Failed to update trigger rule"),
   });
 
   // Delete rule
@@ -501,6 +512,7 @@ export default function TriggerRules() {
       queryClient.invalidateQueries({ queryKey: ["trigger-rules"] });
       queryClient.invalidateQueries({ queryKey: ["trigger-hits"] });
     },
+    onError: () => toast.error("Failed to delete trigger rule"),
   });
 
   function handleToggle(id: number, enabled: boolean) {
@@ -528,6 +540,10 @@ export default function TriggerRules() {
       {isLoading ? (
         <div className="flex items-center justify-center py-4">
           <span className="text-[10px] text-[var(--text-3)]">Loading...</span>
+        </div>
+      ) : isError ? (
+        <div className="flex items-center justify-center py-4">
+          <span className="text-[10px] text-[var(--clr-red)]">Failed to load rules</span>
         </div>
       ) : !rules || rules.length === 0 ? (
         <div className="flex items-center justify-center py-4">

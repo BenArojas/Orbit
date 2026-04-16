@@ -172,7 +172,7 @@ export default function AlertLog() {
 
   const [toast, setToast] = useState<ToastState | null>(null);
 
-  const { data: hits, isLoading } = useQuery<TriggerHit[]>({
+  const { data: hits, isLoading, isError } = useQuery<TriggerHit[]>({
     queryKey: ["trigger-hits"],
     queryFn: () => api.getTriggerHits(200),
     refetchInterval: 60_000,
@@ -229,6 +229,11 @@ export default function AlertLog() {
         {isLoading ? (
           <div className="flex h-full items-center justify-center">
             <span className="text-[10px] text-[var(--text-3)]">Loading...</span>
+          </div>
+        ) : isError ? (
+          <div className="flex h-full items-center justify-center gap-1.5">
+            <span className="text-[10px] text-[var(--clr-red)]">Failed to load alerts</span>
+            <span className="text-[10px] text-[var(--text-3)]">— will retry</span>
           </div>
         ) : !hits || hits.length === 0 ? (
           <div className="flex h-full items-center justify-center">

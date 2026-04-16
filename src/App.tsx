@@ -24,6 +24,7 @@ import { useWebSocket } from "@/hooks/useWebSocket";
 import { useTriggerAlerts } from "@/hooks/useTriggerAlerts";
 import { GatewayProvider } from "@/context/GatewayContext";
 import { IbkrReconnectBanner } from "@/components/gateway/IbkrReconnectBanner";
+import { Toaster } from "@/components/ui/Toaster";
 import { DashboardPage, AnalysisPage, ScreenerPage } from "@/pages";
 import "./styles.css";
 
@@ -151,6 +152,8 @@ export default function App() {
       <GatewayProvider>
         <TooltipProvider>
           <AppShell />
+          {/* Global toast overlay — rendered outside AppShell so it's always on top */}
+          <Toaster />
         </TooltipProvider>
       </GatewayProvider>
     </QueryClientProvider>

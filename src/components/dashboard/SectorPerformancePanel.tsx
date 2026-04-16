@@ -44,8 +44,17 @@ export default function SectorPerformancePanel() {
 
         {error && (
           <div className="flex items-center justify-center py-8">
-            <span className="text-xs text-[var(--red)]">
+            <span className="text-xs text-[var(--clr-red)]">
               Failed to load sector data
+            </span>
+          </div>
+        )}
+
+        {!isLoading && !error && sectors?.length === 0 && (
+          <div className="flex flex-col items-center justify-center gap-1 py-8">
+            <span className="text-[11px] text-[var(--text-3)]">No sector data available</span>
+            <span className="text-[10px] text-[var(--text-3)] opacity-60">
+              IBKR must be connected to load sector performance
             </span>
           </div>
         )}

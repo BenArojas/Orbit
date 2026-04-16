@@ -103,7 +103,7 @@ function TriggerHitItem({ hit }: { hit: TriggerHit }) {
 
 /** The trigger watchlist section in the sidebar */
 export default function TriggerWatchlist() {
-  const { data: hits, isLoading } = useQuery<TriggerHit[]>({
+  const { data: hits, isLoading, isError } = useQuery<TriggerHit[]>({
     queryKey: ["trigger-hits"],
     queryFn: () => api.getTriggerHits(50),
     refetchInterval: 30_000,
@@ -128,6 +128,10 @@ export default function TriggerWatchlist() {
       {isLoading ? (
         <div className="flex items-center justify-center py-6">
           <span className="text-[10px] text-[var(--text-3)]">Loading...</span>
+        </div>
+      ) : isError ? (
+        <div className="flex items-center justify-center py-6">
+          <span className="text-[10px] text-[var(--clr-red)]">Failed to load hits</span>
         </div>
       ) : activeHits.length === 0 ? (
         <div className="flex items-center justify-center py-6">
