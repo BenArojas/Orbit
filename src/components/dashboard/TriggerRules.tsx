@@ -23,6 +23,7 @@ import { toast } from "sonner";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   api,
+  ApiError,
   type TriggerRule,
   type TriggerRuleCreate,
   type TriggerHit,
@@ -160,6 +161,20 @@ function NotificationsToggle() {
   );
 }
 
+// ── Mutation error helper ──────────────────────────────────
+
+function mutationErrorMessage(action: string, err: unknown): string {
+  if (err instanceof ApiError) {
+    if (err.status === 401 || err.status === 403)
+      return `${action}: not authorized — reconnect to IBKR and try again`;
+    if (err.status === 429) return `${action}: rate limited — wait a moment and retry`;
+    if (err.status >= 400 && err.status < 500)
+      return err.message || `${action}: invalid request`;
+  }
+  if (err instanceof TypeError) return `${action}: cannot reach backend — check your connection`;
+  return `${action}: unexpected error`;
+}
+
 // ── Create Rule Modal ──────────────────────────────────────
 
 function CreateRuleModal() {
@@ -183,19 +198,29 @@ function CreateRuleModal() {
 
   const queryClient = useQueryClient();
 
-  // Resolve symbol to conid when the user types a symbol
+  // Resolve symbol to conid when the user presses Enter / clicks Resolve.
+  // `form.symbol` is captured into `attempted` at call time so the error
+  // message always reflects the symbol the request was made for, even if
+  // the field value changes before the response arrives.
   const resolveSymbol = useCallback(async () => {
-    if (!form.symbol) return;
+    const attempted = form.symbol.toUpperCase();
+    if (!attempted) return;
     setSymbolError(null);
     try {
-      const result = await api.resolveConid(form.symbol.toUpperCase());
+      const result = await api.resolveConid(attempted);
       setForm((prev) => ({
         ...prev,
         conid: result.conid,
         symbol: result.symbol,
       }));
-    } catch {
-      setSymbolError(`Symbol "${form.symbol}" not found`);
+    } catch (err) {
+      const isNotFound =
+        err instanceof ApiError && err.status === 404;
+      setSymbolError(
+        isNotFound
+          ? `Symbol "${attempted}" not found`
+          : `Could not resolve "${attempted}" — check your connection and try again`,
+      );
     }
   }, [form.symbol]);
 
@@ -207,7 +232,7 @@ function CreateRuleModal() {
       setOpen(false);
       resetForm();
     },
-    onError: () => toast.error("Failed to create trigger rule"),
+    onError: (err) => toast.error(mutationErrorMessage("Failed to create trigger rule", err)),
   });
 
   function resetForm() {
@@ -502,7 +527,7 @@ export default function TriggerRules() {
     mutationFn: ({ id, enabled }: { id: number; enabled: boolean }) =>
       api.updateTriggerRule(id, { enabled }),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["trigger-rules"] }),
-    onError: () => toast.error("Failed to update trigger rule"),
+    onError: (err) => toast.error(mutationErrorMessage("Failed to update trigger rule", err)),
   });
 
   // Delete rule
@@ -512,7 +537,7 @@ export default function TriggerRules() {
       queryClient.invalidateQueries({ queryKey: ["trigger-rules"] });
       queryClient.invalidateQueries({ queryKey: ["trigger-hits"] });
     },
-    onError: () => toast.error("Failed to delete trigger rule"),
+    onError: (err) => toast.error(mutationErrorMessage("Failed to delete trigger rule", err)),
   });
 
   function handleToggle(id: number, enabled: boolean) {

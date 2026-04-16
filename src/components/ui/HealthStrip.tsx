@@ -52,6 +52,8 @@ function useHealthDetails() {
   return useQuery<HealthDetails>({
     queryKey: ["health-details"],
     queryFn: fetchHealthDetails,
+    // 10 s — balances responsiveness with backend load; health checks are cheap
+    // but run multiple sub-checks (IBKR, Ollama, scanner, DB, triggers).
     refetchInterval: 10_000,
     retry: 2,
     staleTime: 8_000,

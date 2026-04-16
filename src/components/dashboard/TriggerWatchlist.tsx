@@ -90,7 +90,7 @@ function TriggerHitItem({ hit }: { hit: TriggerHit }) {
 
       {/* Actual value when triggered */}
       <div className="font-data text-right text-[11px] text-[var(--text-1)]">
-        {hit.actual_value.toFixed(1)}
+        {Number.isFinite(hit.actual_value) ? hit.actual_value.toFixed(1) : "—"}
       </div>
 
       {/* Threshold */}

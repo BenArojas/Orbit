@@ -16,6 +16,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useGatewayContext } from "@/context/GatewayContext";
+import { IBKR_GATEWAY_BASE_URL } from "@/config/endpoints";
 import type { WsMessage } from "@/hooks/useWebSocket";
 
 interface IbkrReconnectBannerProps {
@@ -56,7 +57,7 @@ export function IbkrReconnectBanner({ addHandler }: IbkrReconnectBannerProps) {
 
   if (!visible) return null;
 
-  const gatewayUrl = status?.gateway_url ?? "https://localhost:5000";
+  const gatewayUrl = status?.gateway_url ?? IBKR_GATEWAY_BASE_URL;
 
   return (
     <div

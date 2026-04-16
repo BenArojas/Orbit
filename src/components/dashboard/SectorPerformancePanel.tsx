@@ -79,11 +79,12 @@ function SectorRow({
   const ytd = sector.ytdPercent ?? 0;
   const isUp = ytd >= 0;
 
-  // Calculate bar width relative to max absolute value
-  const maxAbsYtd = Math.max(
-    ...sectors.map((s) => Math.abs(s.ytdPercent ?? 0)),
-    1 // prevent division by zero
-  );
+  // Calculate bar width relative to max absolute value.
+  // Guard against empty spread (Math.max() with no args returns -Infinity).
+  const maxAbsYtd =
+    sectors.length > 0
+      ? Math.max(...sectors.map((s) => Math.abs(s.ytdPercent ?? 0)), 1)
+      : 1;
   const barWidthPct = Math.min((Math.abs(ytd) / maxAbsYtd) * 50, 50); // max 50% of track
 
   return (

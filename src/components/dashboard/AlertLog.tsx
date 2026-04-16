@@ -175,6 +175,8 @@ export default function AlertLog() {
   const { data: hits, isLoading, isError } = useQuery<TriggerHit[]>({
     queryKey: ["trigger-hits"],
     queryFn: () => api.getTriggerHits(200),
+    // 60 s background refetch — new alerts arrive via WS invalidation (below),
+    // so this is only a safety net for missed events / stale data.
     refetchInterval: 60_000,
   });
 
