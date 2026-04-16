@@ -79,9 +79,17 @@ function ActivePage() {
     case "dashboard":
       return <DashboardPage />;
     case "analysis":
-      return <AnalysisPage />;
+      return (
+        <Suspense fallback={<PageSkeleton />}>
+          <AnalysisPage />
+        </Suspense>
+      );
     case "screener":
-      return <ScreenerPage />;
+      return (
+        <Suspense fallback={<PageSkeleton />}>
+          <ScreenerPage />
+        </Suspense>
+      );
     case "settings":
       return <SettingsPage />;
   }
