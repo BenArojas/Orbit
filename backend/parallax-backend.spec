@@ -137,7 +137,8 @@ exe = EXE(
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
-    upx=True,
+    # UPX disabled — compressed executables trigger antivirus false positives on Windows.
+    upx=False,
     upx_exclude=[],
     runtime_tmpdir=None,
     # console=False suppresses the terminal window on Windows in release builds.

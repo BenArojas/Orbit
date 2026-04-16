@@ -120,8 +120,11 @@ export function useWebSocket() {
         for (const handler of handlersRef.current) {
           handler(msg);
         }
-      } catch {
-        // Ignore malformed messages
+      } catch (err) {
+        // Malformed messages are discarded — log in dev so protocol mismatches are visible
+        if (import.meta.env.DEV) {
+          console.warn("[useWebSocket] malformed message dropped:", event.data, err);
+        }
       }
     };
 

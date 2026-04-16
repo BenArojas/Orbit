@@ -34,6 +34,7 @@ jobs:
       - uses: astral-sh/setup-uv@v5
         with:
           python-version: ${{ env.PYTHON_VERSION }}
+          enable-cache: true
 
       - name: Install backend dependencies + PyInstaller
         working-directory: backend
@@ -63,6 +64,7 @@ jobs:
       - uses: astral-sh/setup-uv@v5
         with:
           python-version: ${{ env.PYTHON_VERSION }}
+          enable-cache: true
 
       - name: Install backend dependencies + PyInstaller
         working-directory: backend
@@ -165,6 +167,7 @@ jobs:
       - uses: astral-sh/setup-uv@v5
         with:
           python-version: ${{ env.PYTHON_VERSION }}
+          enable-cache: true
 
       - name: Install backend dependencies + PyInstaller
         working-directory: backend
@@ -183,7 +186,7 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path src-tauri\binaries | Out-Null
-          Copy-Item dist-pyinstaller\parallax-backend.exe `
+          Copy-Item -Force dist-pyinstaller\parallax-backend.exe `
             src-tauri\binaries\parallax-backend-x86_64-pc-windows-msvc.exe
 
       - name: Install frontend dependencies
