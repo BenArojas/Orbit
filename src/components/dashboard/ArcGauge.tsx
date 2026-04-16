@@ -149,7 +149,8 @@ export default function ArcGaugeRow() {
 
   const vixConid = vixResolved?.conid;
 
-  // Fetch VIX quote for the VIX gauge (only once conid is resolved)
+  // Fetch VIX quote for the VIX gauge (only once conid is resolved).
+  // 15 s — fast enough to show intraday moves without hammering IBKR snapshots.
   const { data: vixQuote } = useQuery<QuoteResponse>({
     queryKey: ["quote", vixConid],
     queryFn: () => api.quote(vixConid!),
@@ -157,7 +158,8 @@ export default function ArcGaugeRow() {
     refetchInterval: 15_000,
   });
 
-  // Fetch trigger rules + hits for the Triggers gauge — local SQLite, always ok
+  // Fetch trigger rules + hits for the Triggers gauge — local SQLite, always ok.
+  // 30 s staleTime: rules change rarely; hitting SQLite every render is unnecessary.
   const { data: rules } = useQuery<TriggerRule[]>({
     queryKey: ["trigger-rules"],
     queryFn: () => api.getTriggerRules(),
