@@ -17,7 +17,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from starlette.middleware.cors import CORSMiddleware
 
-from config import FRONTEND_ORIGIN
+from config import FRONTEND_ORIGIN, TAURI_ORIGIN
 from exceptions import (
     AIError,
     GatewayError,
@@ -168,9 +168,13 @@ app = FastAPI(
 
 # ── CORS ─────────────────────────────────────────────────────
 
+# Allow both origins so the same backend binary works in dev (localhost:1420)
+# and in the packaged Tauri app (tauri://localhost).
+_cors_origins = list({FRONTEND_ORIGIN, TAURI_ORIGIN})
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[FRONTEND_ORIGIN],
+    allow_origins=_cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

@@ -17,8 +17,13 @@ IBKR_API_BASE_URL = f"{IBKR_GATEWAY_BASE_URL}/v1/api"
 BACKEND_HOST = os.getenv("BACKEND_HOST", "localhost")
 BACKEND_PORT = int(os.getenv("BACKEND_PORT", "8000"))
 
-# Tauri dev server (for CORS)
+# Tauri dev server (for CORS in development)
 FRONTEND_ORIGIN = os.getenv("FRONTEND_ORIGIN", "http://localhost:1420")
+
+# Tauri production webview origin — requests come from tauri://localhost when
+# the app is packaged. run.py sets FRONTEND_ORIGIN to this value at startup,
+# but we keep it here as a constant so main.py can always allow both origins.
+TAURI_ORIGIN = "tauri://localhost"
 
 # Ollama (local AI)
 # The Ollama server runs locally and exposes a REST API.

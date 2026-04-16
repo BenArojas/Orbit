@@ -24,6 +24,15 @@ __pycache__/
 # uv
 uv.lock
 
+# PyInstaller build artifacts — never commit binaries
+dist-pyinstaller/
+dist-pyinstaller-arm64/
+dist-pyinstaller-x86_64/
+build-pyinstaller/
+build-pyinstaller-arm64/
+build-pyinstaller-x86_64/
+src-tauri/binaries/
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

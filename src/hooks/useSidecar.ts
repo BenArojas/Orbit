@@ -4,8 +4,8 @@
  * In dev mode (npm run tauri dev), you typically run the backend manually:
  *   cd backend && uv run uvicorn main:app --reload --port 8000
  *
- * In production (npm run tauri build), this hook spawns the sidecar
- * automatically when the app launches and kills it on close.
+ * In production (npm run tauri build), this hook spawns the PyInstaller
+ * sidecar binary automatically on launch and kills it on close.
  *
  * The hook polls /health until the backend responds, so the UI can
  * show a "connecting..." state during startup.
@@ -28,15 +28,17 @@ interface UseSidecarReturn {
 }
 
 /**
- * Set to true during development when you run the backend manually.
- * When false, this hook spawns uvicorn as a child process.
- *
+ * True during `npm run tauri dev` — backend is run manually in that case.
  * In production builds, Tauri sets import.meta.env.DEV = false.
  */
 const DEV_MODE = import.meta.env.DEV;
 
-const HEALTH_POLL_INTERVAL = 1000; // 1 second
-const HEALTH_MAX_RETRIES = 30;     // 30 seconds max wait
+// Must match the `externalBin` entry in tauri.conf.json and the scope
+// entry in capabilities/default.json.
+const SIDECAR_NAME = "binaries/parallax-backend";
+
+const HEALTH_POLL_INTERVAL = 1000; // ms
+const HEALTH_MAX_RETRIES = 60;     // 60s — PyInstaller cold start can be slow
 
 export function useSidecar(): UseSidecarReturn {
   const [status, setStatus] = useState<SidecarStatus>(
@@ -45,7 +47,7 @@ export function useSidecar(): UseSidecarReturn {
   const [error, setError] = useState<string | null>(null);
   const childRef = useRef<Child | null>(null);
 
-  // ── Poll /health until the backend is up ──
+  // ── Poll /health until the backend is up ──────────────────────────────────
 
   const waitForBackend = useCallback(async () => {
     for (let i = 0; i < HEALTH_MAX_RETRIES; i++) {
@@ -61,14 +63,14 @@ export function useSidecar(): UseSidecarReturn {
       await new Promise((r) => setTimeout(r, HEALTH_POLL_INTERVAL));
     }
     setStatus("error");
-    setError("Backend did not start within 30 seconds");
+    setError("Backend did not start within 60 seconds");
   }, []);
 
-  // ── Spawn the sidecar process ──
+  // ── Spawn the sidecar process ─────────────────────────────────────────────
 
   useEffect(() => {
     if (DEV_MODE) {
-      // In dev mode, just poll until the manually-started backend responds
+      // In dev mode, just poll until the manually-started backend responds.
       waitForBackend();
       return;
     }
@@ -77,13 +79,10 @@ export function useSidecar(): UseSidecarReturn {
 
     async function spawn() {
       try {
-        // Spawn: uv run uvicorn main:app --host 127.0.0.1 --port 8000
-        // The working directory is the backend/ folder relative to the binary.
-        const command = Command.create("uv", [
-          "run", "uvicorn", "main:app",
-          "--host", "127.0.0.1",
-          "--port", "8000",
-        ]);
+        // Production: launch the PyInstaller-bundled sidecar binary.
+        // Tauri resolves the binary path and appends the target triple suffix
+        // automatically based on the current platform.
+        const command = Command.sidecar(SIDECAR_NAME);
 
         command.stdout.on("data", (line) => {
           console.log("[sidecar]", line);
@@ -101,7 +100,9 @@ export function useSidecar(): UseSidecarReturn {
         const child = await command.spawn();
         childRef.current = child;
 
-        // Wait for the backend to respond to /health
+        // Wait for the backend to respond to /health.
+        // PyInstaller cold-start includes Python interpreter extraction — allow
+        // up to 60 seconds on slow machines or first launch.
         await waitForBackend();
       } catch (err) {
         if (!cancelled) {
@@ -115,12 +116,8 @@ export function useSidecar(): UseSidecarReturn {
 
     return () => {
       cancelled = true;
-      // Kill the sidecar when the app closes
-      if (childRef.current) {
-        childRef.current.kill().catch(() => {
-          // Best effort — process may already be dead
-        });
-      }
+      // Kill the sidecar when the app closes — best effort.
+      childRef.current?.kill().catch(() => {});
     };
   }, [waitForBackend]);
 
