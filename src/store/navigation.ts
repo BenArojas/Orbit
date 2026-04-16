@@ -8,7 +8,7 @@
 
 import { create } from "zustand";
 
-export type Screen = "dashboard" | "analysis" | "screener";
+export type Screen = "dashboard" | "analysis" | "screener" | "settings";
 
 interface NavigationState {
   /** Currently active screen */

@@ -24,8 +24,9 @@ import { useWebSocket } from "@/hooks/useWebSocket";
 import { useTriggerAlerts } from "@/hooks/useTriggerAlerts";
 import { GatewayProvider } from "@/context/GatewayContext";
 import { IbkrReconnectBanner } from "@/components/gateway/IbkrReconnectBanner";
+import { HealthStrip } from "@/components/ui/HealthStrip";
 import { Toaster } from "@/components/ui/Toaster";
-import { DashboardPage, AnalysisPage, ScreenerPage } from "@/pages";
+import { DashboardPage, AnalysisPage, ScreenerPage, SettingsPage } from "@/pages";
 import "./styles.css";
 
 /**
@@ -52,6 +53,7 @@ const NAV_ITEMS: { id: Screen; label: string }[] = [
   { id: "dashboard", label: "Dashboard" },
   { id: "analysis", label: "Analysis" },
   { id: "screener", label: "Screener" },
+  { id: "settings", label: "Settings" },
 ];
 
 /** Renders the active page based on navigation state */
@@ -64,6 +66,8 @@ function ActivePage() {
       return <AnalysisPage />;
     case "screener":
       return <ScreenerPage />;
+    case "settings":
+      return <SettingsPage />;
   }
 }
 
@@ -139,6 +143,9 @@ function AppShell() {
       <main className="flex-1 overflow-hidden">
         <ActivePage />
       </main>
+
+      {/* ── Health status strip (7.5) ── */}
+      <HealthStrip />
     </div>
   );
 }

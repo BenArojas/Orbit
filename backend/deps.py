@@ -54,6 +54,11 @@ def get_gateway(request: Request) -> GatewayLifecycle:
     return request.app.state.gateway
 
 
+def get_scanner(request: Request) -> ScannerService:
+    """Get the background scanner singleton stashed on app.state during lifespan."""
+    return request.app.state.scanner
+
+
 async def require_ibkr_auth(ibkr: IBKRService = Depends(get_ibkr)) -> IBKRService:
     """
     Dependency that gates IBKR-backed routes behind authentication.
