@@ -15,6 +15,10 @@ import ssl
 import time
 from typing import Any, Awaitable, Callable
 
+# After this many consecutive tickle failures we declare the session dropped
+# and broadcast a WS event so the frontend can prompt re-auth immediately.
+TICKLE_FAIL_THRESHOLD = 3
+
 import httpx
 import websockets
 
@@ -142,7 +146,11 @@ class IBKRService:
             is_valid = is_authenticated and is_connected
 
             self.state.authenticated = is_valid
-            if not is_valid:
+            if is_valid:
+                # Clear any prior disconnect flag — user successfully re-authed
+                self.state.session_dropped = False
+                self.state.tickle_fail_count = 0
+            else:
                 self.state.session_token = None
 
             return {
@@ -235,13 +243,40 @@ class IBKRService:
             log.info("Tickle loop stopped.")
 
     async def _tickle_loop(self) -> None:
-        """Background loop — calls tickle every N seconds."""
+        """Background loop — calls tickle every N seconds.
+
+        Consecutive failures increment state.tickle_fail_count.  Once the count
+        reaches TICKLE_FAIL_THRESHOLD we mark the session as dropped and
+        broadcast a ``session_dropped`` WS event so the frontend can prompt
+        the user to re-authenticate immediately (no polling delay).
+        """
         while True:
             try:
                 await asyncio.sleep(IBKR_TICKLE_INTERVAL)
                 success = await self.tickle()
-                if not success:
-                    log.warning("Tickle failed — IBKR session may have expired.")
+                if success:
+                    # Reset failure tracking on any successful tickle
+                    self.state.tickle_fail_count = 0
+                    self.state.session_dropped = False
+                else:
+                    self.state.tickle_fail_count += 1
+                    log.warning(
+                        "Tickle failed (%d/%d) — IBKR session may have expired.",
+                        self.state.tickle_fail_count,
+                        TICKLE_FAIL_THRESHOLD,
+                    )
+                    if (
+                        self.state.tickle_fail_count >= TICKLE_FAIL_THRESHOLD
+                        and not self.state.session_dropped
+                    ):
+                        self.state.session_dropped = True
+                        log.error(
+                            "IBKR session declared dropped after %d consecutive"
+                            " tickle failures. Broadcasting session_dropped event.",
+                            self.state.tickle_fail_count,
+                        )
+                        if hasattr(self, "_broadcast") and self._broadcast:
+                            await self._broadcast({"type": "session_dropped"})
             except asyncio.CancelledError:
                 break
             except (OSError, ConnectionError, IBKRConnectionError) as exc:

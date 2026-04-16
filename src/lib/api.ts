@@ -59,6 +59,8 @@ export interface GatewayStatusResponse {
   authenticated: boolean;
   auth_required: boolean;
   auth_message: string;
+  /** True when the session was previously authenticated but has since dropped. */
+  session_dropped?: boolean;
   gateway_url: string;
   gateway_home: string;
   error: string | null;

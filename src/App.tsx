@@ -20,15 +20,21 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { queryClient } from "@/lib/query";
 import { useNavigationStore, useSettingsStore, type Screen } from "@/store";
 import { useSidecar } from "@/hooks/useSidecar";
+import { useWebSocket } from "@/hooks/useWebSocket";
+import { useTriggerAlerts } from "@/hooks/useTriggerAlerts";
 import { GatewayProvider } from "@/context/GatewayContext";
+import { IbkrReconnectBanner } from "@/components/gateway/IbkrReconnectBanner";
 import { DashboardPage, AnalysisPage, ScreenerPage } from "@/pages";
 import "./styles.css";
 
 /**
  * Global side-effects: settings hydration + WS trigger-alert bridge.
  * Mounted inside the providers so the stores are available.
+ *
+ * Returns addHandler so the reconnect banner can subscribe to WS events
+ * through the same shared socket connection.
  */
-function GlobalEffects() {
+function useGlobalEffects() {
   const loadSettings = useSettingsStore((s) => s.loadSettings);
   const { addHandler } = useWebSocket();
 
@@ -38,7 +44,7 @@ function GlobalEffects() {
 
   useTriggerAlerts(addHandler);
 
-  return null;
+  return { addHandler };
 }
 
 const NAV_ITEMS: { id: Screen; label: string }[] = [
@@ -84,55 +90,68 @@ function ConnectionStatus() {
   );
 }
 
-export default function App() {
+/**
+ * AppShell — renders nav, reconnect banner, and active page.
+ * Must be a child of GatewayProvider so it can read gateway context.
+ */
+function AppShell() {
   const { activeScreen, navigate } = useNavigationStore();
+  const { addHandler } = useGlobalEffects();
 
+  return (
+    <div className="flex h-screen flex-col overflow-hidden">
+      {/* ── Nav bar (44px) ── */}
+      <nav className="relative z-10 flex h-11 items-center border-b border-border bg-gradient-to-b from-[var(--bg-1)]/95 to-[var(--bg-1)] px-5">
+        {/* Cyan glow line */}
+        <div className="absolute bottom-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-[var(--clr-cyan)] to-transparent opacity-30" />
+
+        {/* Logo */}
+        <span className="text-[15px] font-extrabold tracking-[3px] text-gradient-brand">
+          PARALLAX
+        </span>
+
+        {/* Pill navigation — centered */}
+        <div className="mx-auto flex gap-0.5 rounded-[22px] border border-border bg-[var(--bg-2)] p-[3px]">
+          {NAV_ITEMS.map(({ id, label }) => (
+            <button
+              key={id}
+              onClick={() => navigate(id)}
+              className={`rounded-[18px] px-5 py-[5px] text-[11px] font-medium transition-all ${
+                id === activeScreen
+                  ? "bg-[var(--bg-4)] text-foreground shadow-[0_0_12px_var(--glow-cyan)]"
+                  : "text-[var(--text-3)] hover:text-[var(--text-2)]"
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+
+        {/* Connection status */}
+        <ConnectionStatus />
+      </nav>
+
+      {/* ── IBKR session-dropped banner (7.1) ── */}
+      <IbkrReconnectBanner addHandler={addHandler} />
+
+      {/* ── Page content ── */}
+      <main className="flex-1 overflow-hidden">
+        <ActivePage />
+      </main>
+    </div>
+  );
+}
+
+export default function App() {
   return (
     <QueryClientProvider client={queryClient}>
       {/* GatewayProvider must be inside QueryClientProvider so useGateway
           can use TanStack Query internally if needed, and so all child
           components can call useIbkrReady() to gate IBKR queries. */}
       <GatewayProvider>
-      <TooltipProvider>
-        <GlobalEffects />
-        <div className="flex h-screen flex-col overflow-hidden">
-          {/* ── Nav bar (44px) ── */}
-          <nav className="relative z-10 flex h-11 items-center border-b border-border bg-gradient-to-b from-[var(--bg-1)]/95 to-[var(--bg-1)] px-5">
-            {/* Cyan glow line */}
-            <div className="absolute bottom-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-[var(--clr-cyan)] to-transparent opacity-30" />
-
-            {/* Logo */}
-            <span className="text-[15px] font-extrabold tracking-[3px] text-gradient-brand">
-              PARALLAX
-            </span>
-
-            {/* Pill navigation — centered */}
-            <div className="mx-auto flex gap-0.5 rounded-[22px] border border-border bg-[var(--bg-2)] p-[3px]">
-              {NAV_ITEMS.map(({ id, label }) => (
-                <button
-                  key={id}
-                  onClick={() => navigate(id)}
-                  className={`rounded-[18px] px-5 py-[5px] text-[11px] font-medium transition-all ${
-                    id === activeScreen
-                      ? "bg-[var(--bg-4)] text-foreground shadow-[0_0_12px_var(--glow-cyan)]"
-                      : "text-[var(--text-3)] hover:text-[var(--text-2)]"
-                  }`}
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
-
-            {/* Connection status */}
-            <ConnectionStatus />
-          </nav>
-
-          {/* ── Page content ── */}
-          <main className="flex-1 overflow-hidden">
-            <ActivePage />
-          </main>
-        </div>
-      </TooltipProvider>
+        <TooltipProvider>
+          <AppShell />
+        </TooltipProvider>
       </GatewayProvider>
     </QueryClientProvider>
   );

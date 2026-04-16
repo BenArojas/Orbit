@@ -27,6 +27,8 @@ interface UseGatewayReturn {
   needsLogin: boolean;
   /** Is a download/setup in progress? */
   isProvisioning: boolean;
+  /** True when a previously-authenticated session has since dropped. */
+  sessionDropped: boolean;
   /** Trigger first-time provisioning (download JRE + Gateway) */
   provision: (force?: boolean) => Promise<void>;
   /** Start the Gateway process */
@@ -59,6 +61,7 @@ export function useGateway(): UseGatewayReturn {
   const isRunning = status?.running ?? false;
   const isAuthenticated = status?.authenticated ?? false;
   const needsLogin = status?.auth_required ?? false;
+  const sessionDropped = status?.session_dropped ?? false;
 
   // ── Polling ──────────────────────────────────────────────
 
@@ -151,6 +154,7 @@ export function useGateway(): UseGatewayReturn {
     isAuthenticated,
     needsLogin,
     isProvisioning,
+    sessionDropped,
     provision,
     start,
     stop,
