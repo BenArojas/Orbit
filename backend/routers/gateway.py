@@ -96,6 +96,9 @@ async def gateway_status(
     status["authenticated"] = authenticated
     status["auth_required"] = status["running"] and not authenticated
     status["auth_message"] = auth_message
+    # Expose mid-session disconnect flag — the frontend uses this to show a
+    # targeted "session expired" banner instead of the generic login prompt.
+    status["session_dropped"] = ibkr.state.session_dropped
     return status
 
 

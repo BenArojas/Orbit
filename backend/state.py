@@ -19,6 +19,12 @@ class IBKRState(BaseModel):
     authenticated: bool = False
     session_token: Optional[str] = None
 
+    # Disconnect detection
+    # Set to True after TICKLE_FAIL_THRESHOLD consecutive tickle failures while
+    # previously authenticated. Cleared when the user re-authenticates.
+    session_dropped: bool = False
+    tickle_fail_count: int = 0
+
     # WebSocket — IBKR gateway connection
     ws_connected: bool = False
     ibkr_ws: Any = None  # websockets.WebSocketClientProtocol (Any to avoid import)
@@ -38,6 +44,8 @@ class IBKRState(BaseModel):
         """Clear all session state (on logout or disconnect)."""
         self.authenticated = False
         self.session_token = None
+        self.session_dropped = False
+        self.tickle_fail_count = 0
         self.ws_connected = False
         self.ibkr_ws = None
         self.ws_subscriptions.clear()

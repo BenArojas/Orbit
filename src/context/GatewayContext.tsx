@@ -24,6 +24,8 @@ interface GatewayContextValue {
   isAuthenticated: boolean;
   needsLogin: boolean;
   isProvisioning: boolean;
+  /** True when a previously-authenticated session has since dropped. */
+  sessionDropped: boolean;
   provision: (force?: boolean) => Promise<void>;
   start: () => Promise<void>;
   stop: () => Promise<void>;
@@ -41,6 +43,13 @@ export function GatewayProvider({ children }: { children: ReactNode }) {
       {children}
     </GatewayContext.Provider>
   );
+}
+
+/** Returns true when a previously-authenticated IBKR session has since dropped. */
+export function useSessionDropped(): boolean {
+  const ctx = useContext(GatewayContext);
+  if (!ctx) return false;
+  return ctx.sessionDropped;
 }
 
 /** Full gateway context — use in GatewaySetup and other gateway-aware UI. */
