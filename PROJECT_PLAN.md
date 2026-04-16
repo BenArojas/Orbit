@@ -1,7 +1,7 @@
 # Parallax — Project Plan
 
 > Last updated: 2026-04-16
-> Status: Phase 1–7 (7.1–7.6) complete. 7.7 (release packaging) + Phase 8 remaining.
+> Status: Phase 1–7 complete. Phase 8 (E2E testing) remaining.
 ---
 
 ## IBKR Gateway — What We Learned (2026-04-14)
@@ -191,7 +191,7 @@ These are locked in. Don't revisit unless something breaks.
 
 ---
 
-### Phase 7: Polish + Integration — IN PROGRESS (7.7 remaining)
+### Phase 7: Polish + Integration — COMPLETE
 
 > Goal: Everything works together, feels professional.
 
@@ -203,7 +203,7 @@ These are locked in. Don't revisit unless something breaks.
 | 7.4 | Performance optimization | Both | DONE | 7.4a: query dedup + `useIbkrReadyTier` stagger hook. 7.4b: React.lazy() code splitting for AnalysisPage + ScreenerPage. 7.4c: `@tanstack/react-virtual` for WatchlistSidebar |
 | 7.5 | Health status strip + diagnostics | Both | DONE | 🟢/🟡/🔴 strip in shell. Modal: IBKR Gateway, Ollama, Scanner, Database, Background Triggers — plain-English status. "Copy diagnostics" → minimal JSON to clipboard only. No log viewer |
 | 7.6 | Empty states | Both | DONE | Shared `<EmptyState>` component. Covers: empty watchlist, chart no symbol, scanner pre-run + zero results, empty trigger list, AI chat no history (prompt chips), empty alert log |
-| 7.7 | Release packaging | Both | TODO | Tauri bundler: macOS universal .dmg (Intel + ARM), Windows .msi. PyInstaller sidecar → single binary in Tauri resources. Code signing: Apple notarization required; Windows EV cert optional. Distribution via GitHub Releases (private). No auto-updater in v1. Fresh-install smoke test on clean VM. |
+| 7.7 | Release packaging | Both | DONE | PyInstaller `--onefile` sidecar (run.py entry point). `scripts/build-backend.sh` + `.ps1` for local builds. macOS universal .dmg via GitHub Actions lipo (arm64 on macos-14 + x86_64 on macos-13). Windows NSIS + MSI on windows-latest. `.github/workflows/release.yml` — push `v*.*.*` tag → CI builds + draft GitHub Release. No code signing (no paid certs). CORS updated for `tauri://localhost`. `src-tauri/binaries/` gitignored. |
 
 ---
 
