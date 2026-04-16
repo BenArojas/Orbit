@@ -15,6 +15,7 @@
  */
 
 import { useEffect, useRef, useState } from "react";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import { useGatewayContext } from "@/context/GatewayContext";
 import { IBKR_GATEWAY_BASE_URL } from "@/config/endpoints";
 import type { WsMessage } from "@/hooks/useWebSocket";
@@ -87,10 +88,13 @@ export function IbkrReconnectBanner({ addHandler }: IbkrReconnectBannerProps) {
 
       {/* Actions */}
       <div className="flex shrink-0 items-center gap-3">
-        <a
-          href={gatewayUrl}
-          target="_blank"
-          rel="noopener noreferrer"
+        <button
+          type="button"
+          onClick={() => {
+            openUrl(gatewayUrl).catch((err) => {
+              console.error("Failed to open IBKR login URL:", err);
+            });
+          }}
           className="rounded border px-3 py-1 font-medium transition-colors hover:opacity-80"
           style={{
             borderColor: "var(--clr-orange)",
@@ -98,7 +102,7 @@ export function IbkrReconnectBanner({ addHandler }: IbkrReconnectBannerProps) {
           }}
         >
           Open IBKR Login
-        </a>
+        </button>
         <button
           className="text-[var(--text-3)] transition-colors hover:text-[var(--text-2)]"
           onClick={() => {

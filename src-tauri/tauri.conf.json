@@ -55,13 +55,7 @@
   },
   "plugins": {
     "shell": {
-      "open": true,
-      "scope": [
-        {
-          "name": "parallax-backend",
-          "sidecar": true
-        }
-      ]
+      "open": true
     }
   }
 }

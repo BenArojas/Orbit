@@ -18,6 +18,7 @@
  */
 
 import { useEffect, useRef } from "react";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import { useGatewayContext } from "@/context/GatewayContext";
 import type { GatewayState } from "@/lib/api";
 
@@ -245,19 +246,32 @@ export function GatewaySetup() {
               {status.auth_message}
             </p>
           )}
-          {/* D3: login link only active when gateway is running */}
-          <a
-            href={status.gateway_url}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="inline-block rounded-md border px-3 py-1.5 text-[11px] font-medium transition-colors hover:bg-[var(--bg-2)]"
-            style={{
-              borderColor: needsLogin ? "var(--clr-orange)" : "var(--clr-cyan)",
-              color: needsLogin ? "var(--clr-orange)" : "var(--clr-cyan)",
-            }}
-          >
-            {needsLogin ? "Open IBKR Login" : "Open Gateway"}
-          </a>
+          {/* Login button — only shown when re-auth is required.
+              Hidden when already authenticated because opening the gateway
+              URL would just land on the login page again (the session cookie
+              isn't shared with a freshly-opened browser tab).
+              Tauri v2 blocks <a target="_blank"> inside the webview — we must
+              call the opener plugin explicitly to open the URL in the user's
+              default browser. */}
+          {needsLogin && (
+            <button
+              type="button"
+              onClick={() => {
+                if (status.gateway_url) {
+                  openUrl(status.gateway_url).catch((err) => {
+                    console.error("Failed to open gateway URL:", err);
+                  });
+                }
+              }}
+              className="inline-block rounded-md border px-3 py-1.5 text-[11px] font-medium transition-colors hover:bg-[var(--bg-2)]"
+              style={{
+                borderColor: "var(--clr-orange)",
+                color: "var(--clr-orange)",
+              }}
+            >
+              Open IBKR Login
+            </button>
+          )}
         </div>
       )}
 

@@ -239,23 +239,48 @@ async def test_gateway_status_includes_session_dropped():
     GET /gateway/status response includes session_dropped reflecting IBKRState.
 
     Uses FastAPI's TestClient against the app to exercise the full route.
+
+    Two env-isolation concerns:
+      1. `app.state.ibkr` is only populated by the FastAPI lifespan, which
+         runs on `__enter__` of the TestClient context manager — so state
+         mutation must happen inside the `with` block.
+      2. When the gateway is running, the route calls `ibkr.auth_status()`
+         which, on success, clears `session_dropped`. If the developer has
+         a real gateway running on localhost:5001 (common during dev), this
+         clears the flag before the response is built and the assertion
+         fails. We patch `gw.status()` to report not running so the route
+         skips the auth probe and returns the raw flag.
     """
     from fastapi.testclient import TestClient
     from main import app
 
-    # Pre-configure the IBKR service state to simulate a dropped session
-    ibkr_svc = app.state.ibkr
-    ibkr_svc.state.session_dropped = True
-    ibkr_svc.state.authenticated = False
-
     with TestClient(app, raise_server_exceptions=False) as client:
-        resp = client.get("/gateway/status")
+        # Pre-configure the IBKR service state to simulate a dropped session
+        ibkr_svc = app.state.ibkr
+        gw_svc = app.state.gateway
 
-    # The route always returns 200 (even when gateway is down)
-    assert resp.status_code == 200
-    body = resp.json()
-    assert "session_dropped" in body
-    assert body["session_dropped"] is True
+        ibkr_svc.state.session_dropped = True
+        ibkr_svc.state.authenticated = False
 
-    # Cleanup
-    ibkr_svc.state.session_dropped = False
+        # Force the "gateway not running" branch so auth_status() is skipped
+        fake_status = {
+            "state": "not_provisioned",
+            "running": False,
+            "provisioned": False,
+            "error": None,
+            "progress": None,
+            "gateway_url": "https://localhost:5001",
+        }
+
+        with patch.object(gw_svc, "status", return_value=fake_status):
+            try:
+                resp = client.get("/gateway/status")
+
+                # The route always returns 200 (even when gateway is down)
+                assert resp.status_code == 200
+                body = resp.json()
+                assert "session_dropped" in body
+                assert body["session_dropped"] is True
+            finally:
+                # Cleanup — leave the shared app state clean for subsequent tests
+                ibkr_svc.state.session_dropped = False

@@ -298,32 +298,33 @@ class TestGatewayStart:
 
     @pytest.mark.asyncio
     async def test_start_requires_provisioning(self, tmp_path):
+        """When Gateway isn't running externally and not provisioned, start() raises."""
         gw = GatewayLifecycle(gateway_home=str(tmp_path))
-        with pytest.raises(GatewayNotProvisionedError):
-            await gw.start()
+        # Force the "not running externally" branch so we reach the
+        # is_provisioned() check. Without this mock the test would hit the
+        # real localhost:5001 if the user has a Gateway running.
+        with patch.object(gw, "_is_gateway_healthy", AsyncMock(return_value=False)):
+            with pytest.raises(GatewayNotProvisionedError):
+                await gw.start()
 
     @pytest.mark.asyncio
     async def test_start_detects_external_gateway(self, tmp_path):
         """If Gateway is already running (Docker/manual), just report RUNNING."""
         gw = GatewayLifecycle(gateway_home=str(tmp_path))
-        gw._http = AsyncMock()
-        mock_resp = MagicMock()
-        mock_resp.status_code = 200
-        gw._http.get = AsyncMock(return_value=mock_resp)
-
-        await gw.start()
+        with patch.object(gw, "_is_gateway_healthy", AsyncMock(return_value=True)):
+            await gw.start()
         assert gw.state == GatewayState.RUNNING
 
     @pytest.mark.asyncio
     async def test_start_treats_401_as_running_gateway(self, tmp_path):
-        """401 from auth/status means the Gateway is up but login is still required."""
-        gw = GatewayLifecycle(gateway_home=str(tmp_path))
-        gw._http = AsyncMock()
-        mock_resp = MagicMock()
-        mock_resp.status_code = 401
-        gw._http.get = AsyncMock(return_value=mock_resp)
+        """401 from auth/status means the Gateway is up but login is still required.
 
-        await gw.start()
+        Verified at a unit level in TestHealthProbeMethod; here we just confirm
+        start() short-circuits when the healthy probe returns True.
+        """
+        gw = GatewayLifecycle(gateway_home=str(tmp_path))
+        with patch.object(gw, "_is_gateway_healthy", AsyncMock(return_value=True)):
+            await gw.start()
         assert gw.state == GatewayState.RUNNING
 
     @pytest.mark.asyncio
@@ -337,16 +338,20 @@ class TestGatewayStart:
         conf = root_dir / "conf.yaml"
         conf.write_text("listenPort: 5000\nlistenSsl: true\n")
 
-        gw._http = AsyncMock()
-        gw._http.get = AsyncMock(side_effect=[
-            httpx.ConnectError("refused"),
-            MagicMock(status_code=200),
-        ])
         run_script = gw.home / "bin" / "run.sh"
         run_script.parent.mkdir(parents=True, exist_ok=True)
         run_script.write_text("#!/bin/sh\n")
 
-        with patch("services.gateway.subprocess") as mock_sub:
+        # _is_gateway_healthy is called twice inside start(): first as the
+        # "already running externally?" early-exit probe (must return False so
+        # we proceed), then inside the 45s health-wait loop (must return True
+        # so the loop exits successfully).
+        health_sequence = AsyncMock(side_effect=[False] + [True] * 50)
+
+        with patch("services.gateway.subprocess") as mock_sub, \
+             patch.object(gw, "_is_gateway_healthy", health_sequence), \
+             patch.object(gw, "_is_port_in_use", return_value=False), \
+             patch.object(gw, "_warmup_gateway", AsyncMock()):
             mock_proc = MagicMock()
             mock_proc.poll.return_value = None
             mock_sub.Popen.return_value = mock_proc
@@ -371,16 +376,19 @@ class TestGatewayStart:
         _make_fake_gateway(gw.home)
         gw.reset_conf_yaml()
 
-        gw._http = AsyncMock()
-        gw._http.get = AsyncMock(side_effect=[
-            httpx.ConnectError("refused"),
-            MagicMock(status_code=200),
-        ])
         run_script = gw.home / "bin" / "run.sh"
         run_script.parent.mkdir(parents=True, exist_ok=True)
         run_script.write_text("#!/bin/sh\n")
 
-        with patch("services.gateway.subprocess") as mock_sub:
+        # See test_start_syncs_existing_conf_before_launch for why we use a
+        # sequence: first call = "external gateway check" (False), subsequent
+        # calls = "health loop after spawn" (True).
+        health_sequence = AsyncMock(side_effect=[False] + [True] * 50)
+
+        with patch("services.gateway.subprocess") as mock_sub, \
+             patch.object(gw, "_is_gateway_healthy", health_sequence), \
+             patch.object(gw, "_is_port_in_use", return_value=False), \
+             patch.object(gw, "_warmup_gateway", AsyncMock()):
             mock_proc = MagicMock()
             mock_proc.poll.return_value = None
             mock_sub.Popen.return_value = mock_proc
