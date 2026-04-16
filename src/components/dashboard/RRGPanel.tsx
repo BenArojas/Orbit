@@ -88,7 +88,7 @@ export default function RRGPanel() {
           RS-Momentum
         </span>
 
-        {/* Loading / Error */}
+        {/* Loading / Error / Empty */}
         {isLoading && (
           <div className="absolute inset-0 flex items-center justify-center">
             <span className="text-xs text-[var(--text-3)]">Loading RRG...</span>
@@ -96,7 +96,15 @@ export default function RRGPanel() {
         )}
         {error && (
           <div className="absolute inset-0 flex items-center justify-center">
-            <span className="text-xs text-[var(--red)]">Failed to load RRG</span>
+            <span className="text-xs text-[var(--clr-red)]">Failed to load RRG</span>
+          </div>
+        )}
+        {!isLoading && !error && rrg?.length === 0 && (
+          <div className="absolute inset-0 flex flex-col items-center justify-center gap-1">
+            <span className="text-[11px] text-[var(--text-3)]">No RRG data available</span>
+            <span className="text-[10px] text-[var(--text-3)] opacity-60">
+              Connect IBKR to see sector rotation
+            </span>
           </div>
         )}
 
