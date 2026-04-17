@@ -101,7 +101,7 @@ export function IbkrReconnectBanner({ addHandler }: IbkrReconnectBannerProps) {
               console.error("Failed to open IBKR login URL:", err);
             });
           }}
-          className="rounded border px-3 py-1 font-medium transition-colors hover:opacity-80"
+          className="cursor-pointer rounded border px-3 py-1 font-medium transition-colors hover:opacity-80"
           style={{
             borderColor: "var(--clr-orange)",
             color: "var(--clr-orange)",
@@ -110,7 +110,7 @@ export function IbkrReconnectBanner({ addHandler }: IbkrReconnectBannerProps) {
           Open IBKR Login
         </button>
         <button
-          className="text-[var(--text-3)] transition-colors hover:text-[var(--text-2)]"
+          className="cursor-pointer text-[var(--text-3)] transition-colors hover:text-[var(--text-2)]"
           onClick={() => {
             dismissedRef.current = true;
             setVisible(false);

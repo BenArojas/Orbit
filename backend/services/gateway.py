@@ -700,6 +700,84 @@ class GatewayLifecycle:
         log.info("Gateway stopped")
         self.state = GatewayState.PROVISIONED
 
+    # ── Factory reset helpers ───────────────────────────────────
+    #
+    # A "factory reset" nukes the IBKR Gateway's on-disk session state while
+    # preserving the managed JRE and the Gateway binaries (so we don't have
+    # to re-download ~100 MB on every reset).
+    #
+    # What we delete (surgical):
+    #   - root/logs/         → Jetty + gateway server logs
+    #   - root/Jts/          → IBKR Trader Workstation session dir (if present)
+    #   - root/*.cookie      → any cookie files the gateway persisted
+    #   - root/*.session     → any session artefacts
+    #
+    # What we KEEP:
+    #   - jre/                 (our managed JRE — reprovision-only territory)
+    #   - bin/, build/, dist/, doc/  (IBKR binaries)
+    #   - root/conf.yaml       (our generated config — gateway needs it to start)
+    #   - root/webapps/, root/etc/  (jetty config/webapps that ship in the zip)
+    #
+    # If the surgical cleanup proves insufficient in the field, the fallback
+    # is /gateway/reprovision which nukes and redownloads everything.
+
+    def clear_session_files(self) -> list[str]:
+        """
+        Delete IBKR session state files from root/ without touching binaries
+        or conf.yaml. Safe to call while the gateway process is stopped.
+
+        Returns a list of absolute paths that were actually removed — useful
+        for logging and for tests to assert against.
+        """
+        removed: list[str] = []
+
+        if not self.root_dir.exists():
+            log.info("clear_session_files: root_dir missing — nothing to clean")
+            return removed
+
+        # Known session-state subdirs
+        for subdir in ("logs", "Jts"):
+            target = self.root_dir / subdir
+            if target.exists() and target.is_dir():
+                try:
+                    shutil.rmtree(target)
+                    removed.append(str(target))
+                    log.info("clear_session_files: removed dir %s", target)
+                except OSError as exc:
+                    log.warning(
+                        "clear_session_files: failed to remove %s: %s",
+                        target, exc,
+                    )
+
+        # Cookie/session files at the top level of root/
+        for pattern in ("*.cookie", "*.session"):
+            for path in self.root_dir.glob(pattern):
+                try:
+                    path.unlink()
+                    removed.append(str(path))
+                    log.info("clear_session_files: removed file %s", path)
+                except OSError as exc:
+                    log.warning(
+                        "clear_session_files: failed to remove %s: %s",
+                        path, exc,
+                    )
+
+        # Process stdout/stderr log — not session state, but users expect a
+        # factory reset to clear stale log output too. Safe to remove — the
+        # next start() will recreate it.
+        if self.log_path.exists():
+            try:
+                self.log_path.unlink()
+                removed.append(str(self.log_path))
+                log.info("clear_session_files: removed log %s", self.log_path)
+            except OSError as exc:
+                log.warning(
+                    "clear_session_files: failed to remove %s: %s",
+                    self.log_path, exc,
+                )
+
+        return removed
+
     # ── Startup sequence ───────────────────────────────────────
 
     async def startup(self, auto_start: bool = True) -> None:

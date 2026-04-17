@@ -118,6 +118,7 @@ export function GatewaySetup() {
     sessionDropped,
     provision,
     start,
+    resetSession,
     actionError,
     actionLoading,
   } = useGatewayContext();
@@ -205,7 +206,7 @@ export function GatewaySetup() {
             This is a one-time setup (~30–60 s).
           </p>
           <button
-            className="rounded-md px-3 py-1.5 text-[11px] font-medium text-[var(--bg-0)] disabled:opacity-50"
+            className="cursor-pointer rounded-md px-3 py-1.5 text-[11px] font-medium text-[var(--bg-0)] disabled:opacity-50 disabled:cursor-not-allowed"
             style={{ background: "var(--clr-cyan)" }}
             onClick={() => provision()}
             disabled={actionLoading}
@@ -230,7 +231,7 @@ export function GatewaySetup() {
             Gateway is ready. Start it to connect to IBKR.
           </p>
           <button
-            className="rounded-md px-3 py-1.5 text-[11px] font-medium text-[var(--bg-0)] disabled:opacity-50"
+            className="cursor-pointer rounded-md px-3 py-1.5 text-[11px] font-medium text-[var(--bg-0)] disabled:opacity-50 disabled:cursor-not-allowed"
             style={{ background: "var(--clr-cyan)" }}
             onClick={start}
             disabled={actionLoading}
@@ -261,23 +262,39 @@ export function GatewaySetup() {
               call the opener plugin explicitly to open the URL in the user's
               default browser. */}
           {needsLogin && !bannerIsShowing && (
-            <button
-              type="button"
-              onClick={() => {
-                if (status.gateway_url) {
-                  openUrl(status.gateway_url).catch((err) => {
-                    console.error("Failed to open gateway URL:", err);
-                  });
-                }
-              }}
-              className="inline-block rounded-md border px-3 py-1.5 text-[11px] font-medium transition-colors hover:bg-[var(--bg-2)]"
-              style={{
-                borderColor: "var(--clr-orange)",
-                color: "var(--clr-orange)",
-              }}
-            >
-              Open IBKR Login
-            </button>
+            <div className="flex flex-wrap items-center gap-3">
+              <button
+                type="button"
+                onClick={() => {
+                  if (status.gateway_url) {
+                    openUrl(status.gateway_url).catch((err) => {
+                      console.error("Failed to open gateway URL:", err);
+                    });
+                  }
+                }}
+                className="inline-block cursor-pointer rounded-md border px-3 py-1.5 text-[11px] font-medium transition-colors hover:bg-[var(--bg-2)]"
+                style={{
+                  borderColor: "var(--clr-orange)",
+                  color: "var(--clr-orange)",
+                }}
+              >
+                Open IBKR Login
+              </button>
+              {/* R2 — recover from a wedged session (client login succeeded but
+                  UI never updated, dispatcher stopped downloading, etc.).
+                  Acts immediately, no confirmation dialog: it just restarts
+                  the gateway and clears in-memory state. Files on disk are
+                  untouched — for that, see Factory Reset in Settings. */}
+              <button
+                type="button"
+                onClick={resetSession}
+                disabled={actionLoading}
+                className="cursor-pointer text-[10px] text-[var(--text-3)] underline-offset-2 hover:text-[var(--text-1)] hover:underline disabled:opacity-40 disabled:cursor-not-allowed"
+                title="Restart the gateway and clear the in-memory session"
+              >
+                {actionLoading ? "Resetting…" : "Reset session"}
+              </button>
+            </div>
           )}
         </div>
       )}
@@ -289,7 +306,7 @@ export function GatewaySetup() {
             {status.error ?? "An unknown error occurred."}
           </p>
           <button
-            className="rounded-md px-3 py-1.5 text-[11px] font-medium text-[var(--bg-0)] disabled:opacity-50"
+            className="cursor-pointer rounded-md px-3 py-1.5 text-[11px] font-medium text-[var(--bg-0)] disabled:opacity-50 disabled:cursor-not-allowed"
             style={{ background: "var(--clr-orange)" }}
             onClick={() => provision(true)}
             disabled={actionLoading}

@@ -743,4 +743,14 @@ export const api = {
 
   gatewayReprovision: () =>
     request<GatewayStatusResponse>("POST", "/gateway/reprovision"),
+
+  // R2 — stop tickle + WS + gateway, clear in-memory state, restart gateway.
+  // Files on disk are untouched.
+  gatewayResetSession: () =>
+    request<GatewayStatusResponse>("POST", "/gateway/reset-session"),
+
+  // R3 — reset-session + delete root/logs, root/Jts, *.cookie, *.session.
+  // Preserves the JRE, Gateway binaries, and conf.yaml.
+  gatewayFactoryReset: () =>
+    request<GatewayStatusResponse>("POST", "/gateway/factory-reset"),
 } as const;
