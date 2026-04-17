@@ -14,6 +14,7 @@
  */
 
 import { useState } from "react";
+import { Copy, Check } from "lucide-react";
 import { useSettingsStore } from "@/store";
 import { useGatewayContext } from "@/context/GatewayContext";
 import {
@@ -146,6 +147,74 @@ function SettingsCard({
         {title}
       </h2>
       {children}
+    </div>
+  );
+}
+
+// ── Troubleshooting commands ──────────────────────────────────────────────────
+
+/**
+ * Hard-coded list of macOS commands Ben uses when the app gets wedged.
+ * Rendered verbatim so they can be copied to a terminal with one click.
+ *
+ * If the app gains Windows support, gate this list per platform
+ * (use navigator.userAgent or a Tauri os plugin call).
+ */
+const TROUBLESHOOTING_COMMANDS: { cmd: string; desc: string }[] = [
+  {
+    cmd: "lsof -nP -iTCP:5001",
+    desc: "See which process is holding port 5001 (IBKR Gateway).",
+  },
+  {
+    cmd: "lsof -ti:5001 | xargs kill -9",
+    desc: "Force-kill whoever owns port 5001. Use when the gateway won't start.",
+  },
+  {
+    cmd: "pkill -f 'ibgroup.*clientportal.gw'",
+    desc: "Kill the IBKR Gateway java process by name.",
+  },
+  {
+    cmd: "pkill -f parallax-sidecar",
+    desc: "Kill the FastAPI sidecar if it's wedged and not responding.",
+  },
+];
+
+function CommandRow({ cmd, desc }: { cmd: string; desc: string }) {
+  const [copied, setCopied] = useState(false);
+
+  function copy() {
+    navigator.clipboard.writeText(cmd).then(
+      () => {
+        setCopied(true);
+        setTimeout(() => setCopied(false), 1500);
+      },
+      () => toast.error("Failed to copy"),
+    );
+  }
+
+  return (
+    <div className="py-3 border-b border-border last:border-0">
+      <div className="flex items-start gap-2">
+        <code className="flex-1 min-w-0 font-data text-[11px] text-[var(--text-1)] bg-[var(--bg-3)] px-2 py-1.5 rounded break-all">
+          {cmd}
+        </code>
+        <button
+          type="button"
+          onClick={copy}
+          aria-label="Copy command"
+          className="shrink-0 rounded-md p-1.5 text-[var(--text-3)] hover:text-[var(--text-1)] hover:bg-[var(--bg-3)] transition-colors cursor-pointer"
+          title={copied ? "Copied" : "Copy to clipboard"}
+        >
+          {copied ? (
+            <Check size={13} className="text-[var(--clr-green)]" />
+          ) : (
+            <Copy size={13} />
+          )}
+        </button>
+      </div>
+      <p className="mt-1 text-[10px] text-[var(--text-3)] leading-snug">
+        {desc}
+      </p>
     </div>
   );
 }
@@ -315,6 +384,17 @@ export default function SettingsPage() {
         {/* Troubleshooting */}
         <SettingsCard title="Troubleshooting">
           <FactoryResetRow />
+          <div className="pt-2 pb-3">
+            <p className="text-[10px] font-semibold uppercase tracking-widest text-[var(--text-3)] mb-1">
+              Terminal commands (macOS)
+            </p>
+            <p className="text-[10px] text-[var(--text-3)] leading-snug mb-2">
+              Copy and paste into Terminal when things get stuck.
+            </p>
+            {TROUBLESHOOTING_COMMANDS.map((c) => (
+              <CommandRow key={c.cmd} cmd={c.cmd} desc={c.desc} />
+            ))}
+          </div>
         </SettingsCard>
 
         {/* About */}

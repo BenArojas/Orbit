@@ -17,7 +17,6 @@
  * D5: actionError auto-clears after 5 s.
  */
 
-import { useEffect, useRef } from "react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { useGatewayContext } from "@/context/GatewayContext";
 import type { GatewayState } from "@/lib/api";
@@ -119,7 +118,6 @@ export function GatewaySetup() {
     provision,
     start,
     resetSession,
-    actionError,
     actionLoading,
   } = useGatewayContext();
 
@@ -129,20 +127,13 @@ export function GatewaySetup() {
   // in that case so the user only sees a single clear call to action.
   const bannerIsShowing = sessionDropped && !isAuthenticated;
 
-  // D5: auto-clear actionError after 5 s
-  const errorTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  useEffect(() => {
-    if (actionError) {
-      if (errorTimer.current) clearTimeout(errorTimer.current);
-      errorTimer.current = setTimeout(() => {
-        // The hook manages the error state internally — we can't clear it here
-        // directly, but the next successful action will reset it.
-      }, 5_000);
-    }
-    return () => {
-      if (errorTimer.current) clearTimeout(errorTimer.current);
-    };
-  }, [actionError]);
+  // NOTE: `actionError` is intentionally not rendered here. The backend sets
+  // `gw.state = ERROR` + `error_message` before raising on every failure path
+  // that produces a user-facing message (port in use, provisioning failure,
+  // etc.), so the error already appears in `status.error` via the polled
+  // status. Rendering `actionError` separately caused the same message to
+  // show twice — once above the button (status.error) and once below
+  // (actionError). See Phase 8 findings.
 
   if (!status) {
     return (
@@ -316,12 +307,6 @@ export function GatewaySetup() {
         </div>
       )}
 
-      {/* D5: action error — shown below state body, fades visually after a few s */}
-      {actionError && (
-        <p className="mt-2 text-[10px] text-[var(--clr-red)] opacity-90">
-          {actionError}
-        </p>
-      )}
     </div>
   );
 }
