@@ -18,11 +18,16 @@ import logging
 import math
 
 from constants import (
+    BREADTH_EMA_PERIOD,
+    ROTATION_LOOKBACK_DAYS,
+    ROTATION_RANGE_PCT,
     RRG_LOOKBACK_DAYS,
     RRG_MOMENTUM_PERIOD,
     RRG_RS_EMA_PERIOD,
     SECTOR_BENCHMARK,
     SECTOR_ETFS,
+    SECTORS_DEFENSIVE,
+    SECTORS_OFFENSIVE,
 )
 from services.ibkr import IBKRService
 
@@ -257,6 +262,182 @@ class SectorService:
             })
 
         return rrg_points
+
+    # ── Phase 8.9: Dashboard arc-gauge feeds ───────────────────
+
+    async def get_market_breadth(self) -> dict:
+        """
+        "% of sector ETFs trading above their 50-day EMA" — breadth proxy.
+
+        We use the 11 SPDR sector ETFs instead of all ~500 S&P constituents so
+        we stay within IBKR rate limits while still producing a reasonable
+        breadth signal (11 vote-weights across every sector of the index).
+
+        Returns:
+          {
+            "value":       float,   # 0.0–100.0 — % of ETFs above 50-EMA
+            "above":       int,     # how many ETFs are above
+            "total":       int,     # how many we successfully computed on
+            "etf_states": [
+              {"symbol": "XLK", "above": true,  "close": 245.12, "ema50": 240.50},
+              ...
+            ],
+          }
+        """
+        conids = await self._resolve_conids()
+
+        # Pull enough history to seed a 50-period EMA with a buffer.
+        bars_needed = BREADTH_EMA_PERIOD * 3  # ~150 bars
+        period = f"{bars_needed}d"
+
+        tasks = []
+        syms_used = []
+        for etf in SECTOR_ETFS:
+            conid = conids.get(etf["symbol"])
+            if conid is None:
+                continue
+            syms_used.append(etf["symbol"])
+            tasks.append(self.ibkr.history(conid, period=period, bar="1d"))
+
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        etf_states: list[dict] = []
+        above = 0
+        total = 0
+
+        for sym, raw in zip(syms_used, results):
+            if isinstance(raw, Exception):
+                log.warning("breadth: %s fetch failed: %s", sym, raw)
+                continue
+            bars = raw.get("data", [])
+            closes = [b["c"] for b in bars if "c" in b]
+            if len(closes) < BREADTH_EMA_PERIOD:
+                continue
+
+            ema_series = _ema(closes, BREADTH_EMA_PERIOD)
+            if not ema_series:
+                continue
+
+            last_close = closes[-1]
+            last_ema = ema_series[-1]
+            is_above = last_close > last_ema
+
+            total += 1
+            if is_above:
+                above += 1
+
+            etf_states.append({
+                "symbol": sym,
+                "above": is_above,
+                "close": round(last_close, 2),
+                "ema50": round(last_ema, 2),
+            })
+
+        value = round((above / total) * 100, 2) if total > 0 else 0.0
+
+        return {
+            "value": value,
+            "above": above,
+            "total": total,
+            "etf_states": etf_states,
+        }
+
+    async def get_sector_rotation(self) -> dict:
+        """
+        Offensive vs Defensive sector performance over ~1 month (21 trading days).
+
+        Offensive = XLK, XLY, XLC, XLF  (risk-on leaders)
+        Defensive = XLP, XLU, XLV       (low-beta safe-haven sectors)
+
+        Gauge mapping (Phase 8.9):
+          delta = offensive_avg_pct − defensive_avg_pct
+          gauge_value = clamp(((delta + RANGE) / (2 * RANGE)) * 100, 0, 100)
+          - delta == -ROTATION_RANGE_PCT → 0   (fully defensive)
+          - delta ==  0                  → 50  (neutral)
+          - delta == +ROTATION_RANGE_PCT → 100 (fully offensive)
+
+        Returns:
+          {
+            "value":          float,   # 0–100 gauge value
+            "delta_pct":      float,   # offensive − defensive (percentage points)
+            "offensive_pct":  float,   # avg 1-month perf of offensive ETFs
+            "defensive_pct":  float,   # avg 1-month perf of defensive ETFs
+            "lookback_days":  int,
+            "offensive":      [{"symbol": ..., "pct": ...}, ...],
+            "defensive":      [{"symbol": ..., "pct": ...}, ...],
+          }
+        """
+        conids = await self._resolve_conids()
+
+        # Request a tad more than the lookback so we always have enough bars.
+        period = f"{ROTATION_LOOKBACK_DAYS + 5}d"
+
+        all_syms = SECTORS_OFFENSIVE + SECTORS_DEFENSIVE
+        valid_syms = [s for s in all_syms if conids.get(s) is not None]
+
+        tasks = [
+            self.ibkr.history(conids[s], period=period, bar="1d")
+            for s in valid_syms
+        ]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        perf: dict[str, float] = {}
+        for sym, raw in zip(valid_syms, results):
+            if isinstance(raw, Exception):
+                log.warning("rotation: %s fetch failed: %s", sym, raw)
+                continue
+            bars = raw.get("data", [])
+            closes = [b["c"] for b in bars if "c" in b]
+            if len(closes) < 2:
+                continue
+
+            # Use the close ~ROTATION_LOOKBACK_DAYS bars back (or the oldest
+            # available if the series is shorter).
+            lookback_idx = max(0, len(closes) - 1 - ROTATION_LOOKBACK_DAYS)
+            anchor = closes[lookback_idx]
+            last = closes[-1]
+            if anchor == 0:
+                continue
+            perf[sym] = ((last - anchor) / anchor) * 100
+
+        def _avg(syms: list[str]) -> float | None:
+            picked = [perf[s] for s in syms if s in perf]
+            return sum(picked) / len(picked) if picked else None
+
+        offensive_avg = _avg(SECTORS_OFFENSIVE)
+        defensive_avg = _avg(SECTORS_DEFENSIVE)
+
+        if offensive_avg is None or defensive_avg is None:
+            return {
+                "value": 50.0,
+                "delta_pct": 0.0,
+                "offensive_pct": offensive_avg,
+                "defensive_pct": defensive_avg,
+                "lookback_days": ROTATION_LOOKBACK_DAYS,
+                "offensive": [{"symbol": s, "pct": perf.get(s)} for s in SECTORS_OFFENSIVE],
+                "defensive": [{"symbol": s, "pct": perf.get(s)} for s in SECTORS_DEFENSIVE],
+            }
+
+        delta = offensive_avg - defensive_avg
+        # Map delta from [-ROTATION_RANGE_PCT, +ROTATION_RANGE_PCT] → [0, 100].
+        gauge = ((delta + ROTATION_RANGE_PCT) / (2 * ROTATION_RANGE_PCT)) * 100
+        gauge = max(0.0, min(100.0, gauge))
+
+        return {
+            "value": round(gauge, 2),
+            "delta_pct": round(delta, 2),
+            "offensive_pct": round(offensive_avg, 2),
+            "defensive_pct": round(defensive_avg, 2),
+            "lookback_days": ROTATION_LOOKBACK_DAYS,
+            "offensive": [
+                {"symbol": s, "pct": round(perf[s], 2) if s in perf else None}
+                for s in SECTORS_OFFENSIVE
+            ],
+            "defensive": [
+                {"symbol": s, "pct": round(perf[s], 2) if s in perf else None}
+                for s in SECTORS_DEFENSIVE
+            ],
+        }
 
 
 # ── Helper functions ────────────────────────────────────────

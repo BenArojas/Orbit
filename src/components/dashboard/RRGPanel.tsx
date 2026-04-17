@@ -20,6 +20,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { api, type RRGDataPoint } from "../../lib/api";
 import { useIbkrReadyTier } from "@/hooks/useIbkrReadyTier";
+import { RRGSkeleton } from "./skeletons";
 
 // Colors per quadrant (matching the mockup)
 const QUADRANT_COLORS: Record<string, string> = {
@@ -30,20 +31,31 @@ const QUADRANT_COLORS: Record<string, string> = {
 };
 
 export default function RRGPanel() {
-  // Tier 3 — same reasoning as SectorPerformancePanel: heavy multi-ETF call.
-  const ready = useIbkrReadyTier(3);
+  // Tier 4 in the 9-tier dashboard cascade (Phase 8 / Task 8.9):
+  // fires 750 ms after IBKR connects — right after Sector Performance.
+  const ready = useIbkrReadyTier(4);
   const { data: rrg, isLoading, error } = useQuery({
     queryKey: ["sectors", "rrg"],
     queryFn: api.sectorRRG,
     staleTime: 60_000,
     refetchInterval: 5 * 60_000,
     enabled: ready,
+    retry: 2,
+    retryDelay: (attempt) => Math.min(1_000 * 2 ** attempt, 5_000),
   });
 
+  // Skeleton until tier gate fires AND first fetch completes
+  if (!ready || (isLoading && !rrg)) {
+    return <RRGSkeleton />;
+  }
+
   return (
-    <div className="rounded-lg border border-border bg-card overflow-hidden">
+    // Phase 8.9: expand vertically instead of a fixed height so the RRG uses
+    // the full space in its grid row (`flex-1 min-h-[280px]`). Dot positions
+    // are now percentage-based so they re-layout cleanly on resize.
+    <div className="flex h-full min-h-[280px] flex-1 flex-col rounded-lg border border-border bg-card overflow-hidden">
       {/* Header */}
-      <div className="flex items-center justify-between border-b border-border px-4 py-3">
+      <div className="flex shrink-0 items-center justify-between border-b border-border px-4 py-3">
         <span className="text-[11px] font-semibold tracking-wide text-[var(--text-2)]">
           Relative Rotation Graph
         </span>
@@ -53,7 +65,7 @@ export default function RRGPanel() {
       </div>
 
       {/* Graph area */}
-      <div className="relative h-[220px] bg-[var(--bg-1)] overflow-hidden">
+      <div className="relative flex-1 min-h-[240px] bg-[var(--bg-1)] overflow-hidden">
         {/* Radial glow background */}
         <div
           className="absolute inset-0 pointer-events-none"
@@ -90,11 +102,6 @@ export default function RRGPanel() {
         </span>
 
         {/* Loading / Error / Empty */}
-        {isLoading && (
-          <div className="absolute inset-0 flex items-center justify-center">
-            <span className="text-xs text-[var(--text-3)]">Loading RRG...</span>
-          </div>
-        )}
         {error && (
           <div className="absolute inset-0 flex items-center justify-center">
             <span className="text-xs text-[var(--clr-red)]">Failed to load RRG</span>
@@ -119,25 +126,27 @@ export default function RRGPanel() {
 }
 
 /**
- * Map RS-Ratio/RS-Momentum values to pixel positions within the graph.
- * Center is at 100,100. We show a reasonable range (typically 96-104).
+ * Map an RS-Ratio/RS-Momentum value to a 0–100 percentage within the graph.
+ * Center is at 100; we auto-scale around the max deviation of all points so
+ * a small cluster uses the full canvas.
+ *
+ * Phase 8.9: returns percentages so the graph container can flex vertically
+ * (height changes no longer require recomputing pixel Y coordinates).
  */
-function toPosition(
+function toPercent(
   value: number,
   center: number,
-  size: number,
-  allValues: number[]
+  allValues: number[],
 ): number {
-  // Auto-scale: find the range of all values
   const maxDev = Math.max(
     ...allValues.map((v) => Math.abs(v - center)),
-    2 // minimum range of +/- 2
+    2, // minimum range of ± 2
   );
-  const range = maxDev * 1.3; // Add 30% padding
+  const range = maxDev * 1.3; // 30 % padding
 
-  // Normalize to 0-1, then to pixel position
   const normalized = (value - center) / range; // -1 to 1
-  return size / 2 + normalized * (size / 2) * 0.85; // 85% of half-size to leave margin
+  // 85 % of half-height gives a 7.5 % margin at each edge.
+  return 50 + normalized * 50 * 0.85;
 }
 
 function RRGDot({
@@ -149,50 +158,46 @@ function RRGDot({
 }) {
   const color = QUADRANT_COLORS[point.quadrant] ?? "var(--text-2)";
 
-  // Collect all ratio and momentum values for auto-scaling
   const allRatios = allPoints.map((p) => p.rs_ratio);
   const allMomentums = allPoints.map((p) => p.rs_momentum);
 
-  // Graph dimensions (matching the 220px height container)
-  const graphWidth = 100; // percentage
-  const graphHeight = 220; // pixels
-
-  const x = toPosition(point.rs_ratio, 100, graphWidth, allRatios);
-  const y =
-    graphHeight - toPosition(point.rs_momentum, 100, graphHeight, allMomentums); // invert Y
+  const xPct = toPercent(point.rs_ratio, 100, allRatios);
+  // Y is inverted: higher momentum → smaller top %.
+  const yPct = 100 - toPercent(point.rs_momentum, 100, allMomentums);
 
   return (
     <>
-      {/* Trail line */}
+      {/* Trail line — also in % coords so it scales with the container */}
       {point.trail.length > 1 && (
         <svg
-          className="absolute inset-0 w-full h-full pointer-events-none"
+          className="absolute inset-0 h-full w-full pointer-events-none"
+          viewBox="0 0 100 100"
+          preserveAspectRatio="none"
           style={{ zIndex: 1 }}
         >
           <polyline
             points={point.trail
               .map((t) => {
-                const tx = toPosition(t.rs_ratio, 100, graphWidth, allRatios);
-                const ty =
-                  graphHeight -
-                  toPosition(t.rs_momentum, 100, graphHeight, allMomentums);
-                return `${(tx / 100) * 100}%,${ty}`;
+                const tx = toPercent(t.rs_ratio, 100, allRatios);
+                const ty = 100 - toPercent(t.rs_momentum, 100, allMomentums);
+                return `${tx},${ty}`;
               })
               .join(" ")}
             fill="none"
             stroke={color}
-            strokeWidth="1"
+            strokeWidth="0.4"
             strokeOpacity="0.3"
+            vectorEffect="non-scaling-stroke"
           />
         </svg>
       )}
 
       {/* Dot */}
       <div
-        className="absolute w-2.5 h-2.5 rounded-full transition-all duration-[2000ms] ease-in-out"
+        className="absolute h-2.5 w-2.5 rounded-full transition-all duration-[2000ms] ease-in-out"
         style={{
-          left: `${x}%`,
-          top: `${y}px`,
+          left: `${xPct}%`,
+          top: `${yPct}%`,
           transform: "translate(-50%, -50%)",
           backgroundColor: color,
           boxShadow: `0 0 8px ${color}`,
@@ -208,10 +213,10 @@ function RRGDot({
 
       {/* Label */}
       <span
-        className="absolute text-[8px] font-bold whitespace-nowrap pointer-events-none"
+        className="pointer-events-none absolute whitespace-nowrap text-[8px] font-bold"
         style={{
-          left: `${x}%`,
-          top: `${y - 12}px`,
+          left: `${xPct}%`,
+          top: `calc(${yPct}% - 12px)`,
           transform: "translateX(-50%)",
           color,
           zIndex: 3,

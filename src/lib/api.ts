@@ -349,6 +349,33 @@ export interface SectorOverviewResponse {
   rrg: RRGDataPoint[];
 }
 
+// Arc-gauge feeds (Phase 8 / Task 8.9)
+
+export interface MarketBreadthResponse {
+  /** 0–100, % of sector ETFs above their 50-day EMA */
+  value: number;
+  above: number;
+  total: number;
+  etf_states: {
+    symbol: string;
+    above: boolean;
+    close: number;
+    ema50: number;
+  }[];
+}
+
+export interface SectorRotationResponse {
+  /** 0–100 gauge value (50 = neutral) */
+  value: number;
+  /** offensive_pct − defensive_pct, in percentage points */
+  delta_pct: number;
+  offensive_pct: number | null;
+  defensive_pct: number | null;
+  lookback_days: number;
+  offensive: { symbol: string; pct: number | null }[];
+  defensive: { symbol: string; pct: number | null }[];
+}
+
 // ── Watchlists (Phase 3 — task 3.5) ─────────────────────
 
 export interface WatchlistInfo {
@@ -661,6 +688,13 @@ export const api = {
 
   sectorOverview: () =>
     request<SectorOverviewResponse>("GET", "/sectors/overview"),
+
+  // Arc-gauge feeds (Phase 8 / Task 8.9)
+  marketBreadth: () =>
+    request<MarketBreadthResponse>("GET", "/sectors/breadth"),
+
+  sectorRotation: () =>
+    request<SectorRotationResponse>("GET", "/sectors/rotation"),
 
   // Watchlists (Phase 3)
   getWatchlists: () =>

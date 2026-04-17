@@ -21,6 +21,7 @@ import { api, type WatchlistItemResponse } from "../../lib/api";
 import { useNavigationStore } from "../../store/navigation";
 import { useWatchlistStore } from "../../store/watchlist";
 import { useIbkrReadyTier } from "@/hooks/useIbkrReadyTier";
+import { WatchlistSidebarSkeleton } from "../dashboard/skeletons";
 
 // Each WatchlistRow is 40px tall — used by the virtualizer for layout.
 const ROW_HEIGHT = 40;
@@ -30,17 +31,20 @@ export default function WatchlistSidebar() {
   const { searchQuery, setSearchQuery, setMasterWatchlist } = useWatchlistStore();
   const navigateToAnalysis = useNavigationStore((s) => s.navigateToAnalysis);
 
-  // Tier 1 — watchlist names needed immediately to populate the dropdown.
-  // Tier 2 — items + quotes wait 800ms so market pulse / VIX get bandwidth first.
-  const ibkrReadyT1 = useIbkrReadyTier(1);
-  const ibkrReadyT2 = useIbkrReadyTier(2);
+  // Watchlist sidebar is Tier 5 in the 9-tier dashboard cascade
+  // (Phase 8 / Task 8.9). Within the component, the items query depends on the
+  // list query via selectedWatchlistId, so we don't need two separate tiers
+  // here — the natural enabled-chain handles sub-ordering.
+  const ibkrReady = useIbkrReadyTier(5);
 
   // Fetch all IBKR watchlists
   const { data: watchlists } = useQuery({
     queryKey: ["watchlists"],
     queryFn: api.getWatchlists,
     staleTime: 60_000,
-    enabled: ibkrReadyT1,
+    enabled: ibkrReady,
+    retry: 2,
+    retryDelay: (attempt) => Math.min(1_000 * 2 ** attempt, 5_000),
   });
 
   // Auto-select first watchlist
@@ -54,9 +58,11 @@ export default function WatchlistSidebar() {
   const { data: watchlistData, isLoading, error } = useQuery({
     queryKey: ["watchlist", selectedWatchlistId],
     queryFn: () => api.getWatchlistItems(selectedWatchlistId!),
-    enabled: ibkrReadyT2 && !!selectedWatchlistId,
+    enabled: ibkrReady && !!selectedWatchlistId,
     staleTime: 30_000,
     refetchInterval: 30_000,
+    retry: 2,
+    retryDelay: (attempt) => Math.min(1_000 * 2 ** attempt, 5_000),
   });
 
   // Sync to Zustand store for other components
@@ -102,6 +108,13 @@ export default function WatchlistSidebar() {
 
   const virtualItems = virtualizer.getVirtualItems();
 
+  // Skeleton while tier gate closed OR initial fetch in flight.
+  // Once we have `watchlists` data we transition to the real shell (even if
+  // item-level fetches are still resolving) so the dropdown appears quickly.
+  if (!ibkrReady || (!watchlists && !error)) {
+    return <WatchlistSidebarSkeleton rows={8} />;
+  }
+
   return (
     <div className="flex h-full flex-col overflow-hidden">
       {/* Header with watchlist selector */}
@@ -141,10 +154,11 @@ export default function WatchlistSidebar() {
         </div>
       </div>
 
-      {/* State overlays — shown when list is empty */}
-      {isLoading && (
-        <div className="flex flex-1 items-center justify-center">
-          <span className="text-xs text-[var(--text-3)]">Loading...</span>
+      {/* State overlays — shown when list is empty. Initial skeleton is
+          handled above; this covers transient per-watchlist item reloads. */}
+      {isLoading && filteredItems.length === 0 && (
+        <div className="flex flex-1 flex-col gap-1 p-3">
+          <WatchlistSidebarSkeleton rows={6} />
         </div>
       )}
 

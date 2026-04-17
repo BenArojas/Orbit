@@ -1,32 +1,84 @@
 /**
- * Market Pulse Bar — Task 3.1
+ * Market Pulse Bar — Task 3.1 (Phase 8 / Task 8.9 rewrite)
  *
- * A horizontal bar at the top of the Dashboard showing key market indices
- * (SPX, VIX, QQQ, DIA, IWM, etc.) with price, change %, and mini sparklines.
+ * Horizontal bar at the top of the Dashboard showing key market instruments.
+ * Each item is clickable → navigates to Analysis for that conid.
  *
- * Each item is a clickable card — clicking navigates to Analysis for that ticker.
+ * Phase 8.9 changes:
+ *   - 13 slots in a new order: SPX → SPY → QQQ → DIA → IWM → BTC → ETH → GLD
+ *     → SLV → USO → TLT → DXY → USD/ILS (VIX moved to the arc gauges only)
+ *   - Row is centered (`justify-center`) instead of left-aligned
+ *   - Tier 1 of the 9-tier dashboard cascade (fires ~0 ms after IBKR ready)
+ *   - Inner 80 ms per-ticker stagger: each ticker's queries fire in order so
+ *     the IBKR snapshot endpoint isn't hammered with 13 parallel requests
+ *   - Per-ticker pulse skeleton while its quote is still loading
+ *   - Sparkline tooltip explains the window (12 daily closes · last 5 trading days)
  *
- * Data comes from the backend /market/quote endpoint for each symbol.
- * Sparklines are built from the last 12 candles (5-day bars).
- *
- * Conids are resolved at runtime via /market/conid/{symbol} so they work
- * across paper and live IBKR accounts. Results are cached by TanStack Query.
- *
- * Design: dark bg, monospace prices, colored change %, tiny bar sparklines,
- * glow underline on hover matching up/down color.
+ * Data: /market/conid/{symbol} → /market/quote/{conid} → /market/candles/{conid}?timeframe=5D
+ * All three queries are gated on ibkrReady + the per-ticker stagger gate.
  */
 
+import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api, type QuoteResponse, type CandleData, type ConidResponse } from "@/lib/api";
 import { useNavigationStore } from "@/store";
 import { useIbkrReady } from "@/context/GatewayContext";
+import { useIbkrReadyTier } from "@/hooks/useIbkrReadyTier";
+import { Pulse } from "./skeletons";
 
-/** The market symbols we show in the pulse bar */
-const PULSE_SYMBOLS = ["SPX", "VIX", "QQQ", "DIA", "IWM", "TLT", "GLD", "USO"];
+// ── Config ───────────────────────────────────────────────────
 
-/** Mini sparkline — 12 tiny bars showing recent price direction */
+/**
+ * Pulse bar tickers, in display order.
+ *   - `label` is what the user sees
+ *   - `resolve` is the string we hand to /market/conid to look up the conid
+ *     (IBKR forex convention: BASE.QUOTE)
+ */
+const PULSE_ITEMS: { label: string; resolve: string }[] = [
+  { label: "SPX", resolve: "SPX" },
+  { label: "SPY", resolve: "SPY" },
+  { label: "QQQ", resolve: "QQQ" },
+  { label: "DIA", resolve: "DIA" },
+  { label: "IWM", resolve: "IWM" },
+  { label: "BTC", resolve: "BTC" },
+  { label: "ETH", resolve: "ETH" },
+  { label: "GLD", resolve: "GLD" },
+  { label: "SLV", resolve: "SLV" },
+  { label: "USO", resolve: "USO" },
+  { label: "TLT", resolve: "TLT" },
+  { label: "DXY", resolve: "DXY" },
+  { label: "USD/ILS", resolve: "USD.ILS" },
+];
+
+/** Per-ticker stagger — each item fires 80 ms after the previous one. */
+const TICKER_STAGGER_MS = 80;
+
+// ── Stagger hook ─────────────────────────────────────────────
+
+/** Returns true after `delayMs`, only once `gate` is true. */
+function useDelayedReady(gate: boolean, delayMs: number): boolean {
+  const [ready, setReady] = useState(delayMs === 0 && gate);
+
+  useEffect(() => {
+    if (!gate) {
+      setReady(false);
+      return;
+    }
+    if (delayMs === 0) {
+      setReady(true);
+      return;
+    }
+    const t = window.setTimeout(() => setReady(true), delayMs);
+    return () => window.clearTimeout(t);
+  }, [gate, delayMs]);
+
+  return ready;
+}
+
+// ── Sparkline ────────────────────────────────────────────────
+
+/** Mini sparkline — up to 12 tiny bars showing recent closes. */
 function MiniSparkline({ candles, isUp }: { candles: CandleData[]; isUp: boolean }) {
-  // Take the last 12 candles for the sparkline
   const bars = candles.slice(-12);
   if (bars.length === 0) return null;
 
@@ -36,7 +88,11 @@ function MiniSparkline({ candles, isUp }: { candles: CandleData[]; isUp: boolean
   const range = max - min || 1;
 
   return (
-    <div className="flex items-end gap-px" style={{ height: 16 }}>
+    <div
+      className="flex items-end gap-px"
+      style={{ height: 16 }}
+      title="Last 12 daily closes (5-day window) — higher bars = higher price"
+    >
       {bars.map((bar, i) => {
         const height = Math.max(2, ((bar.close - min) / range) * 14);
         return (
@@ -46,7 +102,7 @@ function MiniSparkline({ candles, isUp }: { candles: CandleData[]; isUp: boolean
             style={{
               height,
               backgroundColor: isUp ? "var(--clr-green)" : "var(--clr-red)",
-              opacity: 0.4,
+              opacity: 0.45,
             }}
           />
         );
@@ -55,36 +111,71 @@ function MiniSparkline({ candles, isUp }: { candles: CandleData[]; isUp: boolean
   );
 }
 
-/** One pulse item — symbol, price, change, sparkline */
-function PulseItem({ symbol }: { symbol: string }) {
-  const navigateToAnalysis = useNavigationStore((s) => s.navigateToAnalysis);
-  const ibkrReady = useIbkrReady();
+// ── Per-ticker skeleton ──────────────────────────────────────
 
-  // Step 1: Resolve symbol → conid at runtime (cached indefinitely)
-  const { data: resolved } = useQuery<ConidResponse>({
-    queryKey: ["conid", symbol],
-    queryFn: () => api.resolveConid(symbol),
-    staleTime: Infinity, // conid never changes within a session
-    enabled: ibkrReady,
+function PulseItemSkeleton({ label }: { label: string }) {
+  return (
+    <div className="flex min-w-[115px] flex-col gap-1 px-[18px] py-2">
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-[10px] font-semibold text-[var(--text-3)]">
+          {label}
+        </span>
+        <Pulse className="h-3 w-[44px]" />
+      </div>
+      <div className="flex items-center justify-between gap-2">
+        <Pulse className="h-2 w-[36px]" />
+        <Pulse className="h-[14px] w-[28px]" />
+      </div>
+    </div>
+  );
+}
+
+// ── Pulse Item ───────────────────────────────────────────────
+
+function PulseItem({
+  label,
+  resolve,
+  enabled,
+}: {
+  label: string;
+  resolve: string;
+  enabled: boolean;
+}) {
+  const navigateToAnalysis = useNavigationStore((s) => s.navigateToAnalysis);
+
+  // Step 1 — resolve symbol → conid (cached indefinitely).
+  const { data: resolved, isError: resolveError } = useQuery<ConidResponse>({
+    queryKey: ["conid", resolve],
+    queryFn: () => api.resolveConid(resolve),
+    staleTime: Infinity,
+    enabled,
+    retry: 2,
   });
 
   const conid = resolved?.conid;
 
-  // Step 2: Fetch live quote (only once we have a conid)
-  const { data: quote } = useQuery<QuoteResponse>({
+  // Step 2 — live quote (fires once conid is known).
+  const { data: quote, isError: quoteError } = useQuery<QuoteResponse>({
     queryKey: ["quote", conid],
     queryFn: () => api.quote(conid!),
-    enabled: ibkrReady && conid != null,
+    enabled: enabled && conid != null,
     refetchInterval: 10_000,
+    retry: 2,
   });
 
-  // Step 3: Fetch recent candles for sparkline (5-day window → ~12 daily bars)
+  // Step 3 — recent candles for sparkline.
   const { data: candles } = useQuery<CandleData[]>({
     queryKey: ["candles", conid, "5D"],
     queryFn: () => api.candles(conid!, "5D"),
-    enabled: ibkrReady && conid != null,
+    enabled: enabled && conid != null,
     staleTime: 60_000,
+    retry: 2,
   });
+
+  // Not yet staggered in, or still waiting on conid + quote → show skeleton.
+  if (!enabled || (!quote && !quoteError && !resolveError)) {
+    return <PulseItemSkeleton label={label} />;
+  }
 
   const price = quote?.lastPrice;
   const changePct = quote?.changePercent;
@@ -93,7 +184,8 @@ function PulseItem({ symbol }: { symbol: string }) {
   return (
     <button
       onClick={() => conid && navigateToAnalysis(conid)}
-      className="group relative flex min-w-[115px] flex-col gap-0.5 px-[18px] py-2 transition-colors hover:bg-[var(--bg-2)]"
+      disabled={conid == null}
+      className="group relative flex min-w-[115px] flex-col gap-0.5 px-[18px] py-2 transition-colors hover:bg-[var(--bg-2)] disabled:opacity-60"
     >
       {/* Glow underline on hover */}
       <div
@@ -104,10 +196,10 @@ function PulseItem({ symbol }: { symbol: string }) {
         }}
       />
 
-      {/* Top row: symbol + price */}
+      {/* Top row: label + price */}
       <div className="flex items-center justify-between gap-2">
         <span className="text-[10px] font-semibold text-[var(--text-3)]">
-          {symbol}
+          {label}
         </span>
         <span className="font-data text-[13px] font-bold text-[var(--text-1)]">
           {price != null ? formatPrice(price) : "--"}
@@ -129,7 +221,7 @@ function PulseItem({ symbol }: { symbol: string }) {
   );
 }
 
-/** Format price — add commas for thousands */
+/** Format price — comma thousands, 2 decimals under 1k. */
 function formatPrice(price: number): string {
   if (price >= 1000) {
     return price.toLocaleString("en-US", {
@@ -140,12 +232,46 @@ function formatPrice(price: number): string {
   return price.toFixed(2);
 }
 
-/** The full Market Pulse bar */
+// ── Stagger wrapper ──────────────────────────────────────────
+
+/**
+ * Thin wrapper that computes `enabled` for a single ticker based on
+ * its index in the row and the outer IBKR-ready gate.
+ */
+function StaggeredPulseItem({
+  label,
+  resolve,
+  index,
+  gate,
+}: {
+  label: string;
+  resolve: string;
+  index: number;
+  gate: boolean;
+}) {
+  const enabled = useDelayedReady(gate, index * TICKER_STAGGER_MS);
+  return <PulseItem label={label} resolve={resolve} enabled={enabled} />;
+}
+
+// ── Main bar ─────────────────────────────────────────────────
+
 export default function MarketPulse() {
+  const ibkrReady = useIbkrReady();
+  // Tier 1 in the 9-tier dashboard cascade (Phase 8 / Task 8.9): fires
+  // at t=0 as soon as IBKR connects, before everything else on the page.
+  const tierReady = useIbkrReadyTier(1);
+  const gate = ibkrReady && tierReady;
+
   return (
-    <div className="col-span-2 flex items-center overflow-x-auto border-b border-border bg-[var(--bg-1)]">
-      {PULSE_SYMBOLS.map((symbol) => (
-        <PulseItem key={symbol} symbol={symbol} />
+    <div className="col-span-2 flex items-center justify-center overflow-x-auto border-b border-border bg-[var(--bg-1)]">
+      {PULSE_ITEMS.map((item, i) => (
+        <StaggeredPulseItem
+          key={item.label}
+          label={item.label}
+          resolve={item.resolve}
+          index={i}
+          gate={gate}
+        />
       ))}
     </div>
   );

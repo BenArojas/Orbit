@@ -418,14 +418,43 @@ class IBKRService:
         """
         Fetch all IBKR watchlists for the authenticated user.
         Returns list of {id, name} dicts.
+
+        IBKR Client Portal /iserver/watchlists returns:
+          {
+            "data": {
+              "scanners_only": false,
+              "show_scanners": false,
+              "bulk_delete": false,
+              "user_lists": [ { "id": "...", "name": "...", "type": "..." }, ... ]
+            },
+            "action": "content",
+            "MID": "..."
+          }
+
+        We defensively handle older / alternate shapes too:
+          - {"user_lists": [...]}        (flat, no "data" wrapper)
+          - {"data": [...]}              (simplified, list under "data")
+          - [...]                        (direct list)
+
+        Any non-dict entries are filtered out so downstream code can safely
+        call `.get()` on every item (fixes the 'str has no attribute .get' 500).
         """
         await self.ensure_accounts()
         data = await self._request("GET", "/iserver/watchlists")
-        # IBKR returns: {"data": [{"id": "...", "name": "...", ...}, ...]}
-        # or sometimes just a list
+
+        # Unwrap to a list of watchlist dicts
+        lists: list = []
         if isinstance(data, dict):
-            return data.get("data", data.get("user_lists", []))
-        return data if isinstance(data, list) else []
+            inner = data.get("data", data)
+            if isinstance(inner, dict):
+                lists = inner.get("user_lists", []) or []
+            elif isinstance(inner, list):
+                lists = inner
+        elif isinstance(data, list):
+            lists = data
+
+        # Defense in depth: filter out any non-dict items (strings, None, etc.)
+        return [wl for wl in lists if isinstance(wl, dict)]
 
     async def get_watchlist_items(self, watchlist_id: str) -> list[dict]:
         """

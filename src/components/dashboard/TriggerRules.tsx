@@ -39,6 +39,8 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useSettingsStore } from "@/store/settings";
+import { useIbkrReadyTier } from "@/hooks/useIbkrReadyTier";
+import { SidebarPanelSkeleton } from "./skeletons";
 
 // ── Indicator options for the create form ──────────────────
 
@@ -503,17 +505,23 @@ function CreateRuleModal() {
 
 export default function TriggerRules() {
   const queryClient = useQueryClient();
+  // Tier 7 in the 9-tier dashboard cascade (Phase 8 / Task 8.9).
+  const tierReady = useIbkrReadyTier(7);
 
   const { data: rules, isLoading, isError } = useQuery<TriggerRule[]>({
     queryKey: ["trigger-rules"],
     queryFn: () => api.getTriggerRules(),
     staleTime: 30_000,
+    enabled: tierReady,
+    retry: 2,
   });
 
   const { data: hits } = useQuery<TriggerHit[]>({
     queryKey: ["trigger-hits"],
     queryFn: () => api.getTriggerHits(200),
     staleTime: 30_000,
+    enabled: tierReady,
+    retry: 2,
   });
 
   // Count hits per rule
@@ -562,10 +570,8 @@ export default function TriggerRules() {
       </div>
 
       {/* Rule list */}
-      {isLoading ? (
-        <div className="flex items-center justify-center py-4">
-          <span className="text-[10px] text-[var(--text-3)]">Loading...</span>
-        </div>
+      {!tierReady || (isLoading && !rules) ? (
+        <SidebarPanelSkeleton title={false} rows={3} />
       ) : isError ? (
         <div className="flex items-center justify-center py-4">
           <span className="text-[10px] text-[var(--clr-red)]">Failed to load rules</span>

@@ -11,10 +11,11 @@
 import { useQuery } from "@tanstack/react-query";
 import { api, type SectorPerformance } from "../../lib/api";
 import { useIbkrReadyTier } from "@/hooks/useIbkrReadyTier";
+import { SectorPerformanceSkeleton } from "./skeletons";
 
 export default function SectorPerformancePanel() {
-  // Tier 3 — defer 2 s after IBKR connects so critical quotes load first.
-  // Sector performance hits IBKR for all 11 ETFs — most expensive dashboard call.
+  // Tier 3 in the 9-tier dashboard cascade (Phase 8 / Task 8.9):
+  // fires 500 ms after IBKR connects — after pulse + gauges, before RRG.
   const ready = useIbkrReadyTier(3);
   const { data: sectors, isLoading, error } = useQuery({
     queryKey: ["sectors", "performance"],
@@ -22,48 +23,81 @@ export default function SectorPerformancePanel() {
     staleTime: 60_000,
     refetchInterval: 5 * 60_000,
     enabled: ready,
+    // Auto-retry silently on transient failures (Phase 8 / Task 8.9)
+    retry: 2,
+    retryDelay: (attempt) => Math.min(1_000 * 2 ** attempt, 5_000),
   });
 
+  // Show skeleton while tier gate is closed OR query is actively fetching
+  // with no cached data yet.
+  if (!ready || (isLoading && !sectors)) {
+    return <SectorPerformanceSkeleton rows={5} />;
+  }
+
+  const visibleCount = sectors?.length ?? 0;
+  const isScrollable = visibleCount > 3;
+
   return (
-    <div className="rounded-lg border border-border bg-card overflow-hidden">
+    <div className="flex h-full min-h-0 flex-col rounded-lg border border-border bg-card overflow-hidden">
       {/* Header */}
-      <div className="flex items-center justify-between border-b border-border px-4 py-3">
+      <div className="flex shrink-0 items-center justify-between border-b border-border px-4 py-3">
         <span className="text-[11px] font-semibold tracking-wide text-[var(--text-2)]">
           Sector Performance
         </span>
-        <span className="rounded-full bg-[var(--cyan-glow)] px-2 py-0.5 text-[9px] font-medium text-[var(--cyan)]">
-          YTD
-        </span>
+        <div className="flex items-center gap-2">
+          {isScrollable && (
+            <span className="text-[9px] text-[var(--text-3)]">
+              {visibleCount} sectors · scroll
+            </span>
+          )}
+          <span className="rounded-full bg-[var(--cyan-glow)] px-2 py-0.5 text-[9px] font-medium text-[var(--cyan)]">
+            YTD
+          </span>
+        </div>
       </div>
 
-      {/* Content */}
-      <div className="divide-y divide-border">
-        {isLoading && (
-          <div className="flex items-center justify-center py-8">
-            <span className="text-xs text-[var(--text-3)]">Loading sectors...</span>
-          </div>
-        )}
+      {/* Content — Phase 8.9: single scrollable list, 3 rows visible by default */}
+      <div className="relative flex-1 min-h-0">
+        <div
+          className="divide-y divide-border overflow-y-auto"
+          style={{
+            // Each row ≈ 36 px (py-2 + 10px text + 5px bar). 3 rows ≈ 108 px;
+            // we use 118 px so the third row's bottom border is fully visible.
+            maxHeight: "118px",
+          }}
+        >
+          {error && (
+            <div className="flex items-center justify-center py-8">
+              <span className="text-xs text-[var(--clr-red)]">
+                Failed to load sector data
+              </span>
+            </div>
+          )}
 
-        {error && (
-          <div className="flex items-center justify-center py-8">
-            <span className="text-xs text-[var(--clr-red)]">
-              Failed to load sector data
-            </span>
-          </div>
-        )}
+          {!isLoading && !error && sectors?.length === 0 && (
+            <div className="flex flex-col items-center justify-center gap-1 py-8">
+              <span className="text-[11px] text-[var(--text-3)]">No sector data available</span>
+              <span className="text-[10px] text-[var(--text-3)] opacity-60">
+                IBKR must be connected to load sector performance
+              </span>
+            </div>
+          )}
 
-        {!isLoading && !error && sectors?.length === 0 && (
-          <div className="flex flex-col items-center justify-center gap-1 py-8">
-            <span className="text-[11px] text-[var(--text-3)]">No sector data available</span>
-            <span className="text-[10px] text-[var(--text-3)] opacity-60">
-              IBKR must be connected to load sector performance
-            </span>
-          </div>
-        )}
+          {sectors?.map((sector) => (
+            <SectorRow key={sector.symbol} sector={sector} sectors={sectors} />
+          ))}
+        </div>
 
-        {sectors?.map((sector) => (
-          <SectorRow key={sector.symbol} sector={sector} sectors={sectors} />
-        ))}
+        {/* Fade indicator at the bottom of the scroll area */}
+        {isScrollable && (
+          <div
+            className="pointer-events-none absolute inset-x-0 bottom-0 h-6"
+            style={{
+              background:
+                "linear-gradient(to top, var(--bg-2, var(--card)), transparent)",
+            }}
+          />
+        )}
       </div>
     </div>
   );

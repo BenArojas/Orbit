@@ -18,6 +18,8 @@
 import { useQuery } from "@tanstack/react-query";
 import { api, type TriggerHit } from "@/lib/api";
 import { useNavigationStore } from "@/store";
+import { useIbkrReadyTier } from "@/hooks/useIbkrReadyTier";
+import { SidebarPanelSkeleton } from "./skeletons";
 
 /** Map indicator names to display info */
 const TRIGGER_DISPLAY: Record<
@@ -105,10 +107,14 @@ function TriggerHitItem({ hit }: { hit: TriggerHit }) {
 export default function TriggerWatchlist() {
   // limit=200 matches all other consumers — TanStack Query deduplicates to one request.
   // Slice client-side to cap the sidebar display.
+  // Tier 6 in the 9-tier dashboard cascade (Phase 8 / Task 8.9).
+  const tierReady = useIbkrReadyTier(6);
   const { data: hits, isLoading, isError } = useQuery<TriggerHit[]>({
     queryKey: ["trigger-hits"],
     queryFn: () => api.getTriggerHits(200),
     refetchInterval: 30_000,
+    enabled: tierReady,
+    retry: 2,
   });
 
   // Only show unacknowledged / recent hits (cap sidebar at 50)
@@ -127,10 +133,8 @@ export default function TriggerWatchlist() {
       </div>
 
       {/* Items */}
-      {isLoading ? (
-        <div className="flex items-center justify-center py-6">
-          <span className="text-[10px] text-[var(--text-3)]">Loading...</span>
-        </div>
+      {!tierReady || (isLoading && !hits) ? (
+        <SidebarPanelSkeleton title={false} rows={3} />
       ) : isError ? (
         <div className="flex items-center justify-center py-6">
           <span className="text-[10px] text-[var(--clr-red)]">Failed to load hits</span>

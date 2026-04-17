@@ -221,7 +221,7 @@ These are locked in. Don't revisit unless something breaks.
 | 8.6 | Settings persistence | Both | TODO | All settings survive app restart; theme applies on cold launch |
 | 8.7 | Error + empty state coverage | Both | TODO | Force each error condition manually; verify correct state renders, no blank screens |
 | 8.8 | Fresh-install run-through | Both | TODO | Clean macOS VM + clean Windows VM; gateway setup → first symbol → first trigger |
-| 8.9 | Dashboard bugs + request issues | Both | TODO | New branch off `dev` after 8.1-F merges. Scope: bugs Ben flagged on the Dashboard page + request/polling quirks (examples to be filled in before the branch is cut). Each fix ships with tests per Rule 1. |
+| 8.9 | Dashboard bugs + request issues | Both | CODE COMPLETE · review pending | Branch `feat/dashboard-phase8-task8.9` off `dev`. Shipped: watchlist 500 fix, 9-tier staggered loads (250 ms cascade), per-component pulse skeletons, Market Pulls rewrite (13 tickers centred, 80 ms inner stagger, sparklines), WS singleton with 10 s teardown grace, real Market Strength + Sector Rotation arc gauges (ETF proxy / 21-day offensive-vs-defensive), VIX click → Analysis(1D), Sector Performance scrollable (3 visible + fade hint), RRG flex-1 min-h 280 px with percentage-based SVG, AlertLog collapse-when-empty + dashboard-scroll-when-populated. 17 new backend tests (9 unwrap + 8 gauges) + 12 tier-hook tests, all green. See [`docs/phase8-task8.9-plan.md`](docs/phase8-task8.9-plan.md). |
 
 ---
 

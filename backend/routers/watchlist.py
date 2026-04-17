@@ -36,7 +36,7 @@ async def get_watchlists(
     return [
         {"id": str(wl.get("id", "")), "name": wl.get("name", "Unnamed")}
         for wl in raw
-        if wl.get("id")
+        if isinstance(wl, dict) and wl.get("id")
     ]
 
 

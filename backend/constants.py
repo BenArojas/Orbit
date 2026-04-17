@@ -92,3 +92,15 @@ SECTOR_BENCHMARK = "SPY"  # S&P 500 benchmark for RRG calculations
 RRG_RS_EMA_PERIOD = 10       # EMA smoothing period for RS-Ratio
 RRG_MOMENTUM_PERIOD = 10     # Rate-of-change period for RS-Momentum
 RRG_LOOKBACK_DAYS = 252      # ~1 year of daily data for RRG calculation
+
+# ── Offensive vs Defensive sector groupings ────────────────
+# Used by the Sector Rotation arc gauge (Phase 8 / Task 8.9).
+# Offensive = cyclical sectors that lead in risk-on environments.
+# Defensive = low-beta sectors that lead when markets de-risk.
+SECTORS_OFFENSIVE = ["XLK", "XLY", "XLC", "XLF"]
+SECTORS_DEFENSIVE = ["XLP", "XLU", "XLV"]
+
+# Market breadth / rotation parameters
+BREADTH_EMA_PERIOD = 50                # "% above 50-day EMA" breadth proxy
+ROTATION_LOOKBACK_DAYS = 21            # ~1 month of trading days (offensive − defensive perf)
+ROTATION_RANGE_PCT = 5.0               # ± this % maps to 0/100 on the rotation gauge

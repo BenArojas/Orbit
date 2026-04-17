@@ -152,11 +152,14 @@ export default function WatchlistConfigSection() {
   const [open, setOpen] = useState(false);
   const queryClient = useQueryClient();
 
+  // Tier-8 gating is N/A here — fetches only fire when the user opens the
+  // section. We add silent retries on transient IBKR flakes (Phase 8 / 8.9).
   const { data: configs } = useQuery<WatchlistConfig[]>({
     queryKey: ["watchlist-configs"],
     queryFn: () => api.getWatchlistConfigs(),
     staleTime: 30_000,
     enabled: open,
+    retry: 2,
   });
 
   const { data: watchlists } = useQuery<WatchlistInfo[]>({
@@ -164,6 +167,7 @@ export default function WatchlistConfigSection() {
     queryFn: () => api.getWatchlists(),
     staleTime: 60_000,
     enabled: open,
+    retry: 2,
   });
 
   const putMutation = useMutation({
