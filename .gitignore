@@ -43,3 +43,7 @@ src-tauri/binaries/
 *.njsproj
 *.sln
 *.sw?
+
+
+# FUSE filesystem tombstones (created when a file is unlinked while open)
+.fuse_hidden*

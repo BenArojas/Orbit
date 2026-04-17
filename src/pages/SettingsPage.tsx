@@ -13,7 +13,19 @@
  * Each row: label on the left, control on the right.
  */
 
+import { useState } from "react";
+import { Copy, Check } from "lucide-react";
 import { useSettingsStore } from "@/store";
+import { useGatewayContext } from "@/context/GatewayContext";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { toast } from "sonner";
 
 // ── Timeframe options (matches chart store / IBKR bar sizes) ─────────────────
 
@@ -139,6 +151,159 @@ function SettingsCard({
   );
 }
 
+// ── Troubleshooting commands ──────────────────────────────────────────────────
+
+/**
+ * Hard-coded list of macOS commands Ben uses when the app gets wedged.
+ * Rendered verbatim so they can be copied to a terminal with one click.
+ *
+ * If the app gains Windows support, gate this list per platform
+ * (use navigator.userAgent or a Tauri os plugin call).
+ */
+const TROUBLESHOOTING_COMMANDS: { cmd: string; desc: string }[] = [
+  {
+    cmd: "lsof -nP -iTCP:5001",
+    desc: "See which process is holding port 5001 (IBKR Gateway).",
+  },
+  {
+    cmd: "lsof -ti:5001 | xargs kill -9",
+    desc: "Force-kill whoever owns port 5001. Use when the gateway won't start.",
+  },
+  {
+    cmd: "pkill -f 'ibgroup.*clientportal.gw'",
+    desc: "Kill the IBKR Gateway java process by name.",
+  },
+  {
+    cmd: "pkill -f parallax-sidecar",
+    desc: "Kill the FastAPI sidecar if it's wedged and not responding.",
+  },
+];
+
+function CommandRow({ cmd, desc }: { cmd: string; desc: string }) {
+  const [copied, setCopied] = useState(false);
+
+  function copy() {
+    navigator.clipboard.writeText(cmd).then(
+      () => {
+        setCopied(true);
+        setTimeout(() => setCopied(false), 1500);
+      },
+      () => toast.error("Failed to copy"),
+    );
+  }
+
+  return (
+    <div className="py-3 border-b border-border last:border-0">
+      <div className="flex items-start gap-2">
+        <code className="flex-1 min-w-0 font-data text-[11px] text-[var(--text-1)] bg-[var(--bg-3)] px-2 py-1.5 rounded break-all">
+          {cmd}
+        </code>
+        <button
+          type="button"
+          onClick={copy}
+          aria-label="Copy command"
+          className="shrink-0 rounded-md p-1.5 text-[var(--text-3)] hover:text-[var(--text-1)] hover:bg-[var(--bg-3)] transition-colors cursor-pointer"
+          title={copied ? "Copied" : "Copy to clipboard"}
+        >
+          {copied ? (
+            <Check size={13} className="text-[var(--clr-green)]" />
+          ) : (
+            <Copy size={13} />
+          )}
+        </button>
+      </div>
+      <p className="mt-1 text-[10px] text-[var(--text-3)] leading-snug">
+        {desc}
+      </p>
+    </div>
+  );
+}
+
+// ── Factory reset dialog ──────────────────────────────────────────────────────
+
+/**
+ * Destructive action — wipes root/logs, root/Jts, and any *.cookie / *.session
+ * files in the gateway home. Preserves the JRE, Gateway binaries, and
+ * conf.yaml so no re-download is required.
+ *
+ * Use when Reset Session alone didn't clear a wedged auth state — typically
+ * when IBKR's dispatcher stopped handing us a fresh download on subsequent
+ * login attempts because a stale local cookie is masking the new session.
+ */
+function FactoryResetRow() {
+  const { factoryReset, actionLoading } = useGatewayContext();
+  const [open, setOpen] = useState(false);
+  const [running, setRunning] = useState(false);
+
+  async function confirm() {
+    setRunning(true);
+    try {
+      await factoryReset();
+      toast.success("Gateway factory reset complete");
+      setOpen(false);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Factory reset failed";
+      toast.error(msg);
+    } finally {
+      setRunning(false);
+    }
+  }
+
+  return (
+    <>
+      <SettingRow
+        label="Factory Reset Gateway"
+        description="Clears cached IBKR session files (logs, cookies, Jts). Keeps binaries and config. Use only if 'Reset session' didn't help."
+      >
+        <button
+          type="button"
+          onClick={() => setOpen(true)}
+          disabled={actionLoading || running}
+          className="cursor-pointer rounded-md border px-3 py-1.5 text-[11px] font-medium transition-colors hover:bg-[var(--clr-red)]/10 disabled:opacity-40 disabled:cursor-not-allowed"
+          style={{ borderColor: "var(--clr-red)", color: "var(--clr-red)" }}
+        >
+          Factory Reset
+        </button>
+      </SettingRow>
+
+      <Dialog open={open} onOpenChange={(v) => !running && setOpen(v)}>
+        <DialogContent className="max-w-sm bg-[var(--bg-2)] border-border">
+          <DialogHeader>
+            <DialogTitle className="text-[13px] font-semibold text-[var(--text-1)]">
+              Factory Reset Gateway?
+            </DialogTitle>
+            <DialogDescription className="text-[11px] text-[var(--text-3)] leading-snug">
+              This stops the gateway, deletes cached session files (logs,
+              cookies, Jts), and restarts it. You'll need to log in to IBKR
+              again. Your settings, watchlists, and local database are not
+              touched.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="mt-3 flex justify-end gap-2">
+            <button
+              type="button"
+              onClick={() => setOpen(false)}
+              disabled={running}
+              className="cursor-pointer rounded-md border border-border px-3 py-1.5 text-[11px] text-[var(--text-2)] hover:bg-[var(--bg-3)] disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={confirm}
+              disabled={running}
+              className="cursor-pointer rounded-md px-3 py-1.5 text-[11px] font-medium text-white disabled:opacity-40 disabled:cursor-not-allowed"
+              style={{ background: "var(--clr-red)" }}
+            >
+              {running ? "Resetting…" : "Reset Gateway"}
+            </button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
+  );
+}
+
 // ── Page ──────────────────────────────────────────────────────────────────────
 
 export default function SettingsPage() {
@@ -214,6 +379,22 @@ export default function SettingsPage() {
               onChange={setNotificationsEnabled}
             />
           </SettingRow>
+        </SettingsCard>
+
+        {/* Troubleshooting */}
+        <SettingsCard title="Troubleshooting">
+          <FactoryResetRow />
+          <div className="pt-2 pb-3">
+            <p className="text-[10px] font-semibold uppercase tracking-widest text-[var(--text-3)] mb-1">
+              Terminal commands (macOS)
+            </p>
+            <p className="text-[10px] text-[var(--text-3)] leading-snug mb-2">
+              Copy and paste into Terminal when things get stuck.
+            </p>
+            {TROUBLESHOOTING_COMMANDS.map((c) => (
+              <CommandRow key={c.cmd} cmd={c.cmd} desc={c.desc} />
+            ))}
+          </div>
         </SettingsCard>
 
         {/* About */}

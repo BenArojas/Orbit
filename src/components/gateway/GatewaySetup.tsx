@@ -17,7 +17,7 @@
  * D5: actionError auto-clears after 5 s.
  */
 
-import { useEffect, useRef } from "react";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import { useGatewayContext } from "@/context/GatewayContext";
 import type { GatewayState } from "@/lib/api";
 
@@ -114,26 +114,26 @@ export function GatewaySetup() {
     isAuthenticated,
     needsLogin,
     isProvisioning,
+    sessionDropped,
     provision,
     start,
-    actionError,
+    resetSession,
     actionLoading,
   } = useGatewayContext();
 
-  // D5: auto-clear actionError after 5 s
-  const errorTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  useEffect(() => {
-    if (actionError) {
-      if (errorTimer.current) clearTimeout(errorTimer.current);
-      errorTimer.current = setTimeout(() => {
-        // The hook manages the error state internally — we can't clear it here
-        // directly, but the next successful action will reset it.
-      }, 5_000);
-    }
-    return () => {
-      if (errorTimer.current) clearTimeout(errorTimer.current);
-    };
-  }, [actionError]);
+  // Bug D: when a mid-session disconnect has triggered the IbkrReconnectBanner
+  // above the nav, the "Open IBKR Login" button here becomes redundant — the
+  // banner already has one, louder and more visible. Hide this card's button
+  // in that case so the user only sees a single clear call to action.
+  const bannerIsShowing = sessionDropped && !isAuthenticated;
+
+  // NOTE: `actionError` is intentionally not rendered here. The backend sets
+  // `gw.state = ERROR` + `error_message` before raising on every failure path
+  // that produces a user-facing message (port in use, provisioning failure,
+  // etc.), so the error already appears in `status.error` via the polled
+  // status. Rendering `actionError` separately caused the same message to
+  // show twice — once above the button (status.error) and once below
+  // (actionError). See Phase 8 findings.
 
   if (!status) {
     return (
@@ -197,7 +197,7 @@ export function GatewaySetup() {
             This is a one-time setup (~30–60 s).
           </p>
           <button
-            className="rounded-md px-3 py-1.5 text-[11px] font-medium text-[var(--bg-0)] disabled:opacity-50"
+            className="cursor-pointer rounded-md px-3 py-1.5 text-[11px] font-medium text-[var(--bg-0)] disabled:opacity-50 disabled:cursor-not-allowed"
             style={{ background: "var(--clr-cyan)" }}
             onClick={() => provision()}
             disabled={actionLoading}
@@ -222,7 +222,7 @@ export function GatewaySetup() {
             Gateway is ready. Start it to connect to IBKR.
           </p>
           <button
-            className="rounded-md px-3 py-1.5 text-[11px] font-medium text-[var(--bg-0)] disabled:opacity-50"
+            className="cursor-pointer rounded-md px-3 py-1.5 text-[11px] font-medium text-[var(--bg-0)] disabled:opacity-50 disabled:cursor-not-allowed"
             style={{ background: "var(--clr-cyan)" }}
             onClick={start}
             disabled={actionLoading}
@@ -245,19 +245,48 @@ export function GatewaySetup() {
               {status.auth_message}
             </p>
           )}
-          {/* D3: login link only active when gateway is running */}
-          <a
-            href={status.gateway_url}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="inline-block rounded-md border px-3 py-1.5 text-[11px] font-medium transition-colors hover:bg-[var(--bg-2)]"
-            style={{
-              borderColor: needsLogin ? "var(--clr-orange)" : "var(--clr-cyan)",
-              color: needsLogin ? "var(--clr-orange)" : "var(--clr-cyan)",
-            }}
-          >
-            {needsLogin ? "Open IBKR Login" : "Open Gateway"}
-          </a>
+          {/* Login button — only shown when re-auth is required.
+              Hidden when already authenticated because opening the gateway
+              URL would just land on the login page again (the session cookie
+              isn't shared with a freshly-opened browser tab).
+              Tauri v2 blocks <a target="_blank"> inside the webview — we must
+              call the opener plugin explicitly to open the URL in the user's
+              default browser. */}
+          {needsLogin && !bannerIsShowing && (
+            <div className="flex flex-wrap items-center gap-3">
+              <button
+                type="button"
+                onClick={() => {
+                  if (status.gateway_url) {
+                    openUrl(status.gateway_url).catch((err) => {
+                      console.error("Failed to open gateway URL:", err);
+                    });
+                  }
+                }}
+                className="inline-block cursor-pointer rounded-md border px-3 py-1.5 text-[11px] font-medium transition-colors hover:bg-[var(--bg-2)]"
+                style={{
+                  borderColor: "var(--clr-orange)",
+                  color: "var(--clr-orange)",
+                }}
+              >
+                Open IBKR Login
+              </button>
+              {/* R2 — recover from a wedged session (client login succeeded but
+                  UI never updated, dispatcher stopped downloading, etc.).
+                  Acts immediately, no confirmation dialog: it just restarts
+                  the gateway and clears in-memory state. Files on disk are
+                  untouched — for that, see Factory Reset in Settings. */}
+              <button
+                type="button"
+                onClick={resetSession}
+                disabled={actionLoading}
+                className="cursor-pointer text-[10px] text-[var(--text-3)] underline-offset-2 hover:text-[var(--text-1)] hover:underline disabled:opacity-40 disabled:cursor-not-allowed"
+                title="Restart the gateway and clear the in-memory session"
+              >
+                {actionLoading ? "Resetting…" : "Reset session"}
+              </button>
+            </div>
+          )}
         </div>
       )}
 
@@ -268,7 +297,7 @@ export function GatewaySetup() {
             {status.error ?? "An unknown error occurred."}
           </p>
           <button
-            className="rounded-md px-3 py-1.5 text-[11px] font-medium text-[var(--bg-0)] disabled:opacity-50"
+            className="cursor-pointer rounded-md px-3 py-1.5 text-[11px] font-medium text-[var(--bg-0)] disabled:opacity-50 disabled:cursor-not-allowed"
             style={{ background: "var(--clr-orange)" }}
             onClick={() => provision(true)}
             disabled={actionLoading}
@@ -278,12 +307,6 @@ export function GatewaySetup() {
         </div>
       )}
 
-      {/* D5: action error — shown below state body, fades visually after a few s */}
-      {actionError && (
-        <p className="mt-2 text-[10px] text-[var(--clr-red)] opacity-90">
-          {actionError}
-        </p>
-      )}
     </div>
   );
 }

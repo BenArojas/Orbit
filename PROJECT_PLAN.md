@@ -1,7 +1,7 @@
 # Parallax — Project Plan
 
-> Last updated: 2026-04-16
-> Status: Phase 1–7 complete. Phase 8 (E2E testing) remaining.
+> Last updated: 2026-04-17
+> Status: Phase 1–7 complete. Phase 8 (E2E testing) in progress.
 ---
 
 ## IBKR Gateway — What We Learned (2026-04-14)
@@ -213,7 +213,7 @@ These are locked in. Don't revisit unless something breaks.
 
 | # | Task | Owner | Status | Notes |
 |---|---|---|---|---|
-| 8.1 | IBKR connection lifecycle | Both | TODO | Cold start, gateway down, session expiry, re-auth banner, reconnect success |
+| 8.1 | IBKR connection lifecycle | Both | DONE* | Cold start, gateway down, session expiry, re-auth banner, reconnect success. *Code-complete incl. 8.1-F (client `navigator.onLine` fast-fail + singleton offline toast + auto-refetch on recovery, 2026-04-17). Still under ongoing manual verification — we re-exercise the login loop every session, so rows A–F stay "live" rather than locked. Brother continues E2E on his machine. |
 | 8.2 | Ollama detection walkthrough | Both | TODO | Not installed, installed but no model, model switch mid-session, Ollama crash recovery |
 | 8.3 | Scanner flow | Both | TODO | Preset → filters → results → add to watchlist → trigger rule created |
 | 8.4 | Trigger firing | Both | TODO | All 4 news candle methods under live data; watchlist move + return; dedup across intervals |
@@ -221,6 +221,7 @@ These are locked in. Don't revisit unless something breaks.
 | 8.6 | Settings persistence | Both | TODO | All settings survive app restart; theme applies on cold launch |
 | 8.7 | Error + empty state coverage | Both | TODO | Force each error condition manually; verify correct state renders, no blank screens |
 | 8.8 | Fresh-install run-through | Both | TODO | Clean macOS VM + clean Windows VM; gateway setup → first symbol → first trigger |
+| 8.9 | Dashboard bugs + request issues | Both | TODO | New branch off `dev` after 8.1-F merges. Scope: bugs Ben flagged on the Dashboard page + request/polling quirks (examples to be filled in before the branch is cut). Each fix ships with tests per Rule 1. |
 
 ---
 

@@ -15,6 +15,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from config import IBKR_GATEWAY_HOST, IBKR_GATEWAY_PORT
+from exceptions import IBKRConnectionError
 from services.ibkr import IBKRService, TICKLE_FAIL_THRESHOLD
 from state import IBKRState
 
@@ -230,6 +232,116 @@ async def test_auth_status_failure_does_not_change_drop_flag():
     assert svc.state.session_dropped is True
 
 
+# ── Bug A: connection error while authenticated = immediate session_dropped ──
+
+
+@pytest.mark.asyncio
+async def test_auth_status_connection_error_flips_session_dropped_when_authed():
+    """
+    Bug A: if we were previously authenticated and auth_status hits an
+    IBKRConnectionError (gateway unreachable), flip session_dropped and
+    broadcast immediately — don't wait for the ~165 s tickle threshold.
+    """
+    svc = make_ibkr()
+    svc.state.authenticated = True  # was authenticated before the drop
+    svc.state.session_dropped = False
+
+    svc._request = AsyncMock(side_effect=IBKRConnectionError("gateway down"))
+
+    broadcast_calls: list[dict] = []
+
+    async def fake_broadcast(payload: dict) -> None:
+        broadcast_calls.append(payload)
+
+    svc.set_broadcast(fake_broadcast)
+
+    result = await svc.auth_status()
+
+    assert result["authenticated"] is False
+    assert svc.state.authenticated is False
+    assert svc.state.session_dropped is True
+    assert svc.state.tickle_fail_count == TICKLE_FAIL_THRESHOLD
+    assert broadcast_calls == [{"type": "session_dropped"}]
+
+
+@pytest.mark.asyncio
+async def test_auth_status_connection_error_when_not_previously_authed():
+    """
+    Bug A: if we were NOT previously authenticated (e.g. cold start, gateway
+    just not up yet), a connection error should NOT trip session_dropped —
+    we never had a session to drop.
+    """
+    svc = make_ibkr()
+    svc.state.authenticated = False  # never authenticated yet
+    svc.state.session_dropped = False
+
+    svc._request = AsyncMock(side_effect=IBKRConnectionError("gateway down"))
+    broadcast_calls: list[dict] = []
+
+    async def fake_broadcast(payload: dict) -> None:
+        broadcast_calls.append(payload)
+
+    svc.set_broadcast(fake_broadcast)
+
+    result = await svc.auth_status()
+
+    assert result["authenticated"] is False
+    assert svc.state.session_dropped is False
+    assert broadcast_calls == []
+
+
+@pytest.mark.asyncio
+async def test_auth_status_connection_error_broadcasts_once():
+    """
+    Bug A: repeated connection errors should broadcast session_dropped only
+    on the first transition (when was_authenticated is still True), not
+    every subsequent poll.
+    """
+    svc = make_ibkr()
+    svc.state.authenticated = True
+    svc._request = AsyncMock(side_effect=IBKRConnectionError("gateway down"))
+    broadcast_calls: list[dict] = []
+
+    async def fake_broadcast(payload: dict) -> None:
+        broadcast_calls.append(payload)
+
+    svc.set_broadcast(fake_broadcast)
+
+    # First poll — broadcasts
+    await svc.auth_status()
+    # Second poll — already flipped, no broadcast
+    await svc.auth_status()
+    # Third poll — same
+    await svc.auth_status()
+
+    assert len(broadcast_calls) == 1
+
+
+# ── Bug B: error message uses configured host/port ───────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_auth_status_error_message_uses_configured_port():
+    """
+    Bug B: the "Cannot reach IBKR Gateway" message must reflect the
+    configured host/port, not the hardcoded :5000 that silently shipped
+    when the gateway moved to :5001 (macOS AirPlay collision).
+    """
+    svc = make_ibkr()
+    svc.state.authenticated = False  # avoid the broadcast path for clarity
+    svc._request = AsyncMock(side_effect=IBKRConnectionError("down"))
+
+    result = await svc.auth_status()
+
+    expected_fragment = f"{IBKR_GATEWAY_HOST}:{IBKR_GATEWAY_PORT}"
+    assert expected_fragment in result["message"], (
+        f"expected '{expected_fragment}' in message, got: {result['message']!r}"
+    )
+    # Sanity check — make sure we didn't accidentally hardcode :5000 again
+    if IBKR_GATEWAY_PORT != 5000:
+        assert "localhost:5000" not in result["message"]
+
+
 # ── Gateway status endpoint ───────────────────────────────────────────────────
 
 
@@ -239,23 +351,48 @@ async def test_gateway_status_includes_session_dropped():
     GET /gateway/status response includes session_dropped reflecting IBKRState.
 
     Uses FastAPI's TestClient against the app to exercise the full route.
+
+    Two env-isolation concerns:
+      1. `app.state.ibkr` is only populated by the FastAPI lifespan, which
+         runs on `__enter__` of the TestClient context manager — so state
+         mutation must happen inside the `with` block.
+      2. When the gateway is running, the route calls `ibkr.auth_status()`
+         which, on success, clears `session_dropped`. If the developer has
+         a real gateway running on localhost:5001 (common during dev), this
+         clears the flag before the response is built and the assertion
+         fails. We patch `gw.status()` to report not running so the route
+         skips the auth probe and returns the raw flag.
     """
     from fastapi.testclient import TestClient
     from main import app
 
-    # Pre-configure the IBKR service state to simulate a dropped session
-    ibkr_svc = app.state.ibkr
-    ibkr_svc.state.session_dropped = True
-    ibkr_svc.state.authenticated = False
-
     with TestClient(app, raise_server_exceptions=False) as client:
-        resp = client.get("/gateway/status")
+        # Pre-configure the IBKR service state to simulate a dropped session
+        ibkr_svc = app.state.ibkr
+        gw_svc = app.state.gateway
 
-    # The route always returns 200 (even when gateway is down)
-    assert resp.status_code == 200
-    body = resp.json()
-    assert "session_dropped" in body
-    assert body["session_dropped"] is True
+        ibkr_svc.state.session_dropped = True
+        ibkr_svc.state.authenticated = False
 
-    # Cleanup
-    ibkr_svc.state.session_dropped = False
+        # Force the "gateway not running" branch so auth_status() is skipped
+        fake_status = {
+            "state": "not_provisioned",
+            "running": False,
+            "provisioned": False,
+            "error": None,
+            "progress": None,
+            "gateway_url": "https://localhost:5001",
+        }
+
+        with patch.object(gw_svc, "status", return_value=fake_status):
+            try:
+                resp = client.get("/gateway/status")
+
+                # The route always returns 200 (even when gateway is down)
+                assert resp.status_code == 200
+                body = resp.json()
+                assert "session_dropped" in body
+                assert body["session_dropped"] is True
+            finally:
+                # Cleanup — leave the shared app state clean for subsequent tests
+                ibkr_svc.state.session_dropped = False

@@ -279,6 +279,66 @@ class TestGatewayStatus:
         s = gw.status()
         assert s["running"] is True
 
+    def test_status_detects_dead_subprocess(self, tmp_path):
+        """
+        Bug C: if we think we're RUNNING but the managed subprocess has died
+        (user killed java in Activity Monitor, OOM, crash…), status() must
+        detect it on the next poll and transition RUNNING → PROVISIONED so
+        the UI stops lying about `running: true`.
+        """
+        gw = GatewayLifecycle(gateway_home=str(tmp_path))
+        gw.state = GatewayState.RUNNING
+
+        # Fake process that has already exited (poll returns non-None)
+        dead_process = MagicMock()
+        dead_process.poll = MagicMock(return_value=137)  # SIGKILL exit code
+        dead_process.returncode = 137
+        gw._process = dead_process
+        gw._process_pgid = 12345
+
+        s = gw.status()
+
+        assert s["state"] == "provisioned"
+        assert s["running"] is False
+        assert gw.state == GatewayState.PROVISIONED
+        assert gw._process is None
+        assert gw._process_pgid is None
+
+    def test_status_keeps_running_when_subprocess_alive(self, tmp_path):
+        """
+        Bug C: a live subprocess (poll() returns None) must NOT flip state.
+        Guard against overzealous reconciliation.
+        """
+        gw = GatewayLifecycle(gateway_home=str(tmp_path))
+        gw.state = GatewayState.RUNNING
+
+        alive_process = MagicMock()
+        alive_process.poll = MagicMock(return_value=None)  # still running
+        gw._process = alive_process
+
+        s = gw.status()
+
+        assert s["state"] == "running"
+        assert s["running"] is True
+        assert gw.state == GatewayState.RUNNING
+
+    def test_status_ignores_process_when_not_in_running_state(self, tmp_path):
+        """
+        Bug C: reconciliation only applies when state == RUNNING. If we're
+        already in PROVISIONED/ERROR/etc., don't touch anything.
+        """
+        gw = GatewayLifecycle(gateway_home=str(tmp_path))
+        gw.state = GatewayState.PROVISIONED
+        dead_process = MagicMock()
+        dead_process.poll = MagicMock(return_value=0)
+        gw._process = dead_process
+
+        s = gw.status()
+
+        assert s["state"] == "provisioned"
+        # _process is NOT cleared — we only clean up when transitioning out of RUNNING
+        assert gw._process is dead_process
+
     def test_downloading_includes_progress(self, tmp_path):
         gw = GatewayLifecycle(gateway_home=str(tmp_path))
         gw.state = GatewayState.DOWNLOADING_JRE
@@ -298,32 +358,33 @@ class TestGatewayStart:
 
     @pytest.mark.asyncio
     async def test_start_requires_provisioning(self, tmp_path):
+        """When Gateway isn't running externally and not provisioned, start() raises."""
         gw = GatewayLifecycle(gateway_home=str(tmp_path))
-        with pytest.raises(GatewayNotProvisionedError):
-            await gw.start()
+        # Force the "not running externally" branch so we reach the
+        # is_provisioned() check. Without this mock the test would hit the
+        # real localhost:5001 if the user has a Gateway running.
+        with patch.object(gw, "_is_gateway_healthy", AsyncMock(return_value=False)):
+            with pytest.raises(GatewayNotProvisionedError):
+                await gw.start()
 
     @pytest.mark.asyncio
     async def test_start_detects_external_gateway(self, tmp_path):
         """If Gateway is already running (Docker/manual), just report RUNNING."""
         gw = GatewayLifecycle(gateway_home=str(tmp_path))
-        gw._http = AsyncMock()
-        mock_resp = MagicMock()
-        mock_resp.status_code = 200
-        gw._http.get = AsyncMock(return_value=mock_resp)
-
-        await gw.start()
+        with patch.object(gw, "_is_gateway_healthy", AsyncMock(return_value=True)):
+            await gw.start()
         assert gw.state == GatewayState.RUNNING
 
     @pytest.mark.asyncio
     async def test_start_treats_401_as_running_gateway(self, tmp_path):
-        """401 from auth/status means the Gateway is up but login is still required."""
-        gw = GatewayLifecycle(gateway_home=str(tmp_path))
-        gw._http = AsyncMock()
-        mock_resp = MagicMock()
-        mock_resp.status_code = 401
-        gw._http.get = AsyncMock(return_value=mock_resp)
+        """401 from auth/status means the Gateway is up but login is still required.
 
-        await gw.start()
+        Verified at a unit level in TestHealthProbeMethod; here we just confirm
+        start() short-circuits when the healthy probe returns True.
+        """
+        gw = GatewayLifecycle(gateway_home=str(tmp_path))
+        with patch.object(gw, "_is_gateway_healthy", AsyncMock(return_value=True)):
+            await gw.start()
         assert gw.state == GatewayState.RUNNING
 
     @pytest.mark.asyncio
@@ -337,16 +398,20 @@ class TestGatewayStart:
         conf = root_dir / "conf.yaml"
         conf.write_text("listenPort: 5000\nlistenSsl: true\n")
 
-        gw._http = AsyncMock()
-        gw._http.get = AsyncMock(side_effect=[
-            httpx.ConnectError("refused"),
-            MagicMock(status_code=200),
-        ])
         run_script = gw.home / "bin" / "run.sh"
         run_script.parent.mkdir(parents=True, exist_ok=True)
         run_script.write_text("#!/bin/sh\n")
 
-        with patch("services.gateway.subprocess") as mock_sub:
+        # _is_gateway_healthy is called twice inside start(): first as the
+        # "already running externally?" early-exit probe (must return False so
+        # we proceed), then inside the 45s health-wait loop (must return True
+        # so the loop exits successfully).
+        health_sequence = AsyncMock(side_effect=[False] + [True] * 50)
+
+        with patch("services.gateway.subprocess") as mock_sub, \
+             patch.object(gw, "_is_gateway_healthy", health_sequence), \
+             patch.object(gw, "_is_port_in_use", return_value=False), \
+             patch.object(gw, "_warmup_gateway", AsyncMock()):
             mock_proc = MagicMock()
             mock_proc.poll.return_value = None
             mock_sub.Popen.return_value = mock_proc
@@ -371,16 +436,19 @@ class TestGatewayStart:
         _make_fake_gateway(gw.home)
         gw.reset_conf_yaml()
 
-        gw._http = AsyncMock()
-        gw._http.get = AsyncMock(side_effect=[
-            httpx.ConnectError("refused"),
-            MagicMock(status_code=200),
-        ])
         run_script = gw.home / "bin" / "run.sh"
         run_script.parent.mkdir(parents=True, exist_ok=True)
         run_script.write_text("#!/bin/sh\n")
 
-        with patch("services.gateway.subprocess") as mock_sub:
+        # See test_start_syncs_existing_conf_before_launch for why we use a
+        # sequence: first call = "external gateway check" (False), subsequent
+        # calls = "health loop after spawn" (True).
+        health_sequence = AsyncMock(side_effect=[False] + [True] * 50)
+
+        with patch("services.gateway.subprocess") as mock_sub, \
+             patch.object(gw, "_is_gateway_healthy", health_sequence), \
+             patch.object(gw, "_is_port_in_use", return_value=False), \
+             patch.object(gw, "_warmup_gateway", AsyncMock()):
             mock_proc = MagicMock()
             mock_proc.poll.return_value = None
             mock_sub.Popen.return_value = mock_proc

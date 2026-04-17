@@ -15,6 +15,7 @@
  */
 
 import { useEffect, useRef, useState } from "react";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import { useGatewayContext } from "@/context/GatewayContext";
 import { IBKR_GATEWAY_BASE_URL } from "@/config/endpoints";
 import type { WsMessage } from "@/hooks/useWebSocket";
@@ -25,20 +26,26 @@ interface IbkrReconnectBannerProps {
 }
 
 export function IbkrReconnectBanner({ addHandler }: IbkrReconnectBannerProps) {
-  const { status, isAuthenticated } = useGatewayContext();
+  const { status, isAuthenticated, refetch } = useGatewayContext();
   const [visible, setVisible] = useState(false);
   const dismissedRef = useRef(false);
 
   // ── Detect session drop from WS event (immediate) ─────────────────────────
+  // The WS event tells us the drop happened, but the full status payload
+  // (authenticated, session_dropped, auth_required) only refreshes on the
+  // /gateway/status poll — which may be on the 30 s SLOW interval. Force an
+  // immediate refetch so every downstream consumer of useGatewayContext
+  // (GatewaySetup, useIbkrReady gates, etc.) sees the new truth right away.
   useEffect(() => {
     const off = addHandler((msg: WsMessage) => {
       if (msg.type === "session_dropped") {
         dismissedRef.current = false;
         setVisible(true);
+        void refetch();
       }
     });
     return off;
-  }, [addHandler]);
+  }, [addHandler, refetch]);
 
   // ── Detect session drop from gateway status poll (backup) ─────────────────
   useEffect(() => {
@@ -87,20 +94,23 @@ export function IbkrReconnectBanner({ addHandler }: IbkrReconnectBannerProps) {
 
       {/* Actions */}
       <div className="flex shrink-0 items-center gap-3">
-        <a
-          href={gatewayUrl}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="rounded border px-3 py-1 font-medium transition-colors hover:opacity-80"
+        <button
+          type="button"
+          onClick={() => {
+            openUrl(gatewayUrl).catch((err) => {
+              console.error("Failed to open IBKR login URL:", err);
+            });
+          }}
+          className="cursor-pointer rounded border px-3 py-1 font-medium transition-colors hover:opacity-80"
           style={{
             borderColor: "var(--clr-orange)",
             color: "var(--clr-orange)",
           }}
         >
           Open IBKR Login
-        </a>
+        </button>
         <button
-          className="text-[var(--text-3)] transition-colors hover:text-[var(--text-2)]"
+          className="cursor-pointer text-[var(--text-3)] transition-colors hover:text-[var(--text-2)]"
           onClick={() => {
             dismissedRef.current = true;
             setVisible(false);

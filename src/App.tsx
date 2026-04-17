@@ -18,6 +18,7 @@ import { lazy, Suspense, useEffect } from "react";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { queryClient } from "@/lib/query";
+import { initNetworkMonitor } from "@/lib/network";
 import { useNavigationStore, useSettingsStore, type Screen } from "@/store";
 import { useSidecar } from "@/hooks/useSidecar";
 import { useWebSocket } from "@/hooks/useWebSocket";
@@ -60,6 +61,13 @@ function useGlobalEffects() {
     void loadSettings();
   }, [loadSettings]);
 
+  // Phase 8.1-F — wire browser offline/online events to the singleton
+  // toast + auto-refetch on recovery. Cleanup returned so StrictMode
+  // double-mount in dev doesn't leak listeners.
+  useEffect(() => {
+    return initNetworkMonitor(queryClient);
+  }, []);
+
   useTriggerAlerts(addHandler);
 
   return { addHandler };
@@ -95,21 +103,30 @@ function ActivePage() {
   }
 }
 
-/** Connection status dot */
+/**
+ * Connection status dot — reflects the Python sidecar (FastAPI backend),
+ * NOT the IBKR gateway session. IBKR state is surfaced separately by
+ * GatewaySetup and the IbkrReconnectBanner. We label it "Backend" to
+ * avoid the ambiguity of a plain "Connected" badge when a user's IBKR
+ * session has actually dropped.
+ */
 function ConnectionStatus() {
   const sidecar = useSidecar();
 
   const statusMap = {
-    starting: { color: "text-[var(--clr-orange)]", label: "Starting..." },
-    ready: { color: "text-[var(--clr-green)]", label: "Connected" },
-    error: { color: "text-[var(--clr-red)]", label: "Error" },
-    dev: { color: "text-[var(--clr-cyan)]", label: "Dev Mode" },
+    starting: { color: "text-[var(--clr-orange)]", label: "API: starting…" },
+    ready: { color: "text-[var(--clr-green)]", label: "API: ready" },
+    error: { color: "text-[var(--clr-red)]", label: "API: error" },
+    dev: { color: "text-[var(--clr-cyan)]", label: "API: dev" },
   } as const;
 
   const { color, label } = statusMap[sidecar.status];
 
   return (
-    <div className="flex items-center gap-1.5 font-data text-[10px] text-[var(--text-3)]">
+    <div
+      className="flex items-center gap-1.5 font-data text-[10px] text-[var(--text-3)]"
+      title="Python sidecar (FastAPI) status — IBKR auth state is shown separately"
+    >
       <div
         className={`h-1.5 w-1.5 rounded-full ${color} animate-glow`}
         style={{ color: "inherit" }}

@@ -163,3 +163,60 @@ async def gateway_reset_conf(gw: GatewayLifecycle = Depends(get_gateway)) -> dic
     status["conf_reset"] = True
     status["conf_path"] = str(conf_path)
     return status
+
+
+@router.post("/reset-session")
+async def gateway_reset_session(
+    gw: GatewayLifecycle = Depends(get_gateway),
+    ibkr: IBKRService = Depends(get_ibkr),
+) -> dict:
+    """
+    R2-full: recover from a wedged session without re-downloading binaries.
+
+    Steps:
+      1. Stop the tickle keep-alive loop
+      2. Close the IBKR WebSocket (if open)
+      3. Stop the Gateway subprocess
+      4. Reset in-memory auth/session flags
+      5. Start the Gateway again
+
+    Use when login succeeded but the UI never updated, or subsequent login
+    attempts fail to trigger the IBKR dispatcher download. Does NOT touch
+    files on disk — for that, use /factory-reset.
+    """
+    log.info("Gateway reset-session requested")
+    await ibkr._stop_tickle()
+    await ibkr.stop_ibkr_websocket()
+    await gw.stop()
+    ibkr.state.reset()
+    await gw.start()
+    status = _enrich_status(gw.status())
+    status["reset"] = "session"
+    return status
+
+
+@router.post("/factory-reset")
+async def gateway_factory_reset(
+    gw: GatewayLifecycle = Depends(get_gateway),
+    ibkr: IBKRService = Depends(get_ibkr),
+) -> dict:
+    """
+    R3-surgical: reset-session + delete session-state files on disk.
+
+    Removes root/logs/, root/Jts/, any *.cookie / *.session files in root/,
+    and gateway.log. Preserves the JRE, Gateway binaries, and conf.yaml.
+
+    Use when reset-session alone is not enough — typically when IBKR's own
+    dispatcher caching is masking a stale local session.
+    """
+    log.info("Gateway factory-reset requested")
+    await ibkr._stop_tickle()
+    await ibkr.stop_ibkr_websocket()
+    await gw.stop()
+    ibkr.state.reset()
+    removed = gw.clear_session_files()
+    await gw.start()
+    status = _enrich_status(gw.status())
+    status["reset"] = "factory"
+    status["files_removed"] = removed
+    return status

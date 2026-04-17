@@ -29,8 +29,13 @@ interface GatewayContextValue {
   provision: (force?: boolean) => Promise<void>;
   start: () => Promise<void>;
   stop: () => Promise<void>;
+  /** R2 — restart gateway + clear in-memory auth state (no file changes). */
+  resetSession: () => Promise<void>;
+  /** R3 — resetSession + wipe session files on disk. */
+  factoryReset: () => Promise<void>;
   actionError: string | null;
   actionLoading: boolean;
+  refetch: () => Promise<void>;
 }
 
 const GatewayContext = createContext<GatewayContextValue | null>(null);

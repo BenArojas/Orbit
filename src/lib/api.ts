@@ -18,6 +18,7 @@
 // ── Base URL ────────────────────────────────────────────────
 
 import { API_BASE } from "@/config/endpoints";
+import { ensureOnline, NetworkOfflineError, showOfflineToast } from "./network";
 
 // ── Types ───────────────────────────────────────────────────
 // Mirror the Pydantic models from backend/models/__init__.py.
@@ -589,6 +590,12 @@ async function request<T>(
   path: string,
   body?: unknown,
 ): Promise<T> {
+  // Phase 8.1-F — fast-fail if the browser already knows we're offline.
+  // Skips the fetch + retry chain entirely and surfaces the toast
+  // immediately rather than making the user wait ~3.5 s for the
+  // backend's retry budget to drain.
+  ensureOnline();
+
   const url = `${API_BASE}${path}`;
   const options: RequestInit = {
     method,
@@ -598,13 +605,24 @@ async function request<T>(
     options.body = JSON.stringify(body);
   }
 
-  const res = await fetch(url, options);
-  const data = await res.json();
+  try {
+    const res = await fetch(url, options);
+    const data = await res.json();
 
-  if (!res.ok) {
-    throw new ApiError(res.status, data);
+    if (!res.ok) {
+      throw new ApiError(res.status, data);
+    }
+    return data as T;
+  } catch (err) {
+    // `fetch()` throws a TypeError on network failure (DNS, no route,
+    // sidecar down, etc.). If we've since gone offline, upgrade the
+    // error so retry logic skips it and the singleton toast fires.
+    if (err instanceof TypeError && typeof navigator !== "undefined" && navigator.onLine === false) {
+      showOfflineToast();
+      throw new NetworkOfflineError();
+    }
+    throw err;
   }
-  return data as T;
 }
 
 // ── API functions ───────────────────────────────────────────
@@ -743,4 +761,14 @@ export const api = {
 
   gatewayReprovision: () =>
     request<GatewayStatusResponse>("POST", "/gateway/reprovision"),
+
+  // R2 — stop tickle + WS + gateway, clear in-memory state, restart gateway.
+  // Files on disk are untouched.
+  gatewayResetSession: () =>
+    request<GatewayStatusResponse>("POST", "/gateway/reset-session"),
+
+  // R3 — reset-session + delete root/logs, root/Jts, *.cookie, *.session.
+  // Preserves the JRE, Gateway binaries, and conf.yaml.
+  gatewayFactoryReset: () =>
+    request<GatewayStatusResponse>("POST", "/gateway/factory-reset"),
 } as const;
