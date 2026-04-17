@@ -18,6 +18,7 @@ import { lazy, Suspense, useEffect } from "react";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { queryClient } from "@/lib/query";
+import { initNetworkMonitor } from "@/lib/network";
 import { useNavigationStore, useSettingsStore, type Screen } from "@/store";
 import { useSidecar } from "@/hooks/useSidecar";
 import { useWebSocket } from "@/hooks/useWebSocket";
@@ -59,6 +60,13 @@ function useGlobalEffects() {
   useEffect(() => {
     void loadSettings();
   }, [loadSettings]);
+
+  // Phase 8.1-F — wire browser offline/online events to the singleton
+  // toast + auto-refetch on recovery. Cleanup returned so StrictMode
+  // double-mount in dev doesn't leak listeners.
+  useEffect(() => {
+    return initNetworkMonitor(queryClient);
+  }, []);
 
   useTriggerAlerts(addHandler);
 

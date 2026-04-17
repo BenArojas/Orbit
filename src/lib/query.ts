@@ -10,6 +10,7 @@
 
 import { QueryClient } from "@tanstack/react-query";
 import { ApiError } from "./api";
+import { NetworkOfflineError } from "./network";
 
 export const queryClient = new QueryClient({
   defaultOptions: {
@@ -22,6 +23,9 @@ export const queryClient = new QueryClient({
         if (error instanceof ApiError && error.status === 401) return false;
         // Don't retry rate limits — wait for Retry-After
         if (error instanceof ApiError && error.status === 429) return false;
+        // Don't retry when the browser is offline — fail fast, show toast,
+        // and let `online`-event invalidation refetch on recovery (8.1-F).
+        if (error instanceof NetworkOfflineError) return false;
         // Retry once for everything else (network blip, sidecar slow start)
         return failureCount < 1;
       },
