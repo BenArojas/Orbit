@@ -324,6 +324,15 @@ app.include_router(gateway_router)
 from routers.watchlist_config import router as watchlist_config_router
 app.include_router(watchlist_config_router)
 
+# Phase 6.5 settings router — was authored but never registered here,
+# so every `PUT /settings/{key}` from the frontend was silently 404-ing
+# before Phase 8.9+. Fixed alongside the pulse-config work.
+from routers.settings import router as settings_router
+app.include_router(settings_router)
+
+from routers.pulse_config import router as pulse_config_router
+app.include_router(pulse_config_router)
+
 from routers.health import router as health_router
 app.include_router(health_router)
 

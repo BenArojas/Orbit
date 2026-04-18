@@ -152,6 +152,8 @@ export default function WatchlistConfigSection() {
   const [open, setOpen] = useState(false);
   const queryClient = useQueryClient();
 
+  // Tier-8 gating is N/A here — fetches only fire when the user opens the
+  // section. Retries are handled by the global queryClient default.
   const { data: configs } = useQuery<WatchlistConfig[]>({
     queryKey: ["watchlist-configs"],
     queryFn: () => api.getWatchlistConfigs(),

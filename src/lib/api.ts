@@ -349,6 +349,33 @@ export interface SectorOverviewResponse {
   rrg: RRGDataPoint[];
 }
 
+// Arc-gauge feeds (Phase 8 / Task 8.9)
+
+export interface MarketBreadthResponse {
+  /** 0–100, % of sector ETFs above their 50-day EMA */
+  value: number;
+  above: number;
+  total: number;
+  etf_states: {
+    symbol: string;
+    above: boolean;
+    close: number;
+    ema50: number;
+  }[];
+}
+
+export interface SectorRotationResponse {
+  /** 0–100 gauge value (50 = neutral) */
+  value: number;
+  /** offensive_pct − defensive_pct, in percentage points */
+  delta_pct: number;
+  offensive_pct: number | null;
+  defensive_pct: number | null;
+  lookback_days: number;
+  offensive: { symbol: string; pct: number | null }[];
+  defensive: { symbol: string; pct: number | null }[];
+}
+
 // ── Watchlists (Phase 3 — task 3.5) ─────────────────────
 
 export interface WatchlistInfo {
@@ -356,6 +383,11 @@ export interface WatchlistInfo {
   name: string;
 }
 
+/**
+ * A watchlist row combining instrument metadata with (optional) live quote.
+ * The sidebar populates `symbol`/`companyName` from /instruments immediately,
+ * then backfills `lastPrice`/`changePercent`/`changeAmount` from /quotes.
+ */
 export interface WatchlistItemResponse {
   conid: number;
   symbol: string;
@@ -369,6 +401,34 @@ export interface WatchlistResponse {
   id: string;
   name: string;
   items: WatchlistItemResponse[];
+}
+
+// ── Phase 8.9 / Commit C: split endpoints ─────────────────
+//
+// `/watchlist/{id}/instruments` returns symbol + companyName only (fast).
+// `/watchlist/{id}/quotes?conids=...` returns snapshot data keyed by conid.
+
+export interface WatchlistInstrument {
+  conid: number;
+  symbol: string;
+  companyName: string;
+}
+
+export interface WatchlistInstrumentsResponse {
+  id: string;
+  name: string;
+  items: WatchlistInstrument[];
+}
+
+export interface WatchlistQuote {
+  conid: number;
+  lastPrice: number | null;
+  changePercent: number | null;
+  changeAmount: number | null;
+}
+
+export interface WatchlistQuotesResponse {
+  items: WatchlistQuote[];
 }
 
 // ── AI Analysis (Phase 4 — tasks 4.9–4.12) ────────────────
@@ -571,6 +631,25 @@ export interface AiFilterResponse {
   raw_query: string;
 }
 
+// ── Pulse Config (Phase 8.9+) ───────────────────────────────
+// User-configurable ticker list for the dashboard's Market Pulse bar.
+
+export interface PulseItem {
+  label: string;
+  resolve: string;
+  /**
+   * Optional IBKR secType hint — one of "", "STK", "IND", "BOND".
+   * "" means "no hint" (resolver falls through STK → unfiltered).
+   * Use "STK" to force an equity/ETF match (e.g. GLD as the ARCA
+   * ETF rather than HKFE futures). Use "IND" for indices.
+   */
+  sec_type?: string;
+}
+
+export interface PulseConfigResponse {
+  items: PulseItem[];
+}
+
 // ── API Error ───────────────────────────────────────────────
 
 export class ApiError extends Error {
@@ -645,8 +724,13 @@ export const api = {
   search: (query: string) =>
     request<SearchResult[]>("GET", `/market/search?q=${encodeURIComponent(query)}`),
 
-  resolveConid: (symbol: string) =>
-    request<ConidResponse>("GET", `/market/conid/${encodeURIComponent(symbol)}`),
+  resolveConid: (symbol: string, secType?: string) => {
+    const qs = secType ? `?sec_type=${encodeURIComponent(secType)}` : "";
+    return request<ConidResponse>(
+      "GET",
+      `/market/conid/${encodeURIComponent(symbol)}${qs}`,
+    );
+  },
 
   // Indicators
   computeIndicators: (req: IndicatorRequest) =>
@@ -662,12 +746,30 @@ export const api = {
   sectorOverview: () =>
     request<SectorOverviewResponse>("GET", "/sectors/overview"),
 
+  // Arc-gauge feeds (Phase 8 / Task 8.9)
+  marketBreadth: () =>
+    request<MarketBreadthResponse>("GET", "/sectors/breadth"),
+
+  sectorRotation: () =>
+    request<SectorRotationResponse>("GET", "/sectors/rotation"),
+
   // Watchlists (Phase 3)
   getWatchlists: () =>
     request<WatchlistInfo[]>("GET", "/watchlist/lists"),
 
-  getWatchlistItems: (watchlistId: string) =>
-    request<WatchlistResponse>("GET", `/watchlist/${encodeURIComponent(watchlistId)}`),
+  // Phase 8.9 / Commit C — split endpoints so the sidebar can render names
+  // immediately and backfill prices on a slower second query.
+  getWatchlistInstruments: (watchlistId: string) =>
+    request<WatchlistInstrumentsResponse>(
+      "GET",
+      `/watchlist/${encodeURIComponent(watchlistId)}/instruments`,
+    ),
+
+  getWatchlistQuotes: (watchlistId: string, conids: number[]) =>
+    request<WatchlistQuotesResponse>(
+      "GET",
+      `/watchlist/${encodeURIComponent(watchlistId)}/quotes?conids=${conids.join(",")}`,
+    ),
 
   // Triggers (CRUD)
   getTriggerRules: () =>
@@ -729,6 +831,16 @@ export const api = {
 
   getLockedFibs: (conid: number) =>
     request<LockedFibonacciResponse[]>("GET", `/fibonacci/locks/${conid}`),
+
+  // Pulse Config (Phase 8.9+) — user-configurable Market Pulse tickers
+  getPulseConfig: () =>
+    request<PulseConfigResponse>("GET", "/pulse-config"),
+
+  setPulseConfig: (items: PulseItem[]) =>
+    request<PulseConfigResponse>("PUT", "/pulse-config", { items }),
+
+  resetPulseConfig: () =>
+    request<PulseConfigResponse>("POST", "/pulse-config/reset"),
 
   // Screener (Phase 5)
   screenerScan: (req: ScanRequest) =>

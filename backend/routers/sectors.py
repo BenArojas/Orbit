@@ -59,3 +59,28 @@ async def get_sector_overview(
         "performance": performance,
         "rrg": rrg,
     }
+
+
+@router.get("/breadth")
+async def get_market_breadth(
+    service: SectorService = Depends(get_sectors),
+):
+    """
+    Market-breadth proxy — % of 11 SPDR sector ETFs above their 50-day EMA.
+
+    Feeds the "Market Strength" arc gauge on the dashboard.
+    """
+    return await service.get_market_breadth()
+
+
+@router.get("/rotation")
+async def get_sector_rotation(
+    service: SectorService = Depends(get_sectors),
+):
+    """
+    Sector rotation — 1-month performance of offensive (XLK/XLY/XLC/XLF)
+    vs defensive (XLP/XLU/XLV) sector ETFs.
+
+    Feeds the "Sector Rotation" arc gauge on the dashboard.
+    """
+    return await service.get_sector_rotation()

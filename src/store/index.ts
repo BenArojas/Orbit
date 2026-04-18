@@ -9,6 +9,7 @@
  *   watchlist  — master + trigger watchlists, live quotes
  *   screener   — filter criteria, sort state
  *   settings   — app config persisted to SQLite
+ *   pulseConfig — user-configurable Market Pulse ticker list (SQLite)
  *   ai         — Ollama status, chat session, signal, model selection
  */
 
@@ -32,6 +33,10 @@ export {
   type ScannerSort,
 } from "./screener";
 export { useSettingsStore } from "./settings";
+export {
+  usePulseConfigStore,
+  DEFAULT_PULSE_ITEMS,
+} from "./pulseConfig";
 export {
   useAiStore,
   type OllamaState,

@@ -49,6 +49,40 @@ from config import SQLITE_DB_PATH
 log = logging.getLogger("parallax.db")
 
 
+# ── Market Pulse defaults ──────────────────────────────────────
+#
+# Default tickers shown in the dashboard's Market Pulse bar.
+# Order matches the approved Layout A v2 mockup (SPX-first).
+# Kept alongside the other DB defaults so `seed_defaults()` and the
+# POST /pulse-config/reset endpoint share one source of truth.
+#
+# Tuple shape: (label, resolve, sec_type). `sec_type` is an optional
+# hint routed through to IBKR's /iserver/secdef/search — the empty
+# string means "no hint, default to STK with the fallback chain".
+# Non-STK entries must spell it out explicitly:
+#   - XAUUSD / XAGUSD are CMDTY metal-spot contracts (OTC).
+#   - USD.ILS is a currency pair — IBKR resolves it under STK in the
+#     search endpoint despite being a cash product, so no hint needed.
+#
+# DXY intentionally omitted: IBKR Client Portal Web API does NOT expose
+# the ICE Dollar Index (returns {"error": "No symbol found"}). Users
+# who want a dollar proxy can add UUP manually.
+DEFAULT_PULSE_ITEMS: tuple[tuple[str, str, str], ...] = (
+    ("SPX", "SPX", ""),
+    ("SPY", "SPY", ""),
+    ("QQQ", "QQQ", ""),
+    ("DIA", "DIA", ""),
+    ("IWM", "IWM", ""),
+    ("BTC", "BTC", ""),
+    ("ETH", "ETH", ""),
+    ("Gold", "XAUUSD", ""),
+    ("Silver", "XAGUSD", ""),
+    ("USO", "USO", ""),
+    ("TLT", "TLT", ""),
+    ("USD/ILS", "USD.ILS", ""),
+)
+
+
 class DatabaseService:
     """
     Async-friendly SQLite service.
@@ -275,6 +309,31 @@ class DatabaseService:
 
             CREATE INDEX IF NOT EXISTS idx_locked_fibs_conid
                 ON locked_fibonacci_drawings(conid);
+
+            -- ─── Market Pulse Config (Phase 8.9+) ──────────────────
+            -- User-configurable ticker list for the dashboard's top
+            -- Market Pulse bar. Each row is one ticker; `position`
+            -- determines display order (0-indexed, left → right).
+            --
+            -- `label`   — what shows on the bar (e.g. "USD/ILS")
+            -- `resolve` — the string handed to /market/conid to look up
+            --             the IBKR conid (forex uses BASE.QUOTE, e.g.
+            --             "USD.ILS"). Kept as a ticker string here;
+            --             conid resolution happens at query time so a
+            --             user's paper-vs-live accounts don't poison
+            --             the config.
+            CREATE TABLE IF NOT EXISTS pulse_config (
+                position    INTEGER PRIMARY KEY,
+                label       TEXT NOT NULL,
+                resolve     TEXT NOT NULL,
+                -- `sec_type` is an optional IBKR secType hint ('', 'STK',
+                -- 'IND', 'BOND') routed to /iserver/secdef/search so we
+                -- can disambiguate (e.g. GLD as the ARCA ETF, not HKFE
+                -- futures). Empty string = no hint; the resolver falls
+                -- through its usual STK-then-unfiltered chain.
+                sec_type    TEXT NOT NULL DEFAULT '',
+                updated_at  TEXT DEFAULT (datetime('now'))
+            );
         """)
         self._conn.commit()
         log.info("Database tables verified/created.")
@@ -295,6 +354,8 @@ class DatabaseService:
             # Phase 6.6: news-candle detection method (only used when indicator='news_candle')
             #   one of: 'volume_spike', 'range_spike', 'gap', 'long_wick'
             "ALTER TABLE trigger_rules ADD COLUMN news_candle_method TEXT",
+            # Phase 8.9 / Commit D: sec_type hint for pulse items
+            "ALTER TABLE pulse_config ADD COLUMN sec_type TEXT NOT NULL DEFAULT ''",
         ]
         for sql in migrations:
             try:
@@ -303,6 +364,20 @@ class DatabaseService:
                 log.info("Migration applied: %s", sql)
             except sqlite3.OperationalError:
                 pass  # column already exists — safe to skip
+
+        # Legacy pulse defaults briefly used BTC.USD / ETH.USD, but IBKR's
+        # secdef search resolves the crypto spot contracts under BTC / ETH.
+        # Normalise those persisted defaults in place so existing users stop
+        # carrying forward a broken config after upgrading.
+        self._conn.execute(
+            "UPDATE pulse_config SET resolve = 'BTC' "
+            "WHERE label = 'BTC' AND resolve = 'BTC.USD' AND sec_type = ''"
+        )
+        self._conn.execute(
+            "UPDATE pulse_config SET resolve = 'ETH' "
+            "WHERE label = 'ETH' AND resolve = 'ETH.USD' AND sec_type = ''"
+        )
+        self._conn.commit()
 
     # ── Internal helpers ─────────────────────────────────────
 
@@ -863,6 +938,64 @@ class DatabaseService:
             (lock_id,),
         )
 
+    # ── Pulse Config Operations (Phase 8.9+) ─────────────────
+
+    async def get_pulse_config(self) -> list[dict]:
+        """
+        Return all pulse-bar items in display order (left → right).
+
+        Each row is a plain dict: {position, label, resolve, sec_type}.
+        `sec_type` defaults to "" when unset (unset means "no hint",
+        resolver uses its STK-then-unfiltered fallback chain).
+        If the table is empty (first run before seed), returns [].
+        """
+        return await asyncio.to_thread(
+            self._fetchall,
+            "SELECT position, label, resolve, sec_type "
+            "FROM pulse_config ORDER BY position ASC",
+        )
+
+    async def replace_pulse_config(
+        self, items: list[tuple[str, str, str]],
+    ) -> None:
+        """
+        Replace the entire pulse-bar config atomically.
+
+        `items` is a list of (label, resolve, sec_type) tuples in the
+        desired display order. `sec_type` is an optional IBKR secType
+        hint — pass "" when not needed. Positions are re-indexed from 0
+        on every write so the caller never has to think about holes.
+        We run DELETE + INSERT inside one transaction so a failure
+        mid-write can't leave the bar empty.
+        """
+        def _replace() -> None:
+            assert self._conn is not None
+            try:
+                self._conn.execute("BEGIN")
+                self._conn.execute("DELETE FROM pulse_config")
+                self._conn.executemany(
+                    "INSERT INTO pulse_config "
+                    "(position, label, resolve, sec_type) VALUES (?, ?, ?, ?)",
+                    [
+                        (i, label, resolve, sec_type)
+                        for i, (label, resolve, sec_type) in enumerate(items)
+                    ],
+                )
+                self._conn.commit()
+            except sqlite3.Error:
+                self._conn.rollback()
+                raise
+
+        await asyncio.to_thread(_replace)
+
+    async def reset_pulse_config(self) -> list[dict]:
+        """
+        Reset the pulse bar to DEFAULT_PULSE_ITEMS and return the new list.
+        Used by POST /pulse-config/reset.
+        """
+        await self.replace_pulse_config(list(DEFAULT_PULSE_ITEMS))
+        return await self.get_pulse_config()
+
     # ── Seed default settings ────────────────────────────────
 
     async def seed_defaults(self) -> None:
@@ -871,13 +1004,21 @@ class DatabaseService:
         Called once during app startup, after tables are created.
         """
         defaults = {
-            "scan_interval_seconds": "300",   # Global default per-rule scan interval (seconds)
+            "scan_interval": "300",           # Global scanner interval (seconds) — matches frontend key
             "default_timeframe": "1D",        # Default chart timeframe
             "default_period": "3M",           # Default chart period
             "notifications_enabled": "true",  # Phase 6.5: global desktop notification toggle
+            "theme_mode": "dark",             # Phase 8.9+: 'dark' | 'light'
         }
         for key, value in defaults.items():
             existing = await self.get_setting(key)
             if existing is None:
                 await self.set_setting(key, value)
                 log.info("Seeded default setting: %s = %s", key, value)
+
+        # Seed pulse config only if the table is empty. Users who have
+        # already customized their bar keep their layout across restarts.
+        existing_pulse = await self.get_pulse_config()
+        if not existing_pulse:
+            await self.replace_pulse_config(list(DEFAULT_PULSE_ITEMS))
+            log.info("Seeded default pulse config (%d items)", len(DEFAULT_PULSE_ITEMS))

@@ -27,8 +27,9 @@ def app_and_db():
 
     db = MagicMock()
     db.get_all_settings = AsyncMock(return_value={
-        "scan_interval_seconds": "300",
+        "scan_interval": "300",
         "notifications_enabled": "true",
+        "theme_mode": "dark",
         "ai_model": "llama3.1",
     })
     db.get_setting = AsyncMock(return_value=None)
@@ -47,8 +48,9 @@ def test_get_all_settings_returns_map(app_and_db):
     r = client.get("/settings")
     assert r.status_code == 200
     data = r.json()
-    assert data["scan_interval_seconds"] == "300"
+    assert data["scan_interval"] == "300"
     assert data["notifications_enabled"] == "true"
+    assert data["theme_mode"] == "dark"
     db.get_all_settings.assert_awaited_once()
 
 
@@ -90,6 +92,24 @@ def test_put_setting_stores_string_only(app_and_db):
     """Non-string values in the JSON body should still coerce to string."""
     app, db = app_and_db
     client = TestClient(app)
-    r = client.put("/settings/scan_interval_seconds", json={"value": "600"})
+    r = client.put("/settings/scan_interval", json={"value": "600"})
     assert r.status_code == 200
-    db.set_setting.assert_awaited_once_with("scan_interval_seconds", "600")
+    db.set_setting.assert_awaited_once_with("scan_interval", "600")
+
+
+def test_put_setting_rejects_unknown_key(app_and_db):
+    """The allowlist should block keys that aren't in _ALLOWED_SETTINGS."""
+    app, db = app_and_db
+    client = TestClient(app)
+    r = client.put("/settings/not_a_real_key", json={"value": "x"})
+    assert r.status_code == 400
+    db.set_setting.assert_not_awaited()
+
+
+def test_put_theme_mode_is_accepted(app_and_db):
+    """theme_mode was added in Phase 8.9+ and must be on the allowlist."""
+    app, db = app_and_db
+    client = TestClient(app)
+    r = client.put("/settings/theme_mode", json={"value": "light"})
+    assert r.status_code == 200
+    db.set_setting.assert_awaited_once_with("theme_mode", "light")

@@ -23,11 +23,15 @@ log = logging.getLogger("parallax.settings")
 router = APIRouter(prefix="/settings", tags=["settings"])
 
 
+# Keys the frontend is allowed to PUT. Keep in sync with `useSettingsStore`
+# (src/store/settings.ts) and the defaults seeded in DatabaseService.seed_defaults.
 _ALLOWED_SETTINGS: frozenset[str] = frozenset({
-    "scan_interval_seconds",
-    "default_timeframe",
-    "default_period",
-    "notifications_enabled",
+    "scan_interval",        # Scanner polling interval (seconds)
+    "default_timeframe",    # Default chart timeframe
+    "default_period",       # Default chart period
+    "notifications_enabled",  # Global toggle for desktop notifications
+    "theme_mode",           # Phase 8.9+: 'dark' | 'light'
+    "ai_model",             # Selected Ollama model
 })
 
 

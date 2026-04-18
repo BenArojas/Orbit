@@ -33,12 +33,16 @@ import { GatewaySetup } from "@/components/gateway/GatewaySetup";
 
 export default function DashboardPage() {
   return (
-    <div className="grid h-full grid-cols-[1fr_310px] grid-rows-[54px_1fr_160px]">
+    // Phase 8.9: third row is `auto` so AlertLog collapses to its header when
+    // empty and expands (up to its internal max-height) when alerts exist.
+    // The main content column uses `minmax(0,1fr)` so it can shrink and scroll
+    // as the alert log grows.
+    <div className="grid h-full grid-cols-[1fr_310px] grid-rows-[54px_minmax(0,1fr)_auto]">
       {/* ── Row 1: Market Pulse bar (full width, baked-in col-span-2) ── */}
       <MarketPulse />
 
       {/* ── Row 2 Left: Main content area ── */}
-      <div className="flex flex-col gap-4 overflow-y-auto p-4">
+      <div className="flex min-h-0 flex-col gap-4 overflow-y-auto p-4">
         {/* Gauge row — 4 arc gauges (task 3.2) */}
         <ArcGaugeRow />
 
@@ -50,7 +54,7 @@ export default function DashboardPage() {
       </div>
 
       {/* ── Row 2 Right: Sidebar ── */}
-      <div className="flex flex-col overflow-hidden border-l border-border bg-[var(--bg-1)]">
+      <div className="flex min-h-0 flex-col overflow-hidden border-l border-border bg-[var(--bg-1)]">
         {/* Gateway Status — IBKR connection setup */}
         <div className="border-b border-border p-2">
           <GatewaySetup />
@@ -71,8 +75,10 @@ export default function DashboardPage() {
         <WatchlistConfigSection />
       </div>
 
-      {/* ── Row 3: Alert Log (full width, 160px, task 6.7) ── */}
-      <div className="col-span-2 overflow-hidden">
+      {/* ── Row 3: Alert Log (full width, auto-height, task 6.7 + 8.9)
+          `mt-2` adds an 8 px gap so the log doesn't butt up against the
+          sector/RRG cards above. */}
+      <div className="col-span-2 mt-2 overflow-hidden">
         <AlertLog />
       </div>
     </div>

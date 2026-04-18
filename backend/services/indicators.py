@@ -77,6 +77,33 @@ class IndicatorService:
     the matching methods.
     """
 
+    # ── Public helpers for non-candle callers ────────────────
+    #
+    # Other services (e.g. SectorService) sometimes have raw close-price
+    # lists rather than CandleData objects and just need a rolling EMA.
+    # They call `ema_series(closes, period)` instead of rolling their own —
+    # this keeps the pandas-ta bridge in a single file (CLAUDE.md rule 2:
+    # "pandas-ta is the only exception (bridged)").
+    @staticmethod
+    def ema_series(values: list[float], period: int) -> list[float]:
+        """
+        Compute an Exponential Moving Average over a plain list of floats.
+
+        Uses the same pandas-ta engine as `_compute_ema` (SMA-seeded EMA
+        with alpha = 2 / (period + 1)) so values are numerically identical
+        to the candle-based indicator path.
+
+        Returns the non-NaN tail of the EMA series. Length equals
+        max(0, len(values) - period + 1). Empty list if there isn't
+        enough data to seed the EMA.
+        """
+        if len(values) < period:
+            return []
+        ema = ta.ema(pd.Series(values), length=period)
+        if ema is None or ema.empty:
+            return []
+        return [float(v) for v in ema.to_numpy() if not math.isnan(v)]
+
     def compute(
         self,
         candles: list[CandleData],

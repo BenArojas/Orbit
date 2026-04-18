@@ -21,6 +21,8 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, type TriggerHit } from "@/lib/api";
 import { useNavigationStore } from "@/store";
 import { useWebSocket, type WsMessage } from "@/hooks/useWebSocket";
+import { useIbkrReadyTier } from "@/hooks/useIbkrReadyTier";
+import { AlertLogSkeleton } from "./skeletons";
 
 // ── Helpers ──────────────────────────────────────────────────
 
@@ -172,12 +174,17 @@ export default function AlertLog() {
 
   const [toast, setToast] = useState<ToastState | null>(null);
 
+  // Tier 9 (last) in the 9-tier dashboard cascade (Phase 8 / Task 8.9):
+  // the alert log fires ~2 s after IBKR connects, after every other panel.
+  const tierReady = useIbkrReadyTier(9);
+
   const { data: hits, isLoading, isError } = useQuery<TriggerHit[]>({
     queryKey: ["trigger-hits"],
     queryFn: () => api.getTriggerHits(200),
     // 60 s background refetch — new alerts arrive via WS invalidation (below),
     // so this is only a safety net for missed events / stale data.
     refetchInterval: 60_000,
+    enabled: tierReady,
   });
 
   // Invalidate the hits query whenever the scanner broadcasts a fresh alert so
@@ -205,48 +212,67 @@ export default function AlertLog() {
     [navigateToAnalysis],
   );
 
+  // Phase 8.9 — collapse behaviour:
+  //   - Tier not ready OR first fetch in-flight → skeleton (short)
+  //   - No hits → just show the header row (fully collapsed)
+  //   - Hits → show column header + scrollable list, capped at ~160 px
+  const showSkeleton = !tierReady || (isLoading && !hits);
+  const hasHits = !!hits && hits.length > 0;
+  const collapsed = !showSkeleton && !isError && !hasHits;
+
   return (
-    <div className="relative flex h-full flex-col border-t border-border bg-[var(--bg-1)]">
+    <div className="relative flex flex-col border-t border-border bg-[var(--bg-1)]">
       {/* Header */}
       <div className="flex items-center justify-between border-b border-border px-3 py-1.5">
         <span className="text-[10px] font-semibold uppercase tracking-wider text-[var(--text-3)]">
           Alert Log
         </span>
-        <span className="rounded-full bg-[var(--bg-3)] px-1.5 py-0.5 font-data text-[9px] text-[var(--text-3)]">
-          {hits?.length ?? 0}
+        <span className="flex items-center gap-2">
+          {collapsed && (
+            <span className="text-[9px] text-[var(--text-3)] opacity-70">
+              no alerts
+            </span>
+          )}
+          <span className="rounded-full bg-[var(--bg-3)] px-1.5 py-0.5 font-data text-[9px] text-[var(--text-3)]">
+            {hits?.length ?? 0}
+          </span>
         </span>
       </div>
 
-      {/* Column header */}
-      <div className="grid grid-cols-[72px_minmax(70px,1fr)_minmax(140px,1.4fr)_minmax(180px,2fr)_minmax(180px,1.4fr)] items-center gap-2 border-b border-border bg-[var(--bg-2)]/60 px-3 py-1 text-[9px] uppercase tracking-wider text-[var(--text-3)]">
-        <span>Time</span>
-        <span>Symbol</span>
-        <span>Rule</span>
-        <span>Condition → Actual</span>
-        <span>Source → Target</span>
-      </div>
+      {/* Collapsed? Nothing else to render — the dashboard reclaims this space. */}
+      {!collapsed && (
+        <>
+          {/* Column header — hidden while collapsed to keep the bar minimal */}
+          {!showSkeleton && (
+            <div className="grid grid-cols-[72px_minmax(70px,1fr)_minmax(140px,1.4fr)_minmax(180px,2fr)_minmax(180px,1.4fr)] items-center gap-2 border-b border-border bg-[var(--bg-2)]/60 px-3 py-1 text-[9px] uppercase tracking-wider text-[var(--text-3)]">
+              <span>Time</span>
+              <span>Symbol</span>
+              <span>Rule</span>
+              <span>Condition → Actual</span>
+              <span>Source → Target</span>
+            </div>
+          )}
 
-      {/* Rows */}
-      <div className="flex-1 overflow-y-auto">
-        {isLoading ? (
-          <div className="flex h-full items-center justify-center">
-            <span className="text-[10px] text-[var(--text-3)]">Loading...</span>
+          {/* Rows — capped height when populated so the dashboard keeps room above */}
+          <div
+            className="overflow-y-auto"
+            style={{ maxHeight: "160px" }}
+          >
+            {showSkeleton ? (
+              <AlertLogSkeleton rows={4} />
+            ) : isError ? (
+              <div className="flex items-center justify-center gap-1.5 py-4">
+                <span className="text-[10px] text-[var(--clr-red)]">Failed to load alerts</span>
+                <span className="text-[10px] text-[var(--text-3)]">— will retry</span>
+              </div>
+            ) : (
+              hits!.map((hit) => (
+                <HitRow key={hit.id} hit={hit} onClick={handleClick} />
+              ))
+            )}
           </div>
-        ) : isError ? (
-          <div className="flex h-full items-center justify-center gap-1.5">
-            <span className="text-[10px] text-[var(--clr-red)]">Failed to load alerts</span>
-            <span className="text-[10px] text-[var(--text-3)]">— will retry</span>
-          </div>
-        ) : !hits || hits.length === 0 ? (
-          <div className="flex h-full items-center justify-center">
-            <span className="text-[10px] text-[var(--text-3)]">No alerts yet</span>
-          </div>
-        ) : (
-          hits.map((hit) => (
-            <HitRow key={hit.id} hit={hit} onClick={handleClick} />
-          ))
-        )}
-      </div>
+        </>
+      )}
 
       {/* Click toast (floats inside the panel) */}
       {toast && <AlertToast toast={toast} onDismiss={() => setToast(null)} />}

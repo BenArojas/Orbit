@@ -2,14 +2,18 @@
  * Parallax — Global Theme
  *
  * Dark cinematic design matching the approved Layout A v2 mockup.
- * This is a dark-only app — no light mode. The `dark` class is applied
- * to <html> in index.html.
+ * A light palette was added in Phase 8.9+ (see `:root.light` below) — dark
+ * remains the default. Theme is toggled by swapping `.dark` / `.light`
+ * classes on <html>; `useSettingsStore.themeMode` persists the choice.
  *
- * Color palette from mockup:
+ * Dark palette (from mockup):
  *   bg0 #05080e → bg1 #0a1019 → bg2 #0f1724 → bg3 #162033 → bg4 #1d2b42
  *   Trading: green #00ff88, red #ff4466, cyan #00d4ff
  *   Accent:  orange #ff9f1c, purple #b44dff, blue #4488ff
  *   Text:    text1 #e8edf5, text2 #7d8da1, text3 #4a5568
+ *
+ * Light palette: warm off-white bg scale, darker text, dimmed trading accents
+ * (full glow doesn't read well on light surfaces — see `:root.light`).
  *
  * Fonts: Inter (UI), JetBrains Mono (data/numbers)
  * ────────────────────────────────────────────────────────────────────────── */
@@ -149,6 +153,83 @@
   --sidebar-ring: #00d4ff;
 }
 
+/* ── Light palette (Phase 8.9+) ──
+ * Activated by adding the `.light` class to <html>.
+ * Keeps the same variable names so every component inherits without changes.
+ * Trading accents are desaturated/darkened so they remain legible on
+ * light surfaces (full neon glow washes out on off-white).
+ */
+:root.light {
+  /* Backgrounds — warm off-white scale */
+  --bg-0: #f7f8fa;
+  --bg-1: #eceff5;
+  --bg-2: #e2e6ee;
+  --bg-3: #d3d9e4;
+  --bg-4: #c0c8d6;
+
+  /* Text — dark on light */
+  --text-1: #0f1724;
+  --text-2: #4a5568;
+  --text-3: #7d8da1;
+
+  /* Trading colors — darkened for legibility on light bg */
+  --clr-green: #10a353;
+  --clr-red: #d13d57;
+  --clr-cyan: #0a8fb3;
+  --clr-orange: #cc7a0f;
+  --clr-purple: #8a38c9;
+  --clr-blue: #2f6bcf;
+
+  /* Glows — stronger alpha so pills/badges still read as glows on light bg */
+  --glow-green: rgba(16, 163, 83, 0.12);
+  --glow-red: rgba(209, 61, 87, 0.12);
+  --glow-cyan: rgba(10, 143, 179, 0.12);
+  --glow-orange: rgba(204, 122, 15, 0.12);
+  --glow-purple: rgba(138, 56, 201, 0.12);
+  --glow-blue: rgba(47, 107, 207, 0.12);
+
+  /* shadcn semantic tokens */
+  --background: #f7f8fa;
+  --foreground: #0f1724;
+  --card: #ffffff;
+  --card-foreground: #0f1724;
+  --popover: #ffffff;
+  --popover-foreground: #0f1724;
+  --primary: #0a8fb3;
+  --primary-foreground: #ffffff;
+  --secondary: #e2e6ee;
+  --secondary-foreground: #0f1724;
+  --muted: #eceff5;
+  --muted-foreground: #4a5568;
+  --accent: #d3d9e4;
+  --accent-foreground: #0f1724;
+  --destructive: #d13d57;
+  --border: rgba(15, 23, 36, 0.08);
+  --input: rgba(15, 23, 36, 0.12);
+  --ring: #0a8fb3;
+
+  /* Charts */
+  --chart-1: #0a8fb3;
+  --chart-2: #10a353;
+  --chart-3: #cc7a0f;
+  --chart-4: #8a38c9;
+  --chart-5: #2f6bcf;
+
+  /* Sidebar */
+  --sidebar: #eceff5;
+  --sidebar-foreground: #0f1724;
+  --sidebar-primary: #0a8fb3;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #d3d9e4;
+  --sidebar-accent-foreground: #0f1724;
+  --sidebar-border: rgba(15, 23, 36, 0.08);
+  --sidebar-ring: #0a8fb3;
+}
+
+:root.light {
+  color-scheme: light;
+}
+
 /* ── Base layer ── */
 @layer base {
   * {
@@ -222,5 +303,15 @@
   /* CTA button gradient (Run Analysis, etc.) */
   .bg-gradient-cta {
     background: linear-gradient(135deg, var(--clr-cyan), var(--clr-blue));
+  }
+
+  /* Hide scrollbars while preserving scroll behavior
+     (used by the Market Pulse bar at the top of the dashboard) */
+  .scrollbar-hidden {
+    scrollbar-width: none;         /* Firefox */
+    -ms-overflow-style: none;      /* Edge / IE */
+  }
+  .scrollbar-hidden::-webkit-scrollbar {
+    display: none;                 /* Chromium / WebKit */
   }
 }

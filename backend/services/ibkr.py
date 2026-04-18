@@ -13,6 +13,7 @@ import json
 import logging
 import ssl
 import time
+import re
 from typing import Any, Awaitable, Callable
 
 # After this many consecutive tickle failures we declare the session dropped
@@ -325,17 +326,131 @@ class IBKRService:
         return await self._request("GET", "/iserver/secdef/search", params=params)
 
     @cached(ttl=3600)
-    async def get_conid(self, symbol: str) -> int:
+    async def get_conid(self, symbol: str, sec_type: str = "") -> int:
         """
         Resolve a ticker symbol to an IBKR conid.
         Raises SymbolNotFoundError if not found.
+
+        Args:
+          symbol:   The ticker to resolve (e.g. "GLD", "USD.ILS", "XAUUSD").
+          sec_type: Optional IBKR secType hint. When provided, we only
+                    consider matches whose `sections[].secType` contains
+                    this value — e.g. pass "STK" to prevent GLD matching
+                    the Hong Kong Gold Futures contract (marked IND).
+                    Must be one of IBKR's searchable secTypes ("STK",
+                    "IND", "BOND") or "" to apply no filter.
+
+        Implementation notes:
+          - IBKR search responses are mixed: dict rows, bare strings, and
+            sometimes error envelopes. We only consider dict candidates
+            with a valid top-level conid.
+          - When the caller provides an explicit sec_type hint, we honour
+            it strictly and require that section type to appear on the match.
+          - Without a hint, we do one unfiltered search and rank matches by:
+              1. exact symbol match
+              2. inferred asset-class preference for known patterns
+                 (e.g. BTC → CRYPTO, XAUUSD → CMDTY, USD.ILS → CASH)
+              3. preferred exchange for common stock/ETF symbols
         """
-        results = await self.search(symbol, sec_type="STK")
-        for item in results:
-            conid = item.get("conid")
-            if conid:
-                return int(conid)
-        raise SymbolNotFoundError(symbol)
+        preferred_exchanges = (
+            "ARCA",
+            "NASDAQ",
+            "NYSE",
+            "CBOE",
+            "BATS",
+            "AMEX",
+            "IDEALPRO",
+            "PAXOS",
+        )
+        symbol_upper = symbol.upper()
+
+        def _section_sec_types(item: dict[str, Any]) -> set[str]:
+            out: set[str] = set()
+            sections = item.get("sections")
+            if isinstance(sections, list):
+                for sec in sections:
+                    if not isinstance(sec, dict):
+                        continue
+                    sec_value = sec.get("secType")
+                    if isinstance(sec_value, str) and sec_value:
+                        out.add(sec_value.upper())
+            top_level = item.get("secType")
+            if isinstance(top_level, str) and top_level:
+                out.add(top_level.upper())
+            return out
+
+        def _normalize_conid(raw: Any) -> int | None:
+            try:
+                value = int(raw)
+            except (TypeError, ValueError):
+                return None
+            return value if value > 0 else None
+
+        def _infer_preferred_sec_types() -> tuple[str, ...]:
+            if sec_type:
+                return (sec_type.upper(),)
+            if symbol_upper in {"BTC", "ETH"}:
+                return ("CRYPTO", "STK")
+            if symbol_upper in {"XAUUSD", "XAGUSD"}:
+                return ("CMDTY",)
+            if symbol_upper in {"SPX", "VIX", "NDX", "RUT", "DXY"}:
+                return ("IND", "STK")
+            if re.fullmatch(r"[A-Z]{3}\.[A-Z]{3}", symbol_upper):
+                return ("CASH",)
+            return ("STK", "IND", "BOND")
+
+        def _exchange_rank(item: dict[str, Any]) -> int:
+            values: list[str] = []
+            description = item.get("description")
+            if isinstance(description, str) and description:
+                values.append(description.upper())
+            sections = item.get("sections")
+            if isinstance(sections, list):
+                for sec in sections:
+                    if not isinstance(sec, dict):
+                        continue
+                    exchange = sec.get("exchange")
+                    if isinstance(exchange, str) and exchange:
+                        values.extend(part.upper() for part in exchange.split(";") if part)
+            for rank, exchange in enumerate(preferred_exchanges):
+                if exchange in values:
+                    return rank
+            return len(preferred_exchanges)
+
+        preferred_sec_types = _infer_preferred_sec_types()
+        search_results = await self.search(symbol, sec_type=sec_type.upper())
+        if not isinstance(search_results, list):
+            raise SymbolNotFoundError(symbol)
+
+        candidates: list[tuple[tuple[int, int, int], int]] = []
+        for item in search_results:
+            if not isinstance(item, dict):
+                continue
+            conid = _normalize_conid(item.get("conid"))
+            if conid is None:
+                continue
+            item_symbol = str(item.get("symbol") or "").upper()
+            item_sec_types = _section_sec_types(item)
+            if sec_type and sec_type.upper() not in item_sec_types:
+                continue
+
+            sec_rank = len(preferred_sec_types)
+            for idx, preferred in enumerate(preferred_sec_types):
+                if preferred in item_sec_types:
+                    sec_rank = idx
+                    break
+
+            score = (
+                0 if item_symbol == symbol_upper else 1,
+                sec_rank,
+                _exchange_rank(item),
+            )
+            candidates.append((score, conid))
+
+        if not candidates:
+            raise SymbolNotFoundError(symbol)
+
+        return min(candidates, key=lambda item: item[0])[1]
 
     async def snapshot(
         self,
@@ -418,14 +533,43 @@ class IBKRService:
         """
         Fetch all IBKR watchlists for the authenticated user.
         Returns list of {id, name} dicts.
+
+        IBKR Client Portal /iserver/watchlists returns:
+          {
+            "data": {
+              "scanners_only": false,
+              "show_scanners": false,
+              "bulk_delete": false,
+              "user_lists": [ { "id": "...", "name": "...", "type": "..." }, ... ]
+            },
+            "action": "content",
+            "MID": "..."
+          }
+
+        We defensively handle older / alternate shapes too:
+          - {"user_lists": [...]}        (flat, no "data" wrapper)
+          - {"data": [...]}              (simplified, list under "data")
+          - [...]                        (direct list)
+
+        Any non-dict entries are filtered out so downstream code can safely
+        call `.get()` on every item (fixes the 'str has no attribute .get' 500).
         """
         await self.ensure_accounts()
         data = await self._request("GET", "/iserver/watchlists")
-        # IBKR returns: {"data": [{"id": "...", "name": "...", ...}, ...]}
-        # or sometimes just a list
+
+        # Unwrap to a list of watchlist dicts
+        lists: list = []
         if isinstance(data, dict):
-            return data.get("data", data.get("user_lists", []))
-        return data if isinstance(data, list) else []
+            inner = data.get("data", data)
+            if isinstance(inner, dict):
+                lists = inner.get("user_lists", []) or []
+            elif isinstance(inner, list):
+                lists = inner
+        elif isinstance(data, list):
+            lists = data
+
+        # Defense in depth: filter out any non-dict items (strings, None, etc.)
+        return [wl for wl in lists if isinstance(wl, dict)]
 
     async def get_watchlist_items(self, watchlist_id: str) -> list[dict]:
         """

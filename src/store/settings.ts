@@ -17,6 +17,8 @@
 import { create } from "zustand";
 import { API_BASE } from "@/config/endpoints";
 
+export type ThemeMode = "dark" | "light";
+
 interface SettingsState {
   /** Scanner polling interval in seconds */
   scanInterval: number;
@@ -30,6 +32,9 @@ interface SettingsState {
   /** Global on/off toggle for native desktop notifications on trigger alerts */
   notificationsEnabled: boolean;
 
+  /** Active color theme — swaps `.dark` / `.light` class on <html> */
+  themeMode: ThemeMode;
+
   /** Whether settings have been loaded from backend */
   isLoaded: boolean;
 
@@ -38,6 +43,7 @@ interface SettingsState {
   setDefaultTimeframe: (v: string) => void;
   setDefaultPeriod: (v: string) => void;
   setNotificationsEnabled: (v: boolean) => void;
+  setThemeMode: (v: ThemeMode) => void;
 
   /** Load all settings from backend SQLite */
   loadSettings: () => Promise<void>;
@@ -51,6 +57,7 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
   defaultTimeframe: "1D",
   defaultPeriod: "3M",
   notificationsEnabled: true,
+  themeMode: "dark",
   isLoaded: false,
 
   setScanInterval: (v) => {
@@ -73,17 +80,25 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
     get().persistSetting("notifications_enabled", v ? "true" : "false");
   },
 
+  setThemeMode: (v) => {
+    set({ themeMode: v });
+    get().persistSetting("theme_mode", v);
+  },
+
   loadSettings: async () => {
     try {
       const response = await fetch(`${API_BASE}/settings`);
       if (response.ok) {
         const settings = (await response.json()) as Record<string, string>;
+        const rawTheme = settings["theme_mode"] ?? "dark";
+        const themeMode: ThemeMode = rawTheme === "light" ? "light" : "dark";
 
         set({
           scanInterval: Number(settings["scan_interval"] ?? 300),
           defaultTimeframe: settings["default_timeframe"] ?? "1D",
           defaultPeriod: settings["default_period"] ?? "3M",
           notificationsEnabled: (settings["notifications_enabled"] ?? "true") === "true",
+          themeMode,
           isLoaded: true,
         });
       }
