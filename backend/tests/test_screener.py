@@ -15,6 +15,8 @@ BACKEND_ROOT = Path(__file__).resolve().parents[1]
 if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
+from services.ibkr import IBKRService
+
 from models import (
     ContractInfoResponse,
     IbkrFilterItem,
@@ -129,6 +131,7 @@ class TestScreenerServiceScan:
 
     @pytest.mark.asyncio
     async def test_empty_filters_passes_none_to_ibkr(self):
+        """Screener passes filters=None to scanner_run when no filters given."""
         ibkr = make_ibkr_mock()
         svc = ScreenerService(ibkr)
 
@@ -610,3 +613,98 @@ class TestPresets:
             preset = ScannerPreset(**preset_dict)
             assert hasattr(preset, "default_filters")
             assert isinstance(preset.default_filters, list)
+
+
+# ── Regression: IBKR scanner_run always sends filter array ────
+# Bug: omitting the "filter" key caused IBKR to return 400
+# "filter must be an array" even for presets with no filters.
+# Fix: ibkr.scanner_run now always sets body["filter"] = filters or [].
+
+
+def _make_ibkr_svc() -> IBKRService:
+    """Return a bare IBKRService with _request and ensure_accounts mocked."""
+    svc = IBKRService.__new__(IBKRService)
+    svc.base_url = "https://localhost:5000/v1/api"
+    svc.state = MagicMock()
+    svc.state.accounts_fetched = True  # skip ensure_accounts
+    svc.http = AsyncMock()
+    svc._tickle_task = None
+    svc._ws_task = None
+    return svc
+
+
+class TestScannerRunFilterAlwaysArray:
+    """Regression tests for the 400 'filter must be an array' IBKR bug."""
+
+    @pytest.mark.asyncio
+    async def test_no_filters_sends_empty_array(self):
+        """scanner_run with filters=None must still send filter: [] in body."""
+        svc = _make_ibkr_svc()
+        captured_body: dict = {}
+
+        async def fake_request(method, path, **kwargs):
+            captured_body.update(kwargs.get("json", {}))
+            return {"contracts": []}
+
+        svc._request = fake_request
+        svc.ensure_accounts = AsyncMock()
+
+        await svc.scanner_run(
+            instrument="STK",
+            scan_type="MOST_ACTIVE",
+            location="STK.US.MAJOR",
+            filters=None,
+        )
+
+        assert "filter" in captured_body, (
+            "IBKR body must always contain 'filter' key — omitting it causes 400"
+        )
+        assert captured_body["filter"] == [], (
+            "filter must be [] when no filters provided, not None or missing"
+        )
+
+    @pytest.mark.asyncio
+    async def test_with_filters_sends_filter_array(self):
+        """scanner_run with filters provided sends them verbatim."""
+        svc = _make_ibkr_svc()
+        captured_body: dict = {}
+
+        async def fake_request(method, path, **kwargs):
+            captured_body.update(kwargs.get("json", {}))
+            return {"contracts": []}
+
+        svc._request = fake_request
+        svc.ensure_accounts = AsyncMock()
+
+        filters = [{"code": "priceAbove", "value": 5}]
+        await svc.scanner_run(
+            instrument="STK",
+            scan_type="MOST_ACTIVE",
+            location="STK.US.MAJOR",
+            filters=filters,
+        )
+
+        assert captured_body["filter"] == filters
+
+    @pytest.mark.asyncio
+    async def test_empty_list_filters_sends_empty_array(self):
+        """scanner_run with filters=[] must send filter: [] (not omit key)."""
+        svc = _make_ibkr_svc()
+        captured_body: dict = {}
+
+        async def fake_request(method, path, **kwargs):
+            captured_body.update(kwargs.get("json", {}))
+            return {"contracts": []}
+
+        svc._request = fake_request
+        svc.ensure_accounts = AsyncMock()
+
+        await svc.scanner_run(
+            instrument="STK",
+            scan_type="MOST_ACTIVE",
+            location="STK.US.MAJOR",
+            filters=[],
+        )
+
+        assert "filter" in captured_body
+        assert captured_body["filter"] == []

@@ -847,8 +847,9 @@ class IBKRService:
             "type": scan_type,
             "location": location,
         }
-        if filters:
-            body["filter"] = filters
+        # IBKR requires "filter" to always be an array — omitting the key
+        # causes a 400 "filter must be an array" error even for no-filter scans.
+        body["filter"] = filters if filters is not None else []
         if sort:
             body["sort"] = sort
 
