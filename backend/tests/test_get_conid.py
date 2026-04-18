@@ -5,9 +5,11 @@ Regressions covered:
   - DXY (IBKR index) was 500ing because IBKR's /iserver/secdef/search
     returns a mixed list of dicts + bare strings. Iterating with `.get()`
     on a string raises AttributeError, which bubbled up as an HTTP 500.
-  - GLD/USO/SLV/TLT (ETFs) can come back empty under sec_type="STK" —
-    we now fall back to a sec_type-less search so the pulse bar can
-    still resolve them.
+  - A no-hint search must still choose the right asset class:
+      BTC / ETH   → CRYPTO
+      XAUUSD      → CMDTY
+      USD.ILS     → CASH
+      GLD / USO   → STK ETF, not the first non-stock neighbour
 
 The tests mock IBKRService.search directly so they're hermetic (no
 network) and fast.
@@ -80,44 +82,56 @@ async def test_get_conid_survives_non_list_response():
         await svc.get_conid("WHATEVER")
 
 
-# ── Fallback: STK empty → retry without sec_type ──────────────
+# ── No-hint ranking across asset classes ──────────────────────
 
 @pytest.mark.asyncio
-async def test_get_conid_falls_back_to_unfiltered_search():
-    """
-    STK search returns nothing for an ETF like GLD. We must retry
-    without sec_type so the pulse bar can resolve it.
-    """
-    calls: list[str] = []
-
+async def test_get_conid_prefers_crypto_for_btc():
     async def fake_search(symbol: str, sec_type: str = ""):
-        calls.append(sec_type)
-        if sec_type == "STK":
-            return []
-        return [{"conid": 12345, "symbol": "GLD"}]
+        assert sec_type == ""
+        return [
+            {
+                "conid": 479624278,
+                "symbol": "BTC",
+                "sections": [{"secType": "CRYPTO", "exchange": "PAXOS;"}],
+            },
+            {
+                "conid": 741192224,
+                "symbol": "BTC",
+                "description": "ARCA",
+                "sections": [{"secType": "STK"}],
+            },
+        ]
 
     svc = _make_service(fake_search)
-    assert await svc.get_conid("GLD") == 12345
-    # Both searches were attempted, STK first.
-    assert calls == ["STK", ""]
+    assert await svc.get_conid("BTC") == 479624278
 
 
 @pytest.mark.asyncio
-async def test_get_conid_fallback_also_survives_string_entries():
-    """Mixed types on the fallback path shouldn't crash either."""
+async def test_get_conid_prefers_cmdty_for_xauusd():
     async def fake_search(symbol: str, sec_type: str = ""):
-        if sec_type == "STK":
-            return []
-        return ["Index", {"conid": 42, "symbol": "TLT"}]
+        assert sec_type == ""
+        return [
+            {
+                "conid": 58430358,
+                "symbol": "XAUUSD",
+                "description": "OTC",
+                "sections": [{"secType": "WAR"}, {"secType": "CFD"}],
+            },
+            {
+                "conid": 69067924,
+                "symbol": "XAUUSD",
+                "sections": [{"secType": "CMDTY"}],
+            },
+        ]
 
     svc = _make_service(fake_search)
-    assert await svc.get_conid("TLT") == 42
+    assert await svc.get_conid("XAUUSD") == 69067924
 
 
-# ── Miss: both searches empty → SymbolNotFoundError ───────────
+# ── Miss: no candidates → SymbolNotFoundError ─────────────────
 
 @pytest.mark.asyncio
-async def test_get_conid_raises_when_both_searches_empty():
+async def test_get_conid_raises_when_search_is_empty():
     async def fake_search(symbol: str, sec_type: str = ""):
         return []
     svc = _make_service(fake_search)
@@ -135,12 +149,7 @@ async def test_get_conid_treats_zero_conid_as_miss():
         await svc.get_conid("GHOST")
 
 
-# ── Exchange scoring (Commit D) ───────────────────────────────
-#
-# Regression: a bare STK search for "GLD" returns the Hong Kong Gold
-# Futures contract first and the SPDR Gold Shares ETF on ARCA second.
-# Without exchange scoring we'd resolve GLD to the futures contract
-# and show junk prices on the pulse bar.
+# ── Ranking: exact symbol + preferred secType + exchange ──────
 
 @pytest.mark.asyncio
 async def test_get_conid_prefers_arca_over_hkfe():
@@ -170,8 +179,6 @@ async def test_get_conid_prefers_arca_over_hkfe():
             },
         ]
     svc = _make_service(fake_search)
-    # Default path (sec_type="") uses "STK" as the primary hint and
-    # requires a STK section — HKFE (IND-only) must be rejected.
     assert await svc.get_conid("GLD") == 51529211
 
 
@@ -225,8 +232,7 @@ async def test_get_conid_prefers_arca_over_mexi():
 async def test_get_conid_with_stk_hint_rejects_non_stk_sections():
     """sec_type='STK' must reject an item whose sections are IND-only."""
     async def fake_search(symbol: str, sec_type: str = ""):
-        # Only one candidate, and it's IND-only. With a STK hint we
-        # should NOT fall back to unfiltered — the caller said STK.
+        assert sec_type == "STK"
         return [
             {
                 "conid": 54927692,
@@ -259,11 +265,6 @@ async def test_get_conid_with_ind_hint_picks_ind_section():
 
 @pytest.mark.asyncio
 async def test_get_conid_explicit_hint_does_not_widen_on_miss():
-    """
-    When the caller passed a hint, a primary miss must raise rather than
-    silently falling back to an unfiltered search. The fallback is only
-    for the no-hint path.
-    """
     calls: list[str] = []
 
     async def fake_search(symbol: str, sec_type: str = ""):
@@ -273,18 +274,15 @@ async def test_get_conid_explicit_hint_does_not_widen_on_miss():
     svc = _make_service(fake_search)
     with pytest.raises(SymbolNotFoundError):
         await svc.get_conid("ZZZ", sec_type="IND")
-    # Only the IND call — no widen-to-unfiltered attempt.
     assert calls == ["IND"]
 
 
-# ── No-hint fallback still works for non-STK instruments ─────
+# ── Non-stock defaults remain resolvable without a hint ───────
 
 @pytest.mark.asyncio
-async def test_get_conid_no_hint_falls_back_for_currency_pair():
-    """USD.ILS has no STK match — fallback to unfiltered must succeed."""
+async def test_get_conid_no_hint_prefers_cash_for_currency_pair():
     async def fake_search(symbol: str, sec_type: str = ""):
-        if sec_type == "STK":
-            return []
+        assert sec_type == ""
         return [
             {
                 "conid": 44495102,
@@ -295,3 +293,25 @@ async def test_get_conid_no_hint_falls_back_for_currency_pair():
         ]
     svc = _make_service(fake_search)
     assert await svc.get_conid("USD.ILS") == 44495102
+
+
+@pytest.mark.asyncio
+async def test_get_conid_no_hint_prefers_index_for_spx():
+    async def fake_search(symbol: str, sec_type: str = ""):
+        assert sec_type == ""
+        return [
+            {
+                "conid": 416904,
+                "symbol": "SPX",
+                "description": "CBOE",
+                "sections": [{"secType": "IND", "exchange": "CBOE;"}],
+            },
+            {
+                "conid": 141513582,
+                "symbol": "SPX",
+                "description": "VALUE",
+                "sections": [{"secType": "STK"}],
+            },
+        ]
+    svc = _make_service(fake_search)
+    assert await svc.get_conid("SPX") == 416904

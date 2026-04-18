@@ -365,6 +365,20 @@ class DatabaseService:
             except sqlite3.OperationalError:
                 pass  # column already exists — safe to skip
 
+        # Legacy pulse defaults briefly used BTC.USD / ETH.USD, but IBKR's
+        # secdef search resolves the crypto spot contracts under BTC / ETH.
+        # Normalise those persisted defaults in place so existing users stop
+        # carrying forward a broken config after upgrading.
+        self._conn.execute(
+            "UPDATE pulse_config SET resolve = 'BTC' "
+            "WHERE label = 'BTC' AND resolve = 'BTC.USD' AND sec_type = ''"
+        )
+        self._conn.execute(
+            "UPDATE pulse_config SET resolve = 'ETH' "
+            "WHERE label = 'ETH' AND resolve = 'ETH.USD' AND sec_type = ''"
+        )
+        self._conn.commit()
+
     # ── Internal helpers ─────────────────────────────────────
 
     def _execute(self, sql: str, params: tuple = ()) -> sqlite3.Cursor:

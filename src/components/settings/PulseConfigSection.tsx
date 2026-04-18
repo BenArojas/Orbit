@@ -337,6 +337,7 @@ export default function PulseConfigSection() {
         Drag to reorder. <span className="font-data">Label</span> is what's
         displayed; <span className="font-data">Resolve</span> is the symbol
         passed to IBKR (e.g. <span className="font-data">SPX</span>,{" "}
+        <span className="font-data">BTC</span>,{" "}
         <span className="font-data">USD.ILS</span>,{" "}
         <span className="font-data">XAUUSD</span>). Leave the type as{" "}
         <span className="font-data">auto</span> unless you need to force a

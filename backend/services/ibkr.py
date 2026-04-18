@@ -13,6 +13,7 @@ import json
 import logging
 import ssl
 import time
+import re
 from typing import Any, Awaitable, Callable
 
 # After this many consecutive tickle failures we declare the session dropped
@@ -322,36 +323,7 @@ class IBKRService:
         params: dict[str, str] = {"symbol": symbol}
         if sec_type:
             params["secType"] = sec_type
-        log.info(
-            "[resolve] search request symbol=%r sec_type=%r params=%r",
-            symbol, sec_type, params,
-        )
-        result = await self._request("GET", "/iserver/secdef/search", params=params)
-        # Summarise what came back so we can tell a dict-list from a
-        # mixed list / error-wrapper / non-list response without dumping
-        # the full (often huge) payload.
-        if isinstance(result, list):
-            preview = []
-            for item in result[:5]:
-                if isinstance(item, dict):
-                    preview.append({
-                        "conid": item.get("conid"),
-                        "symbol": item.get("symbol"),
-                        "secType": item.get("secType"),
-                        "description": (item.get("description") or item.get("companyHeader") or "")[:40],
-                    })
-                else:
-                    preview.append({"__non_dict__": type(item).__name__, "value": str(item)[:40]})
-            log.info(
-                "[resolve] search response symbol=%r sec_type=%r len=%d preview=%s",
-                symbol, sec_type, len(result), preview,
-            )
-        else:
-            log.info(
-                "[resolve] search response symbol=%r sec_type=%r NON-LIST type=%s value=%r",
-                symbol, sec_type, type(result).__name__, str(result)[:200],
-            )
-        return result
+        return await self._request("GET", "/iserver/secdef/search", params=params)
 
     @cached(ttl=3600)
     async def get_conid(self, symbol: str, sec_type: str = "") -> int:
@@ -368,146 +340,117 @@ class IBKRService:
                     Must be one of IBKR's searchable secTypes ("STK",
                     "IND", "BOND") or "" to apply no filter.
 
-        Implementation notes (Phase 8.9 / Commits C, D):
-          - IBKR's /iserver/secdef/search can return a mixed list of dicts
-            AND bare strings (section headers). We filter non-dicts before
-            calling `.get()` on them. Symptom before the fix: a 500 on
-            /market/conid/DXY with "'str' object has no attribute 'get'".
-          - IBKR does NOT sort search results by primary market. A bare
-            STK search for "GLD" returned Gold Futures on HKFE as the first
-            hit and the SPDR Gold Shares ETF on ARCA second. Without the
-            preferred-exchange scoring below, the pulse bar would happily
-            resolve GLD → HKFE futures and show junk prices. We score by:
-              1. secType match (if caller asked for STK, require a STK section)
-              2. primary US exchange (ARCA > NASDAQ > NYSE > BATS > AMEX)
-              3. fallback: first dict with a valid conid
-          - Fallback path: if the secType-filtered search returns nothing
-            AND the caller provided no hint, we retry without a secType so
-            non-STK instruments (currency pairs like USD.ILS, metal spots
-            like XAUUSD) still resolve. When the caller DID specify a hint,
-            we trust it and don't silently widen the search.
+        Implementation notes:
+          - IBKR search responses are mixed: dict rows, bare strings, and
+            sometimes error envelopes. We only consider dict candidates
+            with a valid top-level conid.
+          - When the caller provides an explicit sec_type hint, we honour
+            it strictly and require that section type to appear on the match.
+          - Without a hint, we do one unfiltered search and rank matches by:
+              1. exact symbol match
+              2. inferred asset-class preference for known patterns
+                 (e.g. BTC → CRYPTO, XAUUSD → CMDTY, USD.ILS → CASH)
+              3. preferred exchange for common stock/ETF symbols
         """
-        # Preferred US-listed exchanges, in priority order. Non-US and
-        # derivative venues (HKFE, ICEEU, MEXI, SBF, etc.) fall to the end.
-        PREFERRED_EXCHANGES = ("ARCA", "NASDAQ", "NYSE", "BATS", "AMEX")
+        preferred_exchanges = (
+            "ARCA",
+            "NASDAQ",
+            "NYSE",
+            "CBOE",
+            "BATS",
+            "AMEX",
+            "IDEALPRO",
+            "PAXOS",
+        )
+        symbol_upper = symbol.upper()
 
-        def _section_sec_types(item: dict) -> set[str]:
-            """Return the set of secTypes declared under `sections`."""
+        def _section_sec_types(item: dict[str, Any]) -> set[str]:
             out: set[str] = set()
             sections = item.get("sections")
             if isinstance(sections, list):
                 for sec in sections:
-                    if isinstance(sec, dict):
-                        st = sec.get("secType")
-                        if isinstance(st, str) and st:
-                            out.add(st)
+                    if not isinstance(sec, dict):
+                        continue
+                    sec_value = sec.get("secType")
+                    if isinstance(sec_value, str) and sec_value:
+                        out.add(sec_value.upper())
+            top_level = item.get("secType")
+            if isinstance(top_level, str) and top_level:
+                out.add(top_level.upper())
             return out
 
-        def _score(item: dict, require_sec_type: str) -> tuple[int, int]:
-            """
-            Lower score = better match. Returned as a sortable tuple so
-            we can `min(..., key=_score)` over candidates.
-
-            First tuple slot (required-secType match):
-              0 — `require_sec_type` present in this item's sections
-              1 — require_sec_type passed but not satisfied (will skip)
-              2 — no requirement, any match acceptable
-
-            Second tuple slot (exchange preference):
-              0..N-1 — index into PREFERRED_EXCHANGES
-              N — non-preferred / unknown exchange
-            """
-            sec_types = _section_sec_types(item)
-            if require_sec_type:
-                sec_rank = 0 if require_sec_type in sec_types else 1
-            else:
-                sec_rank = 2
-            desc = (item.get("description") or "").upper()
-            # IBKR puts the exchange code in `description` (e.g. "ARCA",
-            # "HKFE"). Fall back to N if absent or unrecognised.
+        def _normalize_conid(raw: Any) -> int | None:
             try:
-                ex_rank = PREFERRED_EXCHANGES.index(desc)
-            except ValueError:
-                ex_rank = len(PREFERRED_EXCHANGES)
-            return (sec_rank, ex_rank)
-
-        def _best_conid(items: list, require_sec_type: str) -> int | None:
-            if not isinstance(items, list):
+                value = int(raw)
+            except (TypeError, ValueError):
                 return None
-            candidates: list[dict] = []
-            for item in items:
-                if not isinstance(item, dict):
-                    continue  # skip bare strings / nulls
-                conid = item.get("conid")
-                if not conid:
-                    continue
-                # When caller specified a secType, reject items whose
-                # sections declare nothing matching — this is what stops
-                # GLD from picking the HKFE futures.
-                if require_sec_type:
-                    if require_sec_type not in _section_sec_types(item):
+            return value if value > 0 else None
+
+        def _infer_preferred_sec_types() -> tuple[str, ...]:
+            if sec_type:
+                return (sec_type.upper(),)
+            if symbol_upper in {"BTC", "ETH"}:
+                return ("CRYPTO", "STK")
+            if symbol_upper in {"XAUUSD", "XAGUSD"}:
+                return ("CMDTY",)
+            if symbol_upper in {"SPX", "VIX", "NDX", "RUT", "DXY"}:
+                return ("IND", "STK")
+            if re.fullmatch(r"[A-Z]{3}\.[A-Z]{3}", symbol_upper):
+                return ("CASH",)
+            return ("STK", "IND", "BOND")
+
+        def _exchange_rank(item: dict[str, Any]) -> int:
+            values: list[str] = []
+            description = item.get("description")
+            if isinstance(description, str) and description:
+                values.append(description.upper())
+            sections = item.get("sections")
+            if isinstance(sections, list):
+                for sec in sections:
+                    if not isinstance(sec, dict):
                         continue
-                candidates.append(item)
-            if not candidates:
-                return None
-            best = min(candidates, key=lambda it: _score(it, require_sec_type))
-            try:
-                return int(best["conid"])
-            except (TypeError, ValueError, KeyError):
-                return None
+                    exchange = sec.get("exchange")
+                    if isinstance(exchange, str) and exchange:
+                        values.extend(part.upper() for part in exchange.split(";") if part)
+            for rank, exchange in enumerate(preferred_exchanges):
+                if exchange in values:
+                    return rank
+            return len(preferred_exchanges)
 
-        log.info("[resolve] get_conid start symbol=%r sec_type=%r", symbol, sec_type)
+        preferred_sec_types = _infer_preferred_sec_types()
+        search_results = await self.search(symbol, sec_type=sec_type.upper())
+        if not isinstance(search_results, list):
+            raise SymbolNotFoundError(symbol)
 
-        # ── Primary lookup ───────────────────────────────────────
-        # Caller-provided hint wins. If no hint, default to STK
-        # (most common case — equities + ETFs).
-        primary_sec_type = sec_type or "STK"
-        primary_results = await self.search(symbol, sec_type=primary_sec_type)
-        conid = _best_conid(primary_results, require_sec_type=primary_sec_type)
-        if conid is not None:
-            log.info(
-                "[resolve] get_conid HIT via %s symbol=%r conid=%d",
-                primary_sec_type, symbol, conid,
+        candidates: list[tuple[tuple[int, int, int], int]] = []
+        for item in search_results:
+            if not isinstance(item, dict):
+                continue
+            conid = _normalize_conid(item.get("conid"))
+            if conid is None:
+                continue
+            item_symbol = str(item.get("symbol") or "").upper()
+            item_sec_types = _section_sec_types(item)
+            if sec_type and sec_type.upper() not in item_sec_types:
+                continue
+
+            sec_rank = len(preferred_sec_types)
+            for idx, preferred in enumerate(preferred_sec_types):
+                if preferred in item_sec_types:
+                    sec_rank = idx
+                    break
+
+            score = (
+                0 if item_symbol == symbol_upper else 1,
+                sec_rank,
+                _exchange_rank(item),
             )
-            return conid
-        log.info(
-            "[resolve] get_conid %s branch empty symbol=%r", primary_sec_type, symbol,
-        )
+            candidates.append((score, conid))
 
-        # ── Fallback ─────────────────────────────────────────────
-        # Only widen the search when caller gave us no hint. When the
-        # caller asked for IND and got nothing, returning an STK match
-        # would be wrong.
-        if not sec_type:
-            fallback_results = await self.search(symbol)
-            # TEMP diagnostic log — remove once pulse-bar resolvers are stable.
-            log.info(
-                "[resolve] fallback response symbol=%r type=%s len=%s preview=%s",
-                symbol,
-                type(fallback_results).__name__,
-                len(fallback_results) if isinstance(fallback_results, list) else "n/a",
-                fallback_results[:3] if isinstance(fallback_results, list) else fallback_results,
-            )
-            # Pass "" so the scorer doesn't reject on missing STK section —
-            # we're deliberately accepting any secType here (currency pairs,
-            # metal spots, etc. that don't surface STK results).
-            conid = _best_conid(fallback_results, require_sec_type="")
-            if conid is not None:
-                log.info(
-                    "[resolve] get_conid HIT via unfiltered symbol=%r conid=%d",
-                    symbol, conid,
-                )
-                return conid
-            # TEMP diagnostic log — remove once pulse-bar resolvers are stable.
-            log.warning(
-                "[resolve] fallback also empty symbol=%r — all items rejected by _best_conid",
-                symbol,
-            )
+        if not candidates:
+            raise SymbolNotFoundError(symbol)
 
-        log.warning(
-            "[resolve] get_conid MISS symbol=%r sec_type=%r", symbol, sec_type,
-        )
-        raise SymbolNotFoundError(symbol)
+        return min(candidates, key=lambda item: item[0])[1]
 
     async def snapshot(
         self,
