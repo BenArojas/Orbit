@@ -598,6 +598,18 @@ export interface AiFilterResponse {
   raw_query: string;
 }
 
+// ── Pulse Config (Phase 8.9+) ───────────────────────────────
+// User-configurable ticker list for the dashboard's Market Pulse bar.
+
+export interface PulseItem {
+  label: string;
+  resolve: string;
+}
+
+export interface PulseConfigResponse {
+  items: PulseItem[];
+}
+
 // ── API Error ───────────────────────────────────────────────
 
 export class ApiError extends Error {
@@ -763,6 +775,16 @@ export const api = {
 
   getLockedFibs: (conid: number) =>
     request<LockedFibonacciResponse[]>("GET", `/fibonacci/locks/${conid}`),
+
+  // Pulse Config (Phase 8.9+) — user-configurable Market Pulse tickers
+  getPulseConfig: () =>
+    request<PulseConfigResponse>("GET", "/pulse-config"),
+
+  setPulseConfig: (items: PulseItem[]) =>
+    request<PulseConfigResponse>("PUT", "/pulse-config", { items }),
+
+  resetPulseConfig: () =>
+    request<PulseConfigResponse>("POST", "/pulse-config/reset"),
 
   // Screener (Phase 5)
   screenerScan: (req: ScanRequest) =>

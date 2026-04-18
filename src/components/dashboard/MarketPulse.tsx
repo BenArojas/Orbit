@@ -21,34 +21,19 @@
 import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api, type QuoteResponse, type CandleData, type ConidResponse } from "@/lib/api";
-import { useNavigationStore } from "@/store";
+import { useNavigationStore, usePulseConfigStore } from "@/store";
 import { useIbkrReady } from "@/context/GatewayContext";
 import { useIbkrReadyTier } from "@/hooks/useIbkrReadyTier";
 import { Pulse } from "./skeletons";
 
 // ── Config ───────────────────────────────────────────────────
-
-/**
- * Pulse bar tickers, in display order.
- *   - `label` is what the user sees
- *   - `resolve` is the string we hand to /market/conid to look up the conid
- *     (IBKR forex convention: BASE.QUOTE)
- */
-const PULSE_ITEMS: { label: string; resolve: string }[] = [
-  { label: "SPX", resolve: "SPX" },
-  { label: "SPY", resolve: "SPY" },
-  { label: "QQQ", resolve: "QQQ" },
-  { label: "DIA", resolve: "DIA" },
-  { label: "IWM", resolve: "IWM" },
-  { label: "BTC", resolve: "BTC" },
-  { label: "ETH", resolve: "ETH" },
-  { label: "GLD", resolve: "GLD" },
-  { label: "SLV", resolve: "SLV" },
-  { label: "USO", resolve: "USO" },
-  { label: "TLT", resolve: "TLT" },
-  { label: "DXY", resolve: "DXY" },
-  { label: "USD/ILS", resolve: "USD.ILS" },
-];
+//
+// Phase 8.9+: pulse-bar tickers are now user-configurable via Settings.
+// The list lives in SQLite (see `backend/routers/pulse_config.py`) and
+// is loaded into `usePulseConfigStore` on app start. The defaults used
+// before hydration come from DEFAULT_PULSE_ITEMS in the store module —
+// kept in sync with backend `DEFAULT_PULSE_ITEMS` so the first render
+// matches what the DB will eventually return.
 
 /** Per-ticker stagger — each item fires 80 ms after the previous one. */
 const TICKER_STAGGER_MS = 80;
@@ -259,9 +244,20 @@ export default function MarketPulse() {
   const tierReady = useIbkrReadyTier(1);
   const gate = ibkrReady && tierReady;
 
+  // User-configurable ticker list (Phase 8.9+). `items` pre-populates with
+  // DEFAULT_PULSE_ITEMS before the backend GET resolves, so the bar never
+  // flashes empty on first render.
+  const items = usePulseConfigStore((s) => s.items);
+
+  // If the user has emptied the list via Settings, hide the bar entirely
+  // rather than render an empty row that still consumes the 54px track.
+  if (items.length === 0) {
+    return <div className="col-span-2 border-b border-border bg-[var(--bg-1)]" />;
+  }
+
   return (
     <div className="col-span-2 flex items-center justify-center overflow-x-auto scrollbar-hidden border-b border-border bg-[var(--bg-1)] px-2 py-1">
-      {PULSE_ITEMS.map((item, i) => (
+      {items.map((item, i) => (
         <StaggeredPulseItem
           key={item.label}
           label={item.label}

@@ -26,6 +26,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { toast } from "sonner";
+import PulseConfigSection from "@/components/settings/PulseConfigSection";
 
 // ── Timeframe options (matches chart store / IBKR bar sizes) ─────────────────
 
@@ -329,6 +330,11 @@ export default function SettingsPage() {
             Changes are saved automatically to the local database.
           </p>
         </div>
+
+        {/* Market Pulse (Phase 8.9+) */}
+        <SettingsCard title="Market Pulse">
+          <PulseConfigSection />
+        </SettingsCard>
 
         {/* Scanner */}
         <SettingsCard title="Scanner">

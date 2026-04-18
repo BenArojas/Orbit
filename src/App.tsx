@@ -19,7 +19,12 @@ import { QueryClientProvider } from "@tanstack/react-query";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { queryClient } from "@/lib/query";
 import { initNetworkMonitor } from "@/lib/network";
-import { useNavigationStore, useSettingsStore, type Screen } from "@/store";
+import {
+  useNavigationStore,
+  useSettingsStore,
+  usePulseConfigStore,
+  type Screen,
+} from "@/store";
 import { useSidecar } from "@/hooks/useSidecar";
 import { useWebSocket } from "@/hooks/useWebSocket";
 import { useTriggerAlerts } from "@/hooks/useTriggerAlerts";
@@ -56,12 +61,20 @@ function PageSkeleton() {
  */
 function useGlobalEffects() {
   const loadSettings = useSettingsStore((s) => s.loadSettings);
+  const loadPulseConfig = usePulseConfigStore((s) => s.load);
   const themeMode = useSettingsStore((s) => s.themeMode);
   const { addHandler } = useWebSocket();
 
   useEffect(() => {
     void loadSettings();
   }, [loadSettings]);
+
+  // Phase 8.9+ — hydrate the user's Market Pulse ticker list.
+  // Kept separate from `loadSettings` so a failing /pulse-config request
+  // doesn't block unrelated settings state.
+  useEffect(() => {
+    void loadPulseConfig();
+  }, [loadPulseConfig]);
 
   // Phase 8.1-F — wire browser offline/online events to the singleton
   // toast + auto-refetch on recovery. Cleanup returned so StrictMode
