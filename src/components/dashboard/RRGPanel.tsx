@@ -51,7 +51,7 @@ export default function RRGPanel() {
     // Phase 8.9: expand vertically instead of a fixed height so the RRG uses
     // the full space in its grid row (`flex-1 min-h-[280px]`). Dot positions
     // are now percentage-based so they re-layout cleanly on resize.
-    <div className="mx-auto flex h-full min-h-[280px] w-full max-w-[70%] flex-1 flex-col rounded-lg border border-border bg-card overflow-hidden">
+    <div className="mx-auto flex h-full min-h-[280px] w-full max-w-[78%] flex-1 flex-col rounded-lg border border-border bg-card overflow-hidden">
       {/* Header */}
       <div className="flex shrink-0 items-center justify-between border-b border-border px-4 py-3">
         <span className="text-[12px] font-semibold tracking-wide text-[var(--text-2)]">

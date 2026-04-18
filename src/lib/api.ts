@@ -383,6 +383,11 @@ export interface WatchlistInfo {
   name: string;
 }
 
+/**
+ * A watchlist row combining instrument metadata with (optional) live quote.
+ * The sidebar populates `symbol`/`companyName` from /instruments immediately,
+ * then backfills `lastPrice`/`changePercent`/`changeAmount` from /quotes.
+ */
 export interface WatchlistItemResponse {
   conid: number;
   symbol: string;
@@ -396,6 +401,34 @@ export interface WatchlistResponse {
   id: string;
   name: string;
   items: WatchlistItemResponse[];
+}
+
+// ── Phase 8.9 / Commit C: split endpoints ─────────────────
+//
+// `/watchlist/{id}/instruments` returns symbol + companyName only (fast).
+// `/watchlist/{id}/quotes?conids=...` returns snapshot data keyed by conid.
+
+export interface WatchlistInstrument {
+  conid: number;
+  symbol: string;
+  companyName: string;
+}
+
+export interface WatchlistInstrumentsResponse {
+  id: string;
+  name: string;
+  items: WatchlistInstrument[];
+}
+
+export interface WatchlistQuote {
+  conid: number;
+  lastPrice: number | null;
+  changePercent: number | null;
+  changeAmount: number | null;
+}
+
+export interface WatchlistQuotesResponse {
+  items: WatchlistQuote[];
 }
 
 // ── AI Analysis (Phase 4 — tasks 4.9–4.12) ────────────────
@@ -604,6 +637,13 @@ export interface AiFilterResponse {
 export interface PulseItem {
   label: string;
   resolve: string;
+  /**
+   * Optional IBKR secType hint — one of "", "STK", "IND", "BOND".
+   * "" means "no hint" (resolver falls through STK → unfiltered).
+   * Use "STK" to force an equity/ETF match (e.g. GLD as the ARCA
+   * ETF rather than HKFE futures). Use "IND" for indices.
+   */
+  sec_type?: string;
 }
 
 export interface PulseConfigResponse {
@@ -684,8 +724,13 @@ export const api = {
   search: (query: string) =>
     request<SearchResult[]>("GET", `/market/search?q=${encodeURIComponent(query)}`),
 
-  resolveConid: (symbol: string) =>
-    request<ConidResponse>("GET", `/market/conid/${encodeURIComponent(symbol)}`),
+  resolveConid: (symbol: string, secType?: string) => {
+    const qs = secType ? `?sec_type=${encodeURIComponent(secType)}` : "";
+    return request<ConidResponse>(
+      "GET",
+      `/market/conid/${encodeURIComponent(symbol)}${qs}`,
+    );
+  },
 
   // Indicators
   computeIndicators: (req: IndicatorRequest) =>
@@ -712,8 +757,19 @@ export const api = {
   getWatchlists: () =>
     request<WatchlistInfo[]>("GET", "/watchlist/lists"),
 
-  getWatchlistItems: (watchlistId: string) =>
-    request<WatchlistResponse>("GET", `/watchlist/${encodeURIComponent(watchlistId)}`),
+  // Phase 8.9 / Commit C — split endpoints so the sidebar can render names
+  // immediately and backfill prices on a slower second query.
+  getWatchlistInstruments: (watchlistId: string) =>
+    request<WatchlistInstrumentsResponse>(
+      "GET",
+      `/watchlist/${encodeURIComponent(watchlistId)}/instruments`,
+    ),
+
+  getWatchlistQuotes: (watchlistId: string, conids: number[]) =>
+    request<WatchlistQuotesResponse>(
+      "GET",
+      `/watchlist/${encodeURIComponent(watchlistId)}/quotes?conids=${conids.join(",")}`,
+    ),
 
   // Triggers (CRUD)
   getTriggerRules: () =>

@@ -322,19 +322,191 @@ class IBKRService:
         params: dict[str, str] = {"symbol": symbol}
         if sec_type:
             params["secType"] = sec_type
-        return await self._request("GET", "/iserver/secdef/search", params=params)
+        log.info(
+            "[resolve] search request symbol=%r sec_type=%r params=%r",
+            symbol, sec_type, params,
+        )
+        result = await self._request("GET", "/iserver/secdef/search", params=params)
+        # Summarise what came back so we can tell a dict-list from a
+        # mixed list / error-wrapper / non-list response without dumping
+        # the full (often huge) payload.
+        if isinstance(result, list):
+            preview = []
+            for item in result[:5]:
+                if isinstance(item, dict):
+                    preview.append({
+                        "conid": item.get("conid"),
+                        "symbol": item.get("symbol"),
+                        "secType": item.get("secType"),
+                        "description": (item.get("description") or item.get("companyHeader") or "")[:40],
+                    })
+                else:
+                    preview.append({"__non_dict__": type(item).__name__, "value": str(item)[:40]})
+            log.info(
+                "[resolve] search response symbol=%r sec_type=%r len=%d preview=%s",
+                symbol, sec_type, len(result), preview,
+            )
+        else:
+            log.info(
+                "[resolve] search response symbol=%r sec_type=%r NON-LIST type=%s value=%r",
+                symbol, sec_type, type(result).__name__, str(result)[:200],
+            )
+        return result
 
     @cached(ttl=3600)
-    async def get_conid(self, symbol: str) -> int:
+    async def get_conid(self, symbol: str, sec_type: str = "") -> int:
         """
         Resolve a ticker symbol to an IBKR conid.
         Raises SymbolNotFoundError if not found.
+
+        Args:
+          symbol:   The ticker to resolve (e.g. "GLD", "USD.ILS", "XAUUSD").
+          sec_type: Optional IBKR secType hint. When provided, we only
+                    consider matches whose `sections[].secType` contains
+                    this value — e.g. pass "STK" to prevent GLD matching
+                    the Hong Kong Gold Futures contract (marked IND).
+                    Must be one of IBKR's searchable secTypes ("STK",
+                    "IND", "BOND") or "" to apply no filter.
+
+        Implementation notes (Phase 8.9 / Commits C, D):
+          - IBKR's /iserver/secdef/search can return a mixed list of dicts
+            AND bare strings (section headers). We filter non-dicts before
+            calling `.get()` on them. Symptom before the fix: a 500 on
+            /market/conid/DXY with "'str' object has no attribute 'get'".
+          - IBKR does NOT sort search results by primary market. A bare
+            STK search for "GLD" returned Gold Futures on HKFE as the first
+            hit and the SPDR Gold Shares ETF on ARCA second. Without the
+            preferred-exchange scoring below, the pulse bar would happily
+            resolve GLD → HKFE futures and show junk prices. We score by:
+              1. secType match (if caller asked for STK, require a STK section)
+              2. primary US exchange (ARCA > NASDAQ > NYSE > BATS > AMEX)
+              3. fallback: first dict with a valid conid
+          - Fallback path: if the secType-filtered search returns nothing
+            AND the caller provided no hint, we retry without a secType so
+            non-STK instruments (currency pairs like USD.ILS, metal spots
+            like XAUUSD) still resolve. When the caller DID specify a hint,
+            we trust it and don't silently widen the search.
         """
-        results = await self.search(symbol, sec_type="STK")
-        for item in results:
-            conid = item.get("conid")
-            if conid:
-                return int(conid)
+        # Preferred US-listed exchanges, in priority order. Non-US and
+        # derivative venues (HKFE, ICEEU, MEXI, SBF, etc.) fall to the end.
+        PREFERRED_EXCHANGES = ("ARCA", "NASDAQ", "NYSE", "BATS", "AMEX")
+
+        def _section_sec_types(item: dict) -> set[str]:
+            """Return the set of secTypes declared under `sections`."""
+            out: set[str] = set()
+            sections = item.get("sections")
+            if isinstance(sections, list):
+                for sec in sections:
+                    if isinstance(sec, dict):
+                        st = sec.get("secType")
+                        if isinstance(st, str) and st:
+                            out.add(st)
+            return out
+
+        def _score(item: dict, require_sec_type: str) -> tuple[int, int]:
+            """
+            Lower score = better match. Returned as a sortable tuple so
+            we can `min(..., key=_score)` over candidates.
+
+            First tuple slot (required-secType match):
+              0 — `require_sec_type` present in this item's sections
+              1 — require_sec_type passed but not satisfied (will skip)
+              2 — no requirement, any match acceptable
+
+            Second tuple slot (exchange preference):
+              0..N-1 — index into PREFERRED_EXCHANGES
+              N — non-preferred / unknown exchange
+            """
+            sec_types = _section_sec_types(item)
+            if require_sec_type:
+                sec_rank = 0 if require_sec_type in sec_types else 1
+            else:
+                sec_rank = 2
+            desc = (item.get("description") or "").upper()
+            # IBKR puts the exchange code in `description` (e.g. "ARCA",
+            # "HKFE"). Fall back to N if absent or unrecognised.
+            try:
+                ex_rank = PREFERRED_EXCHANGES.index(desc)
+            except ValueError:
+                ex_rank = len(PREFERRED_EXCHANGES)
+            return (sec_rank, ex_rank)
+
+        def _best_conid(items: list, require_sec_type: str) -> int | None:
+            if not isinstance(items, list):
+                return None
+            candidates: list[dict] = []
+            for item in items:
+                if not isinstance(item, dict):
+                    continue  # skip bare strings / nulls
+                conid = item.get("conid")
+                if not conid:
+                    continue
+                # When caller specified a secType, reject items whose
+                # sections declare nothing matching — this is what stops
+                # GLD from picking the HKFE futures.
+                if require_sec_type:
+                    if require_sec_type not in _section_sec_types(item):
+                        continue
+                candidates.append(item)
+            if not candidates:
+                return None
+            best = min(candidates, key=lambda it: _score(it, require_sec_type))
+            try:
+                return int(best["conid"])
+            except (TypeError, ValueError, KeyError):
+                return None
+
+        log.info("[resolve] get_conid start symbol=%r sec_type=%r", symbol, sec_type)
+
+        # ── Primary lookup ───────────────────────────────────────
+        # Caller-provided hint wins. If no hint, default to STK
+        # (most common case — equities + ETFs).
+        primary_sec_type = sec_type or "STK"
+        primary_results = await self.search(symbol, sec_type=primary_sec_type)
+        conid = _best_conid(primary_results, require_sec_type=primary_sec_type)
+        if conid is not None:
+            log.info(
+                "[resolve] get_conid HIT via %s symbol=%r conid=%d",
+                primary_sec_type, symbol, conid,
+            )
+            return conid
+        log.info(
+            "[resolve] get_conid %s branch empty symbol=%r", primary_sec_type, symbol,
+        )
+
+        # ── Fallback ─────────────────────────────────────────────
+        # Only widen the search when caller gave us no hint. When the
+        # caller asked for IND and got nothing, returning an STK match
+        # would be wrong.
+        if not sec_type:
+            fallback_results = await self.search(symbol)
+            # TEMP diagnostic log — remove once pulse-bar resolvers are stable.
+            log.info(
+                "[resolve] fallback response symbol=%r type=%s len=%s preview=%s",
+                symbol,
+                type(fallback_results).__name__,
+                len(fallback_results) if isinstance(fallback_results, list) else "n/a",
+                fallback_results[:3] if isinstance(fallback_results, list) else fallback_results,
+            )
+            # Pass "" so the scorer doesn't reject on missing STK section —
+            # we're deliberately accepting any secType here (currency pairs,
+            # metal spots, etc. that don't surface STK results).
+            conid = _best_conid(fallback_results, require_sec_type="")
+            if conid is not None:
+                log.info(
+                    "[resolve] get_conid HIT via unfiltered symbol=%r conid=%d",
+                    symbol, conid,
+                )
+                return conid
+            # TEMP diagnostic log — remove once pulse-bar resolvers are stable.
+            log.warning(
+                "[resolve] fallback also empty symbol=%r — all items rejected by _best_conid",
+                symbol,
+            )
+
+        log.warning(
+            "[resolve] get_conid MISS symbol=%r sec_type=%r", symbol, sec_type,
+        )
         raise SymbolNotFoundError(symbol)
 
     async def snapshot(

@@ -120,18 +120,22 @@ function PulseItemSkeleton({ label }: { label: string }) {
 function PulseItem({
   label,
   resolve,
+  secType,
   enabled,
 }: {
   label: string;
   resolve: string;
+  secType?: string;
   enabled: boolean;
 }) {
   const navigateToAnalysis = useNavigationStore((s) => s.navigateToAnalysis);
 
   // Step 1 — resolve symbol → conid (cached indefinitely).
+  // secType is part of the cache key so two items with the same ticker
+  // but different hints don't collide (e.g. a future TWS-paired case).
   const { data: resolved, isError: resolveError } = useQuery<ConidResponse>({
-    queryKey: ["conid", resolve],
-    queryFn: () => api.resolveConid(resolve),
+    queryKey: ["conid", resolve, secType ?? ""],
+    queryFn: () => api.resolveConid(resolve, secType),
     staleTime: Infinity,
     enabled,
   });
@@ -223,16 +227,25 @@ function formatPrice(price: number): string {
 function StaggeredPulseItem({
   label,
   resolve,
+  secType,
   index,
   gate,
 }: {
   label: string;
   resolve: string;
+  secType?: string;
   index: number;
   gate: boolean;
 }) {
   const enabled = useDelayedReady(gate, index * TICKER_STAGGER_MS);
-  return <PulseItem label={label} resolve={resolve} enabled={enabled} />;
+  return (
+    <PulseItem
+      label={label}
+      resolve={resolve}
+      secType={secType}
+      enabled={enabled}
+    />
+  );
 }
 
 // ── Main bar ─────────────────────────────────────────────────
@@ -262,6 +275,7 @@ export default function MarketPulse() {
           key={item.label}
           label={item.label}
           resolve={item.resolve}
+          secType={item.sec_type}
           index={i}
           gate={gate}
         />

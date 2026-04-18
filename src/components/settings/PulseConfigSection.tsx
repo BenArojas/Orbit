@@ -61,6 +61,11 @@ const MAX_ITEMS = 20;
 const MAX_LABEL_LEN = 16;
 const MAX_RESOLVE_LEN = 16;
 
+// IBKR's /iserver/secdef/search only honours these secTypes. Empty
+// string means "no hint" — the backend resolver then falls through
+// STK → unfiltered. Kept in sync with ALLOWED_SEC_TYPES in the backend.
+const SEC_TYPE_OPTIONS = ["", "STK", "IND", "BOND"] as const;
+
 // ── Draft row type ───────────────────────────────────────────
 //
 // The draft list needs a stable id that survives edits (label changes).
@@ -79,11 +84,21 @@ function makeDraftId(): string {
 }
 
 function toDraft(items: readonly PulseItem[]): DraftRow[] {
-  return items.map((it) => ({ ...it, id: makeDraftId() }));
+  return items.map((it) => ({
+    // Normalise legacy items without sec_type to "" so the input
+    // doesn't render as an uncontrolled → controlled mismatch.
+    sec_type: it.sec_type ?? "",
+    ...it,
+    id: makeDraftId(),
+  }));
 }
 
 function fromDraft(rows: DraftRow[]): PulseItem[] {
-  return rows.map(({ label, resolve }) => ({ label, resolve }));
+  return rows.map(({ label, resolve, sec_type }) => ({
+    label,
+    resolve,
+    sec_type: sec_type ?? "",
+  }));
 }
 
 // ── Sortable row ─────────────────────────────────────────────
@@ -162,6 +177,23 @@ function SortableRow({
         }`}
       />
 
+      {/* secType hint — optional. Empty = resolver falls through
+          STK → unfiltered. "STK" forces an equity match (e.g. GLD as
+          the ARCA ETF rather than HKFE futures). */}
+      <select
+        value={row.sec_type ?? ""}
+        onChange={(e) => onChange({ sec_type: e.target.value })}
+        aria-label="IBKR secType hint"
+        title="Optional IBKR secType hint"
+        className="w-[62px] shrink-0 rounded-md border border-border bg-[var(--bg-3)] px-1.5 py-1 font-data text-[11px] text-[var(--text-1)] focus:outline-none focus:ring-1 focus:ring-[var(--clr-cyan)] cursor-pointer"
+      >
+        {SEC_TYPE_OPTIONS.map((opt) => (
+          <option key={opt || "auto"} value={opt}>
+            {opt || "auto"}
+          </option>
+        ))}
+      </select>
+
       {/* Remove */}
       <button
         type="button"
@@ -220,9 +252,12 @@ export default function PulseConfigSection() {
   const dirty = useMemo(() => {
     if (draft.length !== items.length) return true;
     for (let i = 0; i < draft.length; i++) {
+      const a = draft[i];
+      const b = items[i];
       if (
-        draft[i].label !== items[i].label ||
-        draft[i].resolve !== items[i].resolve
+        a.label !== b.label ||
+        a.resolve !== b.resolve ||
+        (a.sec_type ?? "") !== (b.sec_type ?? "")
       ) {
         return true;
       }
@@ -259,7 +294,10 @@ export default function PulseConfigSection() {
   }
   function addRow() {
     if (draft.length >= MAX_ITEMS) return;
-    setDraft((rows) => [...rows, { id: makeDraftId(), label: "", resolve: "" }]);
+    setDraft((rows) => [
+      ...rows,
+      { id: makeDraftId(), label: "", resolve: "", sec_type: "" },
+    ]);
   }
 
   // ── Save / reset / revert ──────────────────────────────────
@@ -299,7 +337,11 @@ export default function PulseConfigSection() {
         Drag to reorder. <span className="font-data">Label</span> is what's
         displayed; <span className="font-data">Resolve</span> is the symbol
         passed to IBKR (e.g. <span className="font-data">SPX</span>,{" "}
-        <span className="font-data">USD.ILS</span>).
+        <span className="font-data">USD.ILS</span>,{" "}
+        <span className="font-data">XAUUSD</span>). Leave the type as{" "}
+        <span className="font-data">auto</span> unless you need to force a
+        specific IBKR secType (<span className="font-data">STK</span> for
+        stocks/ETFs, <span className="font-data">IND</span> for indices).
       </p>
 
       {/* Row list */}

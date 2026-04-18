@@ -4,20 +4,29 @@
  * Fetches watchlists from IBKR and displays instruments with live quotes.
  * Features:
  *   - Dropdown to switch between IBKR watchlists
- *   - Live price, change %, and change amount for each item
+ *   - Two-phase rendering (Phase 8.9 / Commit C):
+ *       1) /watchlist/{id}/instruments  → rows appear with symbol + name
+ *          and `--` placeholders for price / change.
+ *       2) /watchlist/{id}/quotes       → fills in lastPrice / changePercent.
+ *     Previously a single bundled endpoint made watchlist-switch block for
+ *     seconds while IBKR polled snapshots — now names paint immediately.
  *   - Search/filter within the watchlist
  *   - Click item → navigate to Analysis with that conid
  *   - Glow left-edge indicators for triggered items (Phase 6)
  *   - Virtual scrolling via @tanstack/react-virtual (Phase 7.4c)
  *
- * Data: GET /watchlist/lists, GET /watchlist/{id}
- * Live updates: WebSocket subscription for all watchlist conids
+ * Data: GET /watchlist/lists, /watchlist/{id}/instruments, /watchlist/{id}/quotes
+ * Live updates: /quotes is refetched every 30s; instruments every 60s.
  */
 
 import { useState, useEffect, useMemo, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { api, type WatchlistItemResponse } from "../../lib/api";
+import {
+  api,
+  type WatchlistItemResponse,
+  type WatchlistQuote,
+} from "../../lib/api";
 import { useNavigationStore } from "../../store/navigation";
 import { useWatchlistStore } from "../../store/watchlist";
 import { useIbkrReadyTier } from "@/hooks/useIbkrReadyTier";
@@ -52,20 +61,61 @@ export default function WatchlistSidebar() {
     }
   }, [watchlists, selectedWatchlistId]);
 
-  // Fetch items for selected watchlist
-  const { data: watchlistData, isLoading, error } = useQuery({
-    queryKey: ["watchlist", selectedWatchlistId],
-    queryFn: () => api.getWatchlistItems(selectedWatchlistId!),
+  // ── Query 1: instruments (fast — no IBKR snapshot call) ──────────────────
+  const {
+    data: instrumentsData,
+    isLoading: instrumentsLoading,
+    error: instrumentsError,
+  } = useQuery({
+    queryKey: ["watchlist-instruments", selectedWatchlistId],
+    queryFn: () => api.getWatchlistInstruments(selectedWatchlistId!),
     enabled: ibkrReady && !!selectedWatchlistId,
+    staleTime: 60_000,
+  });
+
+  const instruments = instrumentsData?.items;
+
+  // ── Query 2: quotes (slower — polls IBKR snapshot) ──────────────────────
+  // Gated on instruments so we know which conids to ask for.
+  const conids = useMemo(
+    () => instruments?.map((i) => i.conid) ?? [],
+    [instruments],
+  );
+  const conidsKey = conids.join(",");
+
+  const { data: quotesData } = useQuery({
+    queryKey: ["watchlist-quotes", selectedWatchlistId, conidsKey],
+    queryFn: () => api.getWatchlistQuotes(selectedWatchlistId!, conids),
+    enabled: ibkrReady && !!selectedWatchlistId && conids.length > 0,
     staleTime: 30_000,
     refetchInterval: 30_000,
   });
 
+  // ── Merge instruments + quotes into a single render-ready list ──────────
+  const items: WatchlistItemResponse[] = useMemo(() => {
+    if (!instruments) return [];
+    const quoteMap = new Map<number, WatchlistQuote>();
+    for (const q of quotesData?.items ?? []) {
+      quoteMap.set(q.conid, q);
+    }
+    return instruments.map((inst) => {
+      const q = quoteMap.get(inst.conid);
+      return {
+        conid: inst.conid,
+        symbol: inst.symbol,
+        companyName: inst.companyName,
+        lastPrice: q?.lastPrice ?? null,
+        changePercent: q?.changePercent ?? null,
+        changeAmount: q?.changeAmount ?? null,
+      };
+    });
+  }, [instruments, quotesData]);
+
   // Sync to Zustand store for other components
   useEffect(() => {
-    if (watchlistData?.items) {
+    if (items.length > 0) {
       setMasterWatchlist(
-        watchlistData.items.map((item) => ({
+        items.map((item) => ({
           conid: item.conid,
           symbol: item.symbol,
           companyName: item.companyName,
@@ -76,21 +126,21 @@ export default function WatchlistSidebar() {
         }))
       );
     }
-  }, [watchlistData, setMasterWatchlist]);
+  }, [items, setMasterWatchlist]);
 
   // Filter items by search
   const filteredItems = useMemo(() => {
-    if (!watchlistData?.items) return [];
-    if (!searchQuery) return watchlistData.items;
+    if (!items.length) return [];
+    if (!searchQuery) return items;
     const q = searchQuery.toLowerCase();
-    return watchlistData.items.filter(
+    return items.filter(
       (item) =>
         item.symbol.toLowerCase().includes(q) ||
         item.companyName.toLowerCase().includes(q)
     );
-  }, [watchlistData?.items, searchQuery]);
+  }, [items, searchQuery]);
 
-  const itemCount = watchlistData?.items?.length ?? 0;
+  const itemCount = items.length;
 
   // ── Virtual scroll setup ───────────────────────────────────────────────────
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -104,10 +154,11 @@ export default function WatchlistSidebar() {
 
   const virtualItems = virtualizer.getVirtualItems();
 
-  // Skeleton while tier gate closed OR initial fetch in flight.
-  // Once we have `watchlists` data we transition to the real shell (even if
-  // item-level fetches are still resolving) so the dropdown appears quickly.
-  if (!ibkrReady || (!watchlists && !error)) {
+  // Skeleton while tier gate closed OR initial watchlists fetch in flight.
+  // Once we have the `watchlists` dropdown data we transition to the real
+  // shell (even if /instruments is still resolving) so the dropdown appears
+  // quickly.
+  if (!ibkrReady || (!watchlists && !instrumentsError)) {
     return <WatchlistSidebarSkeleton rows={8} />;
   }
 
@@ -152,13 +203,13 @@ export default function WatchlistSidebar() {
 
       {/* State overlays — shown when list is empty. Initial skeleton is
           handled above; this covers transient per-watchlist item reloads. */}
-      {isLoading && filteredItems.length === 0 && (
+      {instrumentsLoading && filteredItems.length === 0 && (
         <div className="flex flex-1 flex-col gap-1 p-3">
           <WatchlistSidebarSkeleton rows={6} />
         </div>
       )}
 
-      {error && (
+      {instrumentsError && (
         <div className="flex flex-1 flex-col items-center justify-center gap-2 px-4">
           <span className="text-xs text-[var(--red)]">Failed to load watchlist</span>
           <span className="text-center text-[10px] text-[var(--text-3)]">
@@ -167,7 +218,7 @@ export default function WatchlistSidebar() {
         </div>
       )}
 
-      {!isLoading && !error && filteredItems.length === 0 && (
+      {!instrumentsLoading && !instrumentsError && filteredItems.length === 0 && (
         <div className="flex flex-1 items-center justify-center">
           <span className="text-xs text-[var(--text-3)]">
             {searchQuery ? "No matching items" : "Connect IBKR to load watchlist"}
@@ -222,9 +273,17 @@ function WatchlistRow({
   item: WatchlistItemResponse;
   onClick: () => void;
 }) {
+  const hasPrice = item.lastPrice != null;
+  const hasChange = item.changePercent != null;
   const changePct = item.changePercent ?? 0;
   const isUp = changePct >= 0;
-  const colorClass = isUp ? "text-[var(--green)]" : "text-[var(--red)]";
+  // Muted tone while prices haven't arrived yet so the row doesn't look
+  // "green by default" during the instruments-only render window.
+  const colorClass = !hasChange
+    ? "text-[var(--text-3)]"
+    : isUp
+      ? "text-[var(--green)]"
+      : "text-[var(--red)]";
 
   return (
     <div
@@ -246,13 +305,14 @@ function WatchlistRow({
 
       {/* Price */}
       <span className="font-data text-[11px] text-right text-[var(--text-1)]">
-        {item.lastPrice != null ? item.lastPrice.toFixed(2) : "--"}
+        {hasPrice ? item.lastPrice!.toFixed(2) : "--"}
       </span>
 
       {/* Change % */}
       <span className={`font-data text-[10px] text-right font-medium ${colorClass}`}>
-        {changePct >= 0 ? "+" : ""}
-        {changePct.toFixed(2)}%
+        {hasChange
+          ? `${changePct >= 0 ? "+" : ""}${changePct.toFixed(2)}%`
+          : "--"}
       </span>
     </div>
   );

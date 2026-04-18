@@ -21,12 +21,25 @@ from deps import get_db
 from routers.pulse_config import router, MAX_ITEMS
 
 
-def _rows(*pairs: tuple[str, str]) -> list[dict]:
-    """Shorthand: build DB-shaped rows from (label, resolve) pairs."""
-    return [
-        {"position": i, "label": label, "resolve": resolve}
-        for i, (label, resolve) in enumerate(pairs)
-    ]
+def _rows(*items) -> list[dict]:
+    """
+    Shorthand: build DB-shaped rows from (label, resolve) or
+    (label, resolve, sec_type) tuples. Missing sec_type defaults to "".
+    """
+    out: list[dict] = []
+    for i, t in enumerate(items):
+        if len(t) == 2:
+            label, resolve = t
+            sec_type = ""
+        else:
+            label, resolve, sec_type = t
+        out.append({
+            "position": i,
+            "label": label,
+            "resolve": resolve,
+            "sec_type": sec_type,
+        })
+    return out
 
 
 @pytest.fixture
@@ -51,8 +64,8 @@ def test_get_returns_items_in_order(app_and_db):
     data = r.json()
     assert data == {
         "items": [
-            {"label": "SPY", "resolve": "SPY"},
-            {"label": "QQQ", "resolve": "QQQ"},
+            {"label": "SPY", "resolve": "SPY", "sec_type": ""},
+            {"label": "QQQ", "resolve": "QQQ", "sec_type": ""},
         ]
     }
 
@@ -78,8 +91,9 @@ def test_put_replaces_list(app_and_db):
     assert r.status_code == 200
     data = r.json()
     assert [i["label"] for i in data["items"]] == ["SPY", "IWM", "GLD"]
+    # Now stored as 3-tuples with the sec_type slot (default "" when omitted).
     db.replace_pulse_config.assert_awaited_once_with(
-        [("SPY", "SPY"), ("IWM", "IWM"), ("GLD", "GLD")]
+        [("SPY", "SPY", ""), ("IWM", "IWM", ""), ("GLD", "GLD", "")]
     )
 
 
@@ -143,5 +157,102 @@ def test_reset_returns_defaults(app_and_db):
     r = client.post("/pulse-config/reset")
     assert r.status_code == 200
     data = r.json()
-    assert data == {"items": [{"label": "SPX", "resolve": "SPX"}]}
+    assert data == {
+        "items": [{"label": "SPX", "resolve": "SPX", "sec_type": ""}],
+    }
     db.reset_pulse_config.assert_awaited_once()
+
+
+# ── sec_type hint (Commit D) ──────────────────────────────────
+
+def test_put_accepts_sec_type_hint(app_and_db):
+    """A caller providing sec_type='STK' should round-trip through the API."""
+    app, db = app_and_db
+    db.get_pulse_config = AsyncMock(
+        return_value=_rows(("GLD", "GLD", "STK"), ("XAU", "XAUUSD", ""))
+    )
+    client = TestClient(app)
+    r = client.put(
+        "/pulse-config",
+        json={
+            "items": [
+                {"label": "GLD", "resolve": "GLD", "sec_type": "STK"},
+                {"label": "XAU", "resolve": "XAUUSD"},  # no hint → ""
+            ]
+        },
+    )
+    assert r.status_code == 200
+    db.replace_pulse_config.assert_awaited_once_with(
+        [("GLD", "GLD", "STK"), ("XAU", "XAUUSD", "")]
+    )
+
+
+def test_put_rejects_unknown_sec_type(app_and_db):
+    """Only STK / IND / BOND / '' are honoured by IBKR's search endpoint."""
+    app, db = app_and_db
+    client = TestClient(app)
+    r = client.put(
+        "/pulse-config",
+        json={
+            "items": [
+                {"label": "X", "resolve": "X", "sec_type": "FUT"},
+            ]
+        },
+    )
+    assert r.status_code == 422
+    db.replace_pulse_config.assert_not_awaited()
+
+
+def test_put_sec_type_is_uppercased(app_and_db):
+    """Lowercase hints get normalised to upper so the DB has one canonical form."""
+    app, db = app_and_db
+    db.get_pulse_config = AsyncMock(
+        return_value=_rows(("GLD", "GLD", "STK"))
+    )
+    client = TestClient(app)
+    r = client.put(
+        "/pulse-config",
+        json={
+            "items": [
+                {"label": "GLD", "resolve": "GLD", "sec_type": "stk"},
+            ]
+        },
+    )
+    assert r.status_code == 200
+    db.replace_pulse_config.assert_awaited_once_with(
+        [("GLD", "GLD", "STK")]
+    )
+
+
+def test_get_survives_legacy_rows_without_sec_type(app_and_db):
+    """
+    Rows written before the sec_type migration won't have the key in
+    the dict coming out of the DB layer. The router must not 500 on them.
+    """
+    app, db = app_and_db
+    db.get_pulse_config = AsyncMock(return_value=[
+        {"position": 0, "label": "SPY", "resolve": "SPY"},  # no sec_type key
+    ])
+    client = TestClient(app)
+    r = client.get("/pulse-config")
+    assert r.status_code == 200
+    assert r.json() == {
+        "items": [{"label": "SPY", "resolve": "SPY", "sec_type": ""}]
+    }
+
+
+def test_defaults_swap_metals_and_drop_dxy():
+    """
+    DEFAULT_PULSE_ITEMS moved off GLD/SLV to the XAUUSD/XAGUSD metal
+    spot contracts, and dropped DXY entirely since IBKR CP doesn't
+    expose the ICE Dollar Index. Pin this so we don't regress.
+    """
+    from services.db import DEFAULT_PULSE_ITEMS
+    resolves = {resolve for _, resolve, _ in DEFAULT_PULSE_ITEMS}
+    labels = {label for label, _, _ in DEFAULT_PULSE_ITEMS}
+    assert "XAUUSD" in resolves
+    assert "XAGUSD" in resolves
+    assert "GLD" not in resolves
+    assert "SLV" not in resolves
+    assert "DXY" not in resolves
+    assert "DXY" not in labels

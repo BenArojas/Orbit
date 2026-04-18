@@ -13,21 +13,44 @@
 
 import { create } from "zustand";
 import { api, type PulseItem } from "@/lib/api";
+import { queryClient } from "@/lib/query";
 
+/**
+ * Query keys whose cached results become stale whenever the pulse
+ * ticker list changes. They use `staleTime: Infinity` in MarketPulse,
+ * so a ticker swap (e.g. SLV → XAGUSD) would otherwise keep showing
+ * the previous session's conid / quote / sparkline until a hard
+ * restart. We flush them after every save()/reset().
+ */
+const PULSE_DEPENDENT_QUERY_KEYS: readonly (readonly string[])[] = [
+  ["conid"],   // resolver → conid (staleTime: Infinity)
+  ["quote"],   // live price
+  ["candles"], // sparkline
+];
+
+function invalidatePulseQueries(): void {
+  for (const key of PULSE_DEPENDENT_QUERY_KEYS) {
+    queryClient.removeQueries({ queryKey: key as unknown as readonly unknown[] });
+  }
+}
+
+// Mirrors backend services/db.py DEFAULT_PULSE_ITEMS.
+// Gold/Silver use XAUUSD/XAGUSD (metal spot) rather than GLD/SLV ETFs —
+// the user preferred the spot contract. DXY is intentionally omitted:
+// IBKR Client Portal Web API doesn't expose the ICE Dollar Index.
 export const DEFAULT_PULSE_ITEMS: readonly PulseItem[] = [
-  { label: "SPX", resolve: "SPX" },
-  { label: "SPY", resolve: "SPY" },
-  { label: "QQQ", resolve: "QQQ" },
-  { label: "DIA", resolve: "DIA" },
-  { label: "IWM", resolve: "IWM" },
-  { label: "BTC", resolve: "BTC" },
-  { label: "ETH", resolve: "ETH" },
-  { label: "GLD", resolve: "GLD" },
-  { label: "SLV", resolve: "SLV" },
-  { label: "USO", resolve: "USO" },
-  { label: "TLT", resolve: "TLT" },
-  { label: "DXY", resolve: "DXY" },
-  { label: "USD/ILS", resolve: "USD.ILS" },
+  { label: "SPX", resolve: "SPX", sec_type: "" },
+  { label: "SPY", resolve: "SPY", sec_type: "" },
+  { label: "QQQ", resolve: "QQQ", sec_type: "" },
+  { label: "DIA", resolve: "DIA", sec_type: "" },
+  { label: "IWM", resolve: "IWM", sec_type: "" },
+  { label: "BTC", resolve: "BTC", sec_type: "" },
+  { label: "ETH", resolve: "ETH", sec_type: "" },
+  { label: "Gold", resolve: "XAUUSD", sec_type: "" },
+  { label: "Silver", resolve: "XAGUSD", sec_type: "" },
+  { label: "USO", resolve: "USO", sec_type: "" },
+  { label: "TLT", resolve: "TLT", sec_type: "" },
+  { label: "USD/ILS", resolve: "USD.ILS", sec_type: "" },
 ];
 
 interface PulseConfigState {
@@ -89,6 +112,9 @@ export const usePulseConfigStore = create<PulseConfigState>()((set, get) => ({
     try {
       const { items: saved } = await api.setPulseConfig(items);
       set({ items: saved, isSaving: false });
+      // Drop cached conid/quote/candle entries — the new list may have
+      // different `resolve` strings whose previous resolution is now stale.
+      invalidatePulseQueries();
     } catch (e) {
       // Revert — user keeps what they see if the backend refuses.
       set({
@@ -105,6 +131,9 @@ export const usePulseConfigStore = create<PulseConfigState>()((set, get) => ({
     try {
       const { items } = await api.resetPulseConfig();
       set({ items, isSaving: false });
+      // Same rationale as save() — flush cached resolver/quote entries
+      // so the restored defaults actually rehydrate from the server.
+      invalidatePulseQueries();
     } catch (e) {
       set({
         isSaving: false,

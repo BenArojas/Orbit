@@ -55,20 +55,31 @@ log = logging.getLogger("parallax.db")
 # Order matches the approved Layout A v2 mockup (SPX-first).
 # Kept alongside the other DB defaults so `seed_defaults()` and the
 # POST /pulse-config/reset endpoint share one source of truth.
-DEFAULT_PULSE_ITEMS: tuple[tuple[str, str], ...] = (
-    ("SPX", "SPX"),
-    ("SPY", "SPY"),
-    ("QQQ", "QQQ"),
-    ("DIA", "DIA"),
-    ("IWM", "IWM"),
-    ("BTC", "BTC"),
-    ("ETH", "ETH"),
-    ("GLD", "GLD"),
-    ("SLV", "SLV"),
-    ("USO", "USO"),
-    ("TLT", "TLT"),
-    ("DXY", "DXY"),
-    ("USD/ILS", "USD.ILS"),
+#
+# Tuple shape: (label, resolve, sec_type). `sec_type` is an optional
+# hint routed through to IBKR's /iserver/secdef/search — the empty
+# string means "no hint, default to STK with the fallback chain".
+# Non-STK entries must spell it out explicitly:
+#   - XAUUSD / XAGUSD are CMDTY metal-spot contracts (OTC).
+#   - USD.ILS is a currency pair — IBKR resolves it under STK in the
+#     search endpoint despite being a cash product, so no hint needed.
+#
+# DXY intentionally omitted: IBKR Client Portal Web API does NOT expose
+# the ICE Dollar Index (returns {"error": "No symbol found"}). Users
+# who want a dollar proxy can add UUP manually.
+DEFAULT_PULSE_ITEMS: tuple[tuple[str, str, str], ...] = (
+    ("SPX", "SPX", ""),
+    ("SPY", "SPY", ""),
+    ("QQQ", "QQQ", ""),
+    ("DIA", "DIA", ""),
+    ("IWM", "IWM", ""),
+    ("BTC", "BTC", ""),
+    ("ETH", "ETH", ""),
+    ("Gold", "XAUUSD", ""),
+    ("Silver", "XAGUSD", ""),
+    ("USO", "USO", ""),
+    ("TLT", "TLT", ""),
+    ("USD/ILS", "USD.ILS", ""),
 )
 
 
@@ -315,6 +326,12 @@ class DatabaseService:
                 position    INTEGER PRIMARY KEY,
                 label       TEXT NOT NULL,
                 resolve     TEXT NOT NULL,
+                -- `sec_type` is an optional IBKR secType hint ('', 'STK',
+                -- 'IND', 'BOND') routed to /iserver/secdef/search so we
+                -- can disambiguate (e.g. GLD as the ARCA ETF, not HKFE
+                -- futures). Empty string = no hint; the resolver falls
+                -- through its usual STK-then-unfiltered chain.
+                sec_type    TEXT NOT NULL DEFAULT '',
                 updated_at  TEXT DEFAULT (datetime('now'))
             );
         """)
@@ -337,6 +354,8 @@ class DatabaseService:
             # Phase 6.6: news-candle detection method (only used when indicator='news_candle')
             #   one of: 'volume_spike', 'range_spike', 'gap', 'long_wick'
             "ALTER TABLE trigger_rules ADD COLUMN news_candle_method TEXT",
+            # Phase 8.9 / Commit D: sec_type hint for pulse items
+            "ALTER TABLE pulse_config ADD COLUMN sec_type TEXT NOT NULL DEFAULT ''",
         ]
         for sql in migrations:
             try:
@@ -911,22 +930,29 @@ class DatabaseService:
         """
         Return all pulse-bar items in display order (left → right).
 
-        Each row is a plain dict: {position, label, resolve}.
+        Each row is a plain dict: {position, label, resolve, sec_type}.
+        `sec_type` defaults to "" when unset (unset means "no hint",
+        resolver uses its STK-then-unfiltered fallback chain).
         If the table is empty (first run before seed), returns [].
         """
         return await asyncio.to_thread(
             self._fetchall,
-            "SELECT position, label, resolve FROM pulse_config ORDER BY position ASC",
+            "SELECT position, label, resolve, sec_type "
+            "FROM pulse_config ORDER BY position ASC",
         )
 
-    async def replace_pulse_config(self, items: list[tuple[str, str]]) -> None:
+    async def replace_pulse_config(
+        self, items: list[tuple[str, str, str]],
+    ) -> None:
         """
         Replace the entire pulse-bar config atomically.
 
-        `items` is a list of (label, resolve) tuples in the desired display
-        order. Positions are re-indexed from 0 on every write so the caller
-        never has to think about holes. We run DELETE + INSERT inside one
-        transaction so a failure mid-write can't leave the bar empty.
+        `items` is a list of (label, resolve, sec_type) tuples in the
+        desired display order. `sec_type` is an optional IBKR secType
+        hint — pass "" when not needed. Positions are re-indexed from 0
+        on every write so the caller never has to think about holes.
+        We run DELETE + INSERT inside one transaction so a failure
+        mid-write can't leave the bar empty.
         """
         def _replace() -> None:
             assert self._conn is not None
@@ -934,8 +960,12 @@ class DatabaseService:
                 self._conn.execute("BEGIN")
                 self._conn.execute("DELETE FROM pulse_config")
                 self._conn.executemany(
-                    "INSERT INTO pulse_config (position, label, resolve) VALUES (?, ?, ?)",
-                    [(i, label, resolve) for i, (label, resolve) in enumerate(items)],
+                    "INSERT INTO pulse_config "
+                    "(position, label, resolve, sec_type) VALUES (?, ?, ?, ?)",
+                    [
+                        (i, label, resolve, sec_type)
+                        for i, (label, resolve, sec_type) in enumerate(items)
+                    ],
                 )
                 self._conn.commit()
             except sqlite3.Error:

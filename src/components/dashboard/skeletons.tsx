@@ -80,13 +80,15 @@ export function ArcGaugeRowSkeleton() {
 // ── Sector Performance (horizontal bars) ─────────────────────
 
 export function SectorPerformanceSkeleton({ rows = 5 }: { rows?: number }) {
+  // Width + mx-auto mirror the live SectorPerformancePanel wrapper so the
+  // panel doesn't visually jump when real data replaces the skeleton.
   return (
-    <div className="rounded-lg border border-border bg-card overflow-hidden">
-      <div className="flex items-center justify-between border-b border-border px-4 py-3">
+    <div className="mx-auto flex h-full min-h-0 w-full max-w-[78%] flex-col rounded-lg border border-border bg-card overflow-hidden">
+      <div className="flex shrink-0 items-center justify-between border-b border-border px-4 py-3">
         <Pulse className="h-3 w-[110px]" />
         <Pulse className="h-3 w-[60px] rounded-full" />
       </div>
-      <div className="flex flex-col gap-2 p-3">
+      <div className="flex flex-1 flex-col gap-2 p-3">
         {Array.from({ length: rows }).map((_, i) => (
           <div key={i} className="flex items-center gap-2">
             <Pulse className="h-3 w-[40px]" />
@@ -102,13 +104,15 @@ export function SectorPerformanceSkeleton({ rows = 5 }: { rows?: number }) {
 // ── RRG scatter plot ─────────────────────────────────────────
 
 export function RRGSkeleton() {
+  // Width + min-height match the live RRGPanel wrapper (max-w-[78%],
+  // min-h-[280px]) so the dashboard row doesn't reflow when data arrives.
   return (
-    <div className="rounded-lg border border-border bg-card overflow-hidden">
-      <div className="flex items-center justify-between border-b border-border px-4 py-3">
+    <div className="mx-auto flex h-full min-h-[280px] w-full max-w-[78%] flex-1 flex-col rounded-lg border border-border bg-card overflow-hidden">
+      <div className="flex shrink-0 items-center justify-between border-b border-border px-4 py-3">
         <Pulse className="h-3 w-[150px]" />
         <Pulse className="h-3 w-[50px] rounded-full" />
       </div>
-      <div className="relative h-[220px] bg-[var(--bg-1)] overflow-hidden">
+      <div className="relative flex-1 min-h-[220px] bg-[var(--bg-1)] overflow-hidden">
         {/* Crosshairs */}
         <div className="absolute top-1/2 left-0 right-0 h-px bg-[var(--border)]" />
         <div className="absolute left-1/2 top-0 bottom-0 w-px bg-[var(--border)]" />

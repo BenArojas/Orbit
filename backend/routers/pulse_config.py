@@ -20,7 +20,7 @@ Endpoints:
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from deps import get_db
 from services.db import DatabaseService
@@ -35,11 +35,32 @@ MAX_ITEMS = 20
 MAX_LABEL_LEN = 16
 MAX_RESOLVE_LEN = 16
 
+# IBKR's /iserver/secdef/search only honours these secType values.
+# Empty string means "no hint" — the resolver falls through its
+# usual STK-then-unfiltered chain. Anything else is rejected up
+# front so users don't waste a round-trip on a typo.
+ALLOWED_SEC_TYPES: frozenset[str] = frozenset({"", "STK", "IND", "BOND"})
+
 
 class PulseItem(BaseModel):
     """One ticker row on the pulse bar."""
     label: str = Field(..., min_length=1, max_length=MAX_LABEL_LEN)
     resolve: str = Field(..., min_length=1, max_length=MAX_RESOLVE_LEN)
+    # Optional IBKR secType hint. See ALLOWED_SEC_TYPES above.
+    # Defaults to "" (empty string) so callers that don't care can omit it.
+    sec_type: str = Field(default="", max_length=8)
+
+    @field_validator("sec_type")
+    @classmethod
+    def _validate_sec_type(cls, v: str) -> str:
+        # Tolerate casing differences — store the canonical upper form.
+        upper = v.upper() if v else ""
+        if upper not in ALLOWED_SEC_TYPES:
+            raise ValueError(
+                f"sec_type must be one of {sorted(ALLOWED_SEC_TYPES)!r} "
+                f"(got {v!r})"
+            )
+        return upper
 
 
 class PulseConfigResponse(BaseModel):
@@ -53,7 +74,16 @@ class PulseConfigUpdate(BaseModel):
 
 def _rows_to_items(rows: list[dict]) -> list[PulseItem]:
     """Strip `position` — the list's index is already the order."""
-    return [PulseItem(label=r["label"], resolve=r["resolve"]) for r in rows]
+    return [
+        PulseItem(
+            label=r["label"],
+            resolve=r["resolve"],
+            # DB rows written before the sec_type migration won't have
+            # the key; default to "" so legacy rows keep working.
+            sec_type=r.get("sec_type", "") or "",
+        )
+        for r in rows
+    ]
 
 
 @router.get("", response_model=PulseConfigResponse)
@@ -79,9 +109,11 @@ async def put_pulse_config(
             detail="Duplicate labels in pulse config",
         )
 
-    pairs = [(item.label, item.resolve) for item in body.items]
-    await db.replace_pulse_config(pairs)
-    log.info("Pulse config replaced (%d items)", len(pairs))
+    triples = [
+        (item.label, item.resolve, item.sec_type) for item in body.items
+    ]
+    await db.replace_pulse_config(triples)
+    log.info("Pulse config replaced (%d items)", len(triples))
     rows = await db.get_pulse_config()
     return PulseConfigResponse(items=_rows_to_items(rows))
 

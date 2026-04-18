@@ -165,9 +165,20 @@ async def search_securities(
 # ── GET /market/conid/{symbol} ───────────────────────────────
 
 
+_ALLOWED_CONID_SEC_TYPES = {"", "STK", "IND", "BOND"}
+
+
 @router.get("/conid/{symbol}")
 async def resolve_conid(
     symbol: str,
+    sec_type: str = Query(
+        "",
+        description=(
+            "Optional IBKR secType hint — one of STK, IND, BOND. "
+            "Disambiguates symbols that collide across asset classes "
+            "(e.g. GLD as the ARCA ETF vs. HKFE Gold Futures)."
+        ),
+    ),
     ibkr: IBKRService = Depends(get_ibkr),
     db: DatabaseService = Depends(get_db),
 ):
@@ -177,8 +188,14 @@ async def resolve_conid(
 
     Hub integration: Result is cached in the instruments table.
     """
+    hint = sec_type.upper()
+    if hint not in _ALLOWED_CONID_SEC_TYPES:
+        return {
+            "error": f"Invalid sec_type: {sec_type!r}",
+            "symbol": symbol,
+        }
     try:
-        conid = await ibkr.get_conid(symbol)
+        conid = await ibkr.get_conid(symbol, sec_type=hint)
         # Cache the resolution so other Hub modules can look up by conid
         await db.upsert_instrument(conid=conid, symbol=symbol.upper())
         return {"conid": conid, "symbol": symbol.upper()}

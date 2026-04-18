@@ -46,7 +46,7 @@ export default function SectorPerformancePanel() {
   const isScrollable = visibleCount > visibleRows;
 
   return (
-    <div className="mx-auto flex h-full min-h-0 w-full max-w-[70%] flex-col rounded-lg border border-border bg-card overflow-hidden">
+    <div className="mx-auto flex h-full min-h-0 w-full max-w-[78%] flex-col rounded-lg border border-border bg-card overflow-hidden">
       {/* Header */}
       <div className="flex shrink-0 items-center justify-between border-b border-border px-4 py-3">
         <span className="text-[12px] font-semibold tracking-wide text-[var(--text-2)]">

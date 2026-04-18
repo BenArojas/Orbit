@@ -15,6 +15,7 @@
 
 import { useState } from "react";
 import { Copy, Check } from "lucide-react";
+import { useQueryClient } from "@tanstack/react-query";
 import { useSettingsStore } from "@/store";
 import { useGatewayContext } from "@/context/GatewayContext";
 import {
@@ -220,6 +221,52 @@ function CommandRow({ cmd, desc }: { cmd: string; desc: string }) {
   );
 }
 
+// ── Clear React Query cache ───────────────────────────────────────────────────
+
+/**
+ * Drops all in-memory TanStack Query cache entries. Useful when a
+ * `staleTime: Infinity` query (like `["conid", resolve]` on the pulse
+ * bar) is holding onto a stale resolution from a previous session and
+ * the only way to refresh it would be a full app restart.
+ *
+ * This does NOT touch SQLite — your settings, watchlists, pulse-config
+ * rows, triggers, etc. are all safe.
+ */
+function ClearQueryCacheRow() {
+  const qc = useQueryClient();
+  const [busy, setBusy] = useState(false);
+
+  function clear() {
+    setBusy(true);
+    try {
+      qc.clear();
+      toast.success("Query cache cleared — refetching…");
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Failed to clear cache";
+      toast.error(msg);
+    } finally {
+      // Brief lockout so the button doesn't flicker on rapid clicks.
+      setTimeout(() => setBusy(false), 400);
+    }
+  }
+
+  return (
+    <SettingRow
+      label="Clear Query Cache"
+      description="Drops all in-memory React Query data (resolved conids, quotes, candles). Every component refetches on next render. Doesn't touch the database."
+    >
+      <button
+        type="button"
+        onClick={clear}
+        disabled={busy}
+        className="cursor-pointer rounded-md border border-border px-3 py-1.5 text-[11px] text-[var(--text-2)] hover:bg-[var(--bg-3)] disabled:opacity-40 disabled:cursor-not-allowed"
+      >
+        {busy ? "Clearing…" : "Clear cache"}
+      </button>
+    </SettingRow>
+  );
+}
+
 // ── Factory reset dialog ──────────────────────────────────────────────────────
 
 /**
@@ -389,6 +436,7 @@ export default function SettingsPage() {
 
         {/* Troubleshooting */}
         <SettingsCard title="Troubleshooting">
+          <ClearQueryCacheRow />
           <FactoryResetRow />
           <div className="pt-2 pb-3">
             <p className="text-[10px] font-semibold uppercase tracking-widest text-[var(--text-3)] mb-1">
