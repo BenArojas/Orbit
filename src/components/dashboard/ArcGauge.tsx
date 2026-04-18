@@ -94,7 +94,7 @@ function GaugeCard({
 
       {/* Header: title + badge */}
       <div className="relative z-10 flex w-full items-center justify-between">
-        <span className="text-[10px] font-semibold uppercase tracking-wider text-[var(--text-3)]">
+        <span className="text-[11px] font-semibold uppercase tracking-wider text-[var(--text-3)]">
           {title}
         </span>
         <span
@@ -132,14 +132,14 @@ function GaugeCard({
 
       {/* Value */}
       <span
-        className="relative z-10 font-data text-lg font-bold"
+        className="relative z-10 font-data text-xl font-bold"
         style={{ color }}
       >
         {value}
       </span>
 
       {/* Subtitle */}
-      <span className="relative z-10 text-[9px] text-center text-[var(--text-3)]">
+      <span className="relative z-10 text-[10px] text-center text-[var(--text-3)]">
         {subtitle}
       </span>
     </Tag>

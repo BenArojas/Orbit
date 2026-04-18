@@ -75,8 +75,10 @@ export default function DashboardPage() {
         <WatchlistConfigSection />
       </div>
 
-      {/* ── Row 3: Alert Log (full width, auto-height, task 6.7 + 8.9) ── */}
-      <div className="col-span-2 overflow-hidden">
+      {/* ── Row 3: Alert Log (full width, auto-height, task 6.7 + 8.9)
+          `mt-2` adds an 8 px gap so the log doesn't butt up against the
+          sector/RRG cards above. */}
+      <div className="col-span-2 mt-2 overflow-hidden">
         <AlertLog />
       </div>
     </div>

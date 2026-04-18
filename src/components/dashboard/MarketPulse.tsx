@@ -260,7 +260,7 @@ export default function MarketPulse() {
   const gate = ibkrReady && tierReady;
 
   return (
-    <div className="col-span-2 flex items-center justify-center overflow-x-auto border-b border-border bg-[var(--bg-1)]">
+    <div className="col-span-2 flex items-center justify-center overflow-x-auto scrollbar-hidden border-b border-border bg-[var(--bg-1)] px-2 py-1">
       {PULSE_ITEMS.map((item, i) => (
         <StaggeredPulseItem
           key={item.label}

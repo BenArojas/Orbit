@@ -11,12 +11,23 @@
 import { useQuery } from "@tanstack/react-query";
 import { api, type SectorPerformance } from "../../lib/api";
 import { useIbkrReadyTier } from "@/hooks/useIbkrReadyTier";
+import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { SectorPerformanceSkeleton } from "./skeletons";
+
+// Row layout — keep in sync with SectorRow below. Used to size the scroll
+// area so that exactly `visibleRows` fit without the next row peeking through.
+const ROW_HEIGHT_PX = 40;
 
 export default function SectorPerformancePanel() {
   // Tier 3 in the 9-tier dashboard cascade (Phase 8 / Task 8.9):
   // fires 500 ms after IBKR connects — after pulse + gauges, before RRG.
   const ready = useIbkrReadyTier(3);
+  // Phase 8.9+: on tall viewports (fullscreen, large monitors) show 5 rows
+  // without scrolling. On shorter viewports, keep the default 3-row cap so
+  // the bottom of the dashboard isn't pushed off-screen.
+  const isTallViewport = useMediaQuery("(min-height: 900px)");
+  const visibleRows = isTallViewport ? 5 : 3;
+
   const { data: sectors, isLoading, error } = useQuery({
     queryKey: ["sectors", "performance"],
     queryFn: api.sectorPerformance,
@@ -28,39 +39,39 @@ export default function SectorPerformancePanel() {
   // Show skeleton while tier gate is closed OR query is actively fetching
   // with no cached data yet.
   if (!ready || (isLoading && !sectors)) {
-    return <SectorPerformanceSkeleton rows={5} />;
+    return <SectorPerformanceSkeleton rows={visibleRows} />;
   }
 
   const visibleCount = sectors?.length ?? 0;
-  const isScrollable = visibleCount > 3;
+  const isScrollable = visibleCount > visibleRows;
 
   return (
-    <div className="flex h-full min-h-0 flex-col rounded-lg border border-border bg-card overflow-hidden">
+    <div className="mx-auto flex h-full min-h-0 w-full max-w-[70%] flex-col rounded-lg border border-border bg-card overflow-hidden">
       {/* Header */}
       <div className="flex shrink-0 items-center justify-between border-b border-border px-4 py-3">
-        <span className="text-[11px] font-semibold tracking-wide text-[var(--text-2)]">
+        <span className="text-[12px] font-semibold tracking-wide text-[var(--text-2)]">
           Sector Performance
         </span>
         <div className="flex items-center gap-2">
           {isScrollable && (
-            <span className="text-[9px] text-[var(--text-3)]">
+            <span className="text-[10px] text-[var(--text-3)]">
               {visibleCount} sectors · scroll
             </span>
           )}
-          <span className="rounded-full bg-[var(--cyan-glow)] px-2 py-0.5 text-[9px] font-medium text-[var(--cyan)]">
+          <span className="rounded-full bg-[var(--cyan-glow)] px-2 py-0.5 text-[10px] font-medium text-[var(--cyan)]">
             YTD
           </span>
         </div>
       </div>
 
-      {/* Content — Phase 8.9: single scrollable list, 3 rows visible by default */}
+      {/* Content — Phase 8.9+: list scrolls when there are more rows than fit.
+          Row count is viewport-responsive: 3 on short screens, 5 on tall. */}
       <div className="relative flex-1 min-h-0">
         <div
           className="divide-y divide-border overflow-y-auto"
           style={{
-            // Each row ≈ 36 px (py-2 + 10px text + 5px bar). 3 rows ≈ 108 px;
-            // we use 118 px so the third row's bottom border is fully visible.
-            maxHeight: "118px",
+            // +6px so the last row's bottom border is fully visible
+            maxHeight: `${ROW_HEIGHT_PX * visibleRows + 6}px`,
           }}
         >
           {error && (
@@ -121,12 +132,12 @@ function SectorRow({
   return (
     <div className="flex items-center gap-2.5 px-4 py-2 transition-colors hover:bg-[var(--bg-3)] cursor-pointer">
       {/* Symbol */}
-      <span className="w-9 font-data text-[10px] font-semibold text-[var(--text-2)]">
+      <span className="w-9 font-data text-[12px] font-semibold text-[var(--text-2)]">
         {sector.symbol}
       </span>
 
       {/* Name */}
-      <span className="w-[90px] text-[10px] text-[var(--text-3)] truncate">
+      <span className="w-[90px] text-[12px] text-[var(--text-3)] truncate">
         {sector.name}
       </span>
 
@@ -154,7 +165,7 @@ function SectorRow({
 
       {/* Percentage */}
       <span
-        className={`w-[50px] text-right font-data text-[11px] font-semibold ${
+        className={`w-[50px] text-right font-data text-[12px] font-semibold ${
           isUp ? "text-[var(--green)]" : "text-[var(--red)]"
         }`}
       >

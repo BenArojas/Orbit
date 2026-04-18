@@ -26,6 +26,7 @@ import { useTriggerAlerts } from "@/hooks/useTriggerAlerts";
 import { GatewayProvider } from "@/context/GatewayContext";
 import { IbkrReconnectBanner } from "@/components/gateway/IbkrReconnectBanner";
 import { HealthStrip } from "@/components/ui/HealthStrip";
+import { ThemeToggle } from "@/components/ui/ThemeToggle";
 import { Toaster } from "@/components/ui/Toaster";
 // Dashboard and Settings are small — keep them eager so the shell feels instant.
 import { DashboardPage, SettingsPage } from "@/pages";
@@ -55,6 +56,7 @@ function PageSkeleton() {
  */
 function useGlobalEffects() {
   const loadSettings = useSettingsStore((s) => s.loadSettings);
+  const themeMode = useSettingsStore((s) => s.themeMode);
   const { addHandler } = useWebSocket();
 
   useEffect(() => {
@@ -67,6 +69,15 @@ function useGlobalEffects() {
   useEffect(() => {
     return initNetworkMonitor(queryClient);
   }, []);
+
+  // Phase 8.9+ — keep `<html>` class in sync with the persisted theme.
+  // CSS palette switches off `.dark` vs `.light` on :root, so this is
+  // the single source of truth for theme application.
+  useEffect(() => {
+    const html = document.documentElement;
+    html.classList.remove("dark", "light");
+    html.classList.add(themeMode);
+  }, [themeMode]);
 
   useTriggerAlerts(addHandler);
 
@@ -146,8 +157,8 @@ function AppShell() {
 
   return (
     <div className="flex h-screen flex-col overflow-hidden">
-      {/* ── Nav bar (44px) ── */}
-      <nav className="relative z-10 flex h-11 items-center border-b border-border bg-gradient-to-b from-[var(--bg-1)]/95 to-[var(--bg-1)] px-5">
+      {/* ── Nav bar (min-h 44px, 8px vertical padding) ── */}
+      <nav className="relative z-10 flex min-h-11 items-center border-b border-border bg-gradient-to-b from-[var(--bg-1)]/95 to-[var(--bg-1)] px-5 py-2">
         {/* Cyan glow line */}
         <div className="absolute bottom-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-[var(--clr-cyan)] to-transparent opacity-30" />
 
@@ -173,8 +184,11 @@ function AppShell() {
           ))}
         </div>
 
-        {/* Connection status */}
-        <ConnectionStatus />
+        {/* Connection status + theme toggle (top-right) */}
+        <div className="flex items-center gap-3">
+          <ConnectionStatus />
+          <ThemeToggle />
+        </div>
       </nav>
 
       {/* ── IBKR session-dropped banner (7.1) ── */}
