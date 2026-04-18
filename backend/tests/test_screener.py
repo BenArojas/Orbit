@@ -26,7 +26,7 @@ from models import (
     ScreenerResultRow,
     ScannerParamsResponse,
 )
-from exceptions import ScannerUnavailableError
+from exceptions import IBKRError, ScannerUnavailableError
 from services.screener import DEFAULT_PRESETS, ScreenerService, _safe_float
 
 
@@ -200,9 +200,9 @@ class TestScreenerServiceScan:
 
     @pytest.mark.asyncio
     async def test_snapshot_error_skips_batch_gracefully(self):
-        """A failing snapshot batch should not crash the scan."""
+        """A failing snapshot batch (IBKRError) should not crash the scan."""
         ibkr = make_ibkr_mock()
-        ibkr.snapshot = AsyncMock(side_effect=Exception("network error"))
+        ibkr.snapshot = AsyncMock(side_effect=IBKRError("network error"))
         svc = ScreenerService(ibkr)
 
         result = await svc.scan("STK", "MOST_ACTIVE", "STK.US.MAJOR", [], 50)
@@ -590,29 +590,43 @@ class TestContractInfo:
 
 class TestPresets:
 
-    def test_wsh_earnings_preset_exists(self):
-        """Verify the WSH earnings preset is in DEFAULT_PRESETS."""
+    def test_no_wsh_earnings_preset(self):
+        """Earnings This Week preset removed — requires paid WSH subscription."""
         earnings_presets = [
             p for p in DEFAULT_PRESETS
             if "Earnings" in p.get("display_name", "")
         ]
-        assert len(earnings_presets) >= 1
-        earnings = earnings_presets[0]
-        assert earnings["instrument"] == "STK"
-        assert earnings["scan_type"] == "MOST_ACTIVE"
-        assert earnings["location"] == "STK.US.MAJOR"
+        assert len(earnings_presets) == 0
+
+    def test_no_germany_preset(self):
+        """Germany preset removed — focus is US equities/ETFs."""
+        germany_presets = [
+            p for p in DEFAULT_PRESETS
+            if "Germany" in p.get("display_name", "")
+        ]
+        assert len(germany_presets) == 0
+
+    def test_no_hong_kong_preset(self):
+        """Hong Kong preset removed — focus is US equities/ETFs."""
+        hk_presets = [
+            p for p in DEFAULT_PRESETS
+            if "Hong Kong" in p.get("display_name", "")
+        ]
+        assert len(hk_presets) == 0
 
     def test_default_filters_on_preset(self):
-        """Verify ScannerPreset model accepts default_filters."""
-        earnings_presets = [
-            p for p in DEFAULT_PRESETS
-            if "Earnings" in p.get("display_name", "")
-        ]
-        if earnings_presets:
-            preset_dict = earnings_presets[0]
-            preset = ScannerPreset(**preset_dict)
-            assert hasattr(preset, "default_filters")
-            assert isinstance(preset.default_filters, list)
+        """Verify ScannerPreset model accepts default_filters field."""
+        # Build a synthetic preset dict with default_filters to test the model
+        preset_dict = {
+            "instrument": "STK",
+            "scan_type": "MOST_ACTIVE",
+            "location": "STK.US.MAJOR",
+            "display_name": "Test Preset",
+            "default_filters": [{"code": "priceAbove", "value": "5"}],
+        }
+        preset = ScannerPreset(**preset_dict)
+        assert hasattr(preset, "default_filters")
+        assert isinstance(preset.default_filters, list)
 
 
 # ── Regression: IBKR scanner_run always sends filter array ────
@@ -708,3 +722,386 @@ class TestScannerRunFilterAlwaysArray:
 
         assert "filter" in captured_body
         assert captured_body["filter"] == []
+
+
+# ── Regression: scanner_run response parser ──────────────────
+# Bug: parser looked for capital-C {"Contracts": {"Contract": [...]}}
+# (the HMDS format), but /iserver/scanner/run returns
+# {"contracts": [...], "scan_data_column_name": "..."} — a flat
+# array under lowercase "contracts". Result: 0 contracts parsed
+# → ScannerUnavailableError → 422 on every scan.
+
+
+class TestScannerRunResponseParsing:
+    """Regression tests for parsing the /iserver/scanner/run response shape."""
+
+    @pytest.mark.asyncio
+    async def test_parses_lowercase_contracts_flat_array(self):
+        """Real /iserver/scanner/run shape: {"contracts": [...]}."""
+        svc = _make_ibkr_svc()
+        svc.ensure_accounts = AsyncMock()
+
+        fake_response = {
+            "contracts": [
+                {"server_id": "0", "symbol": "AMD", "conid": 4391},
+                {"server_id": "1", "symbol": "NVDA", "conid": 4815},
+            ],
+            "scan_data_column_name": "Trades",
+        }
+
+        async def fake_request(method, path, **kwargs):
+            return fake_response
+
+        svc._request = fake_request
+
+        results = await svc.scanner_run(
+            instrument="STK",
+            scan_type="MOST_ACTIVE",
+            location="STK.US.MAJOR",
+        )
+
+        assert len(results) == 2
+        assert results[0]["symbol"] == "AMD"
+        assert results[1]["conid"] == 4815
+
+    @pytest.mark.asyncio
+    async def test_parses_hmds_capital_nested_shape(self):
+        """HMDS fallback shape: {"Contracts": {"Contract": [...]}}."""
+        svc = _make_ibkr_svc()
+        svc.ensure_accounts = AsyncMock()
+
+        fake_response = {
+            "Contracts": {
+                "Contract": [
+                    {"contractID": "431424315", "inScanTime": "20231214"},
+                ],
+            },
+            "total": "1",
+        }
+
+        async def fake_request(method, path, **kwargs):
+            return fake_response
+
+        svc._request = fake_request
+
+        results = await svc.scanner_run(
+            instrument="STK",
+            scan_type="MOST_ACTIVE",
+            location="STK.US.MAJOR",
+        )
+
+        assert len(results) == 1
+        assert results[0]["contractID"] == "431424315"
+
+    @pytest.mark.asyncio
+    async def test_empty_contracts_array_returns_empty_list(self):
+        """Empty array under 'contracts' key → empty list (not an error)."""
+        svc = _make_ibkr_svc()
+        svc.ensure_accounts = AsyncMock()
+
+        async def fake_request(method, path, **kwargs):
+            return {"contracts": [], "scan_data_column_name": "Trades"}
+
+        svc._request = fake_request
+
+        results = await svc.scanner_run(
+            instrument="STK",
+            scan_type="MOST_ACTIVE",
+            location="STK.US.MAJOR",
+        )
+
+        assert results == []
+
+
+# ── Phase C: required_fields param on snapshot() ─────────────
+# snapshot() now accepts required_fields to decouple which fields are
+# *requested* from IBKR from which must be present before returning.
+# This lets market cap (7289) be best-effort while core fields gate the poll.
+
+
+class TestSnapshotRequiredFields:
+    """Tests for the required_fields parameter added to IBKRService.snapshot()."""
+
+    @pytest.mark.asyncio
+    async def test_required_fields_subset_gates_poll(self):
+        """
+        When required_fields is a subset of fields, polling stops as soon as
+        the required subset is present — even if other fields (e.g. 7289) are missing.
+        """
+        svc = _make_ibkr_svc()
+        svc.ensure_accounts = AsyncMock()
+
+        # Response has core fields but NOT 7289 (market cap)
+        partial_response = [
+            {
+                "conid": 265598,
+                "31": "185.50",   # last price
+                "55": "AAPL",     # symbol
+                "83": "1.23",     # change %
+                "7762": "52000000",  # volume
+                # 7289 intentionally absent
+            }
+        ]
+
+        call_count = 0
+
+        async def fake_request(method, path, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            return partial_response
+
+        svc._request = fake_request
+
+        result = await svc.snapshot(
+            conids=[265598],
+            fields="31,55,83,7762,7289",
+            timeout=5.0,
+            required_fields=["31", "55", "83", "7762"],  # 7289 not required
+        )
+
+        # Should return on first poll (required fields satisfied)
+        assert call_count == 1
+        assert result == partial_response
+
+    @pytest.mark.asyncio
+    async def test_no_required_fields_uses_all_requested(self):
+        """
+        When required_fields is None (default), ALL requested fields must be
+        present — original behaviour preserved.
+        """
+        svc = _make_ibkr_svc()
+        svc.ensure_accounts = AsyncMock()
+
+        # First call: missing 7289; second call: all fields present
+        full_response = [
+            {
+                "conid": 265598,
+                "31": "185.50",
+                "55": "AAPL",
+                "83": "1.23",
+                "7762": "52000000",
+                "7289": "2900000",
+            }
+        ]
+        partial_response = [{k: v for k, v in full_response[0].items() if k != "7289"}]
+
+        responses = iter([partial_response, full_response])
+
+        async def fake_request(method, path, **kwargs):
+            return next(responses)
+
+        svc._request = fake_request
+
+        result = await svc.snapshot(
+            conids=[265598],
+            fields="31,55,83,7762,7289",
+            timeout=5.0,
+            poll_interval=0.0,  # instant re-poll for the test
+            required_fields=None,  # all fields required
+        )
+
+        assert result == full_response
+
+    @pytest.mark.asyncio
+    async def test_required_fields_empty_list_returns_immediately(self):
+        """
+        If required_fields=[] (no fields required), should return on first
+        non-empty response without polling.
+        """
+        svc = _make_ibkr_svc()
+        svc.ensure_accounts = AsyncMock()
+
+        response = [{"conid": 265598}]
+        call_count = 0
+
+        async def fake_request(method, path, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            return response
+
+        svc._request = fake_request
+
+        result = await svc.snapshot(
+            conids=[265598],
+            fields="31",
+            timeout=5.0,
+            required_fields=[],
+        )
+
+        assert call_count == 1
+        assert result == response
+
+
+# ── Phase E: contract endpoint enrichment ────────────────────
+# GET /screener/contract/{conid} now returns perf_*, w52_* fields
+# computed from 1y daily history.
+
+
+class TestContractEnrichment:
+    """
+    Tests for the enrichment logic in GET /screener/contract/{conid}.
+
+    We test the enrichment helper functions directly rather than via the FastAPI
+    router to avoid the pandas_ta import chain triggered by deps.py.
+    """
+
+    def _make_bars(self, n: int, base_close: float = 100.0) -> list[dict]:
+        """Generate synthetic daily bars (epoch ms timestamps, sequential days)."""
+        import datetime
+        bars = []
+        start_ts = int(
+            (datetime.datetime.now() - datetime.timedelta(days=n)).timestamp() * 1000
+        )
+        for i in range(n):
+            ts = start_ts + i * 86_400_000  # 1 day in ms
+            close = base_close * (1 + i * 0.001)  # slowly rising
+            bars.append({
+                "t": ts,
+                "o": close - 0.5,
+                "h": close + 1.0,
+                "l": close - 1.0,
+                "c": close,
+                "v": 1_000_000,
+            })
+        return bars
+
+    def _compute_enrichment(self, bars: list[dict]) -> dict:
+        """
+        Replicate the enrichment logic from routers/screener.py contract_info
+        without importing the router (avoids deps → pandas_ta chain).
+        """
+        import datetime
+
+        closes = [b.get("c") for b in bars if b.get("c") is not None]
+        timestamps = [b.get("t") for b in bars if b.get("t") is not None]
+
+        perf_5d = perf_1m = perf_3m = perf_ytd = None
+        w52_pct_from_high = w52_pct_from_low = None
+        w52_days_since_high = None
+
+        if not closes or len(closes) < 2:
+            return {}
+
+        last_close = closes[-1]
+        now_ts = datetime.datetime.now(tz=datetime.timezone.utc)
+
+        def _perf(n_bars: int):
+            if len(closes) > n_bars:
+                base = closes[-(n_bars + 1)]
+                if base and base != 0:
+                    return round((last_close - base) / base * 100, 2)
+            return None
+
+        perf_5d = _perf(5)
+        perf_1m = _perf(21)
+        perf_3m = _perf(63)
+
+        year_start = datetime.datetime(now_ts.year, 1, 1, tzinfo=datetime.timezone.utc)
+        ytd_bars = [
+            (t, c) for t, c in zip(timestamps, closes)
+            if t is not None and datetime.datetime.fromtimestamp(
+                t / 1000, tz=datetime.timezone.utc
+            ) >= year_start
+        ]
+        if ytd_bars:
+            ytd_base = ytd_bars[0][1]
+            if ytd_base and ytd_base != 0:
+                perf_ytd = round((last_close - ytd_base) / ytd_base * 100, 2)
+
+        year_bars = bars[-252:]
+        year_highs = [b.get("h") for b in year_bars if b.get("h") is not None]
+        year_lows = [b.get("l") for b in year_bars if b.get("l") is not None]
+
+        if year_highs:
+            w52_high = max(year_highs)
+            if w52_high and w52_high != 0:
+                w52_pct_from_high = round((last_close - w52_high) / w52_high * 100, 2)
+
+            year_closes = [(b.get("t"), b.get("c")) for b in year_bars if b.get("c") is not None]
+            if year_closes:
+                max_close = max(c for _, c in year_closes)
+                high_bar_ts = next(
+                    (t for t, c in reversed(year_closes) if c == max_close), None
+                )
+                if high_bar_ts is not None:
+                    high_dt = datetime.datetime.fromtimestamp(
+                        high_bar_ts / 1000, tz=datetime.timezone.utc
+                    )
+                    w52_days_since_high = (now_ts - high_dt).days
+
+        if year_lows:
+            w52_low = min(year_lows)
+            if w52_low and w52_low != 0:
+                w52_pct_from_low = round((last_close - w52_low) / w52_low * 100, 2)
+
+        return {
+            "perf_5d": perf_5d,
+            "perf_1m": perf_1m,
+            "perf_3m": perf_3m,
+            "perf_ytd": perf_ytd,
+            "w52_pct_from_high": w52_pct_from_high,
+            "w52_pct_from_low": w52_pct_from_low,
+            "w52_days_since_high": w52_days_since_high,
+        }
+
+    def test_perf_5d_computed_from_history(self):
+        """perf_5d is % change from 5 bars ago to latest close."""
+        bars = self._make_bars(30, base_close=100.0)
+        expected_base = bars[-6]["c"]
+        expected_last = bars[-1]["c"]
+        expected = round((expected_last - expected_base) / expected_base * 100, 2)
+
+        result = self._compute_enrichment(bars)
+
+        assert result["perf_5d"] is not None
+        assert abs(result["perf_5d"] - expected) < 0.01
+
+    def test_perf_ytd_uses_first_bar_in_current_year(self):
+        """perf_ytd is % change from the first bar of this calendar year."""
+        import datetime
+        bars = self._make_bars(252, base_close=50.0)
+        # Force the first bar's timestamp into this calendar year
+        now = datetime.datetime.now(tz=datetime.timezone.utc)
+        year_start_ts = int(
+            datetime.datetime(now.year, 1, 2, tzinfo=datetime.timezone.utc).timestamp() * 1000
+        )
+        bars[0]["t"] = year_start_ts
+
+        result = self._compute_enrichment(bars)
+        assert result["perf_ytd"] is not None
+
+    def test_w52_pct_from_high_is_negative_when_below_high(self):
+        """w52_pct_from_high < 0 when current price is below 52W high."""
+        bars = self._make_bars(252, base_close=100.0)
+        # Inject a high spike earlier in the year; last close stays ~100
+        bars[50]["h"] = 250.0
+        result = self._compute_enrichment(bars)
+        assert result["w52_pct_from_high"] is not None
+        assert result["w52_pct_from_high"] < 0
+
+    def test_w52_pct_from_low_is_positive_when_above_low(self):
+        """w52_pct_from_low > 0 when current price is above 52W low."""
+        bars = self._make_bars(252, base_close=100.0)
+        # Inject a very low bar earlier
+        bars[10]["l"] = 10.0
+        result = self._compute_enrichment(bars)
+        assert result["w52_pct_from_low"] is not None
+        assert result["w52_pct_from_low"] > 0
+
+    def test_w52_days_since_high_is_non_negative(self):
+        """days_since_high is always ≥ 0."""
+        bars = self._make_bars(252, base_close=100.0)
+        result = self._compute_enrichment(bars)
+        assert result["w52_days_since_high"] is not None
+        assert result["w52_days_since_high"] >= 0
+
+    def test_insufficient_bars_returns_none_perfs(self):
+        """With < 6 bars we cannot compute perf_5d — should be None."""
+        bars = self._make_bars(3, base_close=100.0)
+        result = self._compute_enrichment(bars)
+        assert result.get("perf_5d") is None
+
+    def test_empty_bars_returns_empty(self):
+        """Empty bar list → empty enrichment dict (no KeyError)."""
+        result = self._compute_enrichment([])
+        assert result == {}

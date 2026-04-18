@@ -595,12 +595,22 @@ export interface ContractInfoResponse {
   currency: string;
   industry: string;
   category: string;
+  sector: string;           // Alias for category — broader grouping
   avg_volume: number | null;
   market_cap: number | null;
   high_52w: number | null;
   low_52w: number | null;
   pe_ratio: number | null;
   dividend_yield: number | null;
+  // 52-week positioning (derived from 1y daily history)
+  w52_pct_from_high: number | null;
+  w52_pct_from_low: number | null;
+  w52_days_since_high: number | null;
+  // Relative performance (derived from 1y daily history)
+  perf_5d: number | null;
+  perf_1m: number | null;
+  perf_3m: number | null;
+  perf_ytd: number | null;
 }
 
 export interface ScannerParamsResponse {

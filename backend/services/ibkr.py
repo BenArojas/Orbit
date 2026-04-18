@@ -39,6 +39,7 @@ from exceptions import (
     IBKRRequestError,
     SymbolNotFoundError,
 )
+from ibkr_dumper import dump_if_first
 from rate_control import paced
 from state import IBKRState
 
@@ -458,18 +459,29 @@ class IBKRService:
         fields: str = DEFAULT_QUOTE_FIELDS_STR,
         timeout: float = 5.0,
         poll_interval: float = 1.0,
+        required_fields: list[str] | None = None,
     ) -> list[dict]:
         """
         Get a market data snapshot for one or more conids.
-        Polls until all requested fields are present or timeout is reached.
-        IBKR requires calling snapshot twice — first call "warms up" the data.
+        Polls until all *required* fields are present or timeout is reached.
+
+        Args:
+            conids: IBKR contract IDs to fetch.
+            fields: Comma-separated field codes to request (all sent to IBKR).
+            timeout: Max seconds to poll before returning partial data.
+            poll_interval: Seconds between polls.
+            required_fields: Field codes that MUST be present before returning.
+                If None, ALL requested fields are required (original behaviour).
+                Pass a subset (e.g. ["31","55","83","7762"]) to treat slower
+                fields like market cap (7289) as best-effort.
         """
         await self.ensure_accounts()
         params = {
             "conids": ",".join(str(c) for c in conids),
             "fields": fields,
         }
-        requested_fields = fields.split(",")
+        # Determine which fields are required for the "done" check
+        gate_fields = required_fields if required_fields is not None else fields.split(",")
         start = time.monotonic()
         response = []
 
@@ -478,20 +490,22 @@ class IBKRService:
                 "GET", "/iserver/marketdata/snapshot", params=params
             )
             if response and isinstance(response, list):
-                # Check if all conids have all requested fields
+                # Check if all conids have all *required* fields
                 conids_in_resp = {str(item.get("conid")) for item in response}
                 all_conids_present = set(str(c) for c in conids).issubset(conids_in_resp)
                 all_fields_present = all(
-                    all(f in item for f in requested_fields)
+                    all(f in item for f in gate_fields)
                     for item in response
                 )
                 if all_conids_present and all_fields_present:
+                    dump_if_first("marketdata_snapshot", response)
                     return response
 
             await asyncio.sleep(poll_interval)
 
         # Return whatever we have after timeout
         log.warning("Snapshot timed out for conids %s after %.1fs", conids, timeout)
+        dump_if_first("marketdata_snapshot", response)
         return response if isinstance(response, list) else []
 
     @cached(ttl=300)
@@ -512,9 +526,11 @@ class IBKRService:
             "bar": bar,
             "outsideRth": "true",
         }
-        return await self._request(
+        result = await self._request(
             "GET", "/iserver/marketdata/history", params=params
         )
+        dump_if_first("marketdata_history", result)
+        return result
 
     @cached(ttl=3600)
     async def contract_info(self, conid: int) -> dict:
@@ -524,7 +540,9 @@ class IBKRService:
         Used by the screener quick-peek slide-over.
         """
         await self.ensure_accounts()
-        return await self._request("GET", f"/iserver/contract/{conid}/info")
+        result = await self._request("GET", f"/iserver/contract/{conid}/info")
+        dump_if_first("contract_info", result)
+        return result
 
     # ── Watchlist Methods (Step 3.5) ───────────────────────────
 
@@ -817,7 +835,9 @@ class IBKRService:
         the user can build scans from.
         """
         await self.ensure_accounts()
-        return await self._request("GET", "/iserver/scanner/params")
+        result = await self._request("GET", "/iserver/scanner/params")
+        dump_if_first("scanner_params", result)
+        return result
 
     async def scanner_run(
         self,
@@ -854,13 +874,21 @@ class IBKRService:
             body["sort"] = sort
 
         data = await self._request("POST", "/iserver/scanner/run", json=body)
+        dump_if_first("scanner_run", data)
 
-        # IBKR returns: {"Contracts": {"Contract": [...]}} or a list
+        # /iserver/scanner/run returns {"contracts": [...], "scan_data_column_name": "..."}
+        # The HMDS /hmds/scanner endpoint uses {"Contracts": {"Contract": [...]}} —
+        # keep that as a fallback so this parser is safe for both shapes.
         if isinstance(data, dict):
-            contracts = data.get("Contracts", data)
-            if isinstance(contracts, dict):
-                return contracts.get("Contract", [])
-            return contracts if isinstance(contracts, list) else []
+            lower = data.get("contracts")
+            if isinstance(lower, list):
+                return lower
+            upper = data.get("Contracts")
+            if isinstance(upper, dict):
+                return upper.get("Contract", [])
+            if isinstance(upper, list):
+                return upper
+            return []
         return data if isinstance(data, list) else []
 
     # ── WebSocket (Step 1.6) ─────────────────────────────────

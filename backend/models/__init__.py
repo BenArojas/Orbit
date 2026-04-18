@@ -845,11 +845,22 @@ class ContractInfoResponse(BaseModel):
     sec_type: str = ""
     exchange: str = ""
     currency: str = ""
+    # IBKR `industry` = narrow sub-industry, `category` = broader sector grouping
     industry: str = ""
     category: str = ""
+    sector: str = ""          # Alias for category — broader grouping shown in peek panel
     avg_volume: Optional[float] = None
     market_cap: Optional[float] = None
     high_52w: Optional[float] = None
     low_52w: Optional[float] = None
     pe_ratio: Optional[float] = None
     dividend_yield: Optional[float] = None
+    # 52-week positioning (derived from history)
+    w52_pct_from_high: Optional[float] = None   # % below 52W high (negative = below)
+    w52_pct_from_low: Optional[float] = None    # % above 52W low (positive = above)
+    w52_days_since_high: Optional[int] = None   # Calendar days since last 52W high close
+    # Relative performance vs. period start close (derived from history)
+    perf_5d: Optional[float] = None    # 5-day % return
+    perf_1m: Optional[float] = None    # 1-month % return
+    perf_3m: Optional[float] = None    # 3-month % return
+    perf_ytd: Optional[float] = None   # Year-to-date % return

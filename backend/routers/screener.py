@@ -7,6 +7,8 @@ Endpoints:
   GET  /screener/params     — Fetch raw IBKR scanner parameters
 """
 
+import asyncio
+import datetime
 import logging
 from typing import Any
 
@@ -87,8 +89,104 @@ async def contract_info(
     conid: int,
     screener: ScreenerService = Depends(get_screener),
 ):
-    """Fetch contract details for the screener quick-peek slide-over."""
-    raw = await screener.ibkr.contract_info(conid)
+    """
+    Fetch contract details for the screener quick-peek slide-over.
+
+    Runs contract_info + 1y daily history in parallel.
+    History is used to compute:
+      - Relative performance: 5D, 1M, 3M, YTD
+      - 52W positioning: % from high, % from low, days since 52W high
+    """
+    raw, hist = await asyncio.gather(
+        screener.ibkr.contract_info(conid),
+        screener.ibkr.history(conid, period="1y", bar="1d"),
+        return_exceptions=True,
+    )
+
+    # contract_info is mandatory; history is best-effort
+    if isinstance(raw, Exception):
+        raise raw
+
+    if isinstance(hist, Exception):
+        log.warning("History fetch failed for conid %d: %s", conid, hist)
+        hist = {}
+
+    # ── Parse history bars ────────────────────────────────────
+    bars: list[dict] = []
+    if isinstance(hist, dict):
+        bars = hist.get("data", [])
+
+    # Compute enrichment from bars (each bar: {t: epoch_ms, o, h, l, c, v})
+    perf_5d = perf_1m = perf_3m = perf_ytd = None
+    w52_pct_from_high = w52_pct_from_low = None
+    w52_days_since_high: int | None = None
+
+    if bars:
+        closes = [b.get("c") for b in bars if b.get("c") is not None]
+        timestamps = [b.get("t") for b in bars if b.get("t") is not None]
+
+        if closes and len(closes) >= 2:
+            last_close = closes[-1]
+            now_ts = datetime.datetime.now(tz=datetime.timezone.utc)
+
+            # ── Relative performance ───────────────────────────
+            def _perf(n_bars: int) -> float | None:
+                if len(closes) > n_bars:
+                    base = closes[-(n_bars + 1)]
+                    if base and base != 0:
+                        return round((last_close - base) / base * 100, 2)
+                return None
+
+            perf_5d = _perf(5)
+            perf_1m = _perf(21)   # ~21 trading days
+            perf_3m = _perf(63)   # ~63 trading days
+
+            # YTD: find first bar in current calendar year
+            year_start = datetime.datetime(now_ts.year, 1, 1, tzinfo=datetime.timezone.utc)
+            ytd_bars = [
+                (t, c) for t, c in zip(timestamps, closes)
+                if t is not None and datetime.datetime.fromtimestamp(
+                    t / 1000, tz=datetime.timezone.utc
+                ) >= year_start
+            ]
+            if ytd_bars:
+                ytd_base = ytd_bars[0][1]
+                if ytd_base and ytd_base != 0:
+                    perf_ytd = round((last_close - ytd_base) / ytd_base * 100, 2)
+
+            # ── 52W positioning ────────────────────────────────
+            # Use the last 252 bars as a proxy for ~1 trading year
+            year_bars = bars[-252:]
+            year_highs = [b.get("h") for b in year_bars if b.get("h") is not None]
+            year_lows = [b.get("l") for b in year_bars if b.get("l") is not None]
+
+            if year_highs:
+                w52_high = max(year_highs)
+                if w52_high and w52_high != 0:
+                    w52_pct_from_high = round((last_close - w52_high) / w52_high * 100, 2)
+
+                # Days since 52W high close (use close, not intraday high)
+                year_closes = [(b.get("t"), b.get("c")) for b in year_bars if b.get("c") is not None]
+                if year_closes:
+                    max_close = max(c for _, c in year_closes)
+                    # Last bar where close equals (or is closest to) the max close
+                    high_bar_ts = next(
+                        (t for t, c in reversed(year_closes) if c == max_close),
+                        None,
+                    )
+                    if high_bar_ts is not None:
+                        high_dt = datetime.datetime.fromtimestamp(
+                            high_bar_ts / 1000, tz=datetime.timezone.utc
+                        )
+                        w52_days_since_high = (now_ts - high_dt).days
+
+            if year_lows:
+                w52_low = min(year_lows)
+                if w52_low and w52_low != 0:
+                    w52_pct_from_low = round((last_close - w52_low) / w52_low * 100, 2)
+
+    # ── Build response ────────────────────────────────────────
+    category = raw.get("category", "")
     return ContractInfoResponse(
         conid=conid,
         symbol=raw.get("symbol", ""),
@@ -97,13 +195,21 @@ async def contract_info(
         exchange=raw.get("exchange", ""),
         currency=raw.get("currency", ""),
         industry=raw.get("industry", ""),
-        category=raw.get("category", ""),
+        category=category,
+        sector=category,   # IBKR `category` is the broader sector grouping
         avg_volume=_safe_float(raw.get("avgVolume")),
         market_cap=_safe_float(raw.get("marketCap")),
         high_52w=_safe_float(raw.get("week52hi")),
         low_52w=_safe_float(raw.get("week52lo")),
         pe_ratio=_safe_float(raw.get("peRatio")),
         dividend_yield=_safe_float(raw.get("dividendYield")),
+        w52_pct_from_high=w52_pct_from_high,
+        w52_pct_from_low=w52_pct_from_low,
+        w52_days_since_high=w52_days_since_high,
+        perf_5d=perf_5d,
+        perf_1m=perf_1m,
+        perf_3m=perf_3m,
+        perf_ytd=perf_ytd,
     )
 
 

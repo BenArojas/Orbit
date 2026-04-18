@@ -26,6 +26,15 @@ from constants import (
     FIELD_SYMBOL,
     FIELD_VOLUME,
 )
+
+# Core fields that MUST be present before returning (price, symbol, change, volume).
+# Market cap (7289) is a derived field that IBKR populates slower — treat as best-effort.
+SNAPSHOT_REQUIRED_FIELDS = [
+    FIELD_LAST_PRICE,   # 31
+    FIELD_SYMBOL,       # 55
+    FIELD_CHANGE_PCT,   # 83
+    FIELD_VOLUME,       # 7762
+]
 from exceptions import IBKRError, ScannerUnavailableError
 from models import IbkrFilterItem, ScreenerResultRow, ScanResponse
 from services.ibkr import IBKRService
@@ -81,25 +90,6 @@ DEFAULT_PRESETS: list[dict[str, str]] = [
         "scan_type": "MOST_ACTIVE",
         "location": "ETF.EQ.US.MAJOR",
         "display_name": "Most Active — US Equity ETFs",
-    },
-    {
-        "instrument": "STK",
-        "scan_type": "MOST_ACTIVE",
-        "location": "STK.EU.IBIS",
-        "display_name": "Most Active — Germany",
-    },
-    {
-        "instrument": "STOCK.HK",
-        "scan_type": "MOST_ACTIVE",
-        "location": "STK.HK.SEHK",
-        "display_name": "Most Active — Hong Kong",
-    },
-    {
-        "instrument": "STK",
-        "scan_type": "MOST_ACTIVE",
-        "location": "STK.US.MAJOR",
-        "display_name": "Earnings This Week — US Stocks",
-        "default_filters": [{"code": "wshEarningsDate", "value": "5"}],
     },
 ]
 
@@ -270,7 +260,8 @@ class ScreenerService:
                 raw = await self.ibkr.snapshot(
                     batch,
                     fields=SCREENER_SNAPSHOT_FIELDS,
-                    timeout=8.0,
+                    timeout=12.0,
+                    required_fields=SNAPSHOT_REQUIRED_FIELDS,
                 )
                 for item in raw:
                     cid = item.get("conid")
