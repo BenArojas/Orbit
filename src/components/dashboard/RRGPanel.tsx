@@ -40,8 +40,6 @@ export default function RRGPanel() {
     staleTime: 60_000,
     refetchInterval: 5 * 60_000,
     enabled: ready,
-    retry: 2,
-    retryDelay: (attempt) => Math.min(1_000 * 2 ** attempt, 5_000),
   });
 
   // Skeleton until tier gate fires AND first fetch completes

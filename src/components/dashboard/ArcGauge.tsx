@@ -17,6 +17,7 @@
  *   - VIX card is clickable → navigates Analysis to the VIX conid @ 1D timeframe.
  */
 
+import type { ElementType } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   api,
@@ -73,7 +74,7 @@ function GaugeCard({
   const offset = ARC_LENGTH - (ARC_LENGTH * Math.min(fillPercent, 100)) / 100;
 
   const clickable = typeof onClick === "function";
-  const Tag: any = clickable ? "button" : "div";
+  const Tag: ElementType = clickable ? "button" : "div";
 
   return (
     <Tag
@@ -195,7 +196,6 @@ export default function ArcGaugeRow() {
     queryFn: () => api.resolveConid("VIX"),
     staleTime: Infinity,
     enabled: tierReady,
-    retry: 2,
   });
 
   const vixConid = vixResolved?.conid;
@@ -206,7 +206,6 @@ export default function ArcGaugeRow() {
     queryFn: () => api.quote(vixConid!),
     enabled: tierReady && vixConid != null,
     refetchInterval: 15_000,
-    retry: 2,
   });
 
   // Market Strength — breadth proxy from /sectors/breadth
@@ -218,7 +217,6 @@ export default function ArcGaugeRow() {
     // pressuring IBKR with 11 daily-bar requests too often.
     refetchInterval: 120_000,
     staleTime: 60_000,
-    retry: 2,
   });
 
   // Sector Rotation — offensive vs defensive 1-month perf
@@ -228,7 +226,6 @@ export default function ArcGaugeRow() {
     enabled: tierReady,
     refetchInterval: 120_000,
     staleTime: 60_000,
-    retry: 2,
   });
 
   // Trigger rules + hits (local SQLite, always ok)

@@ -114,7 +114,6 @@ export default function TriggerWatchlist() {
     queryFn: () => api.getTriggerHits(200),
     refetchInterval: 30_000,
     enabled: tierReady,
-    retry: 2,
   });
 
   // Only show unacknowledged / recent hits (cap sidebar at 50)

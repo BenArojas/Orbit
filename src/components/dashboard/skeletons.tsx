@@ -90,7 +90,7 @@ export function SectorPerformanceSkeleton({ rows = 5 }: { rows?: number }) {
         {Array.from({ length: rows }).map((_, i) => (
           <div key={i} className="flex items-center gap-2">
             <Pulse className="h-3 w-[40px]" />
-            <Pulse className="h-3 flex-1" style={{ opacity: 1 - i * 0.12 } as any} />
+            <Pulse className="h-3 flex-1" style={{ opacity: 1 - i * 0.12 } as React.CSSProperties} />
             <Pulse className="h-3 w-[40px]" />
           </div>
         ))}
@@ -123,7 +123,7 @@ export function RRGSkeleton() {
           <Pulse
             key={i}
             className="absolute h-2 w-2 rounded-full"
-            style={pos as any}
+            style={pos as React.CSSProperties}
           />
         ))}
       </div>
@@ -174,7 +174,7 @@ export function SidebarPanelSkeleton({
         <Pulse
           key={i}
           className="h-3 w-full"
-          style={{ opacity: 1 - i * 0.15 } as any}
+          style={{ opacity: 1 - i * 0.15 } as React.CSSProperties}
         />
       ))}
     </div>

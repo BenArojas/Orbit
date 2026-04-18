@@ -43,8 +43,6 @@ export default function WatchlistSidebar() {
     queryFn: api.getWatchlists,
     staleTime: 60_000,
     enabled: ibkrReady,
-    retry: 2,
-    retryDelay: (attempt) => Math.min(1_000 * 2 ** attempt, 5_000),
   });
 
   // Auto-select first watchlist
@@ -61,8 +59,6 @@ export default function WatchlistSidebar() {
     enabled: ibkrReady && !!selectedWatchlistId,
     staleTime: 30_000,
     refetchInterval: 30_000,
-    retry: 2,
-    retryDelay: (attempt) => Math.min(1_000 * 2 ** attempt, 5_000),
   });
 
   // Sync to Zustand store for other components

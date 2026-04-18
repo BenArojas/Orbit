@@ -15,7 +15,6 @@ The RRG calculation:
 import asyncio
 import datetime
 import logging
-import math
 
 from constants import (
     BREADTH_EMA_PERIOD,
@@ -30,6 +29,7 @@ from constants import (
     SECTORS_OFFENSIVE,
 )
 from services.ibkr import IBKRService
+from services.indicators import IndicatorService
 
 log = logging.getLogger("parallax.services.sectors")
 
@@ -203,13 +203,13 @@ class SectorService:
             raw_rs = [s / b if b != 0 else 0 for s, b in zip(sector, bench)]
 
             # Step 2: EMA-smooth the RS → RS-Ratio
-            rs_ratio_series = _ema(raw_rs, RRG_RS_EMA_PERIOD)
+            rs_ratio_series = IndicatorService.ema_series(raw_rs, RRG_RS_EMA_PERIOD)
 
             # Step 3: Rate of change of RS-Ratio
             roc = _rate_of_change(rs_ratio_series, RRG_MOMENTUM_PERIOD)
 
             # Step 4: EMA-smooth the ROC → RS-Momentum
-            rs_momentum_series = _ema(roc, RRG_RS_EMA_PERIOD)
+            rs_momentum_series = IndicatorService.ema_series(roc, RRG_RS_EMA_PERIOD)
 
             if not rs_ratio_series or not rs_momentum_series:
                 continue
@@ -314,7 +314,7 @@ class SectorService:
             if len(closes) < BREADTH_EMA_PERIOD:
                 continue
 
-            ema_series = _ema(closes, BREADTH_EMA_PERIOD)
+            ema_series = IndicatorService.ema_series(closes, BREADTH_EMA_PERIOD)
             if not ema_series:
                 continue
 
@@ -441,28 +441,10 @@ class SectorService:
 
 
 # ── Helper functions ────────────────────────────────────────
-
-
-def _ema(data: list[float], period: int) -> list[float]:
-    """
-    Compute Exponential Moving Average.
-    Returns a list the same length as input (first `period-1` values use SMA seed).
-    """
-    if len(data) < period:
-        return []
-
-    multiplier = 2 / (period + 1)
-    result = []
-
-    # Seed with SMA of first `period` values
-    sma = sum(data[:period]) / period
-    result.append(sma)
-
-    for i in range(period, len(data)):
-        ema_val = (data[i] - result[-1]) * multiplier + result[-1]
-        result.append(ema_val)
-
-    return result
+#
+# EMA is provided by `IndicatorService.ema_series` — we reuse the
+# pandas-ta bridge in services/indicators.py instead of rolling a
+# parallel implementation here (CLAUDE.md rule 2).
 
 
 def _rate_of_change(data: list[float], period: int) -> list[float]:

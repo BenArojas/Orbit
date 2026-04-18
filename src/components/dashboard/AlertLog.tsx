@@ -185,7 +185,6 @@ export default function AlertLog() {
     // so this is only a safety net for missed events / stale data.
     refetchInterval: 60_000,
     enabled: tierReady,
-    retry: 2,
   });
 
   // Invalidate the hits query whenever the scanner broadcasts a fresh alert so

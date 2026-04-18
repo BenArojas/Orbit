@@ -513,7 +513,6 @@ export default function TriggerRules() {
     queryFn: () => api.getTriggerRules(),
     staleTime: 30_000,
     enabled: tierReady,
-    retry: 2,
   });
 
   const { data: hits } = useQuery<TriggerHit[]>({
@@ -521,7 +520,6 @@ export default function TriggerRules() {
     queryFn: () => api.getTriggerHits(200),
     staleTime: 30_000,
     enabled: tierReady,
-    retry: 2,
   });
 
   // Count hits per rule

@@ -149,7 +149,6 @@ function PulseItem({
     queryFn: () => api.resolveConid(resolve),
     staleTime: Infinity,
     enabled,
-    retry: 2,
   });
 
   const conid = resolved?.conid;
@@ -160,7 +159,6 @@ function PulseItem({
     queryFn: () => api.quote(conid!),
     enabled: enabled && conid != null,
     refetchInterval: 10_000,
-    retry: 2,
   });
 
   // Step 3 — recent candles for sparkline.
@@ -169,7 +167,6 @@ function PulseItem({
     queryFn: () => api.candles(conid!, "5D"),
     enabled: enabled && conid != null,
     staleTime: 60_000,
-    retry: 2,
   });
 
   // Not yet staggered in, or still waiting on conid + quote → show skeleton.

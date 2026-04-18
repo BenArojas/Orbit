@@ -26,8 +26,11 @@ export const queryClient = new QueryClient({
         // Don't retry when the browser is offline — fail fast, show toast,
         // and let `online`-event invalidation refetch on recovery (8.1-F).
         if (error instanceof NetworkOfflineError) return false;
-        // Retry once for everything else (network blip, sidecar slow start)
-        return failureCount < 1;
+        // Retry up to twice for everything else (network blip, sidecar slow start).
+        // Per-query `retry` overrides are intentionally avoided — they replace
+        // this function entirely in TanStack v5 and would bypass the
+        // NetworkOfflineError / 401 / 429 exclusions above (Phase 8.1-F).
+        return failureCount < 2;
       },
     },
     mutations: {

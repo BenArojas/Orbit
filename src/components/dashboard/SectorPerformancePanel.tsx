@@ -23,9 +23,6 @@ export default function SectorPerformancePanel() {
     staleTime: 60_000,
     refetchInterval: 5 * 60_000,
     enabled: ready,
-    // Auto-retry silently on transient failures (Phase 8 / Task 8.9)
-    retry: 2,
-    retryDelay: (attempt) => Math.min(1_000 * 2 ** attempt, 5_000),
   });
 
   // Show skeleton while tier gate is closed OR query is actively fetching
