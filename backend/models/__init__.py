@@ -726,12 +726,15 @@ class ModelSelectRequest(BaseModel):
 class ScannerPreset(BaseModel):
     """
     An available IBKR scanner preset the user can pick from.
-    The screener UI shows these as a dropdown for "universe source."
+    The screener UI shows these in a grouped combobox:
+      - `popular` presets are always visible,
+      - `niche` presets live under a collapsible "More screens" section.
     """
     instrument: str                                     # "STK", "FUT", etc.
     scan_type: str                                      # "TOP_PERC_GAIN", "MOST_ACTIVE", etc.
     location: str                                       # "STK.US.MAJOR", "STK.EU", etc.
     display_name: str                                   # Human-readable name
+    category: Literal["popular", "niche"] = "popular"   # Grouping for the preset combobox
     default_filters: list["IbkrFilterItem"] = []       # Optional preset filters
 
 

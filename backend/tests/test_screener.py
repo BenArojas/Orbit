@@ -342,15 +342,59 @@ class TestDefaultPresets:
             assert "scan_type" in p
             assert "location" in p
             assert "display_name" in p
+            assert "category" in p
 
     def test_presets_instantiate_as_models(self):
         for p in DEFAULT_PRESETS:
             preset = ScannerPreset(**p)
             assert preset.scan_type
             assert preset.location
+            assert preset.category in ("popular", "niche")
 
     def test_at_least_one_preset(self):
         assert len(DEFAULT_PRESETS) >= 1
+
+    def test_preset_grouping_counts(self):
+        """Locked by spec §3: 6 popular + 10 niche = 16 total."""
+        popular = [p for p in DEFAULT_PRESETS if p["category"] == "popular"]
+        niche = [p for p in DEFAULT_PRESETS if p["category"] == "niche"]
+        assert len(popular) == 6
+        assert len(niche) == 10
+        assert len(DEFAULT_PRESETS) == 16
+
+    def test_popular_presets_match_spec(self):
+        """D6 popular section must contain the exact 6 display names from spec §3."""
+        popular_names = {
+            p["display_name"] for p in DEFAULT_PRESETS
+            if p["category"] == "popular"
+        }
+        assert popular_names == {
+            "Most Active — US Stocks",
+            "Top % Gainers — US Stocks",
+            "Top % Losers — US Stocks",
+            "Hot by Volume — US Stocks",
+            "52-Week Highs — US Stocks",
+            "52-Week Lows — US Stocks",
+        }
+
+    def test_niche_presets_include_new_screens(self):
+        """Spec §3 additions must be present in the niche group."""
+        niche_scan_types = {
+            p["scan_type"] for p in DEFAULT_PRESETS
+            if p["category"] == "niche"
+        }
+        # All 8 new scan types / location variants from spec §3
+        required = {
+            "TOP_OPEN_PERC_GAIN",      # Pre-Market Gainers
+            "TOP_OPEN_PERC_LOSE",      # Pre-Market Losers
+            "HIGH_VS_13W_HL",          # 13-Week Highs
+            "LOW_VS_13W_HL",           # 13-Week Lows
+            "HIGH_DIVIDEND_YIELD_IB",  # High Dividend Yield
+            "HIGH_OPT_IMP_VOLAT",      # High Implied Vol
+            "OPT_VOLUME_MOST_ACTIVE",  # Top Options Volume
+            "HIGH_GROWTH_RATE",        # High Growth Rate
+        }
+        assert required.issubset(niche_scan_types)
 
 
 # ── Models ────────────────────────────────────────────────────
