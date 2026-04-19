@@ -80,6 +80,15 @@ interface ScreenerState {
   removeFilter: (id: string) => void;
   clearFilters: () => void;
   setPreset: (preset: ScannerPreset) => void;
+
+  /**
+   * Atomically set both preset and filters in one go.
+   * Used by the empty-state "Try this" cards so the store + scan request
+   * are always in sync (no race between setPreset and addFilter calls).
+   * Sets isDirty = false because the caller fires a scan immediately after.
+   */
+  applyPreset: (preset: ScannerPreset, filters: ActiveFilter[]) => void;
+
   setScanning: (v: boolean) => void;
 
   /** Replace buffer with a fresh scan result. Called when the main Scan runs. */
@@ -144,6 +153,14 @@ export const useScreenerStore = create<ScreenerState>()((set) => ({
       isDirty: true,
     });
   },
+
+  applyPreset: (preset, filters) =>
+    set({
+      selectedPreset: preset,
+      filters,
+      page: 1,
+      isDirty: false, // caller fires scan immediately
+    }),
 
   setScanning: (v) => set({ isScanning: v }),
 

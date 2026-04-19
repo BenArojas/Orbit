@@ -1,92 +1,44 @@
 /**
  * ScreenerFilterBar — Preset selector + IBKR native filter pills + scan button
  *
- * Layout: [Preset Dropdown] | [+ Add Filter ▾] [Filter Pills...] [Clear] | [Scan]
+ * Layout:
+ *   Row 1: [Preset Dropdown] | [Quick-pick chips] | [+ Add Filter ▾] [Clear] | [AI] [Scan]
+ *   Filter pills appear inline after quick-picks / add button.
  *
  * Filters are IBKR native scanner filter codes (code/value pairs).
- * Grouped by category: Fundamental, Technical, Analyst, Short Interest.
+ * Categories and codes come from GET /screener/filter-catalogue — no hardcoded local list.
+ *
+ * Quick-pick chips: the 5 `popular=true` catalogue entries — one click opens a
+ * compact value input and adds the filter directly to the bar.
+ *
+ * Preset grouping: popular presets at the top, niche ("More screens") below.
  */
 
 import { useState, useRef, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Plus, X, Play, Loader2, ChevronDown, RotateCcw, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { api } from "@/lib/api";
+import { api, type FilterCatalogueEntry } from "@/lib/api";
 import { useScreenerStore, type ActiveFilter } from "@/store/screener";
 import { PresetSkeleton } from "./ScreenerSkeleton";
 
-// ── Filter catalogue ─────────────────────────────────────────
+// ── Helpers ───────────────────────────────────────────────────
 
-interface FilterDef {
-  label: string;
-  aboveCode: string;
-  belowCode: string;
-  unit?: string;         // Display unit (e.g. "$B", "%")
-  placeholder?: string;  // Input placeholder
-}
+const CAT_LABELS: Record<string, string> = {
+  fundamental: "Fundamental",
+  technical: "Technical",
+  analyst: "Analyst",
+  short_ownership: "Short Interest",
+};
 
-interface FilterCategory {
-  label: string;
-  filters: FilterDef[];
-}
+/** Category order for the Add Filter dropdown */
+const CAT_ORDER = ["fundamental", "technical", "analyst", "short_ownership"];
 
-const FILTER_CATEGORIES: FilterCategory[] = [
-  {
-    label: "Fundamental",
-    filters: [
-      { label: "Market Cap", aboveCode: "marketCapAbove1e6", belowCode: "marketCapBelow1e6", unit: "$M", placeholder: "1000" },
-      { label: "P/E Ratio", aboveCode: "minPeRatio", belowCode: "maxPeRatio", placeholder: "15" },
-      { label: "ROE", aboveCode: "minROE", belowCode: "maxROE", unit: "%", placeholder: "15" },
-      { label: "Operating Margin TTM", aboveCode: "minOperatingMargin", belowCode: "maxOperatingMargin", unit: "%", placeholder: "10" },
-      { label: "Net Margin TTM", aboveCode: "minNetMargin", belowCode: "maxNetMargin", unit: "%", placeholder: "5" },
-      { label: "Revenue Chg TTM", aboveCode: "minRevenueChangePercentTTM", belowCode: "maxRevenueChangePercentTTM", unit: "%", placeholder: "10" },
-      { label: "Revenue Growth 5Y", aboveCode: "minRevenuePctChange5Y", belowCode: "maxRevenuePctChange5Y", unit: "%", placeholder: "10" },
-      { label: "EPS Chg TTM", aboveCode: "minEpsChangePercent", belowCode: "maxEpsChangePercent", unit: "%", placeholder: "10" },
-      { label: "Price/Book", aboveCode: "minPriceBook", belowCode: "maxPriceBook", placeholder: "1" },
-      { label: "Quick Ratio", aboveCode: "minQuickRatio", belowCode: "maxQuickRatio", placeholder: "1" },
-      { label: "Earnings Within (days)", aboveCode: "wshEarningsDate", belowCode: "wshEarningsDate", unit: "days", placeholder: "5" },
-    ],
-  },
-  {
-    label: "Technical",
-    filters: [
-      { label: "Price", aboveCode: "priceAbove", belowCode: "priceBelow", unit: "$", placeholder: "10" },
-      { label: "Day Change %", aboveCode: "changePercAbove", belowCode: "changePercBelow", unit: "%", placeholder: "3" },
-      { label: "Volume vs Avg", aboveCode: "volumeAbove", belowCode: "volumeBelow", placeholder: "1000000" },
-      { label: "Price vs EMA(20) %", aboveCode: "priceVsEMA20Above", belowCode: "priceVsEMA20Below", unit: "%", placeholder: "5" },
-      { label: "Price vs EMA(50) %", aboveCode: "priceVsEMA50Above", belowCode: "priceVsEMA50Below", unit: "%", placeholder: "5" },
-      { label: "Price vs EMA(200) %", aboveCode: "priceVsEMA200Above", belowCode: "priceVsEMA200Below", unit: "%", placeholder: "5" },
-      { label: "MACD Histogram", aboveCode: "macdHistAbove", belowCode: "macdHistBelow", placeholder: "0" },
-      { label: "IV Rank 52W", aboveCode: "ivRankAbove", belowCode: "ivRankBelow", unit: "%", placeholder: "50" },
-    ],
-  },
-  {
-    label: "Analyst",
-    filters: [
-      { label: "Avg Rating", aboveCode: "avgRatingAbove", belowCode: "avgRatingBelow", placeholder: "3" },
-      { label: "# Analyst Ratings", aboveCode: "numRatingsAbove", belowCode: "numRatingsBelow", placeholder: "5" },
-      { label: "Avg Price Target", aboveCode: "avgTargetPriceAbove", belowCode: "avgTargetPriceBelow", unit: "$", placeholder: "50" },
-      { label: "Target/Price Ratio", aboveCode: "targetPriceRatioAbove", belowCode: "targetPriceRatioBelow", placeholder: "1.1" },
-    ],
-  },
-  {
-    label: "Short Interest",
-    filters: [
-      { label: "Utilization", aboveCode: "shortableSharesAbove", belowCode: "shortableSharesBelow", unit: "%", placeholder: "50" },
-      { label: "Borrow Fee Rate", aboveCode: "rebateRateAbove", belowCode: "rebateRateBelow", unit: "%", placeholder: "1" },
-      { label: "Insider % of Float", aboveCode: "insiderOwnershipAbove", belowCode: "insiderOwnershipBelow", unit: "%", placeholder: "10" },
-      { label: "Institutional % of Float", aboveCode: "institutionalOwnershipAbove", belowCode: "institutionalOwnershipBelow", unit: "%", placeholder: "50" },
-    ],
-  },
-];
-
-// Flat lookup: code → label (for display in pill)
-const CODE_TO_LABEL: Record<string, string> = {};
-for (const cat of FILTER_CATEGORIES) {
-  for (const f of cat.filters) {
-    CODE_TO_LABEL[f.aboveCode] = `${f.label} ≥`;
-    CODE_TO_LABEL[f.belowCode] = `${f.label} ≤`;
-  }
+/** Build a human-readable display label for a filter value */
+function buildLabel(entry: FilterCatalogueEntry, value: string, direction: "above" | "below") {
+  const arrow = direction === "above" ? "≥" : "≤";
+  const unitSuffix = entry.unit ? ` ${entry.unit}` : "";
+  return `${entry.label} ${arrow} ${value}${unitSuffix}`;
 }
 
 // ── Active filter pill ────────────────────────────────────────
@@ -112,12 +64,110 @@ function FilterPill({
   );
 }
 
-// ── Add filter dropdown + form ────────────────────────────────
+// ── Quick-pick chip ───────────────────────────────────────────
+// One chip per popular=true catalogue entry. Clicking opens a compact
+// inline value input — no category/filter navigation needed.
 
-function AddFilterDropdown({ onAdd }: { onAdd: (filter: ActiveFilter) => void }) {
+function QuickPickChip({
+  entry,
+  onAdd,
+}: {
+  entry: FilterCatalogueEntry;
+  onAdd: (filter: ActiveFilter) => void;
+}) {
   const [open, setOpen] = useState(false);
-  const [selectedCat, setSelectedCat] = useState<FilterCategory | null>(null);
-  const [selectedFilter, setSelectedFilter] = useState<FilterDef | null>(null);
+  const [value, setValue] = useState(entry.example);
+  const ref = useRef<HTMLDivElement>(null);
+
+  // Close on outside click
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [open]);
+
+  const handleOpen = () => {
+    setValue(entry.example);
+    setOpen(true);
+  };
+
+  const handleAdd = () => {
+    if (!value) return;
+    const filter: ActiveFilter = {
+      id: `${entry.code}-${Date.now()}`,
+      code: entry.code,
+      value,
+      display_label: buildLabel(entry, value, entry.direction),
+    };
+    onAdd(filter);
+    setOpen(false);
+  };
+
+  return (
+    <div ref={ref} className="relative">
+      <button
+        onClick={handleOpen}
+        className="rounded-full border border-dashed border-[var(--border)] px-2.5 py-1 text-[10px] text-[var(--text-3)] transition-colors hover:border-[var(--clr-cyan)] hover:text-[var(--clr-cyan)]"
+      >
+        {entry.label}
+      </button>
+
+      {open && (
+        <div className="absolute left-0 top-full z-20 mt-1 rounded-lg border border-[var(--border)] bg-[var(--bg-2)] p-2.5 shadow-xl">
+          <p className="mb-1.5 text-[10px] font-medium text-[var(--text-2)]">
+            {entry.label}&nbsp;{entry.direction === "above" ? "≥" : "≤"}
+          </p>
+          <div className="flex items-center gap-1.5">
+            <input
+              type="number"
+              value={value}
+              onChange={(e) => setValue(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") handleAdd();
+                if (e.key === "Escape") setOpen(false);
+              }}
+              className="w-24 rounded border border-[var(--border)] bg-[var(--bg-3)] px-2 py-1 font-data text-[11px] text-[var(--text-1)] outline-none focus:border-[var(--clr-cyan)]"
+              autoFocus
+            />
+            {entry.unit && (
+              <span className="text-[10px] text-[var(--text-3)]">{entry.unit}</span>
+            )}
+            <button
+              onClick={handleAdd}
+              className="rounded bg-[var(--clr-cyan)]/20 px-2 py-1 text-[10px] font-medium text-[var(--clr-cyan)] transition-colors hover:bg-[var(--clr-cyan)]/30"
+            >
+              Add
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Add filter dropdown ───────────────────────────────────────
+// Three-column panel: category → filter (above-direction entries only) → value + direction toggle.
+// Catalogue is fetched once by the parent and passed as a prop.
+
+interface SelectedEntry {
+  entry: FilterCatalogueEntry;
+  /** below entry from the catalogue (undefined if paired_code is empty) */
+  belowEntry?: FilterCatalogueEntry;
+}
+
+function AddFilterDropdown({
+  catalogue,
+  onAdd,
+}: {
+  catalogue: FilterCatalogueEntry[];
+  onAdd: (filter: ActiveFilter) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [selectedCat, setSelectedCat] = useState<string | null>(null);
+  const [selected, setSelected] = useState<SelectedEntry | null>(null);
   const [direction, setDirection] = useState<"above" | "below">("above");
   const [value, setValue] = useState("");
   const ref = useRef<HTMLDivElement>(null);
@@ -126,43 +176,46 @@ function AddFilterDropdown({ onAdd }: { onAdd: (filter: ActiveFilter) => void })
   useEffect(() => {
     if (!open) return;
     const handler = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) {
-        setOpen(false);
-      }
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
     };
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
   }, [open]);
 
+  // Only show "above"-direction entries as primary list items to avoid duplicates.
+  // below entries are looked up via paired_code when building the value form.
+  const primaryByCat = CAT_ORDER.reduce<Record<string, FilterCatalogueEntry[]>>((acc, cat) => {
+    acc[cat] = catalogue.filter((e) => e.category === cat && e.direction === "above");
+    return acc;
+  }, {});
+
   const handleOpen = () => {
     setOpen(true);
     setSelectedCat(null);
-    setSelectedFilter(null);
+    setSelected(null);
     setValue("");
     setDirection("above");
   };
 
-  const handleSelectFilter = (cat: FilterCategory, filter: FilterDef) => {
-    setSelectedCat(cat);
-    setSelectedFilter(filter);
-    setValue(filter.placeholder ?? "");
+  const handleSelectEntry = (entry: FilterCatalogueEntry) => {
+    const belowEntry = entry.paired_code
+      ? catalogue.find((e) => e.code === entry.paired_code)
+      : undefined;
+    setSelected({ entry, belowEntry });
+    setValue(entry.example);
+    setDirection("above");
   };
 
   const handleAdd = () => {
-    if (!selectedFilter || value === "") return;
-    const parsed = parseFloat(value);
-    if (isNaN(parsed)) return;
-
-    const code = direction === "above" ? selectedFilter.aboveCode : selectedFilter.belowCode;
-    const dirLabel = direction === "above" ? "≥" : "≤";
-    const unitSuffix = selectedFilter.unit ? ` ${selectedFilter.unit}` : "";
-    const displayLabel = `${selectedFilter.label} ${dirLabel} ${parsed}${unitSuffix}`;
+    if (!selected || !value) return;
+    const activeEntry = direction === "above" ? selected.entry : selected.belowEntry;
+    if (!activeEntry) return;
 
     const filter: ActiveFilter = {
-      id: `${code}-${Date.now()}`,
-      code,
-      value: String(parsed),
-      display_label: displayLabel,
+      id: `${activeEntry.code}-${Date.now()}`,
+      code: activeEntry.code,
+      value,
+      display_label: buildLabel(selected.entry, value, direction),
     };
     onAdd(filter);
     setOpen(false);
@@ -197,70 +250,75 @@ function AddFilterDropdown({ onAdd }: { onAdd: (filter: ActiveFilter) => void })
       <div className="absolute left-0 top-full mt-1 flex gap-0 rounded-lg border border-[var(--border)] bg-[var(--bg-2)] shadow-xl">
         {/* Category list */}
         <div className="flex min-w-[140px] flex-col border-r border-[var(--border)] py-1">
-          {FILTER_CATEGORIES.map((cat) => (
+          {CAT_ORDER.map((cat) => (
             <button
-              key={cat.label}
-              onClick={() => { setSelectedCat(cat); setSelectedFilter(null); }}
+              key={cat}
+              onClick={() => { setSelectedCat(cat); setSelected(null); }}
               className={`px-3 py-1.5 text-left text-[11px] transition-colors hover:bg-[var(--bg-3)] ${
-                selectedCat?.label === cat.label
+                selectedCat === cat
                   ? "text-[var(--clr-cyan)] font-medium"
                   : "text-[var(--text-2)]"
               }`}
             >
-              {cat.label}
+              {CAT_LABELS[cat] ?? cat}
             </button>
           ))}
         </div>
 
         {/* Filter list */}
         {selectedCat && (
-          <div className="flex min-w-[180px] flex-col py-1 border-r border-[var(--border)]">
-            {selectedCat.filters.map((f) => (
+          <div className="flex min-w-[190px] flex-col py-1 border-r border-[var(--border)] overflow-y-auto max-h-60">
+            {(primaryByCat[selectedCat] ?? []).map((e) => (
               <button
-                key={f.aboveCode}
-                onClick={() => handleSelectFilter(selectedCat, f)}
+                key={e.code}
+                onClick={() => handleSelectEntry(e)}
                 className={`px-3 py-1.5 text-left text-[11px] transition-colors hover:bg-[var(--bg-3)] ${
-                  selectedFilter?.aboveCode === f.aboveCode
+                  selected?.entry.code === e.code
                     ? "text-[var(--clr-cyan)] font-medium"
                     : "text-[var(--text-2)]"
                 }`}
               >
-                {f.label}
+                {e.label}
+                {e.unit && (
+                  <span className="ml-1 text-[9px] text-[var(--text-3)]">({e.unit})</span>
+                )}
               </button>
             ))}
           </div>
         )}
 
         {/* Value input form */}
-        {selectedFilter && (
+        {selected && (
           <div className="flex min-w-[200px] flex-col gap-2 p-3">
             <p className="text-[11px] font-medium text-[var(--text-1)]">
-              {selectedFilter.label}
+              {selected.entry.label}
             </p>
 
-            {/* Direction toggle */}
-            <div className="flex rounded-md border border-[var(--border)] overflow-hidden text-[10px]">
-              <button
-                onClick={() => setDirection("above")}
-                className={`flex-1 py-1 transition-colors ${
-                  direction === "above"
-                    ? "bg-[var(--clr-cyan)]/20 text-[var(--clr-cyan)] font-medium"
-                    : "text-[var(--text-3)] hover:bg-[var(--bg-3)]"
-                }`}
-              >
-                ≥ Above
-              </button>
-              <button
-                onClick={() => setDirection("below")}
-                className={`flex-1 py-1 transition-colors ${
-                  direction === "below"
-                    ? "bg-[var(--clr-cyan)]/20 text-[var(--clr-cyan)] font-medium"
-                    : "text-[var(--text-3)] hover:bg-[var(--bg-3)]"
-                }`}
-              >
-                ≤ Below
-              </button>
-            </div>
+            {/* Direction toggle — only when paired_code exists */}
+            {selected.belowEntry && (
+              <div className="flex overflow-hidden rounded-md border border-[var(--border)] text-[10px]">
+                <button
+                  onClick={() => setDirection("above")}
+                  className={`flex-1 py-1 transition-colors ${
+                    direction === "above"
+                      ? "bg-[var(--clr-cyan)]/20 font-medium text-[var(--clr-cyan)]"
+                      : "text-[var(--text-3)] hover:bg-[var(--bg-3)]"
+                  }`}
+                >
+                  ≥ Above
+                </button>
+                <button
+                  onClick={() => setDirection("below")}
+                  className={`flex-1 py-1 transition-colors ${
+                    direction === "below"
+                      ? "bg-[var(--clr-cyan)]/20 font-medium text-[var(--clr-cyan)]"
+                      : "text-[var(--text-3)] hover:bg-[var(--bg-3)]"
+                  }`}
+                >
+                  ≤ Below
+                </button>
+              </div>
+            )}
 
             {/* Value input */}
             <div className="flex items-center gap-1">
@@ -269,12 +327,12 @@ function AddFilterDropdown({ onAdd }: { onAdd: (filter: ActiveFilter) => void })
                 value={value}
                 onChange={(e) => setValue(e.target.value)}
                 onKeyDown={(e) => e.key === "Enter" && handleAdd()}
-                placeholder={selectedFilter.placeholder ?? "0"}
+                placeholder={selected.entry.example}
                 className="w-full rounded border border-[var(--border)] bg-[var(--bg-3)] px-2 py-1 font-data text-[11px] text-[var(--text-1)] outline-none focus:border-[var(--clr-cyan)]"
                 autoFocus
               />
-              {selectedFilter.unit && (
-                <span className="text-[10px] text-[var(--text-3)]">{selectedFilter.unit}</span>
+              {selected.entry.unit && (
+                <span className="text-[10px] text-[var(--text-3)]">{selected.entry.unit}</span>
               )}
             </div>
 
@@ -329,16 +387,27 @@ export default function ScreenerFilterBar({
     staleTime: 60_000 * 60,
   });
 
+  const { data: catalogue = [] } = useQuery({
+    queryKey: ["screener-filter-catalogue"],
+    queryFn: () => api.screenerFilterCatalogue(),
+    staleTime: Infinity, // catalogue is static
+  });
+
+  const popularChips = catalogue.filter((e) => e.popular);
+
+  const presetKey = selectedPreset
+    ? `${selectedPreset.instrument}:${selectedPreset.scan_type}:${selectedPreset.location}`
+    : "";
+
+  const popularPresets = presets?.filter((p) => p.category === "popular") ?? [];
+  const nichePresets = presets?.filter((p) => p.category === "niche") ?? [];
+
   const handlePresetChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     const preset = presets?.find(
       (p) => `${p.instrument}:${p.scan_type}:${p.location}` === e.target.value
     );
     if (preset) setPreset(preset);
   };
-
-  const presetKey = selectedPreset
-    ? `${selectedPreset.instrument}:${selectedPreset.scan_type}:${selectedPreset.location}`
-    : "";
 
   return (
     <div className="flex flex-wrap items-center gap-2 border-b border-border bg-[var(--bg-1)] px-4 py-2.5">
@@ -347,7 +416,7 @@ export default function ScreenerFilterBar({
         Screener
       </span>
 
-      {/* Preset selector */}
+      {/* Grouped preset selector */}
       {presetsLoading ? (
         <PresetSkeleton />
       ) : (
@@ -357,26 +426,46 @@ export default function ScreenerFilterBar({
           className="rounded-md border border-[var(--border)] bg-[var(--bg-2)] px-2.5 py-1 font-data text-[11px] text-[var(--text-1)] outline-none transition-colors focus:border-[var(--clr-cyan)]"
         >
           <option value="">Select preset…</option>
-          {presets?.map((p) => (
-            <option
-              key={`${p.instrument}:${p.scan_type}:${p.location}:${p.display_name}`}
-              value={`${p.instrument}:${p.scan_type}:${p.location}`}
-            >
-              {p.display_name}
-            </option>
-          ))}
+          {popularPresets.length > 0 && (
+            <optgroup label="Popular">
+              {popularPresets.map((p) => (
+                <option
+                  key={`${p.instrument}:${p.scan_type}:${p.location}:${p.display_name}`}
+                  value={`${p.instrument}:${p.scan_type}:${p.location}`}
+                >
+                  {p.display_name}
+                </option>
+              ))}
+            </optgroup>
+          )}
+          {nichePresets.length > 0 && (
+            <optgroup label="More screens">
+              {nichePresets.map((p) => (
+                <option
+                  key={`${p.instrument}:${p.scan_type}:${p.location}:${p.display_name}`}
+                  value={`${p.instrument}:${p.scan_type}:${p.location}`}
+                >
+                  {p.display_name}
+                </option>
+              ))}
+            </optgroup>
+          )}
         </select>
       )}
-
-      {/* Sort moved to client-side — click any column header in the results
-          table to sort. (Backend sort dropdown removed by design — keeping
-          backend compute minimal so scans stay fast.) */}
 
       {/* Separator */}
       <div className="h-4 w-px bg-[var(--border)]" />
 
-      {/* Add filter dropdown */}
-      <AddFilterDropdown onAdd={addFilter} />
+      {/* Quick-pick chips (popular catalogue entries) */}
+      {popularChips.map((entry) => (
+        <QuickPickChip key={entry.code} entry={entry} onAdd={addFilter} />
+      ))}
+
+      {/* Separator */}
+      {popularChips.length > 0 && <div className="h-4 w-px bg-[var(--border)]" />}
+
+      {/* Add filter dropdown (full catalogue) */}
+      <AddFilterDropdown catalogue={catalogue} onAdd={addFilter} />
 
       {/* Active filter pills */}
       {filters.map((f) => (
@@ -419,8 +508,8 @@ export default function ScreenerFilterBar({
 
       {/* Scan button
           When the user has existing results AND has since changed filters/preset
-          without rescanning, we show a small amber pulse + tooltip so the
-          current results can't be mistaken for the latest criteria. */}
+          without rescanning, we show a small amber pulse so the current results
+          can't be mistaken for the latest criteria. */}
       <div className="relative">
         <Button
           size="sm"

@@ -542,7 +542,25 @@ export interface ScannerPreset {
   scan_type: string;
   location: string;
   display_name: string;
+  /** "popular" = always-visible section; "niche" = collapsed "More screens" */
+  category?: "popular" | "niche";
   default_filters?: IbkrFilterItem[];
+}
+
+/**
+ * One entry from GET /screener/filter-catalogue.
+ * Mirrors backend FilterCatalogueEntry (notes stripped server-side).
+ * The frontend fetches this once per session and hydrates the filter bar.
+ */
+export interface FilterCatalogueEntry {
+  code: string;
+  label: string;
+  direction: "above" | "below";
+  unit: string | null;
+  example: string;
+  category: "fundamental" | "technical" | "analyst" | "short_ownership";
+  popular: boolean;
+  paired_code: string; // opposite-direction code, or "" if none
 }
 
 /** A native IBKR scanner filter — passed directly to the scanner endpoint */
@@ -858,6 +876,10 @@ export const api = {
 
   screenerPresets: () =>
     request<ScannerPreset[]>("GET", "/screener/presets"),
+
+  /** Canonical filter catalogue — fetched once per session, staleTime 1h */
+  screenerFilterCatalogue: () =>
+    request<FilterCatalogueEntry[]>("GET", "/screener/filter-catalogue"),
 
   screenerParams: () =>
     request<ScannerParamsResponse>("GET", "/screener/params"),

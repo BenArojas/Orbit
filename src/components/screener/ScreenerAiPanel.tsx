@@ -33,7 +33,6 @@ import { useAiStatus } from "@/hooks/useAiStatus";
 const PRESET_QUERIES = [
   "Oversold large caps",
   "High momentum small caps",
-  "Earnings this week + high IV",
   "Low float high volume",
   "Strong uptrend breakout",
   "Value stocks with growth",
