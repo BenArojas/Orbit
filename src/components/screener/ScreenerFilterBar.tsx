@@ -315,12 +315,12 @@ export default function ScreenerFilterBar({
     filters,
     selectedPreset,
     isScanning,
-    scannerSort,
+    results,
+    isDirty,
     addFilter,
     removeFilter,
     clearFilters,
     setPreset,
-    setScannerSort,
   } = useScreenerStore();
 
   const { data: presets, isLoading: presetsLoading } = useQuery({
@@ -368,36 +368,9 @@ export default function ScreenerFilterBar({
         </select>
       )}
 
-      {/* Scanner sort (server-side) */}
-      <select
-        value={scannerSort.field}
-        onChange={(e) =>
-          setScannerSort({ field: e.target.value, direction: scannerSort.direction })
-        }
-        className="rounded-md border border-[var(--border)] bg-[var(--bg-2)] px-2 py-1 font-data text-[10px] text-[var(--text-2)] outline-none transition-colors focus:border-[var(--clr-cyan)]"
-      >
-        <option value="">Sort: Default</option>
-        <option value="changePercAbove">Sort: Chg%</option>
-        <option value="volumeAbove">Sort: Volume</option>
-        <option value="marketCapAbove1e6">Sort: Mkt Cap</option>
-        <option value="priceAbove">Sort: Price</option>
-        <option value="minPeRatio">Sort: P/E</option>
-      </select>
-
-      {/* Sort direction toggle */}
-      {scannerSort.field && (
-        <button
-          onClick={() =>
-            setScannerSort({
-              field: scannerSort.field,
-              direction: scannerSort.direction === "desc" ? "asc" : "desc",
-            })
-          }
-          className="rounded border border-[var(--border)] px-1.5 py-1 font-data text-[10px] text-[var(--text-3)] transition-colors hover:text-[var(--text-1)]"
-        >
-          {scannerSort.direction === "desc" ? "↓ Desc" : "↑ Asc"}
-        </button>
-      )}
+      {/* Sort moved to client-side — click any column header in the results
+          table to sort. (Backend sort dropdown removed by design — keeping
+          backend compute minimal so scans stay fast.) */}
 
       {/* Separator */}
       <div className="h-4 w-px bg-[var(--border)]" />
@@ -444,25 +417,44 @@ export default function ScreenerFilterBar({
         </button>
       )}
 
-      {/* Scan button */}
-      <Button
-        size="sm"
-        onClick={onScan}
-        disabled={isScanning || !selectedPreset}
-        className="gap-1.5 border-[var(--clr-cyan)]/30 bg-[var(--clr-cyan)]/15 text-[var(--clr-cyan)] hover:bg-[var(--clr-cyan)]/25 disabled:opacity-40"
-      >
-        {isScanning ? (
-          <>
-            <Loader2 size={12} className="animate-spin" />
-            Scanning…
-          </>
-        ) : (
-          <>
-            <Play size={12} />
-            Scan
-          </>
+      {/* Scan button
+          When the user has existing results AND has since changed filters/preset
+          without rescanning, we show a small amber pulse + tooltip so the
+          current results can't be mistaken for the latest criteria. */}
+      <div className="relative">
+        <Button
+          size="sm"
+          onClick={onScan}
+          disabled={isScanning || !selectedPreset}
+          title={
+            isDirty && results.length > 0
+              ? "Filters changed — press Scan to refresh results"
+              : undefined
+          }
+          className="gap-1.5 border-[var(--clr-cyan)]/30 bg-[var(--clr-cyan)]/15 text-[var(--clr-cyan)] hover:bg-[var(--clr-cyan)]/25 disabled:opacity-40"
+        >
+          {isScanning ? (
+            <>
+              <Loader2 size={12} className="animate-spin" />
+              Scanning…
+            </>
+          ) : (
+            <>
+              <Play size={12} />
+              Scan
+            </>
+          )}
+        </Button>
+        {isDirty && results.length > 0 && !isScanning && (
+          <span
+            aria-hidden="true"
+            className="pointer-events-none absolute -right-1 -top-1 flex h-2.5 w-2.5"
+          >
+            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[var(--clr-orange)] opacity-75" />
+            <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-[var(--clr-orange)]" />
+          </span>
         )}
-      </Button>
+      </div>
     </div>
   );
 }

@@ -10,8 +10,24 @@ Flow:
 
 Performance notes:
   - All filtering happens in IBKR — no candle fetches, no indicator computation.
+  - Sorting is done client-side in the frontend (zustand store) — the backend
+    does NOT sort results. Keeping compute out of the backend keeps scans fast
+    and avoids reshaping rows only to re-sort them in the browser anyway.
+    The `sort_field` / `sort_direction` params on ScanRequest are still
+    accepted for backward-compat but the frontend no longer sends them.
   - Snapshot calls are batched (25 conids per call).
   - max_results caps how many conids we process.
+
+TODO (next pass): "Search next 50" / cumulative paging
+  IBKR /iserver/scanner/run returns ~50 contracts per call and does not
+  expose a documented offset/startAt. To support fetching more than 50
+  results we need to either:
+    (a) test whether startAt is honored on /iserver/scanner/run (undocumented),
+    (b) switch to /hmds/scanner which documents startAt, or
+    (c) slice/filter differently (e.g. different scan_type).
+  Once the frontend has a "Search next 50" button, this service needs an
+  `offset` param that flows into scanner_run and appends to the frontend
+  zustand store via `appendResults`.
 """
 
 import logging

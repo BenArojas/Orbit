@@ -141,6 +141,29 @@ class TestScreenerServiceScan:
         assert call_kwargs.get("filters") is None
 
     @pytest.mark.asyncio
+    async def test_no_sort_field_passes_empty_sort_to_ibkr(self):
+        """
+        Regression (8.3): the frontend no longer sends sort_field / sort_direction
+        because sorting moved to the client (zustand). Backend must still accept
+        the no-sort path and pass sort="" to scanner_run without crashing.
+        """
+        ibkr = make_ibkr_mock()
+        svc = ScreenerService(ibkr)
+
+        await svc.scan(
+            instrument="STK",
+            scan_type="MOST_ACTIVE",
+            location="STK.US.MAJOR",
+            filters=[],
+            max_results=50,
+            # sort_field / sort_direction intentionally omitted
+        )
+
+        call_kwargs = ibkr.scanner_run.call_args.kwargs
+        # Either not present OR empty string — both mean "no sort" to IBKR.
+        assert call_kwargs.get("sort", "") == ""
+
+    @pytest.mark.asyncio
     async def test_raises_on_empty_scanner_response(self):
         ibkr = make_ibkr_mock(scan_results=[])
         svc = ScreenerService(ibkr)
