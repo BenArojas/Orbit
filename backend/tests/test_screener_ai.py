@@ -438,14 +438,14 @@ class TestFilterCatalogue:
         """Test that key technical filters are in the catalogue."""
         codes = {f["code"] for f in FILTER_CATALOGUE}
         assert "volumeAbove" in codes
-        assert "priceVsEMA20Above" in codes
+        assert "lastVsEMAChangeRatio20Above" in codes
         assert "changePercAbove" in codes
 
     def test_sample_analyst_filters(self):
         """Test that analyst filters are in the catalogue."""
         codes = {f["code"] for f in FILTER_CATALOGUE}
         assert "avgRatingAbove" in codes
-        assert "targetPriceRatioAbove" in codes
+        assert "avgAnalystTarget2PriceRatioAbove" in codes
 
 
 # ── Integration tests ──────────────────────────────────────────
@@ -497,7 +497,7 @@ class TestScreenerAiIntegration:
                 "content": """{
                     "reasoning": "User wants stocks that are oversold but showing momentum",
                     "filters": [
-                        {"code": "priceVsEMA20Below", "value": "-5", "display_label": "Price 5% Below EMA(20)", "reasoning": "Oversold condition"},
+                        {"code": "lastVsEMAChangeRatio20Below", "value": "-5", "display_label": "Price 5% Below EMA(20)", "reasoning": "Oversold condition"},
                         {"code": "changePercAbove", "value": "2", "display_label": "Day Change ≥ 2%", "reasoning": "Momentum indicator"}
                     ],
                     "summary": "Oversold stocks with upward momentum"
@@ -515,7 +515,75 @@ class TestScreenerAiIntegration:
 
             assert len(result["filters"]) == 2
             codes = {f["code"] for f in result["filters"]}
-            assert "priceVsEMA20Below" in codes
+            assert "lastVsEMAChangeRatio20Below" in codes
             assert "changePercAbove" in codes
+
+        await svc.shutdown()
+
+
+# ── Canonical-catalogue wiring ─────────────────────────────────
+
+
+class TestCanonicalCatalogueWiring:
+    """
+    The AI service must pull its catalogue from `constants.ibkr_filters`,
+    not keep a local duplicate. These tests lock that contract in place so
+    the next time someone tries to fork the catalogue, a test goes red.
+    """
+
+    def test_ai_catalogue_is_canonical_catalogue(self):
+        """`services.screener_ai.FILTER_CATALOGUE` must be the canonical list."""
+        from constants.ibkr_filters import FILTER_CATALOGUE as CANONICAL
+        from services.screener_ai import FILTER_CATALOGUE as AI_CATALOGUE
+
+        # Same object, not just same contents — proves it's a re-export.
+        assert AI_CATALOGUE is CANONICAL
+
+    @pytest.mark.asyncio
+    async def test_unknown_code_drop_logs_the_code_string(self, caplog):
+        """
+        When Ollama returns a code outside FILTER_CODES, we must log the
+        *actual code string* (not just a count) so prompt drift is diagnosable.
+        """
+        import logging
+
+        svc = ScreenerAiService()
+
+        mock_response = MagicMock()
+        mock_response.json.return_value = {
+            "message": {
+                "content": """{
+                    "reasoning": "Mix of valid and bogus codes",
+                    "filters": [
+                        {"code": "marketCapAbove1e6", "value": "10000", "display_label": "Market Cap >= $10B", "reasoning": "valid"},
+                        {"code": "totallyFakeCodeABC", "value": "1", "display_label": "bogus", "reasoning": "invalid"}
+                    ],
+                    "summary": "mixed"
+                }"""
+            }
+        }
+
+        with patch.object(svc._http, "post", new_callable=AsyncMock) as mock_post:
+            mock_post.return_value = mock_response
+
+            with caplog.at_level(logging.WARNING, logger="parallax.screener_ai"):
+                result = await svc.generate_filters(
+                    query="test",
+                    model="gemma4:26b",
+                )
+
+        # The valid code survives validation, the bogus one is dropped.
+        assert len(result["filters"]) == 1
+        assert result["filters"][0]["code"] == "marketCapAbove1e6"
+
+        # The dropped code string appears in the warning log record.
+        warning_messages = [
+            rec.getMessage()
+            for rec in caplog.records
+            if rec.levelno == logging.WARNING
+        ]
+        assert any("totallyFakeCodeABC" in msg for msg in warning_messages), (
+            f"expected dropped code in log, got: {warning_messages}"
+        )
 
         await svc.shutdown()
