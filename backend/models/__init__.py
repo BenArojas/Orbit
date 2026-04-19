@@ -815,6 +815,23 @@ class ScannerParamsResponse(BaseModel):
     filters: list[dict] = []                            # Available filter codes
 
 
+class FilterCatalogueEntry(BaseModel):
+    """
+    One entry in the canonical IBKR filter catalogue exposed to the frontend.
+
+    Mirrors `FilterEntry` in `constants/ibkr_filters.py` but drops the
+    Ollama-only `notes` field — the UI doesn't need prompt-tuning hints.
+    """
+    code: str                          # IBKR filter code, e.g. "marketCapAbove1e6"
+    label: str                         # Human label, e.g. "Market Cap"
+    direction: Literal["above", "below"]
+    unit: Optional[str] = None         # "$M", "%", "$", or None
+    example: str                       # Example value (string) for placeholders
+    category: Literal["fundamental", "technical", "analyst", "short_ownership"]
+    popular: bool                      # True → shown as an always-visible quick-pick chip
+    paired_code: str = ""              # Opposite-direction code (or "" if none)
+
+
 class AiFilterRequest(BaseModel):
     """Request to generate IBKR filter codes from a natural language query."""
     query: str                        # e.g. "oversold large caps with strong earnings"

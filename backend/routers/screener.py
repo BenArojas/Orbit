@@ -14,11 +14,13 @@ from typing import Any
 
 from fastapi import APIRouter, Depends
 
+from constants.ibkr_filters import FILTER_CATALOGUE
 from deps import get_screener
 from models import (
     AiFilterRequest,
     AiFilterResponse,
     ContractInfoResponse,
+    FilterCatalogueEntry,
     ScannerParamsResponse,
     ScannerPreset,
     ScanRequest,
@@ -211,6 +213,37 @@ async def contract_info(
         perf_3m=perf_3m,
         perf_ytd=perf_ytd,
     )
+
+
+# ── GET /screener/filter-catalogue ──────────────────────────
+
+
+@router.get("/filter-catalogue", response_model=list[FilterCatalogueEntry])
+async def filter_catalogue():
+    """
+    Return the canonical IBKR filter catalogue used by the screener UI.
+
+    Every entry's `code` is a verified-valid IBKR scanner filter code
+    (see backend/constants/ibkr_filters.py). The frontend fetches this
+    once per session via TanStack Query and hydrates the filter bar +
+    quick-pick chips from it.
+
+    The Ollama-only `notes` field is intentionally stripped — the UI
+    doesn't need prompt-tuning hints.
+    """
+    return [
+        FilterCatalogueEntry(
+            code=f["code"],
+            label=f["label"],
+            direction=f["direction"],
+            unit=f["unit"],
+            example=f["example"],
+            category=f["category"],
+            popular=f["popular"],
+            paired_code=f["paired_code"],
+        )
+        for f in FILTER_CATALOGUE
+    ]
 
 
 # ── GET /screener/presets ───────────────────────────────────

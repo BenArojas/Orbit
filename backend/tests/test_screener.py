@@ -652,6 +652,74 @@ class TestPresets:
         assert isinstance(preset.default_filters, list)
 
 
+# ── FILTER_CATALOGUE + GET /screener/filter-catalogue ─────────
+
+
+class TestFilterCatalogue:
+    """Canonical IBKR filter catalogue lives in constants/ibkr_filters.py."""
+
+    def test_catalogue_is_non_empty(self):
+        """FILTER_CATALOGUE must contain entries across every category."""
+        from constants.ibkr_filters import FILTER_CATALOGUE
+
+        assert len(FILTER_CATALOGUE) > 0
+        categories = {f["category"] for f in FILTER_CATALOGUE}
+        assert categories == {
+            "fundamental",
+            "technical",
+            "analyst",
+            "short_ownership",
+        }
+
+    def test_every_code_is_unique(self):
+        """Duplicate codes would break the AI dedupe and UI filter-bar keys."""
+        from constants.ibkr_filters import FILTER_CATALOGUE
+
+        codes = [f["code"] for f in FILTER_CATALOGUE]
+        assert len(codes) == len(set(codes)), (
+            "Duplicate filter codes present"
+        )
+
+    def test_popular_chips_match_d5_spec(self):
+        """The 5 always-visible quick-pick chips are locked by the D5 spec."""
+        from constants.ibkr_filters import FILTER_CATALOGUE
+
+        popular = {f["code"] for f in FILTER_CATALOGUE if f["popular"]}
+        assert popular == {
+            "marketCapAbove1e6",
+            "priceAbove",
+            "volumeAbove",
+            "changePercAbove",
+            "minPeRatio",
+        }
+
+    @pytest.mark.asyncio
+    async def test_endpoint_returns_catalogue_without_notes(self):
+        """
+        GET /screener/filter-catalogue must return one entry per FILTER_CATALOGUE
+        code, and must NOT expose the Ollama-only `notes` field to the UI.
+        """
+        from constants.ibkr_filters import FILTER_CATALOGUE
+        from routers.screener import filter_catalogue
+
+        result = await filter_catalogue()
+        # One entry per code, same order as FILTER_CATALOGUE
+        assert len(result) == len(FILTER_CATALOGUE)
+        # The response model strips `notes` — confirm no entry carries it
+        for entry in result:
+            assert not hasattr(entry, "notes")
+            # Required keys are present and populated
+            assert entry.code
+            assert entry.label
+            assert entry.direction in ("above", "below")
+            assert entry.category in (
+                "fundamental",
+                "technical",
+                "analyst",
+                "short_ownership",
+            )
+
+
 # ── Regression: IBKR scanner_run always sends filter array ────
 # Bug: omitting the "filter" key caused IBKR to return 400
 # "filter must be an array" even for presets with no filters.
