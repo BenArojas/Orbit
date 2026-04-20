@@ -43,6 +43,7 @@ const POPULAR_ENTRY: FilterCatalogueEntry = {
   example: "10",
   category: "technical",
   popular: true,
+  description: "Last traded price in USD",
   paired_code: "priceBelow",
 };
 
@@ -54,6 +55,7 @@ const NICHE_ENTRY: FilterCatalogueEntry = {
   example: "15",
   category: "fundamental",
   popular: false,
+  description: "Return on equity — net income / shareholder equity",
   paired_code: "maxROE",
 };
 
@@ -93,6 +95,7 @@ const mockStore = {
   results: [],
   isDirty: false,
   addFilter: vi.fn(),
+  updateFilter: vi.fn(),
   removeFilter: vi.fn(),
   clearFilters: vi.fn(),
   setPreset: vi.fn(),
@@ -117,6 +120,24 @@ beforeEach(() => {
   mockStore.results = [];
   mockStore.isDirty = false;
   useQueryMock.mockImplementation(defaultUseQuery);
+});
+
+// ── Catalogue description tooltips ────────────────────────────
+
+describe("Filter catalogue descriptions", () => {
+  it("surfaces description as a native title tooltip in the Add Filter list", () => {
+    render(<ScreenerFilterBar onScan={vi.fn()} />);
+    // Open the Add Filter dropdown
+    fireEvent.click(screen.getByRole("button", { name: /Add Filter/i }));
+    // Click into the Fundamental category where NICHE_ENTRY lives
+    fireEvent.click(screen.getByRole("button", { name: "Fundamental" }));
+    // The filter list button should expose its description via title
+    const roeButton = screen.getByRole("button", { name: /ROE/i });
+    expect(roeButton).toHaveAttribute(
+      "title",
+      "Return on equity — net income / shareholder equity",
+    );
+  });
 });
 
 // ── Quick-pick chips ──────────────────────────────────────────
@@ -209,6 +230,48 @@ describe("Active filter pills", () => {
     });
     fireEvent.click(removeBtn);
     expect(mockStore.removeFilter).toHaveBeenCalledWith("f-1");
+  });
+
+  it("opens an edit popover and calls updateFilter when the pill body is clicked", () => {
+    mockStore.filters = [ACTIVE_FILTER];
+    render(<ScreenerFilterBar onScan={vi.fn()} />);
+
+    // Click the pill body (not the X) to open the edit popover
+    const pillBody = screen.getByRole("button", {
+      name: /Edit filter: Price ≥ \$10/i,
+    });
+    fireEvent.click(pillBody);
+
+    // Popover should render a number input pre-filled with the current value
+    const input = screen.getByRole("spinbutton") as HTMLInputElement;
+    expect(input.value).toBe("10");
+
+    // Change the value and save
+    fireEvent.change(input, { target: { value: "25" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    expect(mockStore.updateFilter).toHaveBeenCalledWith(
+      "f-1",
+      "25",
+      "Price ≥ 25 $",
+    );
+  });
+
+  it("falls back to read-only pill when the catalogue entry is missing", () => {
+    // Filter code that doesn't exist in MOCK_CATALOGUE — pill should still
+    // render (with remove button) but not open an editor on click.
+    mockStore.filters = [{
+      id: "f-unknown",
+      code: "unknownCode",
+      value: "42",
+      display_label: "Unknown ≥ 42",
+    }];
+    render(<ScreenerFilterBar onScan={vi.fn()} />);
+    expect(screen.getByText("Unknown ≥ 42")).toBeInTheDocument();
+    // No edit-pill button (only the remove X) should exist for this filter
+    expect(
+      screen.queryByRole("button", { name: /Edit filter: Unknown/i }),
+    ).not.toBeInTheDocument();
   });
 });
 

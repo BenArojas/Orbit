@@ -549,8 +549,12 @@ export interface ScannerPreset {
 
 /**
  * One entry from GET /screener/filter-catalogue.
- * Mirrors backend FilterCatalogueEntry (notes stripped server-side).
- * The frontend fetches this once per session and hydrates the filter bar.
+ * Mirrors backend FilterCatalogueEntry. The frontend fetches this once per
+ * session and hydrates the filter bar + quick-pick chips.
+ *
+ * `description` — same short guidance string Ollama sees in its system prompt.
+ * Rendered as a native `title` tooltip on the Add Filter menu items so UI
+ * guidance stays consistent with what the AI screener uses.
  */
 export interface FilterCatalogueEntry {
   code: string;
@@ -560,6 +564,7 @@ export interface FilterCatalogueEntry {
   example: string;
   category: "fundamental" | "technical" | "analyst" | "short_ownership";
   popular: boolean;
+  description: string | null;
   paired_code: string; // opposite-direction code, or "" if none
 }
 

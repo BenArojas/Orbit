@@ -50,9 +50,9 @@ class TestBuildCatalogueText:
         # At least some examples should be in the text
         assert "10000" in text or "2000" in text
 
-    def test_includes_notes_when_present(self):
+    def test_includes_description_when_present(self):
         text = _build_catalogue_text()
-        # Some filters have notes
+        # Some filters have a description — rendered after " // " in the prompt
         assert "//" in text
 
 

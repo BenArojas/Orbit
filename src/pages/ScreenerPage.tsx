@@ -86,7 +86,7 @@ const EMPTY_CARDS: CardDef[] = [
     id: "value-screen",
     title: "Value screen",
     description: "Most active stocks with P/E ≤ 15 and Price/Book ≤ 2",
-    scanType: "TOP_VOLUME_RATE",
+    scanType: "MOST_ACTIVE",
     location: "STK.US.MAJOR",
     instrument: "STK",
     filters: [

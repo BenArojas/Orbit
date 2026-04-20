@@ -822,8 +822,9 @@ class FilterCatalogueEntry(BaseModel):
     """
     One entry in the canonical IBKR filter catalogue exposed to the frontend.
 
-    Mirrors `FilterEntry` in `constants/ibkr_filters.py` but drops the
-    Ollama-only `notes` field — the UI doesn't need prompt-tuning hints.
+    Mirrors `FilterEntry` in `constants/ibkr_filters.py`. The `description`
+    field is served to both surfaces — Ollama (as prompt context) and the
+    UI (as a `title` tooltip on the Add Filter menu items).
     """
     code: str                          # IBKR filter code, e.g. "marketCapAbove1e6"
     label: str                         # Human label, e.g. "Market Cap"
@@ -832,6 +833,7 @@ class FilterCatalogueEntry(BaseModel):
     example: str                       # Example value (string) for placeholders
     category: Literal["fundamental", "technical", "analyst", "short_ownership"]
     popular: bool                      # True → shown as an always-visible quick-pick chip
+    description: Optional[str] = None  # Short natural-language tooltip / Ollama context
     paired_code: str = ""              # Opposite-direction code (or "" if none)
 
 

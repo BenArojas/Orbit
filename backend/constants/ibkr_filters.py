@@ -18,7 +18,9 @@ Schema per entry:
   example       — example numeric value (string) for Ollama prompts
   category      — "fundamental" | "technical" | "analyst" | "short_ownership"
   popular       — True  → shown as an always-visible quick-pick chip
-  notes         — short natural-language description (sent to Ollama only)
+  description   — short natural-language explanation of the filter.
+                  Sent to Ollama (context for picking filters) AND shown as
+                  a `title` tooltip on the UI's Add Filter menu items.
   paired_code   — the opposite-direction IBKR code for this filter
                   ("" when no opposite exists, e.g. volumeAbove has no volumeBelow)
 """
@@ -34,7 +36,7 @@ class FilterEntry(TypedDict):
     example: str
     category: Literal["fundamental", "technical", "analyst", "short_ownership"]
     popular: bool
-    notes: str | None
+    description: str | None
     paired_code: str
 
 
@@ -49,7 +51,7 @@ FUNDAMENTAL: list[FilterEntry] = [
         "example": "1000",
         "category": "fundamental",
         "popular": True,
-        "notes": "Market capitalization in millions. 10000 = $10B (large cap), 2000 = $2B (mid cap), 300 = $300M (small cap).",
+        "description": "Market capitalization in millions. 10000 = $10B (large cap), 2000 = $2B (mid cap), 300 = $300M (small cap).",
         "paired_code": "marketCapBelow1e6",
     },
     {
@@ -60,7 +62,7 @@ FUNDAMENTAL: list[FilterEntry] = [
         "example": "10000",
         "category": "fundamental",
         "popular": False,
-        "notes": "Market capitalization ceiling in millions.",
+        "description": "Market capitalization ceiling in millions.",
         "paired_code": "marketCapAbove1e6",
     },
     # P/E Ratio
@@ -72,7 +74,7 @@ FUNDAMENTAL: list[FilterEntry] = [
         "example": "10",
         "category": "fundamental",
         "popular": True,
-        "notes": "Trailing P/E lower bound. Value investors often use ≤ 15.",
+        "description": "Trailing P/E lower bound. Value investors often use ≤ 15.",
         "paired_code": "maxPeRatio",
     },
     {
@@ -83,7 +85,7 @@ FUNDAMENTAL: list[FilterEntry] = [
         "example": "15",
         "category": "fundamental",
         "popular": False,
-        "notes": "Trailing P/E upper bound. Use ≤ 15 to find value stocks.",
+        "description": "Trailing P/E upper bound. Use ≤ 15 to find value stocks.",
         "paired_code": "minPeRatio",
     },
     # ROE
@@ -95,7 +97,7 @@ FUNDAMENTAL: list[FilterEntry] = [
         "example": "15",
         "category": "fundamental",
         "popular": False,
-        "notes": "Return on Equity %. 15+ indicates efficient capital use.",
+        "description": "Return on Equity %. 15+ indicates efficient capital use.",
         "paired_code": "maxRetnOnEq",
     },
     {
@@ -106,7 +108,7 @@ FUNDAMENTAL: list[FilterEntry] = [
         "example": "50",
         "category": "fundamental",
         "popular": False,
-        "notes": "Return on Equity upper bound.",
+        "description": "Return on Equity upper bound.",
         "paired_code": "minRetnOnEq",
     },
     # Operating Margin TTM
@@ -118,7 +120,7 @@ FUNDAMENTAL: list[FilterEntry] = [
         "example": "15",
         "category": "fundamental",
         "popular": False,
-        "notes": "Operating margin trailing 12 months %. 15+ is healthy.",
+        "description": "Operating margin trailing 12 months %. 15+ is healthy.",
         "paired_code": "operatingMarginTTMBelow",
     },
     {
@@ -129,7 +131,7 @@ FUNDAMENTAL: list[FilterEntry] = [
         "example": "40",
         "category": "fundamental",
         "popular": False,
-        "notes": "Operating margin TTM upper bound.",
+        "description": "Operating margin TTM upper bound.",
         "paired_code": "operatingMarginTTMAbove",
     },
     # Net Margin TTM
@@ -141,7 +143,7 @@ FUNDAMENTAL: list[FilterEntry] = [
         "example": "10",
         "category": "fundamental",
         "popular": False,
-        "notes": "Net profit margin TTM %. 10+ is good for most industries.",
+        "description": "Net profit margin TTM %. 10+ is good for most industries.",
         "paired_code": "netProfitMarginTTMBelow",
     },
     {
@@ -152,7 +154,7 @@ FUNDAMENTAL: list[FilterEntry] = [
         "example": "30",
         "category": "fundamental",
         "popular": False,
-        "notes": "Net margin TTM upper bound.",
+        "description": "Net margin TTM upper bound.",
         "paired_code": "netProfitMarginTTMAbove",
     },
     # Revenue Chg TTM
@@ -164,7 +166,7 @@ FUNDAMENTAL: list[FilterEntry] = [
         "example": "15",
         "category": "fundamental",
         "popular": False,
-        "notes": "Revenue growth TTM %. 15+ indicates rapid growth.",
+        "description": "Revenue growth TTM %. 15+ indicates rapid growth.",
         "paired_code": "revChangeBelow",
     },
     {
@@ -175,7 +177,7 @@ FUNDAMENTAL: list[FilterEntry] = [
         "example": "50",
         "category": "fundamental",
         "popular": False,
-        "notes": "Revenue growth TTM upper bound.",
+        "description": "Revenue growth TTM upper bound.",
         "paired_code": "revChangeAbove",
     },
     # Revenue Growth 5Y
@@ -187,7 +189,7 @@ FUNDAMENTAL: list[FilterEntry] = [
         "example": "10",
         "category": "fundamental",
         "popular": False,
-        "notes": "5-year revenue CAGR %. Secular growth signal.",
+        "description": "5-year revenue CAGR %. Secular growth signal.",
         "paired_code": "revGrowthRate5YBelow",
     },
     {
@@ -198,7 +200,7 @@ FUNDAMENTAL: list[FilterEntry] = [
         "example": "40",
         "category": "fundamental",
         "popular": False,
-        "notes": "5-year revenue CAGR upper bound.",
+        "description": "5-year revenue CAGR upper bound.",
         "paired_code": "revGrowthRate5YAbove",
     },
     # EPS Chg TTM
@@ -210,7 +212,7 @@ FUNDAMENTAL: list[FilterEntry] = [
         "example": "15",
         "category": "fundamental",
         "popular": False,
-        "notes": "EPS growth TTM %. Pair with revenue growth for quality growth.",
+        "description": "EPS growth TTM %. Pair with revenue growth for quality growth.",
         "paired_code": "epsChangeTTMBelow",
     },
     {
@@ -221,7 +223,7 @@ FUNDAMENTAL: list[FilterEntry] = [
         "example": "100",
         "category": "fundamental",
         "popular": False,
-        "notes": "EPS growth TTM upper bound.",
+        "description": "EPS growth TTM upper bound.",
         "paired_code": "epsChangeTTMAbove",
     },
     # Price/Book
@@ -233,7 +235,7 @@ FUNDAMENTAL: list[FilterEntry] = [
         "example": "1",
         "category": "fundamental",
         "popular": False,
-        "notes": "Price-to-book ratio lower bound.",
+        "description": "Price-to-book ratio lower bound.",
         "paired_code": "maxPrice2Bk",
     },
     {
@@ -244,7 +246,7 @@ FUNDAMENTAL: list[FilterEntry] = [
         "example": "2",
         "category": "fundamental",
         "popular": False,
-        "notes": "Price-to-book ratio upper bound. ≤ 2 is classic value territory.",
+        "description": "Price-to-book ratio upper bound. ≤ 2 is classic value territory.",
         "paired_code": "minPrice2Bk",
     },
     # Quick Ratio
@@ -256,7 +258,7 @@ FUNDAMENTAL: list[FilterEntry] = [
         "example": "1",
         "category": "fundamental",
         "popular": False,
-        "notes": "Quick ratio lower bound. ≥ 1 = can cover short-term liabilities.",
+        "description": "Quick ratio lower bound. ≥ 1 = can cover short-term liabilities.",
         "paired_code": "maxQuickRatio",
     },
     {
@@ -267,7 +269,7 @@ FUNDAMENTAL: list[FilterEntry] = [
         "example": "5",
         "category": "fundamental",
         "popular": False,
-        "notes": "Quick ratio upper bound.",
+        "description": "Quick ratio upper bound.",
         "paired_code": "minQuickRatio",
     },
 ]
@@ -284,7 +286,7 @@ TECHNICAL: list[FilterEntry] = [
         "example": "10",
         "category": "technical",
         "popular": True,
-        "notes": "Last trade price lower bound. Filters out penny stocks.",
+        "description": "Last trade price lower bound. Filters out penny stocks.",
         "paired_code": "priceBelow",
     },
     {
@@ -295,7 +297,7 @@ TECHNICAL: list[FilterEntry] = [
         "example": "500",
         "category": "technical",
         "popular": False,
-        "notes": "Last trade price upper bound.",
+        "description": "Last trade price upper bound.",
         "paired_code": "priceAbove",
     },
     # Day Change %
@@ -307,7 +309,7 @@ TECHNICAL: list[FilterEntry] = [
         "example": "2",
         "category": "technical",
         "popular": True,
-        "notes": "Today's % change lower bound. Positive = gainers.",
+        "description": "Today's % change lower bound. Positive = gainers.",
         "paired_code": "changePercBelow",
     },
     {
@@ -318,7 +320,7 @@ TECHNICAL: list[FilterEntry] = [
         "example": "-2",
         "category": "technical",
         "popular": False,
-        "notes": "Today's % change upper bound. Negative value → losers.",
+        "description": "Today's % change upper bound. Negative value → losers.",
         "paired_code": "changePercAbove",
     },
     # Volume (above only — IBKR has no volumeBelow)
@@ -330,7 +332,7 @@ TECHNICAL: list[FilterEntry] = [
         "example": "1000000",
         "category": "technical",
         "popular": True,
-        "notes": "Today's share volume lower bound. 1M = liquid; 5M = very liquid.",
+        "description": "Today's share volume lower bound. 1M = liquid; 5M = very liquid.",
         "paired_code": "",
     },
     # Price vs EMA(20)
@@ -342,7 +344,7 @@ TECHNICAL: list[FilterEntry] = [
         "example": "5",
         "category": "technical",
         "popular": False,
-        "notes": "Last price vs 20-day EMA %. Positive = price above EMA20; ≥ 5 often flags overbought.",
+        "description": "Last price vs 20-day EMA %. Positive = price above EMA20; ≥ 5 often flags overbought.",
         "paired_code": "lastVsEMAChangeRatio20Below",
     },
     {
@@ -353,7 +355,7 @@ TECHNICAL: list[FilterEntry] = [
         "example": "-5",
         "category": "technical",
         "popular": False,
-        "notes": "Last price vs 20-day EMA %. ≤ -5 often flags oversold.",
+        "description": "Last price vs 20-day EMA %. ≤ -5 often flags oversold.",
         "paired_code": "lastVsEMAChangeRatio20Above",
     },
     # Price vs EMA(50)
@@ -365,7 +367,7 @@ TECHNICAL: list[FilterEntry] = [
         "example": "0",
         "category": "technical",
         "popular": False,
-        "notes": "Last price vs 50-day EMA %. Above 0 = intermediate-term uptrend.",
+        "description": "Last price vs 50-day EMA %. Above 0 = intermediate-term uptrend.",
         "paired_code": "lastVsEMAChangeRatio50Below",
     },
     {
@@ -376,7 +378,7 @@ TECHNICAL: list[FilterEntry] = [
         "example": "0",
         "category": "technical",
         "popular": False,
-        "notes": "Last price vs 50-day EMA %. Below 0 = intermediate-term downtrend.",
+        "description": "Last price vs 50-day EMA %. Below 0 = intermediate-term downtrend.",
         "paired_code": "lastVsEMAChangeRatio50Above",
     },
     # Price vs EMA(100)
@@ -388,7 +390,7 @@ TECHNICAL: list[FilterEntry] = [
         "example": "0",
         "category": "technical",
         "popular": False,
-        "notes": "Last price vs 100-day EMA %.",
+        "description": "Last price vs 100-day EMA %.",
         "paired_code": "lastVsEMAChangeRatio100Below",
     },
     {
@@ -399,7 +401,7 @@ TECHNICAL: list[FilterEntry] = [
         "example": "0",
         "category": "technical",
         "popular": False,
-        "notes": "Last price vs 100-day EMA %.",
+        "description": "Last price vs 100-day EMA %.",
         "paired_code": "lastVsEMAChangeRatio100Above",
     },
     # Price vs EMA(200)
@@ -411,7 +413,7 @@ TECHNICAL: list[FilterEntry] = [
         "example": "0",
         "category": "technical",
         "popular": False,
-        "notes": "Last price vs 200-day EMA %. Above 0 = long-term uptrend.",
+        "description": "Last price vs 200-day EMA %. Above 0 = long-term uptrend.",
         "paired_code": "lastVsEMAChangeRatio200Below",
     },
     {
@@ -422,7 +424,7 @@ TECHNICAL: list[FilterEntry] = [
         "example": "0",
         "category": "technical",
         "popular": False,
-        "notes": "Last price vs 200-day EMA %. Below 0 = long-term downtrend.",
+        "description": "Last price vs 200-day EMA %. Below 0 = long-term downtrend.",
         "paired_code": "lastVsEMAChangeRatio200Above",
     },
     # MACD Histogram
@@ -434,7 +436,7 @@ TECHNICAL: list[FilterEntry] = [
         "example": "0",
         "category": "technical",
         "popular": False,
-        "notes": "Current MACD histogram value. Above 0 = bullish momentum.",
+        "description": "Current MACD histogram value. Above 0 = bullish momentum.",
         "paired_code": "curMACDDistBelow",
     },
     {
@@ -445,7 +447,7 @@ TECHNICAL: list[FilterEntry] = [
         "example": "0",
         "category": "technical",
         "popular": False,
-        "notes": "Current MACD histogram value. Below 0 = bearish momentum.",
+        "description": "Current MACD histogram value. Below 0 = bearish momentum.",
         "paired_code": "curMACDDistAbove",
     },
     # IV Rank 52W
@@ -457,7 +459,7 @@ TECHNICAL: list[FilterEntry] = [
         "example": "70",
         "category": "technical",
         "popular": False,
-        "notes": "Implied-vol rank over 52 weeks. 70+ = IV rich (good for option sellers).",
+        "description": "Implied-vol rank over 52 weeks. 70+ = IV rich (good for option sellers).",
         "paired_code": "ivRank52wBelow",
     },
     {
@@ -468,7 +470,7 @@ TECHNICAL: list[FilterEntry] = [
         "example": "30",
         "category": "technical",
         "popular": False,
-        "notes": "Implied-vol rank over 52 weeks. 30- = IV cheap (good for option buyers).",
+        "description": "Implied-vol rank over 52 weeks. 30- = IV cheap (good for option buyers).",
         "paired_code": "ivRank52wAbove",
     },
 ]
@@ -484,7 +486,7 @@ ANALYST: list[FilterEntry] = [
         "example": "3",
         "category": "analyst",
         "popular": False,
-        "notes": "Average analyst rating lower bound. Scale: 1=Strong Buy, 5=Strong Sell.",
+        "description": "Average analyst rating lower bound. Scale: 1=Strong Buy, 5=Strong Sell.",
         "paired_code": "avgRatingBelow",
     },
     {
@@ -495,7 +497,7 @@ ANALYST: list[FilterEntry] = [
         "example": "2",
         "category": "analyst",
         "popular": False,
-        "notes": "Average analyst rating upper bound. ≤ 2 ≈ Buy consensus.",
+        "description": "Average analyst rating upper bound. ≤ 2 ≈ Buy consensus.",
         "paired_code": "avgRatingAbove",
     },
     {
@@ -506,7 +508,7 @@ ANALYST: list[FilterEntry] = [
         "example": "5",
         "category": "analyst",
         "popular": False,
-        "notes": "Minimum analyst coverage. Higher = more credible consensus.",
+        "description": "Minimum analyst coverage. Higher = more credible consensus.",
         "paired_code": "numRatingsBelow",
     },
     {
@@ -517,7 +519,7 @@ ANALYST: list[FilterEntry] = [
         "example": "40",
         "category": "analyst",
         "popular": False,
-        "notes": "Maximum analyst coverage.",
+        "description": "Maximum analyst coverage.",
         "paired_code": "numRatingsAbove",
     },
     {
@@ -528,7 +530,7 @@ ANALYST: list[FilterEntry] = [
         "example": "50",
         "category": "analyst",
         "popular": False,
-        "notes": "Average analyst price target lower bound ($).",
+        "description": "Average analyst price target lower bound ($).",
         "paired_code": "avgPriceTargetBelow",
     },
     {
@@ -539,7 +541,7 @@ ANALYST: list[FilterEntry] = [
         "example": "500",
         "category": "analyst",
         "popular": False,
-        "notes": "Average analyst price target upper bound ($).",
+        "description": "Average analyst price target upper bound ($).",
         "paired_code": "avgPriceTargetAbove",
     },
     {
@@ -550,7 +552,7 @@ ANALYST: list[FilterEntry] = [
         "example": "1.1",
         "category": "analyst",
         "popular": False,
-        "notes": "Analyst target ÷ current price. > 1 means analysts expect upside.",
+        "description": "Analyst target ÷ current price. > 1 means analysts expect upside.",
         "paired_code": "avgAnalystTarget2PriceRatioBelow",
     },
     {
@@ -561,7 +563,7 @@ ANALYST: list[FilterEntry] = [
         "example": "1",
         "category": "analyst",
         "popular": False,
-        "notes": "Analyst target ÷ current price. < 1 = priced above consensus.",
+        "description": "Analyst target ÷ current price. < 1 = priced above consensus.",
         "paired_code": "avgAnalystTarget2PriceRatioAbove",
     },
 ]
@@ -579,7 +581,7 @@ SHORT_OWNERSHIP: list[FilterEntry] = [
         "example": "90",
         "category": "short_ownership",
         "popular": False,
-        "notes": "% of shortable inventory currently borrowed. 90+ = extremely tight borrow, squeeze candidate.",
+        "description": "% of shortable inventory currently borrowed. 90+ = extremely tight borrow, squeeze candidate.",
         "paired_code": "utilizationBelow",
     },
     {
@@ -590,7 +592,7 @@ SHORT_OWNERSHIP: list[FilterEntry] = [
         "example": "50",
         "category": "short_ownership",
         "popular": False,
-        "notes": "Short utilization upper bound.",
+        "description": "Short utilization upper bound.",
         "paired_code": "utilizationAbove",
     },
     {
@@ -601,7 +603,7 @@ SHORT_OWNERSHIP: list[FilterEntry] = [
         "example": "10",
         "category": "short_ownership",
         "popular": False,
-        "notes": "Annualized fee to borrow the stock %. 10+ = expensive to short (squeeze signal).",
+        "description": "Annualized fee to borrow the stock %. 10+ = expensive to short (squeeze signal).",
         "paired_code": "feeRateBelow",
     },
     {
@@ -612,7 +614,7 @@ SHORT_OWNERSHIP: list[FilterEntry] = [
         "example": "5",
         "category": "short_ownership",
         "popular": False,
-        "notes": "Borrow fee rate upper bound.",
+        "description": "Borrow fee rate upper bound.",
         "paired_code": "feeRateAbove",
     },
     {
@@ -623,7 +625,7 @@ SHORT_OWNERSHIP: list[FilterEntry] = [
         "example": "10",
         "category": "short_ownership",
         "popular": False,
-        "notes": "Insider holdings as % of float. May be unavailable on some instruments.",
+        "description": "Insider holdings as % of float. May be unavailable on some instruments.",
         "paired_code": "ihInsiderOfFloatPercBelow",
     },
     {
@@ -634,7 +636,7 @@ SHORT_OWNERSHIP: list[FilterEntry] = [
         "example": "50",
         "category": "short_ownership",
         "popular": False,
-        "notes": "Insider holdings upper bound.",
+        "description": "Insider holdings upper bound.",
         "paired_code": "ihInsiderOfFloatPercAbove",
     },
     {
@@ -645,7 +647,7 @@ SHORT_OWNERSHIP: list[FilterEntry] = [
         "example": "70",
         "category": "short_ownership",
         "popular": False,
-        "notes": "Institutional holdings as % of float. High = heavy smart-money presence.",
+        "description": "Institutional holdings as % of float. High = heavy smart-money presence.",
         "paired_code": "iiInstitutionalOfFloatPercBelow",
     },
     {
@@ -656,7 +658,7 @@ SHORT_OWNERSHIP: list[FilterEntry] = [
         "example": "30",
         "category": "short_ownership",
         "popular": False,
-        "notes": "Institutional holdings upper bound.",
+        "description": "Institutional holdings upper bound.",
         "paired_code": "iiInstitutionalOfFloatPercAbove",
     },
 ]

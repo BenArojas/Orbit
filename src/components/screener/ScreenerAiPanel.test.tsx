@@ -10,7 +10,6 @@
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen } from "@testing-library/react";
-import * as ReactQueryModule from "@tanstack/react-query";
 import ScreenerAiPanel from "./ScreenerAiPanel";
 
 // ── Module mocks ──────────────────────────────────────────────

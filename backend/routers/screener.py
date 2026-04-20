@@ -228,8 +228,9 @@ async def filter_catalogue():
     once per session via TanStack Query and hydrates the filter bar +
     quick-pick chips from it.
 
-    The Ollama-only `notes` field is intentionally stripped — the UI
-    doesn't need prompt-tuning hints.
+    The `description` field is served here too — it's shown as a `title`
+    tooltip on the Add Filter menu items (same string Ollama sees in its
+    prompt, so guidance stays consistent across surfaces).
     """
     return [
         FilterCatalogueEntry(
@@ -240,6 +241,7 @@ async def filter_catalogue():
             example=f["example"],
             category=f["category"],
             popular=f["popular"],
+            description=f.get("description"),
             paired_code=f["paired_code"],
         )
         for f in FILTER_CATALOGUE

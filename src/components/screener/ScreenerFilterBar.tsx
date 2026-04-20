@@ -42,25 +42,127 @@ function buildLabel(entry: FilterCatalogueEntry, value: string, direction: "abov
 }
 
 // ── Active filter pill ────────────────────────────────────────
+// Clicking the pill opens a compact popover pre-filled with the current value,
+// so users can tweak a threshold without removing + re-adding.
+// The catalogue `entry` is looked up by the parent via filter.code and passed
+// down — when it's missing (AI-suggested code not in our catalogue, rare) the
+// pill falls back to read-only mode with just the remove button.
 
 function FilterPill({
   filter,
+  entry,
   onRemove,
+  onUpdate,
 }: {
   filter: ActiveFilter;
+  entry: FilterCatalogueEntry | undefined;
   onRemove: () => void;
+  onUpdate: (value: string, display_label: string) => void;
 }) {
+  const [open, setOpen] = useState(false);
+  const [value, setValue] = useState(filter.value);
+  const ref = useRef<HTMLDivElement>(null);
+
+  // Keep local input in sync if the filter is reset externally
+  useEffect(() => {
+    setValue(filter.value);
+  }, [filter.value]);
+
+  // Close on outside click
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [open]);
+
+  const direction: "above" | "below" = entry?.direction ?? "above";
+
+  const handleSave = () => {
+    if (!entry || !value) return;
+    onUpdate(value, buildLabel(entry, value, direction));
+    setOpen(false);
+  };
+
+  // If we don't have the catalogue entry, render a non-editable pill
+  // (still removable) so we never lose the user's filter.
+  if (!entry) {
+    return (
+      <span className="group flex items-center gap-1.5 rounded-full border border-[var(--clr-cyan)]/40 bg-[var(--glow-cyan)] px-2.5 py-1 font-data text-[10px] font-medium text-[var(--clr-cyan)]">
+        <span>{filter.display_label}</span>
+        <button
+          onClick={onRemove}
+          className="opacity-0 transition-opacity group-hover:opacity-100 hover:text-[var(--clr-red)]"
+          aria-label={`Remove filter: ${filter.display_label}`}
+        >
+          <X size={10} />
+        </button>
+      </span>
+    );
+  }
+
   return (
-    <span className="group flex items-center gap-1.5 rounded-full border border-[var(--clr-cyan)]/40 bg-[var(--glow-cyan)] px-2.5 py-1 font-data text-[10px] font-medium text-[var(--clr-cyan)]">
-      <span>{filter.display_label}</span>
-      <button
-        onClick={onRemove}
-        className="opacity-0 transition-opacity group-hover:opacity-100 hover:text-[var(--clr-red)]"
-        aria-label={`Remove filter: ${filter.display_label}`}
+    <div ref={ref} className="relative">
+      <span
+        className={`group flex items-center gap-1.5 rounded-full border px-2.5 py-1 font-data text-[10px] font-medium transition-colors ${
+          open
+            ? "border-[var(--clr-cyan)] bg-[var(--clr-cyan)]/20 text-[var(--clr-cyan)]"
+            : "border-[var(--clr-cyan)]/40 bg-[var(--glow-cyan)] text-[var(--clr-cyan)] hover:border-[var(--clr-cyan)]"
+        }`}
       >
-        <X size={10} />
-      </button>
-    </span>
+        <button
+          type="button"
+          onClick={() => setOpen((v) => !v)}
+          className="cursor-pointer text-left"
+          title={entry.description ?? `Click to edit ${entry.label}`}
+          aria-label={`Edit filter: ${filter.display_label}`}
+          aria-expanded={open}
+        >
+          {filter.display_label}
+        </button>
+        <button
+          type="button"
+          onClick={onRemove}
+          className="opacity-0 transition-opacity group-hover:opacity-100 hover:text-[var(--clr-red)]"
+          aria-label={`Remove filter: ${filter.display_label}`}
+        >
+          <X size={10} />
+        </button>
+      </span>
+
+      {open && (
+        <div className="absolute left-0 top-full z-20 mt-1 rounded-lg border border-[var(--border)] bg-[var(--bg-2)] p-2.5 shadow-xl">
+          <p className="mb-1.5 text-[10px] font-medium text-[var(--text-2)]">
+            {entry.label}&nbsp;{direction === "above" ? "≥" : "≤"}
+          </p>
+          <div className="flex items-center gap-1.5">
+            <input
+              type="number"
+              value={value}
+              onChange={(e) => setValue(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") handleSave();
+                if (e.key === "Escape") setOpen(false);
+              }}
+              className="w-24 rounded border border-[var(--border)] bg-[var(--bg-3)] px-2 py-1 font-data text-[11px] text-[var(--text-1)] outline-none focus:border-[var(--clr-cyan)]"
+              autoFocus
+            />
+            {entry.unit && (
+              <span className="text-[10px] text-[var(--text-3)]">{entry.unit}</span>
+            )}
+            <button
+              type="button"
+              onClick={handleSave}
+              className="rounded bg-[var(--clr-cyan)]/20 px-2 py-1 text-[10px] font-medium text-[var(--clr-cyan)] transition-colors hover:bg-[var(--clr-cyan)]/30"
+            >
+              Save
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -272,6 +374,7 @@ function AddFilterDropdown({
               <button
                 key={e.code}
                 onClick={() => handleSelectEntry(e)}
+                title={e.description ?? undefined}
                 className={`px-3 py-1.5 text-left text-[11px] transition-colors hover:bg-[var(--bg-3)] ${
                   selected?.entry.code === e.code
                     ? "text-[var(--clr-cyan)] font-medium"
@@ -376,6 +479,7 @@ export default function ScreenerFilterBar({
     results,
     isDirty,
     addFilter,
+    updateFilter,
     removeFilter,
     clearFilters,
     setPreset,
@@ -472,7 +576,9 @@ export default function ScreenerFilterBar({
         <FilterPill
           key={f.id}
           filter={f}
+          entry={catalogue.find((e) => e.code === f.code)}
           onRemove={() => removeFilter(f.id)}
+          onUpdate={(value, display_label) => updateFilter(f.id, value, display_label)}
         />
       ))}
 

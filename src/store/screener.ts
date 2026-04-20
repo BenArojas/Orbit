@@ -77,6 +77,8 @@ interface ScreenerState {
 
   // ── Actions ────────────────────────────────────────────────
   addFilter: (filter: ActiveFilter) => void;
+  /** Update an existing filter's value + display_label in-place (click-to-edit pill). */
+  updateFilter: (id: string, value: string, display_label: string) => void;
   removeFilter: (id: string) => void;
   clearFilters: () => void;
   setPreset: (preset: ScannerPreset) => void;
@@ -126,6 +128,14 @@ export const useScreenerStore = create<ScreenerState>()((set) => ({
   addFilter: (filter) =>
     set((state) => ({
       filters: [...state.filters, filter],
+      isDirty: true,
+    })),
+
+  updateFilter: (id, value, display_label) =>
+    set((state) => ({
+      filters: state.filters.map((f) =>
+        f.id === id ? { ...f, value, display_label } : f,
+      ),
       isDirty: true,
     })),
 

@@ -738,10 +738,11 @@ class TestFilterCatalogue:
         }
 
     @pytest.mark.asyncio
-    async def test_endpoint_returns_catalogue_without_notes(self):
+    async def test_endpoint_returns_catalogue_with_description(self):
         """
         GET /screener/filter-catalogue must return one entry per FILTER_CATALOGUE
-        code, and must NOT expose the Ollama-only `notes` field to the UI.
+        code and carry the `description` field (shown as a UI tooltip AND sent
+        to Ollama — single field, two surfaces).
         """
         from constants.ibkr_filters import FILTER_CATALOGUE
         from routers.screener import filter_catalogue
@@ -749,9 +750,11 @@ class TestFilterCatalogue:
         result = await filter_catalogue()
         # One entry per code, same order as FILTER_CATALOGUE
         assert len(result) == len(FILTER_CATALOGUE)
-        # The response model strips `notes` — confirm no entry carries it
+        # The old Ollama-only `notes` field is gone — renamed to `description`.
+        # `description` IS exposed (same string the AI prompt sees).
         for entry in result:
             assert not hasattr(entry, "notes")
+            assert hasattr(entry, "description")
             # Required keys are present and populated
             assert entry.code
             assert entry.label
@@ -762,6 +765,9 @@ class TestFilterCatalogue:
                 "analyst",
                 "short_ownership",
             )
+        # At least one entry in our catalogue has a populated description —
+        # lock that contract so a future empty catalogue doesn't slip through.
+        assert any(entry.description for entry in result)
 
 
 # ── Regression: IBKR scanner_run always sends filter array ────

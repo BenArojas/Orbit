@@ -61,16 +61,16 @@ def _build_catalogue_text() -> str:
     Format the canonical filter catalogue as a concise reference table.
 
     One line per code. Direction is rendered as ≥ (above) or ≤ (below).
-    Ollama-only `notes` are appended after ` // `; dropped when None.
+    The `description` field is appended after ` // `; dropped when None.
     """
     lines: list[str] = []
     for f in FILTER_CATALOGUE:
         arrow = "≥" if f["direction"] == "above" else "≤"
         unit = f" ({f['unit']})" if f.get("unit") else ""
-        notes = f" // {f['notes']}" if f.get("notes") else ""
+        desc = f" // {f['description']}" if f.get("description") else ""
         lines.append(
             f"  {f['code']}{unit} — {f['label']} {arrow} X, "
-            f"e.g. value={f['example']!r}{notes}"
+            f"e.g. value={f['example']!r}{desc}"
         )
     return "\n".join(lines)
 
