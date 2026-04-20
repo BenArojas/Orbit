@@ -208,3 +208,49 @@ describe("clearResults", () => {
     expect(s.totalScanned).toBe(0);
   });
 });
+
+// ── applyPreset ───────────────────────────────────────────────
+// Used by empty-state "Try this" cards — sets preset + filters atomically
+// and keeps isDirty=false so no stale amber pulse appears.
+
+describe("applyPreset", () => {
+  it("sets selectedPreset and filters atomically", () => {
+    const filters: ActiveFilter[] = [FILTER];
+    useScreenerStore.getState().applyPreset(PRESET, filters);
+
+    const s = useScreenerStore.getState();
+    expect(s.selectedPreset).toEqual(PRESET);
+    expect(s.filters).toEqual(filters);
+  });
+
+  it("does NOT set isDirty (caller fires scan immediately)", () => {
+    useScreenerStore.getState().applyPreset(PRESET, [FILTER]);
+    expect(useScreenerStore.getState().isDirty).toBe(false);
+  });
+
+  it("resets page to 1", () => {
+    useScreenerStore.setState({ page: 3 });
+    useScreenerStore.getState().applyPreset(PRESET, []);
+    expect(useScreenerStore.getState().page).toBe(1);
+  });
+
+  it("does not clear isDirty that was already false before call", () => {
+    useScreenerStore.setState({ isDirty: false });
+    useScreenerStore.getState().applyPreset(PRESET, [FILTER]);
+    expect(useScreenerStore.getState().isDirty).toBe(false);
+  });
+
+  it("clears isDirty even if it was true before call", () => {
+    // User had previously dirtied the store, then clicked an empty-state card
+    useScreenerStore.getState().addFilter(FILTER);
+    expect(useScreenerStore.getState().isDirty).toBe(true);
+
+    const anotherFilter: ActiveFilter = { id: "f-2", code: "volumeAbove", value: "1000000", display_label: "Volume ≥ 1M" };
+    useScreenerStore.getState().applyPreset(PRESET, [anotherFilter]);
+
+    const s = useScreenerStore.getState();
+    expect(s.isDirty).toBe(false);
+    expect(s.filters).toHaveLength(1);
+    expect(s.filters[0].code).toBe("volumeAbove");
+  });
+});
