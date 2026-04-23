@@ -793,7 +793,11 @@ class ScreenerResultRow(BaseModel):
     last_price: Optional[float] = None
     change_percent: Optional[float] = None
     volume: Optional[float] = None
-    market_cap: Optional[float] = None                  # In $M (IBKR field 7289)
+    # Note: market cap intentionally NOT part of screener rows. IBKR does not
+    # expose mc reliably via /iserver/marketdata/snapshot (field 7289 is absent
+    # from the official fields list). See backend/docs/ibkr_market_data_fields.md.
+    # The per-contract quick-peek (ContractInfoResponse below) still carries it
+    # because that endpoint fetches it from /iserver/contract/{conid}/info.
 
 
 class ScanResponse(BaseModel):

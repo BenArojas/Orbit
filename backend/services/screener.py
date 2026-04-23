@@ -30,6 +30,7 @@ TODO (next pass): "Search next 50" / cumulative paging
   zustand store via `appendResults`.
 """
 
+import asyncio
 import logging
 import math
 from typing import Any
@@ -38,31 +39,31 @@ from constants import (
     FIELD_CHANGE_PCT,
     FIELD_COMPANY_NAME,
     FIELD_LAST_PRICE,
-    FIELD_MARKET_CAP,
     FIELD_SYMBOL,
     FIELD_VOLUME,
 )
 
 # Fields that MUST be present before the snapshot poll exits.
-# Phase 5C update: market cap (7289) was previously best-effort because it's a
-# slow-fill field on /iserver/marketdata/snapshot. We now ASK for it as required
-# (longer poll timeout absorbs the latency) AND fall back to /iserver/contract/
-# {conid}/info → `marketCap` for any conid that still has no value after the
-# snapshot returns. Belt-and-braces — neither path alone was reliable enough.
+#
+# Phase 5C revision (2026-04-23): we previously required 7289 (market cap) and
+# even added a contract_info fallback. Turned out field 7289 isn't on IBKR's
+# official market-data-fields list at all — the poll was waiting ~18s for a
+# value that was never going to arrive. See backend/docs/ibkr_market_data_fields.md
+# for the canonical list. Market cap column was removed from the screener to
+# keep scans fast; we can bring it back later using /trsrv/secdef or fundamentals
+# endpoints if needed.
 SNAPSHOT_REQUIRED_FIELDS = [
     FIELD_LAST_PRICE,   # 31
     FIELD_SYMBOL,       # 55
     FIELD_CHANGE_PCT,   # 83
     FIELD_VOLUME,       # 7762
-    FIELD_MARKET_CAP,   # 7289 — required so the poll waits for it
 ]
 
 # Per-batch snapshot timeouts.
-#  - First pass: longer than the prior 12s because we now require 7289 (slow).
-#  - Stragglers retry: shorter — these conids already failed once, no point
-#    holding the whole scan hostage on them.
-SNAPSHOT_TIMEOUT_FIRST = 18.0
-SNAPSHOT_TIMEOUT_RETRY = 6.0
+#  - First pass: short — only the four fast fields are required now.
+#  - Stragglers retry: even shorter; these conids already failed once.
+SNAPSHOT_TIMEOUT_FIRST = 8.0
+SNAPSHOT_TIMEOUT_RETRY = 3.0
 from exceptions import IBKRError
 from models import IbkrFilterItem, ScreenerResultRow, ScanResponse
 from services.ibkr import IBKRService
@@ -212,14 +213,14 @@ DEFAULT_PRESETS: list[dict[str, Any]] = [
     },
 ]
 
-# Snapshot fields for screener results
+# Snapshot fields for screener results.
+# Market cap intentionally NOT requested — see SNAPSHOT_REQUIRED_FIELDS note.
 SCREENER_SNAPSHOT_FIELDS = ",".join([
     FIELD_LAST_PRICE,   # 31 — last price
     FIELD_SYMBOL,       # 55 — ticker
     FIELD_CHANGE_PCT,   # 83 — % change
     FIELD_VOLUME,       # 7762 — volume
     FIELD_COMPANY_NAME, # 7051 — company name
-    FIELD_MARKET_CAP,   # 7289 — market cap ($M)
 ])
 
 # IBKR allows up to ~50 conids per snapshot call
@@ -335,9 +336,6 @@ class ScreenerService:
             if r.last_price is not None or r.volume is not None
         ]
 
-        # Fallback enrichment for any row still missing market_cap.
-        rows = await self._enrich_market_caps(rows)
-
         # Paginate results
         total_pages = max(1, math.ceil(len(rows) / page_size))
         start_idx = (page - 1) * page_size
@@ -397,40 +395,63 @@ class ScreenerService:
         Fetch market data snapshots in batches of SNAPSHOT_BATCH_SIZE.
         Returns {conid: quote_data} mapping.
 
-        Two-pass strategy (Phase 5C):
-          Pass 1 — request all conids with the full required-field gate
-                   (price, symbol, change, volume, market cap).
+        Two-pass strategy (Phase 5C, revised 2026-04-23):
+          Pass 1 — request all conids in parallel batches (asyncio.gather) with
+                   the fast required-field gate (price, symbol, change, volume).
+                   Running batches concurrently roughly halves wall time vs
+                   serial.
           Pass 2 — for any conid still missing required fields after pass 1,
-                   re-call snapshot in a smaller batch with a shorter timeout.
-                   IBKR's first call often primes the cache without returning
-                   complete data; the second call comes back cleaner.
+                   re-call snapshot with a shorter timeout. These are usually
+                   IBKR-side misses (illiquid, halted, no subscription); we
+                   give them one more chance but cap the wait at ~3s.
+
+        Previous version required field 7289 (market cap) and used a long 18s
+        pass-1 timeout. Field 7289 isn't on IBKR's documented market data
+        fields list — the poll was waiting for a value that was never coming.
+        See backend/docs/ibkr_market_data_fields.md.
         """
         quotes: dict[int, dict[str, Any]] = {}
 
-        # ── Pass 1: full batch ────────────────────────────────────
-        for i in range(0, len(conids), SNAPSHOT_BATCH_SIZE):
-            batch = conids[i : i + SNAPSHOT_BATCH_SIZE]
+        # ── Pass 1: parallel batches ──────────────────────────────
+        pass_1_batches = [
+            conids[i : i + SNAPSHOT_BATCH_SIZE]
+            for i in range(0, len(conids), SNAPSHOT_BATCH_SIZE)
+        ]
+
+        async def _fetch_batch(
+            batch: list[int], timeout: float
+        ) -> list[dict] | Exception:
+            """Fetch one batch; return exception object instead of raising so
+            `asyncio.gather` doesn't short-circuit on a single bad batch."""
             try:
-                raw = await self.ibkr.snapshot(
+                return await self.ibkr.snapshot(
                     batch,
                     fields=SCREENER_SNAPSHOT_FIELDS,
-                    timeout=SNAPSHOT_TIMEOUT_FIRST,
+                    timeout=timeout,
                     required_fields=SNAPSHOT_REQUIRED_FIELDS,
                 )
-                for item in raw:
-                    cid = item.get("conid")
-                    if cid:
-                        quotes[int(cid)] = item
             except IBKRError as exc:
+                return exc
+
+        pass_1_results = await asyncio.gather(
+            *(_fetch_batch(b, SNAPSHOT_TIMEOUT_FIRST) for b in pass_1_batches),
+            return_exceptions=False,  # we're already returning exc objects
+        )
+        for idx, result in enumerate(pass_1_results):
+            if isinstance(result, Exception):
                 log.warning(
                     "Snapshot batch failed (batch %d, size %d): %s",
-                    i // SNAPSHOT_BATCH_SIZE, len(batch), exc,
+                    idx, len(pass_1_batches[idx]), result,
                 )
+                continue
+            for item in result:
+                cid = item.get("conid")
+                if cid:
+                    quotes[int(cid)] = item
 
-        # ── Pass 2: retry stragglers ──────────────────────────────
+        # ── Pass 2: retry stragglers (parallel) ───────────────────
         # A "straggler" is a conid that either never appeared in pass-1 quotes
-        # or whose quote is missing one or more required fields. The second
-        # call benefits from IBKR's now-warm cache.
+        # or whose quote is missing one or more required fields.
         stragglers = [
             c for c in conids
             if c not in quotes
@@ -441,66 +462,29 @@ class ScreenerService:
                 "Snapshot pass 2: re-fetching %d stragglers (of %d total)",
                 len(stragglers), len(conids),
             )
-            for i in range(0, len(stragglers), SNAPSHOT_BATCH_SIZE):
-                batch = stragglers[i : i + SNAPSHOT_BATCH_SIZE]
-                try:
-                    raw = await self.ibkr.snapshot(
-                        batch,
-                        fields=SCREENER_SNAPSHOT_FIELDS,
-                        timeout=SNAPSHOT_TIMEOUT_RETRY,
-                        required_fields=SNAPSHOT_REQUIRED_FIELDS,
-                    )
-                    for item in raw:
-                        cid = item.get("conid")
-                        if cid:
-                            # Merge — pass-2 fields take precedence but we don't
-                            # blow away anything pass-1 already filled in.
-                            existing = quotes.get(int(cid), {})
-                            quotes[int(cid)] = {**existing, **item}
-                except IBKRError as exc:
+            pass_2_batches = [
+                stragglers[i : i + SNAPSHOT_BATCH_SIZE]
+                for i in range(0, len(stragglers), SNAPSHOT_BATCH_SIZE)
+            ]
+            pass_2_results = await asyncio.gather(
+                *(_fetch_batch(b, SNAPSHOT_TIMEOUT_RETRY) for b in pass_2_batches),
+            )
+            for idx, result in enumerate(pass_2_results):
+                if isinstance(result, Exception):
                     log.warning(
                         "Snapshot retry batch failed (batch %d, size %d): %s",
-                        i // SNAPSHOT_BATCH_SIZE, len(batch), exc,
+                        idx, len(pass_2_batches[idx]), result,
                     )
+                    continue
+                for item in result:
+                    cid = item.get("conid")
+                    if cid:
+                        # Merge — pass-2 fields take precedence but we don't
+                        # blow away anything pass-1 already filled in.
+                        existing = quotes.get(int(cid), {})
+                        quotes[int(cid)] = {**existing, **item}
 
         return quotes
-
-    async def _enrich_market_caps(
-        self,
-        rows: list[ScreenerResultRow],
-    ) -> list[ScreenerResultRow]:
-        """
-        Fallback enrichment for rows whose `market_cap` is still None after the
-        two snapshot passes. Calls /iserver/contract/{conid}/info per missing
-        conid and pulls the `marketCap` field.
-
-        Why a separate pass?
-          IBKR snapshot field 7289 is unreliable on /iserver/marketdata/snapshot
-          for many instruments. The contract endpoint returns a stable, cached
-          marketCap value (1h cache via @cached(ttl=3600)) that's been our
-          ground truth in MoonMarket. We only call it for stragglers so a
-          successful snapshot scan stays as fast as before.
-        """
-        missing = [r for r in rows if r.market_cap is None]
-        if not missing:
-            return rows
-
-        log.info("Market-cap enrichment: %d rows need fallback", len(missing))
-
-        for row in missing:
-            try:
-                info = await self.ibkr.contract_info(row.conid)
-                mc = _safe_float(info.get("marketCap"))
-                if mc is not None:
-                    # Pydantic model — copy with the new value
-                    row.market_cap = mc
-            except IBKRError as exc:
-                log.debug(
-                    "contract_info enrichment failed for conid %d: %s",
-                    row.conid, exc,
-                )
-
-        return rows
 
     def _build_row(
         self, item: dict[str, Any], quote: dict[str, Any]
@@ -520,7 +504,6 @@ class ScreenerService:
             last_price=_safe_float(quote.get("31")),
             change_percent=_safe_float(quote.get("83")),
             volume=_safe_float(quote.get("7762")),
-            market_cap=_safe_float(quote.get("7289")),
         )
 
 

@@ -34,7 +34,6 @@ const MOCK_RESULTS: ScreenerResultRow[] = Array.from({ length: 30 }, (_, i) => (
   last_price: 100,
   change_percent: 1,
   volume: 1_000_000,
-  market_cap: 50_000,
 }));
 
 const mockStore = {

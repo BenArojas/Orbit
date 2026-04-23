@@ -472,11 +472,12 @@ class IBKRService:
             poll_interval: Seconds between polls.
             required_fields: Field codes that MUST be present before returning.
                 If None, ALL requested fields are required (original behaviour).
-                Pass a subset (e.g. ["31","55","83","7762"]) to treat slower
-                fields like market cap (7289) as best-effort.
+                Pass a subset (e.g. ["31","55","83","7762"]) to treat the
+                remaining requested fields as best-effort. Use this whenever
+                you ask for fields that IBKR fills lazily or not at all.
 
         ────────────────────────────────────────────────────────────
-        SAMPLE RESPONSE (from /iserver/marketdata/snapshot, fields=31,55,83,7762,7289,7051):
+        SAMPLE RESPONSE (from /iserver/marketdata/snapshot, fields=31,55,83,7762,7051):
         ────────────────────────────────────────────────────────────
         [
           {
@@ -490,20 +491,19 @@ class IBKRService:
             "7051": "APPLE INC",         # company name
             "31": "214.29",              # last price (STRING — parse to float)
             "83": "+1.42",               # % change (STRING, may start with + or -)
-            "7762": "52.1M",             # volume (STRING, may carry K/M/B suffix)
-            "7289": "3285420"            # market cap (STRING, value in MILLIONS)
+            "7762": "52100000"           # volume long (STRING, high precision)
           },
           ...
         ]
 
         Field notes:
           - ALL values come back as STRINGS — must _safe_float on read.
-          - "7762" (volume) sometimes arrives as "52.1M" / "900K" — `_parse_volume`
-            in screener.py handles the suffix.
-          - "7289" (market cap) is quoted in MILLIONS (so 3285420 = $3.285T).
-            Frequently MISSING on first snapshot for illiquid names — this is
-            why the screener reruns a pass-2 retry and then falls back to
-            /iserver/contract/{conid}/info (see contract_info below).
+          - "87" (formatted volume) arrives as "52.1M" / "900K". Prefer "7762"
+            for parsing.
+          - "7289" (market cap) is NOT on IBKR's documented fields list. Don't
+            put it in `fields`; don't add it to `required_fields`. Use the
+            contract endpoint (/iserver/contract/{conid}/info → `marketCap`)
+            for mc instead. See backend/docs/ibkr_market_data_fields.md.
           - Partial responses are common: IBKR may return the row with only
             55 + 6509 filled while it warms its cache. The poll loop above
             waits through this and returns once `required_fields` are all set.

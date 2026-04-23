@@ -313,7 +313,7 @@ export default function ScreenerPeekPanel() {
               <div className="flex flex-col divide-y divide-[var(--border)]">
                 <StatRow
                   label="Market Cap"
-                  value={fmtMktCap(row?.market_cap ?? contract?.market_cap)}
+                  value={fmtMktCap(contract?.market_cap)}
                 />
                 <StatRow
                   label="Volume"

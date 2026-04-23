@@ -597,7 +597,9 @@ export interface ScreenerResultRow {
   last_price: number | null;
   change_percent: number | null;
   volume: number | null;
-  market_cap: number | null;  // In $M (IBKR field 7289)
+  // Note: market_cap intentionally omitted — not reliably available via
+  // /iserver/marketdata/snapshot. Quick-peek row (ContractInfoResponse) still
+  // carries it because that comes from /iserver/contract/{conid}/info.
 }
 
 export interface ScanResponse {

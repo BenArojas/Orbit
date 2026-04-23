@@ -1,8 +1,9 @@
 /**
  * ScreenerResultsTable — Sortable, paginated table of screener scan results
  *
- * Columns: Symbol, Name, Type, Price, Chg%, Volume, Market Cap
- * Click any row → open quick-peek (ScreenerPeekPanel)
+ * Columns: Symbol, Name, Type, Price, Chg%, Volume
+ * Click any row → open quick-peek (ScreenerPeekPanel) — mkt cap lives there,
+ * not in the table row. IBKR snapshot doesn't expose it reliably.
  *
  * Sort model (client-side):
  *   - sortBy === "" → preserve IBKR scanner's natural arrival order.
@@ -61,14 +62,6 @@ function fmtVolume(v: number | null): string {
   if (v >= 1_000_000) return `${(v / 1_000_000).toFixed(1)}M`;
   if (v >= 1_000) return `${(v / 1_000).toFixed(0)}K`;
   return v.toFixed(0);
-}
-
-function fmtMarketCap(v: number | null): string {
-  // v is already in $M from IBKR field 7289
-  if (v == null) return "—";
-  if (v >= 1_000_000) return `$${(v / 1_000_000).toFixed(1)}T`;
-  if (v >= 1_000) return `$${(v / 1_000).toFixed(1)}B`;
-  return `$${v.toFixed(0)}M`;
 }
 
 function changeColor(v: number | null): string {
@@ -140,12 +133,6 @@ const COLUMNS: ColDef[] = [
     align: "right",
     render: (r) => <span className="text-[var(--text-2)]">{fmtVolume(r.volume)}</span>,
   },
-  {
-    key: "market_cap",
-    label: "Mkt Cap",
-    align: "right",
-    render: (r) => <span className="text-[var(--text-2)]">{fmtMarketCap(r.market_cap)}</span>,
-  },
 ];
 
 // ── Sort helpers ──────────────────────────────────────────────
@@ -158,7 +145,6 @@ function getSortValue(row: ScreenerResultRow, col: string): number | string {
     case "last_price":     return row.last_price ?? -Infinity;
     case "change_percent": return row.change_percent ?? -Infinity;
     case "volume":         return row.volume ?? -Infinity;
-    case "market_cap":     return row.market_cap ?? -Infinity;
     default:               return -Infinity;
   }
 }

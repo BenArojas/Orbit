@@ -151,7 +151,6 @@ class TestScreenerServiceScan:
         assert row.last_price == pytest.approx(185.50)
         assert row.change_percent == pytest.approx(1.23)
         assert row.volume == pytest.approx(52_000_000)
-        assert row.market_cap == pytest.approx(2_900_000)
 
     @pytest.mark.asyncio
     async def test_native_filters_passed_to_ibkr(self):
@@ -262,19 +261,16 @@ class TestScreenerServiceScan:
     @pytest.mark.asyncio
     async def test_partial_quote_fields_preserved_as_none(self):
         """
-        Row with SOME quote data (e.g. price but no change%/volume/mc) survives
+        Row with SOME quote data (e.g. price but no change%/volume) survives
         the ticker-only filter and missing fields come back as None.
-
-        Also patch contract_info to None so enrichment doesn't fill market_cap.
         """
         scan_results = [{"conid": 999, "symbol": "XYZ"}]
-        # Snapshot has price only — no change%, no volume, no mc
+        # Snapshot has price only — no change%, no volume
         snapshot_results = [{"conid": 999, "55": "XYZ", "31": "12.34"}]
 
         ibkr = make_ibkr_mock(
             scan_results=scan_results,
             snapshot_results=snapshot_results,
-            contract_info={},  # no marketCap → enrichment no-op
         )
         svc = ScreenerService(ibkr)
 
@@ -285,7 +281,6 @@ class TestScreenerServiceScan:
         assert row.last_price == 12.34
         assert row.change_percent is None
         assert row.volume is None
-        assert row.market_cap is None
 
     @pytest.mark.asyncio
     async def test_ticker_only_rows_are_dropped(self):
@@ -300,7 +295,6 @@ class TestScreenerServiceScan:
         ibkr = make_ibkr_mock(
             scan_results=scan_results,
             snapshot_results=snapshot_results,
-            contract_info={},  # no marketCap — doesn't save the row
         )
         svc = ScreenerService(ibkr)
 
@@ -315,7 +309,7 @@ class TestScreenerServiceScan:
         """A failing snapshot batch (IBKRError) doesn't crash — rows with no
         data become ticker-only and get filtered out. scan() still returns a
         valid (empty) ScanResponse instead of propagating the error."""
-        ibkr = make_ibkr_mock(contract_info={})  # no mc fallback either
+        ibkr = make_ibkr_mock()
         ibkr.snapshot = AsyncMock(side_effect=IBKRError("network error"))
         svc = ScreenerService(ibkr)
 
@@ -392,7 +386,6 @@ class TestBuildRow:
             "31": "185.00",
             "83": "1.5",
             "7762": "50000000",
-            "7289": "2900000",
         }
         row = svc._build_row(item, quote)
         assert row.conid == 100
@@ -401,7 +394,6 @@ class TestBuildRow:
         assert row.last_price == pytest.approx(185.0)
         assert row.change_percent == pytest.approx(1.5)
         assert row.volume == pytest.approx(50_000_000)
-        assert row.market_cap == pytest.approx(2_900_000)
 
     def test_falls_back_to_scanner_metadata(self):
         svc = ScreenerService(MagicMock())
@@ -414,12 +406,11 @@ class TestBuildRow:
     def test_invalid_price_is_none(self):
         svc = ScreenerService(MagicMock())
         item = {"conid": 100, "symbol": "X", "company_name": "", "sec_type": "STK"}
-        quote = {"31": "N/A", "83": "", "7762": None, "7289": "abc"}
+        quote = {"31": "N/A", "83": "", "7762": None}
         row = svc._build_row(item, quote)
         assert row.last_price is None
         assert row.change_percent is None
         assert row.volume is None
-        assert row.market_cap is None
 
 
 # ── Default presets ───────────────────────────────────────────
@@ -526,7 +517,7 @@ class TestScreenerModels:
     def test_screener_result_row_optional_fields(self):
         row = ScreenerResultRow(conid=123)
         assert row.last_price is None
-        assert row.market_cap is None
+        assert row.change_percent is None
         assert row.volume is None
 
     def test_scan_response_structure(self):
@@ -565,7 +556,7 @@ class TestSafeFloat:
         assert _safe_float(float("nan")) is None
 
 
-# ── Snapshot two-pass + market-cap enrichment (Phase 5C) ──────
+# ── Snapshot two-pass (Phase 5C) ──────────────────────────────
 
 
 class TestSnapshotTwoPass:
@@ -578,14 +569,14 @@ class TestSnapshotTwoPass:
     @pytest.mark.asyncio
     async def test_pass_two_merges_with_pass_one(self):
         """
-        Pass 1 returns AAPL missing volume + mc.
-        Pass 2 returns AAPL with volume + mc only (other fields absent).
-        Final merged quote has ALL fields → row has every quote value populated.
-        (Side-effect test only — we don't spy on call counts per 1b.)
+        Pass 1 returns AAPL with price + symbol + chg%, but no volume.
+        Pass 2 returns AAPL with volume only.
+        Final merged quote has ALL required fields.
+        (Side-effect test only — we don't spy on call counts.)
         """
         scan_results = [{"conid": 265598, "symbol": "AAPL"}]
         pass_1 = [{"conid": 265598, "55": "AAPL", "31": "185.50", "83": "1.23"}]
-        pass_2 = [{"conid": 265598, "7762": "52000000", "7289": "2900000"}]
+        pass_2 = [{"conid": 265598, "7762": "52000000"}]
 
         ibkr = make_ibkr_mock(scan_results=scan_results)
         ibkr.snapshot = AsyncMock(side_effect=[pass_1, pass_2])
@@ -598,56 +589,8 @@ class TestSnapshotTwoPass:
         # Pass 1 values survived
         assert row.last_price == 185.50
         assert row.change_percent == 1.23
-        # Pass 2 filled the stragglers
+        # Pass 2 filled the straggler
         assert row.volume == 52000000.0
-        assert row.market_cap == 2900000.0
-
-
-class TestMarketCapEnrichment:
-    """
-    Phase 5C: rows still missing `market_cap` after both snapshot passes get
-    enriched via /iserver/contract/{conid}/info → `marketCap` field.
-    """
-
-    @pytest.mark.asyncio
-    async def test_contract_info_fills_missing_market_cap(self):
-        """
-        Snapshot returns everything EXCEPT 7289. _enrich_market_caps calls
-        ibkr.contract_info(conid) once per missing row and populates
-        row.market_cap from the returned `marketCap` string (MILLIONS).
-        """
-        scan_results = [{"conid": 265598, "symbol": "AAPL"}]
-        snapshot_results = [{
-            "conid": 265598, "55": "AAPL",
-            "31": "185.50", "83": "1.23", "7762": "52000000",
-            # 7289 deliberately absent
-        }]
-
-        ibkr = make_ibkr_mock(
-            scan_results=scan_results,
-            snapshot_results=snapshot_results,
-            contract_info={"marketCap": "3285420"},  # $3.285T in millions
-        )
-        svc = ScreenerService(ibkr)
-
-        result = await svc.scan("STK", "MOST_ACTIVE", "STK.US.MAJOR", [], 50)
-
-        assert len(result.results) == 1
-        row = result.results[0]
-        assert row.market_cap == 3285420.0
-        # Was called exactly once for this single missing row
-        assert ibkr.contract_info.await_count == 1
-        ibkr.contract_info.assert_awaited_with(265598)
-
-    @pytest.mark.asyncio
-    async def test_contract_info_not_called_when_snapshot_has_market_cap(self):
-        """If snapshot already filled 7289 we skip the enrichment fetch."""
-        ibkr = make_ibkr_mock()  # default mocks include 7289 in snapshot
-        svc = ScreenerService(ibkr)
-
-        await svc.scan("STK", "MOST_ACTIVE", "STK.US.MAJOR", [], 50)
-
-        assert ibkr.contract_info.await_count == 0
 
 
 # ── Pagination Tests ──────────────────────────────────────────
