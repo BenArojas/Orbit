@@ -43,14 +43,26 @@ from constants import (
     FIELD_VOLUME,
 )
 
-# Core fields that MUST be present before returning (price, symbol, change, volume).
-# Market cap (7289) is a derived field that IBKR populates slower — treat as best-effort.
+# Fields that MUST be present before the snapshot poll exits.
+# Phase 5C update: market cap (7289) was previously best-effort because it's a
+# slow-fill field on /iserver/marketdata/snapshot. We now ASK for it as required
+# (longer poll timeout absorbs the latency) AND fall back to /iserver/contract/
+# {conid}/info → `marketCap` for any conid that still has no value after the
+# snapshot returns. Belt-and-braces — neither path alone was reliable enough.
 SNAPSHOT_REQUIRED_FIELDS = [
     FIELD_LAST_PRICE,   # 31
     FIELD_SYMBOL,       # 55
     FIELD_CHANGE_PCT,   # 83
     FIELD_VOLUME,       # 7762
+    FIELD_MARKET_CAP,   # 7289 — required so the poll waits for it
 ]
+
+# Per-batch snapshot timeouts.
+#  - First pass: longer than the prior 12s because we now require 7289 (slow).
+#  - Stragglers retry: shorter — these conids already failed once, no point
+#    holding the whole scan hostage on them.
+SNAPSHOT_TIMEOUT_FIRST = 18.0
+SNAPSHOT_TIMEOUT_RETRY = 6.0
 from exceptions import IBKRError
 from models import IbkrFilterItem, ScreenerResultRow, ScanResponse
 from services.ibkr import IBKRService
@@ -305,7 +317,7 @@ class ScreenerService:
                 total_pages=1,
             )
 
-        # Fetch snapshot quotes for all conids
+        # Fetch snapshot quotes for all conids (two-pass — see _batch_snapshots).
         conid_list = [u["conid"] for u in universe]
         quotes = await self._batch_snapshots(conid_list)
 
@@ -314,6 +326,17 @@ class ScreenerService:
             self._build_row(item, quotes.get(item["conid"], {}))
             for item in universe
         ]
+
+        # Drop ticker-only rows: if IBKR returned NEITHER price nor volume for
+        # this conid, the row is useless (illiquid, delisted, no data
+        # subscription). Showing them as blank cells made the table look broken.
+        rows = [
+            r for r in rows
+            if r.last_price is not None or r.volume is not None
+        ]
+
+        # Fallback enrichment for any row still missing market_cap.
+        rows = await self._enrich_market_caps(rows)
 
         # Paginate results
         total_pages = max(1, math.ceil(len(rows) / page_size))
@@ -373,16 +396,25 @@ class ScreenerService:
         """
         Fetch market data snapshots in batches of SNAPSHOT_BATCH_SIZE.
         Returns {conid: quote_data} mapping.
+
+        Two-pass strategy (Phase 5C):
+          Pass 1 — request all conids with the full required-field gate
+                   (price, symbol, change, volume, market cap).
+          Pass 2 — for any conid still missing required fields after pass 1,
+                   re-call snapshot in a smaller batch with a shorter timeout.
+                   IBKR's first call often primes the cache without returning
+                   complete data; the second call comes back cleaner.
         """
         quotes: dict[int, dict[str, Any]] = {}
 
+        # ── Pass 1: full batch ────────────────────────────────────
         for i in range(0, len(conids), SNAPSHOT_BATCH_SIZE):
             batch = conids[i : i + SNAPSHOT_BATCH_SIZE]
             try:
                 raw = await self.ibkr.snapshot(
                     batch,
                     fields=SCREENER_SNAPSHOT_FIELDS,
-                    timeout=12.0,
+                    timeout=SNAPSHOT_TIMEOUT_FIRST,
                     required_fields=SNAPSHOT_REQUIRED_FIELDS,
                 )
                 for item in raw:
@@ -395,7 +427,80 @@ class ScreenerService:
                     i // SNAPSHOT_BATCH_SIZE, len(batch), exc,
                 )
 
+        # ── Pass 2: retry stragglers ──────────────────────────────
+        # A "straggler" is a conid that either never appeared in pass-1 quotes
+        # or whose quote is missing one or more required fields. The second
+        # call benefits from IBKR's now-warm cache.
+        stragglers = [
+            c for c in conids
+            if c not in quotes
+            or not all(f in quotes[c] for f in SNAPSHOT_REQUIRED_FIELDS)
+        ]
+        if stragglers:
+            log.info(
+                "Snapshot pass 2: re-fetching %d stragglers (of %d total)",
+                len(stragglers), len(conids),
+            )
+            for i in range(0, len(stragglers), SNAPSHOT_BATCH_SIZE):
+                batch = stragglers[i : i + SNAPSHOT_BATCH_SIZE]
+                try:
+                    raw = await self.ibkr.snapshot(
+                        batch,
+                        fields=SCREENER_SNAPSHOT_FIELDS,
+                        timeout=SNAPSHOT_TIMEOUT_RETRY,
+                        required_fields=SNAPSHOT_REQUIRED_FIELDS,
+                    )
+                    for item in raw:
+                        cid = item.get("conid")
+                        if cid:
+                            # Merge — pass-2 fields take precedence but we don't
+                            # blow away anything pass-1 already filled in.
+                            existing = quotes.get(int(cid), {})
+                            quotes[int(cid)] = {**existing, **item}
+                except IBKRError as exc:
+                    log.warning(
+                        "Snapshot retry batch failed (batch %d, size %d): %s",
+                        i // SNAPSHOT_BATCH_SIZE, len(batch), exc,
+                    )
+
         return quotes
+
+    async def _enrich_market_caps(
+        self,
+        rows: list[ScreenerResultRow],
+    ) -> list[ScreenerResultRow]:
+        """
+        Fallback enrichment for rows whose `market_cap` is still None after the
+        two snapshot passes. Calls /iserver/contract/{conid}/info per missing
+        conid and pulls the `marketCap` field.
+
+        Why a separate pass?
+          IBKR snapshot field 7289 is unreliable on /iserver/marketdata/snapshot
+          for many instruments. The contract endpoint returns a stable, cached
+          marketCap value (1h cache via @cached(ttl=3600)) that's been our
+          ground truth in MoonMarket. We only call it for stragglers so a
+          successful snapshot scan stays as fast as before.
+        """
+        missing = [r for r in rows if r.market_cap is None]
+        if not missing:
+            return rows
+
+        log.info("Market-cap enrichment: %d rows need fallback", len(missing))
+
+        for row in missing:
+            try:
+                info = await self.ibkr.contract_info(row.conid)
+                mc = _safe_float(info.get("marketCap"))
+                if mc is not None:
+                    # Pydantic model — copy with the new value
+                    row.market_cap = mc
+            except IBKRError as exc:
+                log.debug(
+                    "contract_info enrichment failed for conid %d: %s",
+                    row.conid, exc,
+                )
+
+        return rows
 
     def _build_row(
         self, item: dict[str, Any], quote: dict[str, Any]

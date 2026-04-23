@@ -474,6 +474,39 @@ class IBKRService:
                 If None, ALL requested fields are required (original behaviour).
                 Pass a subset (e.g. ["31","55","83","7762"]) to treat slower
                 fields like market cap (7289) as best-effort.
+
+        ────────────────────────────────────────────────────────────
+        SAMPLE RESPONSE (from /iserver/marketdata/snapshot, fields=31,55,83,7762,7289,7051):
+        ────────────────────────────────────────────────────────────
+        [
+          {
+            "server_id": "q0",
+            "conid": 265598,
+            "conidEx": "265598",
+            "_updated": 1719446872109,
+            "6119": "q0",
+            "6509": "RB",                # market-data availability flag
+            "55": "AAPL",                # symbol
+            "7051": "APPLE INC",         # company name
+            "31": "214.29",              # last price (STRING — parse to float)
+            "83": "+1.42",               # % change (STRING, may start with + or -)
+            "7762": "52.1M",             # volume (STRING, may carry K/M/B suffix)
+            "7289": "3285420"            # market cap (STRING, value in MILLIONS)
+          },
+          ...
+        ]
+
+        Field notes:
+          - ALL values come back as STRINGS — must _safe_float on read.
+          - "7762" (volume) sometimes arrives as "52.1M" / "900K" — `_parse_volume`
+            in screener.py handles the suffix.
+          - "7289" (market cap) is quoted in MILLIONS (so 3285420 = $3.285T).
+            Frequently MISSING on first snapshot for illiquid names — this is
+            why the screener reruns a pass-2 retry and then falls back to
+            /iserver/contract/{conid}/info (see contract_info below).
+          - Partial responses are common: IBKR may return the row with only
+            55 + 6509 filled while it warms its cache. The poll loop above
+            waits through this and returns once `required_fields` are all set.
         """
         await self.ensure_accounts()
         params = {
@@ -537,7 +570,42 @@ class IBKRService:
         """
         Fetch full contract details for a conid.
         Returns exchange, currency, sector, industry, etc.
-        Used by the screener quick-peek slide-over.
+        Used by the screener quick-peek slide-over AND as the market-cap
+        fallback when /iserver/marketdata/snapshot field 7289 is missing.
+
+        ────────────────────────────────────────────────────────────
+        SAMPLE RESPONSE (from /iserver/contract/{conid}/info for AAPL):
+        ────────────────────────────────────────────────────────────
+        {
+          "conid": 265598,
+          "company_name": "APPLE INC",
+          "company_header": "APPLE INC - NASDAQ",
+          "exchange": "NASDAQ",
+          "listing_exchange": "NASDAQ",
+          "symbol": "AAPL",
+          "instrument_type": "STK",
+          "currency": "USD",
+          "category": "Computers",
+          "industry": "Computer Hardware",
+          "rule": true,
+          "valid_exchanges": "SMART,AMEX,NYSE,CBOE,...",
+          "allow_sell_long": true,
+          "is_zero_commission_security": false,
+          "contract_clarification_type": null,
+          "underConid": 0,
+          "r_t_h": true,
+          "marketCap": "3285420"          # STRING, in MILLIONS — same unit as snapshot 7289
+        }
+
+        Field notes:
+          - `marketCap` is a STRING in MILLIONS (so "3285420" = $3.285T). Parse
+            with `_safe_float` and keep as-is — the frontend already formats
+            millions for display.
+          - Values are cached by IBKR at ~1h granularity; our @cached(ttl=3600)
+            matches. This is more stable than snapshot 7289 which is derived
+            live and frequently drops fields.
+          - Not every instrument has `marketCap` (indices, some ETFs, futures).
+            Missing value ⇒ `_safe_float` returns None ⇒ row just keeps None.
         """
         await self.ensure_accounts()
         result = await self._request("GET", f"/iserver/contract/{conid}/info")

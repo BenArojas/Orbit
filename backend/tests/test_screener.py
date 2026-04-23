@@ -38,8 +38,34 @@ from services.screener import (
 # ── Fixtures ─────────────────────────────────────────────────
 
 
-def make_ibkr_mock(scan_results=None, snapshot_results=None):
-    """Build a mock IBKRService with preset return values."""
+def _synthesize_snapshot_from_scan(scan_results):
+    """Build a minimal full-field snapshot response from scanner output.
+
+    Ensures rows survive the ticker-only filter (price+volume present) and the
+    SNAPSHOT_REQUIRED_FIELDS gate (includes 7289). Used when tests don't care
+    about the specific quote values but need rows to pass through the pipeline.
+    """
+    return [
+        {
+            "conid": r["conid"],
+            "55": r.get("symbol", f"T{r['conid']}"),
+            "7051": r.get("company_name", ""),
+            "31": "10.00",
+            "83": "0.00",
+            "7762": "1000000",
+            "7289": "500000",
+        }
+        for r in scan_results
+    ]
+
+
+def make_ibkr_mock(scan_results=None, snapshot_results=None, contract_info=None):
+    """Build a mock IBKRService with preset return values.
+
+    When `snapshot_results=None`, synthesizes full-field snapshots from
+    `scan_results` so rows survive the ticker-only filter + required-fields
+    gate. Pass `snapshot_results=[]` explicitly to simulate a dead snapshot.
+    """
     ibkr = MagicMock()
 
     if scan_results is None:
@@ -49,29 +75,41 @@ def make_ibkr_mock(scan_results=None, snapshot_results=None):
         ]
 
     if snapshot_results is None:
-        snapshot_results = [
-            {
-                "conid": 265598,
-                "55": "AAPL",
-                "7051": "Apple Inc.",
-                "31": "185.50",
-                "83": "1.23",
-                "7762": "52000000",
-                "7289": "2900000",
-            },
-            {
-                "conid": 272093,
-                "55": "MSFT",
-                "7051": "Microsoft Corp.",
-                "31": "415.00",
-                "83": "-0.45",
-                "7762": "21000000",
-                "7289": "3100000",
-            },
-        ]
+        # Use AAPL/MSFT realistic defaults for the default scan, otherwise
+        # auto-synthesize from the custom scan_results.
+        default_conids = {265598, 272093}
+        if {r["conid"] for r in scan_results} == default_conids:
+            snapshot_results = [
+                {
+                    "conid": 265598,
+                    "55": "AAPL",
+                    "7051": "Apple Inc.",
+                    "31": "185.50",
+                    "83": "1.23",
+                    "7762": "52000000",
+                    "7289": "2900000",
+                },
+                {
+                    "conid": 272093,
+                    "55": "MSFT",
+                    "7051": "Microsoft Corp.",
+                    "31": "415.00",
+                    "83": "-0.45",
+                    "7762": "21000000",
+                    "7289": "3100000",
+                },
+            ]
+        else:
+            snapshot_results = _synthesize_snapshot_from_scan(scan_results)
 
     ibkr.scanner_run = AsyncMock(return_value=scan_results)
     ibkr.snapshot = AsyncMock(return_value=snapshot_results)
+    # contract_info defaults to a usable marketCap so enrichment paths don't
+    # explode in tests that don't care about it.
+    ibkr.contract_info = AsyncMock(
+        return_value=contract_info if contract_info is not None
+        else {"marketCap": "1500000"}
+    )
     return ibkr
 
 
@@ -212,46 +250,81 @@ class TestScreenerServiceScan:
     @pytest.mark.asyncio
     async def test_snapshot_batching_for_large_universe(self):
         many = [{"conid": 100 + i, "symbol": f"T{i}"} for i in range(60)]
-        # Each snapshot call returns empty list (no quotes available)
-        ibkr = make_ibkr_mock(scan_results=many, snapshot_results=[])
+        # Mock auto-synthesizes full-field snapshots → no stragglers → no pass 2.
+        ibkr = make_ibkr_mock(scan_results=many)
         svc = ScreenerService(ibkr)
 
         await svc.scan("STK", "MOST_ACTIVE", "STK.US.MAJOR", [], 60)
 
-        # 60 conids / 25 per batch = 3 calls
+        # 60 conids / 25 per batch = 3 calls (pass 1 only)
         assert ibkr.snapshot.call_count == 3
 
     @pytest.mark.asyncio
-    async def test_missing_quote_fields_are_none(self):
-        """Instruments with no snapshot data get None fields."""
-        scan_results = [{"conid": 999, "symbol": "XYZ"}]
-        snapshot_results = []  # No quotes returned
+    async def test_partial_quote_fields_preserved_as_none(self):
+        """
+        Row with SOME quote data (e.g. price but no change%/volume/mc) survives
+        the ticker-only filter and missing fields come back as None.
 
-        ibkr = make_ibkr_mock(scan_results=scan_results, snapshot_results=snapshot_results)
+        Also patch contract_info to None so enrichment doesn't fill market_cap.
+        """
+        scan_results = [{"conid": 999, "symbol": "XYZ"}]
+        # Snapshot has price only — no change%, no volume, no mc
+        snapshot_results = [{"conid": 999, "55": "XYZ", "31": "12.34"}]
+
+        ibkr = make_ibkr_mock(
+            scan_results=scan_results,
+            snapshot_results=snapshot_results,
+            contract_info={},  # no marketCap → enrichment no-op
+        )
         svc = ScreenerService(ibkr)
 
         result = await svc.scan("STK", "MOST_ACTIVE", "STK.US.MAJOR", [], 50)
 
         assert len(result.results) == 1
         row = result.results[0]
-        assert row.last_price is None
+        assert row.last_price == 12.34
         assert row.change_percent is None
         assert row.volume is None
         assert row.market_cap is None
 
     @pytest.mark.asyncio
+    async def test_ticker_only_rows_are_dropped(self):
+        """
+        Row with NO price AND NO volume (IBKR gave us just a ticker) is hidden.
+        Ticker-only rows made the table look broken — dropping them is cleaner
+        than showing a row full of em-dashes.
+        """
+        scan_results = [{"conid": 999, "symbol": "XYZ"}]
+        snapshot_results = []  # No quotes at all
+
+        ibkr = make_ibkr_mock(
+            scan_results=scan_results,
+            snapshot_results=snapshot_results,
+            contract_info={},  # no marketCap — doesn't save the row
+        )
+        svc = ScreenerService(ibkr)
+
+        result = await svc.scan("STK", "MOST_ACTIVE", "STK.US.MAJOR", [], 50)
+
+        assert result.results == []
+        assert result.total_scanned == 1  # pre-filter count still counts it
+        assert result.total_matched == 0
+
+    @pytest.mark.asyncio
     async def test_snapshot_error_skips_batch_gracefully(self):
-        """A failing snapshot batch (IBKRError) should not crash the scan."""
-        ibkr = make_ibkr_mock()
+        """A failing snapshot batch (IBKRError) doesn't crash — rows with no
+        data become ticker-only and get filtered out. scan() still returns a
+        valid (empty) ScanResponse instead of propagating the error."""
+        ibkr = make_ibkr_mock(contract_info={})  # no mc fallback either
         ibkr.snapshot = AsyncMock(side_effect=IBKRError("network error"))
         svc = ScreenerService(ibkr)
 
         result = await svc.scan("STK", "MOST_ACTIVE", "STK.US.MAJOR", [], 50)
 
-        # Rows returned but with None quote fields
-        assert len(result.results) == 2
-        for row in result.results:
-            assert row.last_price is None
+        assert isinstance(result, ScanResponse)
+        # Both AAPL & MSFT had no snapshot data → dropped as ticker-only
+        assert result.results == []
+        assert result.total_scanned == 2
 
 
 # ── _parse_scanner_results ────────────────────────────────────
@@ -492,6 +565,91 @@ class TestSafeFloat:
         assert _safe_float(float("nan")) is None
 
 
+# ── Snapshot two-pass + market-cap enrichment (Phase 5C) ──────
+
+
+class TestSnapshotTwoPass:
+    """
+    Phase 5C: `_batch_snapshots` runs a second pass for any conid missing a
+    required field after pass 1. Pass-2 fields merge on top of pass-1 without
+    wiping fields pass-1 already filled.
+    """
+
+    @pytest.mark.asyncio
+    async def test_pass_two_merges_with_pass_one(self):
+        """
+        Pass 1 returns AAPL missing volume + mc.
+        Pass 2 returns AAPL with volume + mc only (other fields absent).
+        Final merged quote has ALL fields → row has every quote value populated.
+        (Side-effect test only — we don't spy on call counts per 1b.)
+        """
+        scan_results = [{"conid": 265598, "symbol": "AAPL"}]
+        pass_1 = [{"conid": 265598, "55": "AAPL", "31": "185.50", "83": "1.23"}]
+        pass_2 = [{"conid": 265598, "7762": "52000000", "7289": "2900000"}]
+
+        ibkr = make_ibkr_mock(scan_results=scan_results)
+        ibkr.snapshot = AsyncMock(side_effect=[pass_1, pass_2])
+        svc = ScreenerService(ibkr)
+
+        result = await svc.scan("STK", "MOST_ACTIVE", "STK.US.MAJOR", [], 50)
+
+        assert len(result.results) == 1
+        row = result.results[0]
+        # Pass 1 values survived
+        assert row.last_price == 185.50
+        assert row.change_percent == 1.23
+        # Pass 2 filled the stragglers
+        assert row.volume == 52000000.0
+        assert row.market_cap == 2900000.0
+
+
+class TestMarketCapEnrichment:
+    """
+    Phase 5C: rows still missing `market_cap` after both snapshot passes get
+    enriched via /iserver/contract/{conid}/info → `marketCap` field.
+    """
+
+    @pytest.mark.asyncio
+    async def test_contract_info_fills_missing_market_cap(self):
+        """
+        Snapshot returns everything EXCEPT 7289. _enrich_market_caps calls
+        ibkr.contract_info(conid) once per missing row and populates
+        row.market_cap from the returned `marketCap` string (MILLIONS).
+        """
+        scan_results = [{"conid": 265598, "symbol": "AAPL"}]
+        snapshot_results = [{
+            "conid": 265598, "55": "AAPL",
+            "31": "185.50", "83": "1.23", "7762": "52000000",
+            # 7289 deliberately absent
+        }]
+
+        ibkr = make_ibkr_mock(
+            scan_results=scan_results,
+            snapshot_results=snapshot_results,
+            contract_info={"marketCap": "3285420"},  # $3.285T in millions
+        )
+        svc = ScreenerService(ibkr)
+
+        result = await svc.scan("STK", "MOST_ACTIVE", "STK.US.MAJOR", [], 50)
+
+        assert len(result.results) == 1
+        row = result.results[0]
+        assert row.market_cap == 3285420.0
+        # Was called exactly once for this single missing row
+        assert ibkr.contract_info.await_count == 1
+        ibkr.contract_info.assert_awaited_with(265598)
+
+    @pytest.mark.asyncio
+    async def test_contract_info_not_called_when_snapshot_has_market_cap(self):
+        """If snapshot already filled 7289 we skip the enrichment fetch."""
+        ibkr = make_ibkr_mock()  # default mocks include 7289 in snapshot
+        svc = ScreenerService(ibkr)
+
+        await svc.scan("STK", "MOST_ACTIVE", "STK.US.MAJOR", [], 50)
+
+        assert ibkr.contract_info.await_count == 0
+
+
 # ── Pagination Tests ──────────────────────────────────────────
 
 
@@ -501,7 +659,7 @@ class TestPagination:
     async def test_pagination_first_page(self):
         """First page of 60 results, page_size=25 → 25 rows, total_pages=3."""
         many = [{"conid": 100 + i, "symbol": f"T{i}"} for i in range(60)]
-        ibkr = make_ibkr_mock(scan_results=many, snapshot_results=[])
+        ibkr = make_ibkr_mock(scan_results=many)
         svc = ScreenerService(ibkr)
 
         result = await svc.scan(
@@ -526,7 +684,7 @@ class TestPagination:
     async def test_pagination_last_page(self):
         """Last page of 60 results, page_size=25 → 10 rows."""
         many = [{"conid": 100 + i, "symbol": f"T{i}"} for i in range(60)]
-        ibkr = make_ibkr_mock(scan_results=many, snapshot_results=[])
+        ibkr = make_ibkr_mock(scan_results=many)
         svc = ScreenerService(ibkr)
 
         result = await svc.scan(
@@ -549,7 +707,7 @@ class TestPagination:
     async def test_pagination_out_of_range(self):
         """Out-of-range page → 0 rows."""
         many = [{"conid": 100 + i, "symbol": f"T{i}"} for i in range(60)]
-        ibkr = make_ibkr_mock(scan_results=many, snapshot_results=[])
+        ibkr = make_ibkr_mock(scan_results=many)
         svc = ScreenerService(ibkr)
 
         result = await svc.scan(
