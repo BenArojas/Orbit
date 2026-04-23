@@ -21,6 +21,7 @@ import { Button } from "@/components/ui/button";
 import { api, type FilterCatalogueEntry } from "@/lib/api";
 import { useScreenerStore, type ActiveFilter } from "@/store/screener";
 import { PresetSkeleton } from "./ScreenerSkeleton";
+import NumericFilterInput from "./NumericFilterInput";
 
 // ── Helpers ───────────────────────────────────────────────────
 
@@ -138,14 +139,11 @@ function FilterPill({
             {entry.label}&nbsp;{direction === "above" ? "≥" : "≤"}
           </p>
           <div className="flex items-center gap-1.5">
-            <input
-              type="number"
+            <NumericFilterInput
               value={value}
-              onChange={(e) => setValue(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") handleSave();
-                if (e.key === "Escape") setOpen(false);
-              }}
+              onChange={setValue}
+              onEnter={handleSave}
+              onEscape={() => setOpen(false)}
               className="w-24 rounded border border-[var(--border)] bg-[var(--bg-3)] px-2 py-1 font-data text-[11px] text-[var(--text-1)] outline-none focus:border-[var(--clr-cyan)]"
               autoFocus
             />
@@ -223,14 +221,11 @@ function QuickPickChip({
             {entry.label}&nbsp;{entry.direction === "above" ? "≥" : "≤"}
           </p>
           <div className="flex items-center gap-1.5">
-            <input
-              type="number"
+            <NumericFilterInput
               value={value}
-              onChange={(e) => setValue(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") handleAdd();
-                if (e.key === "Escape") setOpen(false);
-              }}
+              onChange={setValue}
+              onEnter={handleAdd}
+              onEscape={() => setOpen(false)}
               className="w-24 rounded border border-[var(--border)] bg-[var(--bg-3)] px-2 py-1 font-data text-[11px] text-[var(--text-1)] outline-none focus:border-[var(--clr-cyan)]"
               autoFocus
             />
@@ -425,11 +420,10 @@ function AddFilterDropdown({
 
             {/* Value input */}
             <div className="flex items-center gap-1">
-              <input
-                type="number"
+              <NumericFilterInput
                 value={value}
-                onChange={(e) => setValue(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && handleAdd()}
+                onChange={setValue}
+                onEnter={handleAdd}
                 placeholder={selected.entry.example}
                 className="w-full rounded border border-[var(--border)] bg-[var(--bg-3)] px-2 py-1 font-data text-[11px] text-[var(--text-1)] outline-none focus:border-[var(--clr-cyan)]"
                 autoFocus
@@ -467,10 +461,16 @@ export default function ScreenerFilterBar({
   onScan,
   aiPanelOpen = false,
   onToggleAiPanel,
+  onClearResults,
+  showClearResults = false,
 }: {
   onScan: () => void;
   aiPanelOpen?: boolean;
   onToggleAiPanel?: () => void;
+  /** Parent supplies the reset side-effects (store reset + scanMutation.reset). */
+  onClearResults?: () => void;
+  /** Show the Clear Results button (results exist or there is a scan error). */
+  showClearResults?: boolean;
 }) {
   const {
     filters,
@@ -538,6 +538,7 @@ export default function ScreenerFilterBar({
                   value={`${p.instrument}:${p.scan_type}:${p.location}`}
                 >
                   {p.display_name}
+                  {p.subtitle ? ` — ${p.subtitle}` : ""}
                 </option>
               ))}
             </optgroup>
@@ -550,11 +551,23 @@ export default function ScreenerFilterBar({
                   value={`${p.instrument}:${p.scan_type}:${p.location}`}
                 >
                   {p.display_name}
+                  {p.subtitle ? ` — ${p.subtitle}` : ""}
                 </option>
               ))}
             </optgroup>
           )}
         </select>
+      )}
+
+      {/* Preset subtitle hint (e.g. "Pre-market only") — explains why a scan
+          may legitimately return 0 rows outside its operating window. */}
+      {selectedPreset?.subtitle && (
+        <span
+          data-testid="preset-subtitle"
+          className="rounded-full bg-[var(--bg-2)] border border-[var(--border)] px-2 py-0.5 text-[10px] italic text-[var(--text-3)]"
+        >
+          {selectedPreset.subtitle}
+        </span>
       )}
 
       {/* Separator */}
@@ -582,10 +595,11 @@ export default function ScreenerFilterBar({
         />
       ))}
 
-      {/* Clear all */}
+      {/* Clear filters (in-place — keeps results visible) */}
       {filters.length > 0 && (
         <button
           onClick={clearFilters}
+          title="Remove all filters (keeps current results)"
           className="flex items-center gap-1 text-[10px] text-[var(--text-3)] transition-colors hover:text-[var(--clr-red)]"
         >
           <RotateCcw size={10} />
@@ -595,6 +609,18 @@ export default function ScreenerFilterBar({
 
       {/* Spacer */}
       <div className="flex-1" />
+
+      {/* Clear results — wipes results + preset + filters so the empty-state cards reappear */}
+      {showClearResults && onClearResults && (
+        <button
+          onClick={onClearResults}
+          title="Clear results and return to the start screen"
+          className="flex items-center gap-1.5 rounded-md border border-[var(--border)] px-2.5 py-1 text-[11px] font-medium text-[var(--text-3)] transition-colors hover:border-[var(--clr-red)] hover:text-[var(--clr-red)]"
+        >
+          <RotateCcw size={12} />
+          Clear results
+        </button>
+      )}
 
       {/* AI panel toggle */}
       {onToggleAiPanel && (

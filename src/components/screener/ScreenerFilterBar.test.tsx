@@ -166,9 +166,10 @@ describe("Quick-pick chips", () => {
   it("clicking a chip opens a value input pre-filled with the example", () => {
     render(<ScreenerFilterBar onScan={vi.fn()} />);
     fireEvent.click(screen.getByText("Price"));
-    const input = screen.getByRole("spinbutton");
+    // NumericFilterInput is type="text" → role "textbox" (was "spinbutton" before)
+    const input = screen.getByRole("textbox") as HTMLInputElement;
     expect(input).toBeInTheDocument();
-    expect((input as HTMLInputElement).value).toBe("10");
+    expect(input.value).toBe("10");
   });
 });
 
@@ -200,6 +201,50 @@ describe("Grouped preset select", () => {
     });
     render(<ScreenerFilterBar onScan={vi.fn()} />);
     expect(screen.getByTestId("preset-skeleton")).toBeInTheDocument();
+  });
+
+  it("appends preset.subtitle to the option label when present", () => {
+    const presetsWithSubtitle: ScannerPreset[] = [
+      POPULAR_PRESET,
+      {
+        instrument: "STK",
+        scan_type: "TOP_OPEN_PERC_GAIN",
+        location: "STK.US.MAJOR",
+        display_name: "Pre-Market Gainers",
+        category: "niche",
+        subtitle: "Pre-market only",
+      },
+    ];
+    useQueryMock.mockImplementation(({ queryKey }: { queryKey: unknown[] }) => {
+      if (queryKey[0] === "screener-presets") return { data: presetsWithSubtitle, isLoading: false };
+      return defaultUseQuery({ queryKey });
+    });
+    render(<ScreenerFilterBar onScan={vi.fn()} />);
+    const opts = screen.getByRole("combobox").querySelectorAll("option");
+    const text = Array.from(opts).map((o) => o.textContent).join("|");
+    expect(text).toMatch(/Pre-Market Gainers — Pre-market only/);
+  });
+
+  it("renders the subtitle hint chip when the selected preset has a subtitle", () => {
+    const subtitled: ScannerPreset = {
+      instrument: "STK",
+      scan_type: "TOP_OPEN_PERC_GAIN",
+      location: "STK.US.MAJOR",
+      display_name: "Pre-Market Gainers",
+      category: "niche",
+      subtitle: "Pre-market only",
+    };
+    mockStore.selectedPreset = subtitled;
+    render(<ScreenerFilterBar onScan={vi.fn()} />);
+    const hint = screen.getByTestId("preset-subtitle");
+    expect(hint).toBeInTheDocument();
+    expect(hint).toHaveTextContent("Pre-market only");
+  });
+
+  it("does NOT render the subtitle hint chip when the selected preset has no subtitle", () => {
+    mockStore.selectedPreset = POPULAR_PRESET; // no subtitle on this fixture
+    render(<ScreenerFilterBar onScan={vi.fn()} />);
+    expect(screen.queryByTestId("preset-subtitle")).not.toBeInTheDocument();
   });
 });
 
@@ -242,18 +287,20 @@ describe("Active filter pills", () => {
     });
     fireEvent.click(pillBody);
 
-    // Popover should render a number input pre-filled with the current value
-    const input = screen.getByRole("spinbutton") as HTMLInputElement;
+    // Popover renders a NumericFilterInput (type="text" → role "textbox")
+    // pre-filled with the current value. Comma-formatted on display.
+    const input = screen.getByRole("textbox") as HTMLInputElement;
     expect(input.value).toBe("10");
 
-    // Change the value and save
-    fireEvent.change(input, { target: { value: "25" } });
+    // Change the value and save — NumericFilterInput strips commas before
+    // calling onChange, so user-typed "25,000" arrives as "25000".
+    fireEvent.change(input, { target: { value: "25,000" } });
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
 
     expect(mockStore.updateFilter).toHaveBeenCalledWith(
       "f-1",
-      "25",
-      "Price ≥ 25 $",
+      "25000",
+      "Price ≥ 25000 $",
     );
   });
 
@@ -272,6 +319,29 @@ describe("Active filter pills", () => {
     expect(
       screen.queryByRole("button", { name: /Edit filter: Unknown/i }),
     ).not.toBeInTheDocument();
+  });
+});
+
+// ── Clear Results button ──────────────────────────────────────
+
+describe("Clear Results button", () => {
+  it("does not render when showClearResults=false", () => {
+    render(<ScreenerFilterBar onScan={vi.fn()} />);
+    expect(screen.queryByRole("button", { name: /Clear results/i })).not.toBeInTheDocument();
+  });
+
+  it("renders and fires onClearResults when showClearResults=true", () => {
+    const onClearResults = vi.fn();
+    render(
+      <ScreenerFilterBar
+        onScan={vi.fn()}
+        showClearResults
+        onClearResults={onClearResults}
+      />,
+    );
+    const btn = screen.getByRole("button", { name: /Clear results/i });
+    fireEvent.click(btn);
+    expect(onClearResults).toHaveBeenCalledTimes(1);
   });
 });
 

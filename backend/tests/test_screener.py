@@ -26,8 +26,13 @@ from models import (
     ScreenerResultRow,
     ScannerParamsResponse,
 )
-from exceptions import IBKRError, ScannerUnavailableError
-from services.screener import DEFAULT_PRESETS, ScreenerService, _safe_float
+from exceptions import IBKRError, IBKRRequestError
+from services.screener import (
+    DEFAULT_PRESETS,
+    ScreenerService,
+    _BASELINE_LIQUIDITY_FILTERS,
+    _safe_float,
+)
 
 
 # ── Fixtures ─────────────────────────────────────────────────
@@ -164,12 +169,25 @@ class TestScreenerServiceScan:
         assert call_kwargs.get("sort", "") == ""
 
     @pytest.mark.asyncio
-    async def test_raises_on_empty_scanner_response(self):
+    async def test_returns_empty_scan_response_on_empty_scanner(self):
+        """
+        Behaviour change (Phase 5C): an IBKR scanner returning 0 contracts is a
+        legitimate "no matches right now" — surface it as an empty ScanResponse,
+        not an error. The frontend re-shows the quick-pick cards in this state.
+        """
         ibkr = make_ibkr_mock(scan_results=[])
         svc = ScreenerService(ibkr)
 
-        with pytest.raises(ScannerUnavailableError):
-            await svc.scan("STK", "MOST_ACTIVE", "STK.US.MAJOR", [], 50)
+        result = await svc.scan(
+            "STK", "MOST_ACTIVE", "STK.US.MAJOR", [], 50,
+        )
+
+        assert isinstance(result, ScanResponse)
+        assert result.results == []
+        assert result.total_scanned == 0
+        assert result.total_matched == 0
+        assert result.scan_type == "MOST_ACTIVE"
+        assert result.location == "STK.US.MAJOR"
 
     @pytest.mark.asyncio
     async def test_max_results_caps_universe(self):
@@ -695,6 +713,61 @@ class TestPresets:
         assert hasattr(preset, "default_filters")
         assert isinstance(preset.default_filters, list)
 
+    def test_baseline_liquidity_filters_on_gated_presets(self):
+        """
+        IBKR's 'Finished: EMPTY response is received.' 500 quirk hits hardest
+        on the 5 liquidity-gated scanners. Each one must ship with the baseline
+        priceAbove=1 + volumeAbove=100000 floor so users don't see error banners
+        on slow tapes.
+        """
+        gated = {
+            ("HIGH_VS_52W_HL", "STK.US.MAJOR"),
+            ("LOW_VS_52W_HL", "STK.US.MAJOR"),
+            ("HIGH_VS_13W_HL", "STK.US.MAJOR"),
+            ("LOW_VS_13W_HL", "STK.US.MAJOR"),
+            ("TOP_PERC_GAIN", "STK.US.MINOR"),  # US Small Cap
+        }
+        for p in DEFAULT_PRESETS:
+            key = (p["scan_type"], p["location"])
+            if key in gated:
+                assert p.get("default_filters") == _BASELINE_LIQUIDITY_FILTERS, (
+                    f"Preset {p['display_name']} missing baseline liquidity filters"
+                )
+
+    def test_baseline_filter_codes_and_values(self):
+        """Baseline floor is priceAbove=1 + volumeAbove=100000 (locked)."""
+        codes = {f["code"]: f["value"] for f in _BASELINE_LIQUIDITY_FILTERS}
+        assert codes == {"priceAbove": "1", "volumeAbove": "100000"}
+
+    def test_premarket_presets_carry_subtitle(self):
+        """Pre-market scanners must surface a 'Pre-market only' subtitle so the
+        UI can warn users why a scan returns 0 outside trading hours."""
+        premarket_scan_types = {"TOP_OPEN_PERC_GAIN", "TOP_OPEN_PERC_LOSE"}
+        seen = set()
+        for p in DEFAULT_PRESETS:
+            if p["scan_type"] in premarket_scan_types:
+                seen.add(p["scan_type"])
+                assert p.get("subtitle") == "Pre-market only", (
+                    f"Pre-market preset {p['display_name']} missing subtitle"
+                )
+        assert seen == premarket_scan_types
+
+    def test_non_gated_presets_have_no_default_filters(self):
+        """Most Active / Top Gainers etc. should NOT carry baseline filters —
+        they get plenty of contracts naturally and the floor would skew them."""
+        non_gated = {
+            ("MOST_ACTIVE", "STK.US.MAJOR"),
+            ("TOP_PERC_GAIN", "STK.US.MAJOR"),
+            ("TOP_PERC_LOSE", "STK.US.MAJOR"),
+            ("HOT_BY_VOLUME", "STK.US.MAJOR"),
+        }
+        for p in DEFAULT_PRESETS:
+            key = (p["scan_type"], p["location"])
+            if key in non_gated:
+                assert not p.get("default_filters"), (
+                    f"Preset {p['display_name']} should not carry baseline filters"
+                )
+
 
 # ── FILTER_CATALOGUE + GET /screener/filter-catalogue ─────────
 
@@ -952,6 +1025,69 @@ class TestScannerRunResponseParsing:
         )
 
         assert results == []
+
+    @pytest.mark.asyncio
+    async def test_ibkr_500_empty_response_is_caught(self):
+        """
+        IBKR returns HTTP 500 with body
+        {"error":"Finished: EMPTY response is received."}
+        for time-of-day-gated scanners (52W highs on a slow tape, pre-market
+        scanners outside hours). scanner_run must catch this specific 500 and
+        return [] instead of bubbling the error up.
+        """
+        svc = _make_ibkr_svc()
+        svc.ensure_accounts = AsyncMock()
+
+        async def fake_request(method, path, **kwargs):
+            raise IBKRRequestError(
+                500, detail='{"error":"Finished: EMPTY response is received."}',
+            )
+
+        svc._request = fake_request
+
+        results = await svc.scanner_run(
+            instrument="STK",
+            scan_type="HIGH_VS_52W_HL",
+            location="STK.US.MAJOR",
+        )
+
+        assert results == []
+
+    @pytest.mark.asyncio
+    async def test_ibkr_500_unrelated_body_still_raises(self):
+        """A 500 with a different body (real failure) must still propagate."""
+        svc = _make_ibkr_svc()
+        svc.ensure_accounts = AsyncMock()
+
+        async def fake_request(method, path, **kwargs):
+            raise IBKRRequestError(500, detail="Internal server error")
+
+        svc._request = fake_request
+
+        with pytest.raises(IBKRRequestError):
+            await svc.scanner_run(
+                instrument="STK",
+                scan_type="MOST_ACTIVE",
+                location="STK.US.MAJOR",
+            )
+
+    @pytest.mark.asyncio
+    async def test_ibkr_400_still_raises(self):
+        """Non-500 errors (e.g. 400 bad filter) must still propagate."""
+        svc = _make_ibkr_svc()
+        svc.ensure_accounts = AsyncMock()
+
+        async def fake_request(method, path, **kwargs):
+            raise IBKRRequestError(400, detail="bad filter code")
+
+        svc._request = fake_request
+
+        with pytest.raises(IBKRRequestError):
+            await svc.scanner_run(
+                instrument="STK",
+                scan_type="MOST_ACTIVE",
+                location="STK.US.MAJOR",
+            )
 
 
 # ── Phase C: required_fields param on snapshot() ─────────────

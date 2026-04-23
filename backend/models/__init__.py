@@ -736,6 +736,9 @@ class ScannerPreset(BaseModel):
     display_name: str                                   # Human-readable name
     category: Literal["popular", "niche"] = "popular"   # Grouping for the preset combobox
     default_filters: list["IbkrFilterItem"] = []       # Optional preset filters
+    # Optional caveat shown under the preset name in the UI (e.g. "Pre-market only")
+    # so users understand why a scanner returns 0 rows outside its operating window.
+    subtitle: str | None = None
 
 
 class IbkrFilterItem(BaseModel):

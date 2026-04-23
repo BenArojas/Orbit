@@ -545,6 +545,9 @@ export interface ScannerPreset {
   /** "popular" = always-visible section; "niche" = collapsed "More screens" */
   category?: "popular" | "niche";
   default_filters?: IbkrFilterItem[];
+  /** Optional caveat shown next to the preset name in the UI
+   *  (e.g. "Pre-market only" so users know why a scan returns 0 outside hours). */
+  subtitle?: string | null;
 }
 
 /**

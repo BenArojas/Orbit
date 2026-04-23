@@ -873,7 +873,23 @@ class IBKRService:
         if sort:
             body["sort"] = sort
 
-        data = await self._request("POST", "/iserver/scanner/run", json=body)
+        # IBKR quirk: when a scanner matches zero rows server-side it returns
+        # HTTP 500 with body {"error":"Finished: EMPTY response is received."}
+        # instead of an empty contracts array. This happens for time-of-day
+        # gated scanners (52W highs on a slow tape, pre-market scanners outside
+        # pre-market hours, 13W highs/lows on quiet days). Treat as "no matches"
+        # rather than a real failure so the UI shows the empty state instead of
+        # an error banner.
+        try:
+            data = await self._request("POST", "/iserver/scanner/run", json=body)
+        except IBKRRequestError as exc:
+            if exc.status_code == 500 and "EMPTY response" in str(exc):
+                log.info(
+                    "Scanner %s/%s/%s returned EMPTY (IBKR 500) — treating as no matches",
+                    instrument, scan_type, location,
+                )
+                return []
+            raise
         dump_if_first("scanner_run", data)
 
         # /iserver/scanner/run returns {"contracts": [...], "scan_data_column_name": "..."}

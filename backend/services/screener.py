@@ -51,11 +51,22 @@ SNAPSHOT_REQUIRED_FIELDS = [
     FIELD_CHANGE_PCT,   # 83
     FIELD_VOLUME,       # 7762
 ]
-from exceptions import IBKRError, ScannerUnavailableError
+from exceptions import IBKRError
 from models import IbkrFilterItem, ScreenerResultRow, ScanResponse
 from services.ibkr import IBKRService
 
 log = logging.getLogger("parallax.screener")
+
+# Baseline liquidity floor applied to scanners that previously returned IBKR's
+# "Finished: EMPTY response is received." 500 on slow tapes (52W/13W highs+lows,
+# US small caps). The floor (any-price ≥ $1, volume ≥ 100k) is loose enough not
+# to skew the screen but blocks penny-stock noise that IBKR's empty-set quirk
+# triggers on. Pre-market scanners use the EMPTY-catch in scanner_run instead
+# (filters won't help when the gating issue is time-of-day, not liquidity).
+_BASELINE_LIQUIDITY_FILTERS: list[dict[str, str]] = [
+    {"code": "priceAbove", "value": "1"},
+    {"code": "volumeAbove", "value": "100000"},
+]
 
 # Default scanner presets exposed to the frontend.
 #
@@ -65,7 +76,7 @@ log = logging.getLogger("parallax.screener")
 #
 # Every `scan_type` + `location` pair has been grep-verified against the
 # raw `/iserver/scanner/params` dump (backend/ibkr_scanner_params.json).
-DEFAULT_PRESETS: list[dict[str, str]] = [
+DEFAULT_PRESETS: list[dict[str, Any]] = [
     # ── Popular ────────────────────────────────────────────────
     {
         "instrument": "STK",
@@ -101,6 +112,7 @@ DEFAULT_PRESETS: list[dict[str, str]] = [
         "location": "STK.US.MAJOR",
         "display_name": "52-Week Highs — US Stocks",
         "category": "popular",
+        "default_filters": _BASELINE_LIQUIDITY_FILTERS,
     },
     {
         "instrument": "STK",
@@ -108,6 +120,7 @@ DEFAULT_PRESETS: list[dict[str, str]] = [
         "location": "STK.US.MAJOR",
         "display_name": "52-Week Lows — US Stocks",
         "category": "popular",
+        "default_filters": _BASELINE_LIQUIDITY_FILTERS,
     },
     # ── More screens (niche) ───────────────────────────────────
     {
@@ -116,6 +129,7 @@ DEFAULT_PRESETS: list[dict[str, str]] = [
         "location": "STK.US.MINOR",
         "display_name": "Top % Gainers — US Small Cap",
         "category": "niche",
+        "default_filters": _BASELINE_LIQUIDITY_FILTERS,
     },
     {
         "instrument": "ETF.EQ.US",
@@ -130,6 +144,7 @@ DEFAULT_PRESETS: list[dict[str, str]] = [
         "location": "STK.US.MAJOR",
         "display_name": "Pre-Market Gainers",
         "category": "niche",
+        "subtitle": "Pre-market only",
     },
     {
         "instrument": "STK",
@@ -137,6 +152,7 @@ DEFAULT_PRESETS: list[dict[str, str]] = [
         "location": "STK.US.MAJOR",
         "display_name": "Pre-Market Losers",
         "category": "niche",
+        "subtitle": "Pre-market only",
     },
     {
         "instrument": "STK",
@@ -144,6 +160,7 @@ DEFAULT_PRESETS: list[dict[str, str]] = [
         "location": "STK.US.MAJOR",
         "display_name": "13-Week Highs",
         "category": "niche",
+        "default_filters": _BASELINE_LIQUIDITY_FILTERS,
     },
     {
         "instrument": "STK",
@@ -151,6 +168,7 @@ DEFAULT_PRESETS: list[dict[str, str]] = [
         "location": "STK.US.MAJOR",
         "display_name": "13-Week Lows",
         "category": "niche",
+        "default_filters": _BASELINE_LIQUIDITY_FILTERS,
     },
     {
         "instrument": "STK",
@@ -251,9 +269,24 @@ class ScreenerService:
             sort=sort_code,
         )
 
+        # An empty raw result is a valid outcome — IBKR scanners can legitimately
+        # match zero rows (52W highs on a slow tape, pre-market screens outside
+        # pre-market hours). Frontend handles the empty state by re-showing the
+        # quick-pick cards. No exception, no error banner.
         if not raw_results:
-            raise ScannerUnavailableError(
-                f"Scanner '{scan_type}' returned no results for {location}"
+            log.info(
+                "Scanner %s/%s returned 0 contracts — empty ScanResponse",
+                scan_type, location,
+            )
+            return ScanResponse(
+                results=[],
+                total_scanned=0,
+                total_matched=0,
+                scan_type=scan_type,
+                location=location,
+                page=page,
+                page_size=page_size,
+                total_pages=1,
             )
 
         universe = self._parse_scanner_results(raw_results, max_results)

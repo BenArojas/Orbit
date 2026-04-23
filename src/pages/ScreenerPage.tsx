@@ -159,6 +159,7 @@ export default function ScreenerPage() {
     setScanning,
     replaceResults,
     applyPreset,
+    resetScreener,
   } = useScreenerStore();
 
   // Presets are also fetched in ScreenerFilterBar — React Query deduplicates.
@@ -168,11 +169,20 @@ export default function ScreenerPage() {
     staleTime: 60_000 * 60,
   });
 
+  // Tracks the most recent scan that completed successfully but matched 0 rows
+  // (e.g. 13W highs on a slow tape). Used to swap the cold-start headline for
+  // a "no matches right now" hint above the same quick-pick cards.
+  const [lastScanWasEmpty, setLastScanWasEmpty] = useState(false);
+
   const scanMutation = useMutation({
     mutationFn: (req: ScanRequest) => api.screenerScan(req),
-    onMutate: () => setScanning(true),
+    onMutate: () => {
+      setScanning(true);
+      setLastScanWasEmpty(false);
+    },
     onSuccess: (data) => {
       replaceResults(data.results, data.total_scanned);
+      setLastScanWasEmpty(data.results.length === 0);
     },
     onSettled: () => setScanning(false),
   });
@@ -235,6 +245,12 @@ export default function ScreenerPage() {
         onScan={handleScan}
         aiPanelOpen={aiPanelOpen}
         onToggleAiPanel={() => setAiPanelOpen((v) => !v)}
+        showClearResults={results.length > 0 || scanMutation.isError || lastScanWasEmpty}
+        onClearResults={() => {
+          resetScreener();
+          scanMutation.reset();
+          setLastScanWasEmpty(false);
+        }}
       />
 
       {/* Error state */}
@@ -253,12 +269,27 @@ export default function ScreenerPage() {
           {showEmptyState ? (
             <div className="flex flex-1 flex-col items-center justify-center gap-6 p-8">
               <div className="text-center">
-                <p className="text-[13px] font-semibold text-[var(--text-1)]">
-                  Pick a preset or try a quick scan
-                </p>
-                <p className="mt-1 text-[11px] text-[var(--text-3)]">
-                  Select a scanner preset above, or click a card to run a pre-built screen
-                </p>
+                {lastScanWasEmpty ? (
+                  <>
+                    <p className="text-[13px] font-semibold text-[var(--text-1)]">
+                      No matches for this preset right now
+                    </p>
+                    <p className="mt-1 text-[11px] text-[var(--text-3)]">
+                      {selectedPreset?.subtitle
+                        ? `${selectedPreset.subtitle} — try again during its window, or pick a different preset below.`
+                        : "Try a different preset, or pick a quick scan card below."}
+                    </p>
+                  </>
+                ) : (
+                  <>
+                    <p className="text-[13px] font-semibold text-[var(--text-1)]">
+                      Pick a preset or try a quick scan
+                    </p>
+                    <p className="mt-1 text-[11px] text-[var(--text-3)]">
+                      Select a scanner preset above, or click a card to run a pre-built screen
+                    </p>
+                  </>
+                )}
               </div>
 
               {/* Try this cards */}
