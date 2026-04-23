@@ -107,6 +107,12 @@ interface ScreenerState {
   appendResults: (rows: ScreenerResultRow[], totalScanned: number) => void;
 
   clearResults: () => void;
+  /**
+   * Full-reset escape hatch — wipes filters, preset, results, page, sort, and
+   * the dirty flag in one go so the empty-state "Try this" cards reappear.
+   * Used by the Clear Results button in the filter bar.
+   */
+  resetScreener: () => void;
   setSort: (col: string, dir: SortDir) => void;
   setPage: (page: number) => void;
   setPeekConid: (conid: number | null) => void;
@@ -200,6 +206,19 @@ export const useScreenerStore = create<ScreenerState>()((set) => ({
       totalScanned: 0,
       page: 1,
       sortBy: "",
+    }),
+
+  resetScreener: () =>
+    set({
+      filters: [],
+      selectedPreset: null,
+      results: [],
+      lastBatchSize: 0,
+      totalScanned: 0,
+      page: 1,
+      sortBy: "",
+      sortDir: "desc",
+      isDirty: false,
     }),
 
   setSort: (col, dir) => set({ sortBy: col, sortDir: dir }),
