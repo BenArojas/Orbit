@@ -437,26 +437,29 @@ class TestDefaultPresets:
         assert len(DEFAULT_PRESETS) >= 1
 
     def test_preset_grouping_counts(self):
-        """Locked by spec §3: 6 popular + 10 niche = 16 total."""
+        """6 popular + 9 niche = 15 total. (Was 16 before US Small Cap was
+        removed in favor of "Top % Gainers" + Location: US OTC.)"""
         popular = [p for p in DEFAULT_PRESETS if p["category"] == "popular"]
         niche = [p for p in DEFAULT_PRESETS if p["category"] == "niche"]
         assert len(popular) == 6
-        assert len(niche) == 10
-        assert len(DEFAULT_PRESETS) == 16
+        assert len(niche) == 9
+        assert len(DEFAULT_PRESETS) == 15
 
     def test_popular_presets_match_spec(self):
-        """D6 popular section must contain the exact 6 display names from spec §3."""
+        """The 6 popular presets are region-agnostic — region now comes from
+        the Location dropdown in the UI, so the display names dropped their
+        '— US Stocks' suffix."""
         popular_names = {
             p["display_name"] for p in DEFAULT_PRESETS
             if p["category"] == "popular"
         }
         assert popular_names == {
-            "Most Active — US Stocks",
-            "Top % Gainers — US Stocks",
-            "Top % Losers — US Stocks",
-            "Hot by Volume — US Stocks",
-            "52-Week Highs — US Stocks",
-            "52-Week Lows — US Stocks",
+            "Most Active",
+            "Top % Gainers",
+            "Top % Losers",
+            "Hot by Volume",
+            "52-Week Highs",
+            "52-Week Lows",
         }
 
     def test_niche_presets_include_new_screens(self):
@@ -821,12 +824,15 @@ class TestPresets:
         priceAbove=1 + volumeAbove=100000 floor so users don't see error banners
         on slow tapes.
         """
+        # Note: TOP_PERC_GAIN+STK.US.MINOR was previously in this list (the
+        # "US Small Cap" preset) but that preset was removed in favor of the
+        # generic "Top % Gainers" + Location: US OTC combo. The 4 gated
+        # scanners that remain still need the baseline floor.
         gated = {
             ("HIGH_VS_52W_HL", "STK.US.MAJOR"),
             ("LOW_VS_52W_HL", "STK.US.MAJOR"),
             ("HIGH_VS_13W_HL", "STK.US.MAJOR"),
             ("LOW_VS_13W_HL", "STK.US.MAJOR"),
-            ("TOP_PERC_GAIN", "STK.US.MINOR"),  # US Small Cap
         }
         for p in DEFAULT_PRESETS:
             key = (p["scan_type"], p["location"])

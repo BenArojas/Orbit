@@ -85,7 +85,17 @@ _BASELINE_LIQUIDITY_FILTERS: list[dict[str, str]] = [
 #
 # Grouped for the UI combobox:
 #   - "popular" (6): always visible in the preset dropdown.
-#   - "niche"   (10): under a collapsible "More screens" section.
+#   - "niche"   (9): under a collapsible "More screens" section.
+#
+# Display names are region-AGNOSTIC — region is now picked separately via
+# the Location dropdown in the UI (see LOCATION_OPTIONS in
+# src/components/screener/ScreenerFilterBar.tsx). The `location` field
+# below is the *default* location used when no override is set; when the
+# user picks a location it overrides the value below at request time.
+#
+# ETF and FUT presets keep instrument-specific qualifiers in the display
+# name (e.g. "— US ETFs") because the location dropdown is disabled for
+# non-STK presets — the bundled location is the only one that works.
 #
 # Every `scan_type` + `location` pair has been grep-verified against the
 # raw `/iserver/scanner/params` dump (backend/ibkr_scanner_params.json).
@@ -95,35 +105,35 @@ DEFAULT_PRESETS: list[dict[str, Any]] = [
         "instrument": "STK",
         "scan_type": "MOST_ACTIVE",
         "location": "STK.US.MAJOR",
-        "display_name": "Most Active — US Stocks",
+        "display_name": "Most Active",
         "category": "popular",
     },
     {
         "instrument": "STK",
         "scan_type": "TOP_PERC_GAIN",
         "location": "STK.US.MAJOR",
-        "display_name": "Top % Gainers — US Stocks",
+        "display_name": "Top % Gainers",
         "category": "popular",
     },
     {
         "instrument": "STK",
         "scan_type": "TOP_PERC_LOSE",
         "location": "STK.US.MAJOR",
-        "display_name": "Top % Losers — US Stocks",
+        "display_name": "Top % Losers",
         "category": "popular",
     },
     {
         "instrument": "STK",
         "scan_type": "HOT_BY_VOLUME",
         "location": "STK.US.MAJOR",
-        "display_name": "Hot by Volume — US Stocks",
+        "display_name": "Hot by Volume",
         "category": "popular",
     },
     {
         "instrument": "STK",
         "scan_type": "HIGH_VS_52W_HL",
         "location": "STK.US.MAJOR",
-        "display_name": "52-Week Highs — US Stocks",
+        "display_name": "52-Week Highs",
         "category": "popular",
         "default_filters": _BASELINE_LIQUIDITY_FILTERS,
     },
@@ -131,24 +141,19 @@ DEFAULT_PRESETS: list[dict[str, Any]] = [
         "instrument": "STK",
         "scan_type": "LOW_VS_52W_HL",
         "location": "STK.US.MAJOR",
-        "display_name": "52-Week Lows — US Stocks",
+        "display_name": "52-Week Lows",
         "category": "popular",
         "default_filters": _BASELINE_LIQUIDITY_FILTERS,
     },
     # ── More screens (niche) ───────────────────────────────────
-    {
-        "instrument": "STK",
-        "scan_type": "TOP_PERC_GAIN",
-        "location": "STK.US.MINOR",
-        "display_name": "Top % Gainers — US Small Cap",
-        "category": "niche",
-        "default_filters": _BASELINE_LIQUIDITY_FILTERS,
-    },
+    # Note: "Top % Gainers — US Small Cap" was removed here — it's now
+    # achievable via "Top % Gainers" + Location: "US — OTC Markets",
+    # which keeps a single mental model for region selection.
     {
         "instrument": "ETF.EQ.US",
         "scan_type": "MOST_ACTIVE",
         "location": "ETF.EQ.US.MAJOR",
-        "display_name": "Most Active — US Equity ETFs",
+        "display_name": "Most Active — US ETFs",
         "category": "niche",
     },
     {

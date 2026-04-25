@@ -43,6 +43,14 @@ interface ScreenerState {
   /** Selected scanner preset */
   selectedPreset: ScannerPreset | null;
 
+  /**
+   * Optional location override — when set, scans use this location instead of
+   * the preset's bundled location. Lets the user pick e.g. "Most Active"
+   * (preset) + "Japan" (location) without having to add a Japan-specific
+   * preset. null = use preset's own location (existing behavior).
+   */
+  locationOverride: string | null;
+
   /** Is a scan currently running? */
   isScanning: boolean;
 
@@ -82,6 +90,7 @@ interface ScreenerState {
   removeFilter: (id: string) => void;
   clearFilters: () => void;
   setPreset: (preset: ScannerPreset) => void;
+  setLocationOverride: (location: string | null) => void;
 
   /**
    * Atomically set both preset and filters in one go.
@@ -121,6 +130,7 @@ interface ScreenerState {
 export const useScreenerStore = create<ScreenerState>()((set) => ({
   filters: [],
   selectedPreset: null,
+  locationOverride: null,
   isScanning: false,
   results: [],
   lastBatchSize: 0,
@@ -154,21 +164,25 @@ export const useScreenerStore = create<ScreenerState>()((set) => ({
   clearFilters: () => set({ filters: [], isDirty: true }),
 
   setPreset: (preset) => {
-    // When preset has default_filters, auto-apply them
-    const defaultFilters: ActiveFilter[] = (preset.default_filters ?? []).map(
-      (f, i) => ({
-        ...f,
-        id: `preset-${f.code}-${i}`,
-        display_label: `${f.code}: ${f.value}`,
-      }),
-    );
+    // Picking a scanner only updates `selectedPreset` — never touches the
+    // user's existing filters. Previously this wiped filters to the preset's
+    // default_filters (or to [] when none existed), which silently destroyed
+    // work the user had already done in the filter bar (incl. AI suggestions
+    // they had just accepted). Try-this empty-state cards still go through
+    // applyPreset() when they need to set both atomically.
     set({
       selectedPreset: preset,
-      filters: defaultFilters,
       page: 1,
       isDirty: true,
     });
   },
+
+  setLocationOverride: (location) =>
+    set({
+      locationOverride: location,
+      page: 1,
+      isDirty: true,
+    }),
 
   applyPreset: (preset, filters) =>
     set({
@@ -212,6 +226,7 @@ export const useScreenerStore = create<ScreenerState>()((set) => ({
     set({
       filters: [],
       selectedPreset: null,
+      locationOverride: null,
       results: [],
       lastBatchSize: 0,
       totalScanned: 0,

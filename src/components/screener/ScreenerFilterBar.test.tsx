@@ -91,6 +91,7 @@ const ACTIVE_FILTER: ActiveFilter = {
 const mockStore = {
   filters: [] as ActiveFilter[],
   selectedPreset: null as ScannerPreset | null,
+  locationOverride: null as string | null,
   isScanning: false,
   results: [],
   isDirty: false,
@@ -99,6 +100,7 @@ const mockStore = {
   removeFilter: vi.fn(),
   clearFilters: vi.fn(),
   setPreset: vi.fn(),
+  setLocationOverride: vi.fn(),
 };
 
 // ── Default useQuery implementation ───────────────────────────
@@ -116,6 +118,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockStore.filters = [];
   mockStore.selectedPreset = null;
+  mockStore.locationOverride = null;
   mockStore.isScanning = false;
   mockStore.results = [];
   mockStore.isDirty = false;
@@ -178,7 +181,7 @@ describe("Quick-pick chips", () => {
 describe("Grouped preset select", () => {
   it("renders popular presets inside a 'Popular' optgroup", () => {
     render(<ScreenerFilterBar onScan={vi.fn()} />);
-    const select = screen.getByRole("combobox");
+    const select = screen.getByTestId("preset-select");
     const optgroups = select.querySelectorAll("optgroup");
     const popularGroup = Array.from(optgroups).find((g) => g.label === "Popular");
     expect(popularGroup).toBeDefined();
@@ -187,7 +190,7 @@ describe("Grouped preset select", () => {
 
   it("renders niche presets inside a 'More screens' optgroup", () => {
     render(<ScreenerFilterBar onScan={vi.fn()} />);
-    const select = screen.getByRole("combobox");
+    const select = screen.getByTestId("preset-select");
     const optgroups = select.querySelectorAll("optgroup");
     const nicheGroup = Array.from(optgroups).find((g) => g.label === "More screens");
     expect(nicheGroup).toBeDefined();
@@ -220,7 +223,7 @@ describe("Grouped preset select", () => {
       return defaultUseQuery({ queryKey });
     });
     render(<ScreenerFilterBar onScan={vi.fn()} />);
-    const opts = screen.getByRole("combobox").querySelectorAll("option");
+    const opts = screen.getByTestId("preset-select").querySelectorAll("option");
     const text = Array.from(opts).map((o) => o.textContent).join("|");
     expect(text).toMatch(/Pre-Market Gainers — Pre-market only/);
   });
@@ -356,5 +359,77 @@ describe("AI toggle button", () => {
   it("does not render AI button when onToggleAiPanel is omitted", () => {
     render(<ScreenerFilterBar onScan={vi.fn()} />);
     expect(screen.queryByTitle("AI Filters")).not.toBeInTheDocument();
+  });
+});
+
+// ── Location override dropdown (Task #19) ─────────────────────
+
+describe("Location override dropdown", () => {
+  it("renders the dropdown with the curated options", () => {
+    render(<ScreenerFilterBar onScan={vi.fn()} />);
+    const dropdown = screen.getByTestId("location-override") as HTMLSelectElement;
+    expect(dropdown).toBeInTheDocument();
+    // First option is the "preset default" (null → "")
+    expect(dropdown.value).toBe("");
+    // A few of the curated options should be present (real IBKR codes only —
+    // these labels match LOCATION_OPTIONS in ScreenerFilterBar.tsx)
+    expect(screen.getByRole("option", { name: "Preset default" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "Japan" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("option", { name: "US — Listed/NASDAQ" }),
+    ).toBeInTheDocument();
+  });
+
+  it("calls setLocationOverride with the chosen IBKR code", () => {
+    render(<ScreenerFilterBar onScan={vi.fn()} />);
+    const dropdown = screen.getByTestId("location-override");
+    // STK.HK.TSE_JPN is the real IBKR code for Japan (yes — "HK" tree).
+    fireEvent.change(dropdown, { target: { value: "STK.HK.TSE_JPN" } });
+    expect(mockStore.setLocationOverride).toHaveBeenCalledWith("STK.HK.TSE_JPN");
+  });
+
+  it("calls setLocationOverride(null) when 'Preset default' is picked", () => {
+    mockStore.locationOverride = "STK.HK.TSE_JPN";
+    render(<ScreenerFilterBar onScan={vi.fn()} />);
+    const dropdown = screen.getByTestId("location-override");
+    fireEvent.change(dropdown, { target: { value: "" } });
+    expect(mockStore.setLocationOverride).toHaveBeenCalledWith(null);
+  });
+
+  it("reflects the current locationOverride in the dropdown value", () => {
+    mockStore.locationOverride = "STK.HK.TSE_JPN";
+    render(<ScreenerFilterBar onScan={vi.fn()} />);
+    const dropdown = screen.getByTestId("location-override") as HTMLSelectElement;
+    expect(dropdown.value).toBe("STK.HK.TSE_JPN");
+  });
+
+  it("is enabled when no preset is selected (default state)", () => {
+    mockStore.selectedPreset = null;
+    render(<ScreenerFilterBar onScan={vi.fn()} />);
+    const dropdown = screen.getByTestId("location-override") as HTMLSelectElement;
+    expect(dropdown).not.toBeDisabled();
+  });
+
+  it("is enabled when the selected preset's instrument is STK", () => {
+    mockStore.selectedPreset = POPULAR_PRESET; // instrument = "STK"
+    render(<ScreenerFilterBar onScan={vi.fn()} />);
+    const dropdown = screen.getByTestId("location-override") as HTMLSelectElement;
+    expect(dropdown).not.toBeDisabled();
+  });
+
+  it("is disabled when the selected preset's instrument is not STK (ETF/FUT)", () => {
+    // Pairing a STK location with an ETF preset gives IBKR 500 — guard the
+    // dropdown so the user can't accidentally do that.
+    mockStore.selectedPreset = {
+      instrument: "ETF.EQ.US",
+      scan_type: "MOST_ACTIVE",
+      location: "ETF.EQ.US.MAJOR",
+      display_name: "Most Active — US ETFs",
+      category: "niche",
+    } as ScannerPreset;
+    render(<ScreenerFilterBar onScan={vi.fn()} />);
+    const dropdown = screen.getByTestId("location-override") as HTMLSelectElement;
+    expect(dropdown).toBeDisabled();
+    expect(dropdown.title).toMatch(/stock presets/i);
   });
 });

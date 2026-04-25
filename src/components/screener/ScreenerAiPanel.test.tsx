@@ -10,13 +10,17 @@
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen } from "@testing-library/react";
-import ScreenerAiPanel from "./ScreenerAiPanel";
+import ScreenerAiPanel, { classifySuggestion } from "./ScreenerAiPanel";
+import type { ActiveFilter } from "@/store/screener";
+import type { AiFilterSuggestion } from "@/lib/api";
 
 // ── Module mocks ──────────────────────────────────────────────
 
 vi.mock("@/store/screener", () => ({
   useScreenerStore: () => ({
+    filters: [],
     addFilter: vi.fn(),
+    updateFilter: vi.fn(),
     selectedPreset: null,
   }),
 }));
@@ -150,5 +154,59 @@ describe("Ready state", () => {
     expect(
       screen.getByText("Ask me what you're looking for")
     ).toBeInTheDocument();
+  });
+});
+
+// ── classifySuggestion (Task #18 — no-duplicate / replace logic) ────
+// Pure function, no mocks needed. Drives both the per-card button label
+// (Add / Update / Added) and the Apply All visibility.
+
+describe("classifySuggestion", () => {
+  const SUGG: AiFilterSuggestion = {
+    code: "marketCapAbove1e6",
+    value: "10000",
+    display_label: "Market Cap ≥ $10B",
+    reasoning: "...",
+  };
+
+  const makeFilter = (
+    overrides: Partial<ActiveFilter> = {},
+  ): ActiveFilter => ({
+    id: "f-1",
+    code: "marketCapAbove1e6",
+    value: "10000",
+    display_label: "Market Cap ≥ $10B",
+    ...overrides,
+  });
+
+  it("returns 'new' when no filter has a matching code", () => {
+    expect(classifySuggestion(SUGG, []).state).toBe("new");
+    expect(
+      classifySuggestion(SUGG, [makeFilter({ code: "volumeAbove" })]).state,
+    ).toBe("new");
+  });
+
+  it("returns 'duplicate' when code AND value match exactly", () => {
+    const filter = makeFilter();
+    const result = classifySuggestion(SUGG, [filter]);
+    expect(result.state).toBe("duplicate");
+    expect(result.existing).toBe(filter);
+  });
+
+  it("returns 'differs' when code matches but value differs", () => {
+    const filter = makeFilter({ value: "5000" });
+    const result = classifySuggestion(SUGG, [filter]);
+    expect(result.state).toBe("differs");
+    expect(result.existing).toBe(filter);
+  });
+
+  it("only considers the first matching code (de-dupe by code)", () => {
+    // Two filters with the same code shouldn't ever exist — but if they did,
+    // the classifier picks the first to keep behavior deterministic.
+    const first = makeFilter({ id: "f-1", value: "5000" });
+    const second = makeFilter({ id: "f-2", value: "10000" });
+    const result = classifySuggestion(SUGG, [first, second]);
+    expect(result.state).toBe("differs");
+    expect(result.existing).toBe(first);
   });
 });

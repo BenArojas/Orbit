@@ -50,6 +50,7 @@ function resetStore() {
   useScreenerStore.setState({
     filters: [],
     selectedPreset: null,
+    locationOverride: null,
     isScanning: false,
     results: [],
     lastBatchSize: 0,
@@ -251,5 +252,100 @@ describe("applyPreset", () => {
     expect(s.isDirty).toBe(false);
     expect(s.filters).toHaveLength(1);
     expect(s.filters[0].code).toBe("volumeAbove");
+  });
+});
+
+// ── setPreset preserves filters (Task #17) ────────────────────
+// Bug fix: previously setPreset wiped filters to preset.default_filters
+// (or [] when none existed), which silently destroyed AI-suggested filters
+// the user had just accepted. New behavior: scanner picker only updates
+// selectedPreset; filters stay put.
+
+describe("setPreset", () => {
+  it("preserves existing filters when picking a new scanner", () => {
+    useScreenerStore.getState().addFilter(FILTER);
+    expect(useScreenerStore.getState().filters).toHaveLength(1);
+
+    useScreenerStore.getState().setPreset(PRESET);
+
+    const s = useScreenerStore.getState();
+    expect(s.selectedPreset).toEqual(PRESET);
+    // Filter survives — this is the whole point of the fix
+    expect(s.filters).toHaveLength(1);
+    expect(s.filters[0].code).toBe("priceAbove");
+    expect(s.isDirty).toBe(true);
+    expect(s.page).toBe(1);
+  });
+
+  it("does NOT auto-apply preset.default_filters", () => {
+    // Even when a preset has bundled defaults, setPreset must not splat
+    // them on top of the user's existing filter list. Try-this empty-state
+    // cards still get the bundled-defaults behavior via applyPreset().
+    const presetWithDefaults: ScannerPreset = {
+      ...PRESET,
+      default_filters: [{ code: "minPeRatio", value: "5" }],
+    };
+    useScreenerStore.getState().addFilter(FILTER);
+    useScreenerStore.getState().setPreset(presetWithDefaults);
+
+    const codes = useScreenerStore.getState().filters.map((f) => f.code);
+    expect(codes).toEqual(["priceAbove"]); // bundled minPeRatio NOT added
+  });
+});
+
+// ── setLocationOverride (Task #19 — decouple location from preset) ──
+
+describe("setLocationOverride", () => {
+  it("defaults to null", () => {
+    expect(useScreenerStore.getState().locationOverride).toBeNull();
+  });
+
+  it("sets the override and marks dirty", () => {
+    useScreenerStore.getState().setLocationOverride("STK.JP.TSE");
+    const s = useScreenerStore.getState();
+    expect(s.locationOverride).toBe("STK.JP.TSE");
+    expect(s.isDirty).toBe(true);
+    expect(s.page).toBe(1);
+  });
+
+  it("can be cleared by passing null", () => {
+    useScreenerStore.getState().setLocationOverride("STK.UK.LSE");
+    useScreenerStore.getState().setLocationOverride(null);
+    expect(useScreenerStore.getState().locationOverride).toBeNull();
+  });
+
+  it("is independent of selectedPreset", () => {
+    // Setting a location override doesn't touch the selected preset
+    useScreenerStore.getState().setPreset(PRESET);
+    useScreenerStore.getState().setLocationOverride("STK.JP.TSE");
+
+    const s = useScreenerStore.getState();
+    expect(s.selectedPreset).toEqual(PRESET);
+    expect(s.locationOverride).toBe("STK.JP.TSE");
+  });
+
+  it("is reset by resetScreener", () => {
+    useScreenerStore.getState().setLocationOverride("STK.JP.TSE");
+    useScreenerStore.getState().resetScreener();
+    expect(useScreenerStore.getState().locationOverride).toBeNull();
+  });
+});
+
+// ── updateFilter (Task #18 — wires AI panel "Update" button) ────────
+// Already exercised by the pill click-to-edit flow, but the AI panel now
+// reuses it to replace a filter value rather than creating a duplicate.
+
+describe("updateFilter (AI replace flow)", () => {
+  it("replaces value + display_label on the matching filter id", () => {
+    useScreenerStore.getState().addFilter(FILTER); // priceAbove = 10
+    useScreenerStore
+      .getState()
+      .updateFilter(FILTER.id, "25", "Price ≥ 25");
+
+    const f = useScreenerStore.getState().filters[0];
+    expect(f.value).toBe("25");
+    expect(f.display_label).toBe("Price ≥ 25");
+    // Filter count stays at 1 — proves no duplicate was created
+    expect(useScreenerStore.getState().filters).toHaveLength(1);
   });
 });

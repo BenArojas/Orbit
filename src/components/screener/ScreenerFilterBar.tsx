@@ -35,6 +35,41 @@ const CAT_LABELS: Record<string, string> = {
 /** Category order for the Add Filter dropdown */
 const CAT_ORDER = ["fundamental", "technical", "analyst", "short_ownership"];
 
+/**
+ * Curated location list for the Location dropdown.
+ *
+ * Every code below is grep-verified against IBKR's `location_tree` dump
+ * (backend/ibkr_scanner_params.json) — the gateway returns 500 "No matching
+ * locations defined" for codes that aren't in that tree, so don't add codes
+ * here without checking the dump first.
+ *
+ * STK only — pairing a STK preset (TOP_PERC_GAIN, MOST_ACTIVE, etc.) with
+ * an ETF.* or FUT.* location makes IBKR 500. ETF presets ship with their
+ * own ETF.EQ.US.MAJOR location and the dropdown is disabled for them.
+ *
+ * IBKR groups markets in some non-obvious ways: UK is under STK.EU.*,
+ * Japan and Australia are under STK.HK.*, Canada/Mexico are under STK.NA.*.
+ *
+ * "Preset default" (value=null) keeps existing behavior — the preset's
+ * own bundled location is used.
+ */
+export const LOCATION_OPTIONS: Array<{ value: string | null; label: string }> = [
+  { value: null, label: "Preset default" },
+  { value: "STK.US.MAJOR", label: "US — Listed/NASDAQ" },
+  { value: "STK.US.MINOR", label: "US — OTC Markets" },
+  { value: "STK.NA.CANADA", label: "Canada" },
+  { value: "STK.EU.LSE", label: "UK — LSE" },
+  { value: "STK.EU.IBIS", label: "Germany — Xetra" },
+  { value: "STK.EU.SBF", label: "France" },
+  { value: "STK.EU.EBS", label: "Switzerland" },
+  { value: "STK.EU.AEB", label: "Netherlands" },
+  { value: "STK.HK.TSE_JPN", label: "Japan" },
+  { value: "STK.HK.SEHK", label: "Hong Kong" },
+  { value: "STK.HK.ASX", label: "Australia" },
+  { value: "STK.HK.SGX", label: "Singapore" },
+  { value: "STK.HK.NSE", label: "India" },
+];
+
 /** Build a human-readable display label for a filter value */
 function buildLabel(entry: FilterCatalogueEntry, value: string, direction: "above" | "below") {
   const arrow = direction === "above" ? "≥" : "≤";
@@ -475,6 +510,7 @@ export default function ScreenerFilterBar({
   const {
     filters,
     selectedPreset,
+    locationOverride,
     isScanning,
     results,
     isDirty,
@@ -483,6 +519,7 @@ export default function ScreenerFilterBar({
     removeFilter,
     clearFilters,
     setPreset,
+    setLocationOverride,
   } = useScreenerStore();
 
   const { data: presets, isLoading: presetsLoading } = useQuery({
@@ -525,6 +562,8 @@ export default function ScreenerFilterBar({
         <PresetSkeleton />
       ) : (
         <select
+          data-testid="preset-select"
+          aria-label="Scanner preset"
           value={presetKey}
           onChange={handlePresetChange}
           className="rounded-md border border-[var(--border)] bg-[var(--bg-2)] px-2.5 py-1 font-data text-[11px] text-[var(--text-1)] outline-none transition-colors focus:border-[var(--clr-cyan)]"
@@ -569,6 +608,42 @@ export default function ScreenerFilterBar({
           {selectedPreset.subtitle}
         </span>
       )}
+
+      {/* Location override — picks the IBKR location code for this scan.
+          null = "Preset default" (use whatever the preset bundles, which is
+          almost always STK.US.MAJOR). Overrides apply to the next scan.
+
+          Disabled when the selected preset's instrument isn't STK — pairing
+          an ETF or FUT preset with a STK location makes IBKR 500 ("No
+          matching locations defined"). The ETF/FUT preset's own bundled
+          location is used in that case. */}
+      {(() => {
+        const isStkPreset =
+          !selectedPreset || selectedPreset.instrument === "STK";
+        return (
+          <select
+            data-testid="location-override"
+            aria-label="Location"
+            value={locationOverride ?? ""}
+            disabled={!isStkPreset}
+            onChange={(e) => setLocationOverride(e.target.value || null)}
+            title={
+              !isStkPreset
+                ? "Available only for stock presets — this preset uses its own location"
+                : locationOverride
+                  ? `Override scan location: ${locationOverride}`
+                  : "Use preset's bundled location"
+            }
+            className="rounded-md border border-[var(--border)] bg-[var(--bg-2)] px-2.5 py-1 font-data text-[11px] text-[var(--text-1)] outline-none transition-colors focus:border-[var(--clr-cyan)] disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {LOCATION_OPTIONS.map((opt) => (
+              <option key={opt.value ?? "_default"} value={opt.value ?? ""}>
+                {opt.label}
+              </option>
+            ))}
+          </select>
+        );
+      })()}
 
       {/* Separator */}
       <div className="h-4 w-px bg-[var(--border)]" />

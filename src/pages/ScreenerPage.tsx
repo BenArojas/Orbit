@@ -153,6 +153,7 @@ export default function ScreenerPage() {
 
   const {
     selectedPreset,
+    locationOverride,
     filters,
     results,
     isScanning,
@@ -193,7 +194,9 @@ export default function ScreenerPage() {
     const req: ScanRequest = {
       instrument: selectedPreset.instrument,
       scan_type: selectedPreset.scan_type,
-      location: selectedPreset.location,
+      // Location override (when set) wins over the preset's bundled location
+      // so the user can mix any scan_type with any region.
+      location: locationOverride ?? selectedPreset.location,
       filters: filters.map((f) => ({ code: f.code, value: f.value })),
       max_results: SCAN_BATCH_SIZE,
       page: 1,
@@ -201,7 +204,7 @@ export default function ScreenerPage() {
     };
 
     scanMutation.mutate(req);
-  }, [selectedPreset, filters, isScanning, scanMutation]);
+  }, [selectedPreset, locationOverride, filters, isScanning, scanMutation]);
 
   /** Apply a preset card and fire the scan immediately. */
   const handleCardClick = useCallback(
@@ -221,11 +224,12 @@ export default function ScreenerPage() {
 
       applyPreset(preset, activeFilters);
 
-      // Scan immediately — use card data directly to avoid stale closure
+      // Scan immediately — use card data directly to avoid stale closure.
+      // Location override applies here too, matching the manual-scan path.
       const req: ScanRequest = {
         instrument: preset.instrument,
         scan_type: preset.scan_type,
-        location: preset.location,
+        location: locationOverride ?? preset.location,
         filters: card.filters.map((f) => ({ code: f.code, value: f.value })),
         max_results: SCAN_BATCH_SIZE,
         page: 1,
@@ -233,7 +237,7 @@ export default function ScreenerPage() {
       };
       scanMutation.mutate(req);
     },
-    [presets, isScanning, applyPreset, scanMutation]
+    [presets, locationOverride, isScanning, applyPreset, scanMutation]
   );
 
   const showEmptyState = results.length === 0 && !isScanning && !scanMutation.isError;
