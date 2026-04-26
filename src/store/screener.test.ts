@@ -50,7 +50,7 @@ function resetStore() {
   useScreenerStore.setState({
     filters: [],
     selectedPreset: null,
-    locationOverride: null,
+    locationOverride: "STK.US.MAJOR",
     isScanning: false,
     results: [],
     lastBatchSize: 0,
@@ -293,41 +293,47 @@ describe("setPreset", () => {
   });
 });
 
-// ── setLocationOverride (Task #19 — decouple location from preset) ──
+// ── setLocationOverride (Task #19 + Path B refinement) ────────
+// Path B change: locationOverride is now non-nullable. The dropdown is
+// always at a real location; "Preset default" was removed because it
+// was confusing (the user couldn't tell which location was actually
+// being used).
 
 describe("setLocationOverride", () => {
-  it("defaults to null", () => {
-    expect(useScreenerStore.getState().locationOverride).toBeNull();
+  it("defaults to STK.US.MAJOR (US Listed/NASDAQ)", () => {
+    expect(useScreenerStore.getState().locationOverride).toBe("STK.US.MAJOR");
   });
 
   it("sets the override and marks dirty", () => {
-    useScreenerStore.getState().setLocationOverride("STK.JP.TSE");
+    useScreenerStore.getState().setLocationOverride("STK.HK.TSE_JPN");
     const s = useScreenerStore.getState();
-    expect(s.locationOverride).toBe("STK.JP.TSE");
+    expect(s.locationOverride).toBe("STK.HK.TSE_JPN");
     expect(s.isDirty).toBe(true);
     expect(s.page).toBe(1);
   });
 
-  it("can be cleared by passing null", () => {
-    useScreenerStore.getState().setLocationOverride("STK.UK.LSE");
-    useScreenerStore.getState().setLocationOverride(null);
-    expect(useScreenerStore.getState().locationOverride).toBeNull();
+  it("falsy input falls back to the default location", () => {
+    // setLocationOverride("") / null behavior: never leave the store in a
+    // null state — fall back to the default so the dropdown always has a
+    // real value to display.
+    useScreenerStore.getState().setLocationOverride("STK.EU.LSE");
+    useScreenerStore.getState().setLocationOverride("");
+    expect(useScreenerStore.getState().locationOverride).toBe("STK.US.MAJOR");
   });
 
   it("is independent of selectedPreset", () => {
-    // Setting a location override doesn't touch the selected preset
     useScreenerStore.getState().setPreset(PRESET);
-    useScreenerStore.getState().setLocationOverride("STK.JP.TSE");
+    useScreenerStore.getState().setLocationOverride("STK.HK.TSE_JPN");
 
     const s = useScreenerStore.getState();
     expect(s.selectedPreset).toEqual(PRESET);
-    expect(s.locationOverride).toBe("STK.JP.TSE");
+    expect(s.locationOverride).toBe("STK.HK.TSE_JPN");
   });
 
-  it("is reset by resetScreener", () => {
-    useScreenerStore.getState().setLocationOverride("STK.JP.TSE");
+  it("is reset to default by resetScreener", () => {
+    useScreenerStore.getState().setLocationOverride("STK.HK.TSE_JPN");
     useScreenerStore.getState().resetScreener();
-    expect(useScreenerStore.getState().locationOverride).toBeNull();
+    expect(useScreenerStore.getState().locationOverride).toBe("STK.US.MAJOR");
   });
 });
 

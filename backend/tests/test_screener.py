@@ -437,24 +437,28 @@ class TestDefaultPresets:
         assert len(DEFAULT_PRESETS) >= 1
 
     def test_preset_grouping_counts(self):
-        """6 popular + 9 niche = 15 total. (Was 16 before US Small Cap was
-        removed in favor of "Top % Gainers" + Location: US OTC.)"""
+        """6 popular + 21 niche = 27 total. (Was 15 before Path B added 12
+        scan types from MoonMarket: MOST_ACTIVE_USD, TOP_TRADE_COUNT,
+        HIGH_STVOLUME_5MIN, TOP_AFTER_HOURS_PERC_GAIN/LOSE, HIGH/LOW_OPEN_GAP,
+        LOW_OPT_IMP_VOLAT, TOP_OPT_IMP_VOLAT_GAIN/LOSE, HALTED, FIRST_TRADE_DATE_ASC.)
+        """
         popular = [p for p in DEFAULT_PRESETS if p["category"] == "popular"]
         niche = [p for p in DEFAULT_PRESETS if p["category"] == "niche"]
         assert len(popular) == 6
-        assert len(niche) == 9
-        assert len(DEFAULT_PRESETS) == 15
+        assert len(niche) == 21
+        assert len(DEFAULT_PRESETS) == 27
 
     def test_popular_presets_match_spec(self):
         """The 6 popular presets are region-agnostic — region now comes from
         the Location dropdown in the UI, so the display names dropped their
-        '— US Stocks' suffix."""
+        '— US Stocks' suffix. 'Most Active' was renamed to 'Most Active (Shares)'
+        to disambiguate from 'Most Active (Dollar Volume)' (new niche preset)."""
         popular_names = {
             p["display_name"] for p in DEFAULT_PRESETS
             if p["category"] == "popular"
         }
         assert popular_names == {
-            "Most Active",
+            "Most Active (Shares)",
             "Top % Gainers",
             "Top % Losers",
             "Hot by Volume",
@@ -1489,3 +1493,270 @@ class TestContractEnrichment:
         """Empty bar list → empty enrichment dict (no KeyError)."""
         result = self._compute_enrichment([])
         assert result == {}
+
+
+# ── Path B: live-params-joined presets, locations, scan_data ────
+
+
+class TestListPresets:
+    """ScreenerService.list_presets() joins CURATED_SCAN_TYPES with live
+    IBKR scan_type_list to enrich each preset with the real `instruments`
+    array (which markets/instruments support the scan)."""
+
+    @pytest.mark.asyncio
+    async def test_returns_one_preset_per_curated_entry_plus_etf(self):
+        ibkr = make_ibkr_mock()
+        # Live params returns instruments for every curated scan type
+        ibkr.scanner_params = AsyncMock(return_value={
+            "scan_type_list": [
+                {"code": "TOP_PERC_GAIN", "instruments": ["STK", "STOCK.HK", "STOCK.EU"]},
+                {"code": "TOP_PERC_LOSE", "instruments": ["STK", "STOCK.HK"]},
+                {"code": "MOST_ACTIVE", "instruments": ["STK", "ETF.EQ.US", "STOCK.EU"]},
+                {"code": "HOT_BY_VOLUME", "instruments": ["STK"]},
+                {"code": "MOST_ACTIVE_USD", "instruments": ["STK"]},
+                {"code": "TOP_TRADE_COUNT", "instruments": ["STK"]},
+                {"code": "HIGH_STVOLUME_5MIN", "instruments": ["STK"]},
+                {"code": "HIGH_VS_52W_HL", "instruments": ["STK"]},
+                {"code": "LOW_VS_52W_HL", "instruments": ["STK"]},
+                {"code": "HIGH_VS_13W_HL", "instruments": ["STK"]},
+                {"code": "LOW_VS_13W_HL", "instruments": ["STK"]},
+                {"code": "TOP_OPEN_PERC_GAIN", "instruments": ["STK"]},
+                {"code": "TOP_OPEN_PERC_LOSE", "instruments": ["STK"]},
+                {"code": "TOP_AFTER_HOURS_PERC_GAIN", "instruments": ["STK"]},
+                {"code": "TOP_AFTER_HOURS_PERC_LOSE", "instruments": ["STK"]},
+                {"code": "HIGH_OPEN_GAP", "instruments": ["STK"]},
+                {"code": "LOW_OPEN_GAP", "instruments": ["STK"]},
+                {"code": "HIGH_OPT_IMP_VOLAT", "instruments": ["STK"]},
+                {"code": "LOW_OPT_IMP_VOLAT", "instruments": ["STK"]},
+                {"code": "TOP_OPT_IMP_VOLAT_GAIN", "instruments": ["STK"]},
+                {"code": "TOP_OPT_IMP_VOLAT_LOSE", "instruments": ["STK"]},
+                {"code": "OPT_VOLUME_MOST_ACTIVE", "instruments": ["STK"]},
+                {"code": "HIGH_DIVIDEND_YIELD_IB", "instruments": ["STK"]},
+                {"code": "HIGH_GROWTH_RATE", "instruments": ["STK"]},
+                {"code": "HALTED", "instruments": ["STK"]},
+                {"code": "FIRST_TRADE_DATE_ASC", "instruments": ["STK"]},
+            ],
+        })
+        svc = ScreenerService(ibkr)
+        presets = await svc.list_presets()
+        # 26 curated + 1 ETF bundled
+        assert len(presets) == 27
+
+    @pytest.mark.asyncio
+    async def test_each_preset_carries_instruments_from_live(self):
+        ibkr = make_ibkr_mock()
+        ibkr.scanner_params = AsyncMock(return_value={
+            "scan_type_list": [
+                {"code": "TOP_PERC_GAIN", "instruments": ["STK", "STOCK.HK", "STOCK.EU"]},
+            ],
+        })
+        svc = ScreenerService(ibkr)
+        presets = await svc.list_presets()
+        gainers = next(p for p in presets if p.scan_type == "TOP_PERC_GAIN")
+        assert gainers.instruments == ["STK", "STOCK.HK", "STOCK.EU"]
+        # Group from CURATED_SCAN_TYPES, not from IBKR
+        assert gainers.group == "movers"
+
+    @pytest.mark.asyncio
+    async def test_drops_curated_codes_missing_from_live(self, caplog):
+        """If IBKR removes a scan type from their catalogue, we drop it from
+        our preset list (and warn)."""
+        import logging
+        ibkr = make_ibkr_mock()
+        # Only TOP_PERC_GAIN is in IBKR's response; the other 25 are missing
+        ibkr.scanner_params = AsyncMock(return_value={
+            "scan_type_list": [
+                {"code": "TOP_PERC_GAIN", "instruments": ["STK"]},
+            ],
+        })
+        svc = ScreenerService(ibkr)
+        with caplog.at_level(logging.WARNING, logger="parallax.screener"):
+            presets = await svc.list_presets()
+
+        # Only TOP_PERC_GAIN survives + ETF (which keys on MOST_ACTIVE — not in
+        # the mock above, so its instruments will be empty but it's still added)
+        scan_types = [p.scan_type for p in presets]
+        assert "TOP_PERC_GAIN" in scan_types
+        # And we logged warnings for the 25 missing ones
+        assert any("not in IBKR" in r.getMessage() for r in caplog.records)
+
+    @pytest.mark.asyncio
+    async def test_etf_preset_uses_bundled_instrument_and_location(self):
+        ibkr = make_ibkr_mock()
+        ibkr.scanner_params = AsyncMock(return_value={
+            "scan_type_list": [
+                {"code": "MOST_ACTIVE", "instruments": ["STK", "ETF.EQ.US"]},
+            ],
+        })
+        svc = ScreenerService(ibkr)
+        presets = await svc.list_presets()
+        etf = next(p for p in presets if p.display_name == "Most Active — US ETFs")
+        assert etf.instrument == "ETF.EQ.US"
+        assert etf.location == "ETF.EQ.US.MAJOR"
+        assert etf.group == "etfs"
+
+    @pytest.mark.asyncio
+    async def test_baseline_gated_presets_carry_default_filters(self):
+        ibkr = make_ibkr_mock()
+        ibkr.scanner_params = AsyncMock(return_value={
+            "scan_type_list": [
+                {"code": "HIGH_VS_52W_HL", "instruments": ["STK"]},
+            ],
+        })
+        svc = ScreenerService(ibkr)
+        presets = await svc.list_presets()
+        gated = next(p for p in presets if p.scan_type == "HIGH_VS_52W_HL")
+        assert len(gated.default_filters) == 2
+        codes = {f.code for f in gated.default_filters}
+        assert codes == {"priceAbove", "volumeAbove"}
+
+
+class TestListLocations:
+    """list_locations() returns the curated instrument+location pairs."""
+
+    def test_returns_curated_list(self):
+        ibkr = make_ibkr_mock()
+        svc = ScreenerService(ibkr)
+        locations = svc.list_locations()
+        assert len(locations) >= 10
+        # First entry is the default — US Listed/NASDAQ
+        assert locations[0].location == "STK.US.MAJOR"
+        assert locations[0].instrument == "STK"
+
+    def test_each_location_pairs_instrument_correctly(self):
+        ibkr = make_ibkr_mock()
+        svc = ScreenerService(ibkr)
+        locations = svc.list_locations()
+        # Verify a sample of known instrument/location pairs from the curated list.
+        # These map to IBKR's location_tree top-level instruments.
+        pair_index = {l.location: l.instrument for l in locations}
+        assert pair_index["STK.US.MAJOR"] == "STK"
+        assert pair_index["STK.HK.TSE_JPN"] == "STOCK.HK"  # Japan under HK tree
+        assert pair_index["STK.EU.LSE"] == "STOCK.EU"      # UK under EU tree
+        assert pair_index["STK.NA.CANADA"] == "STOCK.NA"
+
+
+class TestNoQuoteScanTypes:
+    """For FIRST_TRADE_DATE_ASC (and any future no-quote scan types), the
+    snapshot batch is skipped entirely AND the ticker-only filter is bypassed
+    so all rows survive even without price/volume."""
+
+    @pytest.mark.asyncio
+    async def test_first_trade_date_skips_snapshot_call(self):
+        # Provide raw scanner output with scan_data populated but no quotes
+        scan_results = [
+            {
+                "conid": 999001,
+                "symbol": "NEWIPO",
+                "company_name": "Newly Public Inc.",
+                "scan_data": "2026-05-12",
+                "scan_data_column_name": "First Trade Date",
+            },
+        ]
+        ibkr = make_ibkr_mock(scan_results=scan_results)
+        # Spy on snapshot to confirm it's NOT called
+        ibkr.snapshot = AsyncMock(return_value=[])
+        svc = ScreenerService(ibkr)
+
+        resp = await svc.scan(
+            instrument="STK",
+            scan_type="FIRST_TRADE_DATE_ASC",
+            location="STK.US.MAJOR",
+            filters=[],
+        )
+
+        ibkr.snapshot.assert_not_called()
+        assert len(resp.results) == 1
+        # Row survives without price/volume because the ticker-only filter
+        # is bypassed for no-quote scan types
+        assert resp.results[0].last_price is None
+        assert resp.results[0].volume is None
+        # scan_data flows through for the price-column fallback
+        assert resp.results[0].scan_data == "2026-05-12"
+        assert resp.results[0].scan_data_label == "First Trade Date"
+
+    @pytest.mark.asyncio
+    async def test_regular_scan_still_calls_snapshot(self):
+        ibkr = make_ibkr_mock()
+        svc = ScreenerService(ibkr)
+        await svc.scan(
+            instrument="STK",
+            scan_type="TOP_PERC_GAIN",
+            location="STK.US.MAJOR",
+            filters=[],
+        )
+        ibkr.snapshot.assert_called()
+
+
+class TestScanDataPropagation:
+    """scan_data + scan_data_label must flow from IBKR's response through
+    _parse_scanner_results → _build_row → ScreenerResultRow on regular scans
+    too (the frontend uses it as a generic 'ranking metric' fallback)."""
+
+    @pytest.mark.asyncio
+    async def test_scan_data_captured_on_regular_scan(self):
+        # Regular scan returns rows with price (so they survive the filter)
+        # AND scan_data populated
+        scan_results = [
+            {
+                "conid": 100,
+                "symbol": "AAA",
+                "company_name": "A Corp",
+                "scan_data": "+12.5",
+                "scan_data_column_name": "% Change",
+            },
+        ]
+        ibkr = make_ibkr_mock(scan_results=scan_results)
+        svc = ScreenerService(ibkr)
+        resp = await svc.scan(
+            instrument="STK",
+            scan_type="TOP_PERC_GAIN",
+            location="STK.US.MAJOR",
+            filters=[],
+        )
+        assert resp.results[0].scan_data == "+12.5"
+        assert resp.results[0].scan_data_label == "% Change"
+
+    @pytest.mark.asyncio
+    async def test_missing_scan_data_yields_none(self):
+        # IBKR sometimes omits scan_data for older scan types
+        scan_results = [
+            {"conid": 100, "symbol": "AAA"},
+        ]
+        ibkr = make_ibkr_mock(scan_results=scan_results)
+        svc = ScreenerService(ibkr)
+        resp = await svc.scan(
+            instrument="STK",
+            scan_type="MOST_ACTIVE",
+            location="STK.US.MAJOR",
+            filters=[],
+        )
+        assert resp.results[0].scan_data is None
+        assert resp.results[0].scan_data_label is None
+
+
+class TestScannerParamsCache:
+    """list_presets() caches /iserver/scanner/params for 1 hour."""
+
+    @pytest.mark.asyncio
+    async def test_two_calls_hit_ibkr_only_once(self):
+        ibkr = make_ibkr_mock()
+        ibkr.scanner_params = AsyncMock(return_value={
+            "scan_type_list": [{"code": "TOP_PERC_GAIN", "instruments": ["STK"]}],
+        })
+        svc = ScreenerService(ibkr)
+        await svc.list_presets()
+        await svc.list_presets()
+        assert ibkr.scanner_params.call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_falls_back_to_empty_dict_on_first_failure(self):
+        ibkr = make_ibkr_mock()
+        ibkr.scanner_params = AsyncMock(side_effect=IBKRError("boom"))
+        svc = ScreenerService(ibkr)
+        # Should not raise — fallback to empty cache, so curated entries get
+        # dropped (no live data to join against)
+        presets = await svc.list_presets()
+        # Only the bundled ETF preset survives (it has hardcoded fields and
+        # scan_type_index lookup misses are tolerated)
+        assert all(p.instruments == [] for p in presets)

@@ -548,6 +548,26 @@ export interface ScannerPreset {
   /** Optional caveat shown next to the preset name in the UI
    *  (e.g. "Pre-market only" so users know why a scan returns 0 outside hours). */
   subtitle?: string | null;
+  /** Path B: Live IBKR `instruments` array — which top-level instrument
+   *  codes this scan_type supports (e.g. ["STK", "STOCK.HK", "STOCK.EU"]).
+   *  Used by the Location dropdown to disable markets the scan can't run
+   *  in. Joined in by the backend from /iserver/scanner/params. */
+  instruments?: string[];
+  /** Path B: Curated category key for grouping in the preset dropdown's
+   *  "More screens" section AND in the Browse all scans panel (movers /
+   *  highs_lows / pre_post_market / gaps / options_vol / fundamentals /
+   *  special / etfs). */
+  group?: string;
+}
+
+/** Curated Location dropdown option — instrument+location pair from
+ *  GET /screener/locations. The instrument field MUST be sent to IBKR
+ *  alongside the location code (sending instrument=STK with a non-US
+ *  location returns 500 "No matching locations defined"). */
+export interface ScannerLocation {
+  instrument: string;
+  location: string;
+  label: string;
 }
 
 /**
@@ -600,6 +620,13 @@ export interface ScreenerResultRow {
   // Note: market_cap intentionally omitted — not reliably available via
   // /iserver/marketdata/snapshot. Quick-peek row (ContractInfoResponse) still
   // carries it because that comes from /iserver/contract/{conid}/info.
+  /** Path B: IBKR's per-row scanner ranking metric. For TOP_PERC_GAIN
+   *  it's the % change (redundant with change_percent), for
+   *  FIRST_TRADE_DATE_ASC it's the next first-trade date. The table uses
+   *  it as a price-column FALLBACK when last_price is null. */
+  scan_data: string | null;
+  /** IBKR's column header for scan_data, e.g. "First Trade Date". */
+  scan_data_label: string | null;
 }
 
 export interface ScanResponse {
@@ -886,6 +913,11 @@ export const api = {
 
   screenerPresets: () =>
     request<ScannerPreset[]>("GET", "/screener/presets"),
+
+  /** Curated Location dropdown options — instrument+location pairs from
+   *  the backend (single source of truth for region selection). */
+  screenerLocations: () =>
+    request<ScannerLocation[]>("GET", "/screener/locations"),
 
   /** Canonical filter catalogue — fetched once per session, staleTime 1h */
   screenerFilterCatalogue: () =>

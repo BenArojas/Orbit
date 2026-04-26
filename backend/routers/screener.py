@@ -21,12 +21,13 @@ from models import (
     AiFilterResponse,
     ContractInfoResponse,
     FilterCatalogueEntry,
+    ScannerLocation,
     ScannerParamsResponse,
     ScannerPreset,
     ScanRequest,
     ScanResponse,
 )
-from services.screener import DEFAULT_PRESETS, ScreenerService
+from services.screener import ScreenerService
 
 log = logging.getLogger("parallax.routers.screener")
 
@@ -252,13 +253,38 @@ async def filter_catalogue():
 
 
 @router.get("/presets", response_model=list[ScannerPreset])
-async def list_presets():
+async def list_presets(
+    screener: ScreenerService = Depends(get_screener),
+):
     """
     Return the list of curated scanner presets.
-    These are pre-configured IBKR scanner combos (most active, top gainers, etc.)
-    that the frontend shows in the preset picker dropdown.
+
+    Each preset is enriched with the live `instruments: [...]` array from
+    IBKR's /iserver/scanner/params (cached server-side for 1h). The
+    frontend uses that array to disable Location dropdown entries the scan
+    type doesn't support, instead of letting the user submit invalid pairs
+    that come back as 500 "No matching locations defined".
     """
-    return [ScannerPreset(**p) for p in DEFAULT_PRESETS]
+    return await screener.list_presets()
+
+
+# ── GET /screener/locations ─────────────────────────────────
+
+
+@router.get("/locations", response_model=list[ScannerLocation])
+async def list_locations(
+    screener: ScreenerService = Depends(get_screener),
+):
+    """
+    Return the curated Location dropdown options.
+
+    Each entry pairs an IBKR `instrument` code with its valid `location`
+    code (e.g. {"instrument": "STOCK.HK", "location": "STK.HK.TSE_JPN",
+    "label": "Japan"}). The frontend uses these as the Location dropdown
+    options; on scan, the selected entry's instrument overrides the
+    preset's bundled instrument so non-US locations actually work.
+    """
+    return screener.list_locations()
 
 
 # ── GET /screener/params ────────────────────────────────────

@@ -32,8 +32,35 @@
 
 import { useState, useCallback } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { api, type ScanRequest } from "@/lib/api";
+import { api, type ScanRequest, type ScannerLocation } from "@/lib/api";
 import { useScreenerStore, type ActiveFilter } from "@/store/screener";
+
+/**
+ * Resolve the (instrument, location) pair to send to the scan endpoint.
+ *
+ * Logic:
+ *   - For non-STK presets (ETF/FUT), always use the preset's bundled
+ *     instrument + location (the Location dropdown is disabled for these).
+ *   - For STK presets, use the location dropdown's selection. Look up the
+ *     matching curated entry to get the right instrument code (e.g. picking
+ *     "Japan" yields instrument="STOCK.HK", location="STK.HK.TSE_JPN").
+ *   - If the location code isn't in the curated list (shouldn't happen
+ *     under normal flow), fall back to the preset's bundled instrument.
+ */
+function resolveScanTarget(
+  preset: { instrument: string; location: string },
+  locationOverride: string,
+  locations: ScannerLocation[],
+): { instrument: string; location: string } {
+  if (preset.instrument !== "STK") {
+    return { instrument: preset.instrument, location: preset.location };
+  }
+  const opt = locations.find((l) => l.location === locationOverride);
+  if (!opt) {
+    return { instrument: preset.instrument, location: preset.location };
+  }
+  return { instrument: opt.instrument, location: opt.location };
+}
 import ScreenerFilterBar from "@/components/screener/ScreenerFilterBar";
 import ScreenerResultsTable from "@/components/screener/ScreenerResultsTable";
 import ScreenerPagination from "@/components/screener/ScreenerPagination";
@@ -170,6 +197,14 @@ export default function ScreenerPage() {
     staleTime: 60_000 * 60,
   });
 
+  // Locations are also fetched in ScreenerFilterBar — React Query deduplicates.
+  // Used here to look up the instrument code paired with the chosen location.
+  const { data: locations = [] } = useQuery({
+    queryKey: ["screener-locations"],
+    queryFn: () => api.screenerLocations(),
+    staleTime: 60 * 60 * 1000,
+  });
+
   // Tracks the most recent scan that completed successfully but matched 0 rows
   // (e.g. 13W highs on a slow tape). Used to swap the cold-start headline for
   // a "no matches right now" hint above the same quick-pick cards.
@@ -191,12 +226,15 @@ export default function ScreenerPage() {
   const handleScan = useCallback(() => {
     if (!selectedPreset || isScanning) return;
 
+    // Resolve instrument+location together so non-US locations get the
+    // right top-level instrument (e.g. STOCK.HK for Japan). Sending
+    // STK with STK.HK.TSE_JPN gives IBKR 500.
+    const target = resolveScanTarget(selectedPreset, locationOverride, locations);
+
     const req: ScanRequest = {
-      instrument: selectedPreset.instrument,
+      instrument: target.instrument,
       scan_type: selectedPreset.scan_type,
-      // Location override (when set) wins over the preset's bundled location
-      // so the user can mix any scan_type with any region.
-      location: locationOverride ?? selectedPreset.location,
+      location: target.location,
       filters: filters.map((f) => ({ code: f.code, value: f.value })),
       max_results: SCAN_BATCH_SIZE,
       page: 1,
@@ -204,7 +242,7 @@ export default function ScreenerPage() {
     };
 
     scanMutation.mutate(req);
-  }, [selectedPreset, locationOverride, filters, isScanning, scanMutation]);
+  }, [selectedPreset, locationOverride, locations, filters, isScanning, scanMutation]);
 
   /** Apply a preset card and fire the scan immediately. */
   const handleCardClick = useCallback(
@@ -226,10 +264,11 @@ export default function ScreenerPage() {
 
       // Scan immediately — use card data directly to avoid stale closure.
       // Location override applies here too, matching the manual-scan path.
+      const target = resolveScanTarget(preset, locationOverride, locations);
       const req: ScanRequest = {
-        instrument: preset.instrument,
+        instrument: target.instrument,
         scan_type: preset.scan_type,
-        location: locationOverride ?? preset.location,
+        location: target.location,
         filters: card.filters.map((f) => ({ code: f.code, value: f.value })),
         max_results: SCAN_BATCH_SIZE,
         page: 1,
@@ -237,7 +276,7 @@ export default function ScreenerPage() {
       };
       scanMutation.mutate(req);
     },
-    [presets, locationOverride, isScanning, applyPreset, scanMutation]
+    [presets, locationOverride, locations, isScanning, applyPreset, scanMutation]
   );
 
   const showEmptyState = results.length === 0 && !isScanning && !scanMutation.isError;

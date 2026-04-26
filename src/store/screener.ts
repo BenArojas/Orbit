@@ -27,6 +27,11 @@ import type { IbkrFilterItem, ScreenerResultRow, ScannerPreset } from "@/lib/api
 /** Rows per page (hardcoded — no page-size selector any more) */
 export const SCREENER_PAGE_SIZE = 25;
 
+/** Default location code shown in the Location dropdown on first load and
+ *  whenever the location is reset (e.g. by the Browse panel after picking
+ *  an incompatible scan). Mirrored from backend constants.scan_locations. */
+export const DEFAULT_LOCATION_CODE = "STK.US.MAJOR";
+
 /** An active filter with a local ID for React key + removal */
 export interface ActiveFilter extends IbkrFilterItem {
   id: string;            // Local UUID for React key / removal
@@ -44,12 +49,17 @@ interface ScreenerState {
   selectedPreset: ScannerPreset | null;
 
   /**
-   * Optional location override — when set, scans use this location instead of
-   * the preset's bundled location. Lets the user pick e.g. "Most Active"
-   * (preset) + "Japan" (location) without having to add a Japan-specific
-   * preset. null = use preset's own location (existing behavior).
+   * The currently selected scan location. Single source of truth — there's
+   * no longer a "Preset default" entry in the dropdown. Defaults to
+   * "STK.US.MAJOR" (US Listed/NASDAQ); user changes it via the Location
+   * dropdown in the filter bar. The matching `instrument` code is looked
+   * up at scan time from the curated `/screener/locations` list.
+   *
+   * For ETF/FUT presets where the dropdown is disabled, the preset's
+   * bundled location is used at scan time and this value is ignored
+   * (until the user picks an STK preset again).
    */
-  locationOverride: string | null;
+  locationOverride: string;
 
   /** Is a scan currently running? */
   isScanning: boolean;
@@ -90,7 +100,7 @@ interface ScreenerState {
   removeFilter: (id: string) => void;
   clearFilters: () => void;
   setPreset: (preset: ScannerPreset) => void;
-  setLocationOverride: (location: string | null) => void;
+  setLocationOverride: (location: string) => void;
 
   /**
    * Atomically set both preset and filters in one go.
@@ -130,7 +140,7 @@ interface ScreenerState {
 export const useScreenerStore = create<ScreenerState>()((set) => ({
   filters: [],
   selectedPreset: null,
-  locationOverride: null,
+  locationOverride: DEFAULT_LOCATION_CODE,
   isScanning: false,
   results: [],
   lastBatchSize: 0,
@@ -179,7 +189,7 @@ export const useScreenerStore = create<ScreenerState>()((set) => ({
 
   setLocationOverride: (location) =>
     set({
-      locationOverride: location,
+      locationOverride: location || DEFAULT_LOCATION_CODE,
       page: 1,
       isDirty: true,
     }),
@@ -226,7 +236,7 @@ export const useScreenerStore = create<ScreenerState>()((set) => ({
     set({
       filters: [],
       selectedPreset: null,
-      locationOverride: null,
+      locationOverride: DEFAULT_LOCATION_CODE,
       results: [],
       lastBatchSize: 0,
       totalScanned: 0,

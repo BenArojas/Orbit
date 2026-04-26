@@ -64,8 +64,23 @@ SNAPSHOT_REQUIRED_FIELDS = [
 #  - Stragglers retry: even shorter; these conids already failed once.
 SNAPSHOT_TIMEOUT_FIRST = 8.0
 SNAPSHOT_TIMEOUT_RETRY = 3.0
+from constants.scan_types import (
+    CURATED_SCAN_TYPES,
+    NO_QUOTE_SCAN_TYPES,
+    SCAN_TYPE_BY_CODE,
+)
+from constants.scan_locations import (
+    CURATED_LOCATIONS,
+    DEFAULT_LOCATION_CODE,
+)
 from exceptions import IBKRError
-from models import IbkrFilterItem, ScreenerResultRow, ScanResponse
+from models import (
+    IbkrFilterItem,
+    ScannerLocation,
+    ScannerPreset,
+    ScreenerResultRow,
+    ScanResponse,
+)
 from services.ibkr import IBKRService
 
 log = logging.getLogger("parallax.screener")
@@ -81,142 +96,70 @@ _BASELINE_LIQUIDITY_FILTERS: list[dict[str, str]] = [
     {"code": "volumeAbove", "value": "100000"},
 ]
 
-# Default scanner presets exposed to the frontend.
+# Scan types whose default_filters need the baseline liquidity floor
+# (priceAbove=1, volumeAbove=100000) to dodge IBKR's "Finished: EMPTY
+# response is received." 500 quirk on slow tapes. The 13W/52W high+low
+# scanners are the worst offenders.
+_BASELINE_GATED_SCAN_TYPES: frozenset[str] = frozenset({
+    "HIGH_VS_52W_HL",
+    "LOW_VS_52W_HL",
+    "HIGH_VS_13W_HL",
+    "LOW_VS_13W_HL",
+})
+
+# The single ETF preset is bundled separately because it has its own
+# instrument code (ETF.EQ.US, not STK). The Location dropdown is disabled
+# for this preset — the bundled location is the only one that works.
+_ETF_PRESET: dict[str, Any] = {
+    "instrument": "ETF.EQ.US",
+    "scan_type": "MOST_ACTIVE",
+    "location": "ETF.EQ.US.MAJOR",
+    "display_name": "Most Active — US ETFs",
+    "category": "niche",
+    "group": "etfs",
+}
+
+
+# (DEFAULT_PRESETS used to be a hardcoded list here. It's now built from
+# CURATED_SCAN_TYPES (constants/scan_types.py) joined with the live IBKR
+# scan_type_list at request time — see ScreenerService.list_presets().
+# Every preset's `instruments` array now comes from IBKR directly, so the
+# Location dropdown's compatibility filtering stays correct as IBKR
+# evolves its catalogue.)
 #
-# Grouped for the UI combobox:
-#   - "popular" (6): always visible in the preset dropdown.
-#   - "niche"   (9): under a collapsible "More screens" section.
-#
-# Display names are region-AGNOSTIC — region is now picked separately via
-# the Location dropdown in the UI (see LOCATION_OPTIONS in
-# src/components/screener/ScreenerFilterBar.tsx). The `location` field
-# below is the *default* location used when no override is set; when the
-# user picks a location it overrides the value below at request time.
-#
-# ETF and FUT presets keep instrument-specific qualifiers in the display
-# name (e.g. "— US ETFs") because the location dropdown is disabled for
-# non-STK presets — the bundled location is the only one that works.
-#
-# Every `scan_type` + `location` pair has been grep-verified against the
-# raw `/iserver/scanner/params` dump (backend/ibkr_scanner_params.json).
-DEFAULT_PRESETS: list[dict[str, Any]] = [
-    # ── Popular ────────────────────────────────────────────────
-    {
-        "instrument": "STK",
-        "scan_type": "MOST_ACTIVE",
-        "location": "STK.US.MAJOR",
-        "display_name": "Most Active",
-        "category": "popular",
-    },
-    {
-        "instrument": "STK",
-        "scan_type": "TOP_PERC_GAIN",
-        "location": "STK.US.MAJOR",
-        "display_name": "Top % Gainers",
-        "category": "popular",
-    },
-    {
-        "instrument": "STK",
-        "scan_type": "TOP_PERC_LOSE",
-        "location": "STK.US.MAJOR",
-        "display_name": "Top % Losers",
-        "category": "popular",
-    },
-    {
-        "instrument": "STK",
-        "scan_type": "HOT_BY_VOLUME",
-        "location": "STK.US.MAJOR",
-        "display_name": "Hot by Volume",
-        "category": "popular",
-    },
-    {
-        "instrument": "STK",
-        "scan_type": "HIGH_VS_52W_HL",
-        "location": "STK.US.MAJOR",
-        "display_name": "52-Week Highs",
-        "category": "popular",
-        "default_filters": _BASELINE_LIQUIDITY_FILTERS,
-    },
-    {
-        "instrument": "STK",
-        "scan_type": "LOW_VS_52W_HL",
-        "location": "STK.US.MAJOR",
-        "display_name": "52-Week Lows",
-        "category": "popular",
-        "default_filters": _BASELINE_LIQUIDITY_FILTERS,
-    },
-    # ── More screens (niche) ───────────────────────────────────
-    # Note: "Top % Gainers — US Small Cap" was removed here — it's now
-    # achievable via "Top % Gainers" + Location: "US — OTC Markets",
-    # which keeps a single mental model for region selection.
-    {
-        "instrument": "ETF.EQ.US",
-        "scan_type": "MOST_ACTIVE",
-        "location": "ETF.EQ.US.MAJOR",
-        "display_name": "Most Active — US ETFs",
-        "category": "niche",
-    },
-    {
-        "instrument": "STK",
-        "scan_type": "TOP_OPEN_PERC_GAIN",
-        "location": "STK.US.MAJOR",
-        "display_name": "Pre-Market Gainers",
-        "category": "niche",
-        "subtitle": "Pre-market only",
-    },
-    {
-        "instrument": "STK",
-        "scan_type": "TOP_OPEN_PERC_LOSE",
-        "location": "STK.US.MAJOR",
-        "display_name": "Pre-Market Losers",
-        "category": "niche",
-        "subtitle": "Pre-market only",
-    },
-    {
-        "instrument": "STK",
-        "scan_type": "HIGH_VS_13W_HL",
-        "location": "STK.US.MAJOR",
-        "display_name": "13-Week Highs",
-        "category": "niche",
-        "default_filters": _BASELINE_LIQUIDITY_FILTERS,
-    },
-    {
-        "instrument": "STK",
-        "scan_type": "LOW_VS_13W_HL",
-        "location": "STK.US.MAJOR",
-        "display_name": "13-Week Lows",
-        "category": "niche",
-        "default_filters": _BASELINE_LIQUIDITY_FILTERS,
-    },
-    {
-        "instrument": "STK",
-        "scan_type": "HIGH_DIVIDEND_YIELD_IB",
-        "location": "STK.US.MAJOR",
-        "display_name": "High Dividend Yield",
-        "category": "niche",
-    },
-    {
-        "instrument": "STK",
-        "scan_type": "HIGH_OPT_IMP_VOLAT",
-        "location": "STK.US.MAJOR",
-        "display_name": "High Implied Vol",
-        "category": "niche",
-    },
-    {
-        "instrument": "STK",
-        "scan_type": "OPT_VOLUME_MOST_ACTIVE",
-        "location": "STK.US.MAJOR",
-        "display_name": "Top Options Volume",
-        "category": "niche",
-    },
-    {
-        "instrument": "STK",
-        "scan_type": "HIGH_GROWTH_RATE",
-        "location": "STK.US.MAJOR",
-        "display_name": "High Growth Rate",
-        "category": "niche",
-    },
-]
+# Below is the legacy DEFAULT_PRESETS list, kept for backward-compat
+# imports + the EMPTY-state cards lookup (frontend matches by
+# scan_type+location+instrument). Do NOT edit by hand — derived from
+# CURATED_SCAN_TYPES so the two never drift.
+def _build_static_preset_list() -> list[dict[str, Any]]:
+    """
+    Build the legacy preset dict list from CURATED_SCAN_TYPES + the bundled
+    ETF preset. The result has no `instruments` array — that's enriched at
+    request time by ScreenerService.list_presets() using live IBKR data.
+    Kept as a module-level list (DEFAULT_PRESETS below) so existing imports
+    and tests keep working without touching every call site.
+    """
+    presets: list[dict[str, Any]] = []
+    for entry in CURATED_SCAN_TYPES:
+        preset: dict[str, Any] = {
+            "instrument": "STK",
+            "scan_type": entry["code"],
+            "location": DEFAULT_LOCATION_CODE,
+            "display_name": entry["display_name"],
+            "category": "popular" if entry.get("popular") else "niche",
+            "group": entry["category"],
+        }
+        if entry.get("subtitle"):
+            preset["subtitle"] = entry["subtitle"]
+        if entry["code"] in _BASELINE_GATED_SCAN_TYPES:
+            preset["default_filters"] = list(_BASELINE_LIQUIDITY_FILTERS)
+        presets.append(preset)
+    presets.append(_ETF_PRESET)
+    return presets
+
+
+DEFAULT_PRESETS: list[dict[str, Any]] = _build_static_preset_list()
+
 
 # Snapshot fields for screener results.
 # Market cap intentionally NOT requested — see SNAPSHOT_REQUIRED_FIELDS note.
@@ -240,6 +183,111 @@ class ScreenerService:
 
     def __init__(self, ibkr: IBKRService) -> None:
         self.ibkr = ibkr
+        # Cached IBKR scanner_params (instruments, scan_type_list, locations,
+        # filters). Refreshes every _PARAMS_CACHE_TTL seconds — IBKR's
+        # catalogue rarely changes within a session, and the rate limiter
+        # already gates this endpoint to once per 15 min.
+        self._params_cache: dict[str, Any] | None = None
+        self._params_cache_at: float = 0.0
+
+    # ── Live IBKR params caching ────────────────────────────────
+
+    _PARAMS_CACHE_TTL: float = 60 * 60  # 1 hour
+
+    async def _get_scanner_params(self) -> dict[str, Any]:
+        """
+        Fetch /iserver/scanner/params with a 1-hour in-memory cache.
+        On error, returns the last cached value (or {} if never fetched).
+        """
+        import time
+        now = time.monotonic()
+        fresh = (
+            self._params_cache is not None
+            and (now - self._params_cache_at) < self._PARAMS_CACHE_TTL
+        )
+        if fresh:
+            return self._params_cache  # type: ignore[return-value]
+        try:
+            self._params_cache = await self.ibkr.scanner_params()
+            self._params_cache_at = now
+        except IBKRError as exc:
+            log.warning(
+                "scanner_params fetch failed (%s); reusing last cached value", exc,
+            )
+            if self._params_cache is None:
+                self._params_cache = {}
+        return self._params_cache
+
+    # ── Curated presets — joined with live IBKR data ────────────
+
+    async def list_presets(self) -> list[ScannerPreset]:
+        """
+        Return curated scanner presets enriched with live IBKR `instruments`
+        compatibility info.
+
+        Joins CURATED_SCAN_TYPES (constants/scan_types.py — our naming and
+        ordering) against IBKR's live `scan_type_list` (which markets each
+        scan type supports). The Location dropdown uses each preset's
+        `instruments` array to disable markets the scan can't run in.
+
+        Curated entries that aren't in IBKR's live catalogue are dropped
+        with a warning — that means IBKR retired the scan type and we
+        should remove it from our list too.
+        """
+        params = await self._get_scanner_params()
+        scan_type_index: dict[str, dict[str, Any]] = {
+            st.get("code", ""): st
+            for st in params.get("scan_type_list", [])
+        }
+
+        presets: list[ScannerPreset] = []
+        for entry in CURATED_SCAN_TYPES:
+            live = scan_type_index.get(entry["code"])
+            if not live:
+                log.warning(
+                    "Curated scan type %r not in IBKR scan_type_list — skipping",
+                    entry["code"],
+                )
+                continue
+            presets.append(ScannerPreset(
+                instrument="STK",
+                scan_type=entry["code"],
+                location=DEFAULT_LOCATION_CODE,
+                display_name=entry["display_name"],
+                category="popular" if entry.get("popular") else "niche",
+                default_filters=[
+                    IbkrFilterItem(**f) for f in _BASELINE_LIQUIDITY_FILTERS
+                ] if entry["code"] in _BASELINE_GATED_SCAN_TYPES else [],
+                subtitle=entry.get("subtitle"),
+                instruments=list(live.get("instruments", [])),
+                group=entry["category"],
+            ))
+
+        # Bundled ETF preset — separate instrument code, location dropdown
+        # is disabled for it, so the bundled location is the only one used.
+        etf_live = scan_type_index.get(_ETF_PRESET["scan_type"], {})
+        presets.append(ScannerPreset(
+            instrument=_ETF_PRESET["instrument"],
+            scan_type=_ETF_PRESET["scan_type"],
+            location=_ETF_PRESET["location"],
+            display_name=_ETF_PRESET["display_name"],
+            category=_ETF_PRESET["category"],
+            instruments=list(etf_live.get("instruments", [])),
+            group=_ETF_PRESET["group"],
+        ))
+
+        return presets
+
+    # ── Curated locations — instrument+location pairs ───────────
+
+    def list_locations(self) -> list[ScannerLocation]:
+        """
+        Return the curated Location dropdown options. Each entry pairs an
+        IBKR `instrument` code with its valid `location` code so the scan
+        request can use the right pair regardless of which preset is
+        selected. See constants/scan_locations.py.
+        """
+        return [ScannerLocation(**loc) for loc in CURATED_LOCATIONS]
 
     async def scan(
         self,
@@ -307,6 +355,14 @@ class ScreenerService:
                 total_pages=1,
             )
 
+        # Capture scan_data column header from the IBKR response — used as
+        # the price-column FALLBACK label on rows where last_price is None
+        # (FIRST_TRADE_DATE_ASC etc.). The list/dict shape of raw_results
+        # varies across endpoints; the column name lives on the parent
+        # response, which we lost when the IBKR layer flattened to a list.
+        # For now we leave scan_data_label per-row to whatever the row
+        # carries (IBKR sometimes echoes "scan_data_column_name" in each
+        # contract). Future: thread the header through the IBKR layer.
         universe = self._parse_scanner_results(raw_results, max_results)
         total_scanned = len(universe)
         log.info("Scanner returned %d instruments", total_scanned)
@@ -323,9 +379,24 @@ class ScreenerService:
                 total_pages=1,
             )
 
-        # Fetch snapshot quotes for all conids (two-pass — see _batch_snapshots).
-        conid_list = [u["conid"] for u in universe]
-        quotes = await self._batch_snapshots(conid_list)
+        # ── No-quote scan types (FIRST_TRADE_DATE_ASC etc.) ──────
+        # Some scan types return rows for instruments that haven't traded
+        # yet (upcoming IPOs). Snapshot quotes don't exist for them, so
+        # we skip the snapshot batch entirely (saves 5-10s of doomed API
+        # calls) AND skip the ticker-only filter (otherwise every row is
+        # dropped). The frontend uses scan_data as the price-column
+        # fallback to show meaningful info ("First trade: 2026-05-12").
+        is_no_quote = scan_type in NO_QUOTE_SCAN_TYPES
+        if is_no_quote:
+            log.info(
+                "No-quote scan type %s — skipping snapshot batch + ticker-only filter",
+                scan_type,
+            )
+            quotes: dict[int, dict[str, Any]] = {}
+        else:
+            # Fetch snapshot quotes for all conids (two-pass — see _batch_snapshots)
+            conid_list = [u["conid"] for u in universe]
+            quotes = await self._batch_snapshots(conid_list)
 
         # Build result rows
         rows = [
@@ -336,10 +407,13 @@ class ScreenerService:
         # Drop ticker-only rows: if IBKR returned NEITHER price nor volume for
         # this conid, the row is useless (illiquid, delisted, no data
         # subscription). Showing them as blank cells made the table look broken.
-        rows = [
-            r for r in rows
-            if r.last_price is not None or r.volume is not None
-        ]
+        # Exception: NO_QUOTE_SCAN_TYPES (IPOs) — we WANT to show all rows even
+        # though they have no price/volume; scan_data carries the meaningful info.
+        if not is_no_quote:
+            rows = [
+                r for r in rows
+                if r.last_price is not None or r.volume is not None
+            ]
 
         # Paginate results
         total_pages = max(1, math.ceil(len(rows) / page_size))
@@ -362,8 +436,13 @@ class ScreenerService:
         self, raw: list[dict], max_results: int
     ) -> list[dict[str, Any]]:
         """
-        Extract conid + metadata from IBKR scanner response.
+        Extract conid + metadata + scan_data from IBKR scanner response.
         Handles both flat and nested response formats.
+
+        scan_data is IBKR's per-row "ranking metric" — for TOP_PERC_GAIN it's
+        the % change as a string, for FIRST_TRADE_DATE_ASC it's the next
+        first-trade date. The frontend uses it as a fallback in the price
+        column when last_price is None (e.g. for IPO rows).
         """
         results: list[dict[str, Any]] = []
         for item in raw[:max_results]:
@@ -380,6 +459,19 @@ class ScreenerService:
             except (ValueError, TypeError):
                 continue
 
+            # IBKR's scan_data field — sometimes a raw string, sometimes a
+            # number, sometimes nested. Capture defensively as Optional[str].
+            raw_scan_data = item.get("scan_data")
+            scan_data: str | None = None
+            if raw_scan_data is not None:
+                scan_data = str(raw_scan_data).strip() or None
+
+            scan_data_label = (
+                item.get("scan_data_column_name")
+                or item.get("scan_data_label")
+                or None
+            )
+
             results.append({
                 "conid": conid,
                 "symbol": (
@@ -389,6 +481,8 @@ class ScreenerService:
                 ),
                 "company_name": item.get("company_name", ""),
                 "sec_type": item.get("sec_type", item.get("secType", "")),
+                "scan_data": scan_data,
+                "scan_data_label": scan_data_label,
             })
 
         return results
@@ -509,6 +603,10 @@ class ScreenerService:
             last_price=_safe_float(quote.get("31")),
             change_percent=_safe_float(quote.get("83")),
             volume=_safe_float(quote.get("7762")),
+            # scan_data flows through from _parse_scanner_results — used by
+            # the frontend as a price-column fallback when last_price is None.
+            scan_data=item.get("scan_data"),
+            scan_data_label=item.get("scan_data_label"),
         )
 
 

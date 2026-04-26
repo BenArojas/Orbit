@@ -117,7 +117,31 @@ const COLUMNS: ColDef[] = [
     key: "last_price",
     label: "Price",
     align: "right",
-    render: (r) => <span className="text-[var(--text-2)]">{fmtPrice(r.last_price)}</span>,
+    // For no-quote scan rows (FIRST_TRADE_DATE_ASC etc.) last_price is null
+    // and IBKR's scan_data carries the meaningful value (e.g. the next
+    // first-trade date). Render it as the cell content with a small label
+    // chip so the column tells the user what they're looking at.
+    render: (r) => {
+      if (r.last_price != null) {
+        return <span className="text-[var(--text-2)]">{fmtPrice(r.last_price)}</span>;
+      }
+      if (r.scan_data) {
+        return (
+          <span
+            className="text-[var(--text-2)] font-data text-[10px]"
+            title={r.scan_data_label ?? undefined}
+          >
+            {r.scan_data_label && (
+              <span className="text-[var(--text-3)] mr-1">
+                {r.scan_data_label}:
+              </span>
+            )}
+            {r.scan_data}
+          </span>
+        );
+      }
+      return <span className="text-[var(--text-3)]">—</span>;
+    },
   },
   {
     key: "change_percent",

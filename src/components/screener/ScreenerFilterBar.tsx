@@ -18,7 +18,7 @@ import { useState, useRef, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Plus, X, Play, Loader2, ChevronDown, RotateCcw, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { api, type FilterCatalogueEntry } from "@/lib/api";
+import { api, type FilterCatalogueEntry, type ScannerLocation } from "@/lib/api";
 import { useScreenerStore, type ActiveFilter } from "@/store/screener";
 import { PresetSkeleton } from "./ScreenerSkeleton";
 import NumericFilterInput from "./NumericFilterInput";
@@ -35,40 +35,11 @@ const CAT_LABELS: Record<string, string> = {
 /** Category order for the Add Filter dropdown */
 const CAT_ORDER = ["fundamental", "technical", "analyst", "short_ownership"];
 
-/**
- * Curated location list for the Location dropdown.
- *
- * Every code below is grep-verified against IBKR's `location_tree` dump
- * (backend/ibkr_scanner_params.json) — the gateway returns 500 "No matching
- * locations defined" for codes that aren't in that tree, so don't add codes
- * here without checking the dump first.
- *
- * STK only — pairing a STK preset (TOP_PERC_GAIN, MOST_ACTIVE, etc.) with
- * an ETF.* or FUT.* location makes IBKR 500. ETF presets ship with their
- * own ETF.EQ.US.MAJOR location and the dropdown is disabled for them.
- *
- * IBKR groups markets in some non-obvious ways: UK is under STK.EU.*,
- * Japan and Australia are under STK.HK.*, Canada/Mexico are under STK.NA.*.
- *
- * "Preset default" (value=null) keeps existing behavior — the preset's
- * own bundled location is used.
- */
-export const LOCATION_OPTIONS: Array<{ value: string | null; label: string }> = [
-  { value: null, label: "Preset default" },
-  { value: "STK.US.MAJOR", label: "US — Listed/NASDAQ" },
-  { value: "STK.US.MINOR", label: "US — OTC Markets" },
-  { value: "STK.NA.CANADA", label: "Canada" },
-  { value: "STK.EU.LSE", label: "UK — LSE" },
-  { value: "STK.EU.IBIS", label: "Germany — Xetra" },
-  { value: "STK.EU.SBF", label: "France" },
-  { value: "STK.EU.EBS", label: "Switzerland" },
-  { value: "STK.EU.AEB", label: "Netherlands" },
-  { value: "STK.HK.TSE_JPN", label: "Japan" },
-  { value: "STK.HK.SEHK", label: "Hong Kong" },
-  { value: "STK.HK.ASX", label: "Australia" },
-  { value: "STK.HK.SGX", label: "Singapore" },
-  { value: "STK.HK.NSE", label: "India" },
-];
+// LOCATION_OPTIONS used to live here as a hardcoded list. Now sourced
+// from GET /screener/locations (backend/constants/scan_locations.py) so
+// each option carries the IBKR `instrument` it pairs with — sending the
+// wrong instrument with a non-US location returns 500 "No matching
+// locations defined".
 
 /** Build a human-readable display label for a filter value */
 function buildLabel(entry: FilterCatalogueEntry, value: string, direction: "above" | "below") {
@@ -534,6 +505,14 @@ export default function ScreenerFilterBar({
     staleTime: Infinity, // catalogue is static
   });
 
+  // Path B — curated locations come from the backend so each option carries
+  // the IBKR instrument it pairs with. Cached for 1h (rarely changes).
+  const { data: locations = [] } = useQuery({
+    queryKey: ["screener-locations"],
+    queryFn: () => api.screenerLocations(),
+    staleTime: 60 * 60 * 1000,
+  });
+
   const popularChips = catalogue.filter((e) => e.popular);
 
   const presetKey = selectedPreset
@@ -609,38 +588,62 @@ export default function ScreenerFilterBar({
         </span>
       )}
 
-      {/* Location override — picks the IBKR location code for this scan.
-          null = "Preset default" (use whatever the preset bundles, which is
-          almost always STK.US.MAJOR). Overrides apply to the next scan.
+      {/* Location dropdown — single source of truth for the scan region.
+          Each option carries an IBKR `instrument` code (STK, STOCK.HK,
+          STOCK.EU, ...) that matches its location code; the scan path uses
+          that instrument so non-US locations actually work.
 
-          Disabled when the selected preset's instrument isn't STK — pairing
-          an ETF or FUT preset with a STK location makes IBKR 500 ("No
-          matching locations defined"). The ETF/FUT preset's own bundled
-          location is used in that case. */}
+          When the selected preset advertises an `instruments` array (from
+          live IBKR data), options whose instrument isn't in that array are
+          DISABLED with a tooltip — picking one would 500 because the
+          scan_type doesn't support that market.
+
+          Disabled outright when the preset's instrument isn't STK
+          (ETF/FUT presets use their bundled location, dropdown is moot). */}
       {(() => {
         const isStkPreset =
           !selectedPreset || selectedPreset.instrument === "STK";
+        const compatible = selectedPreset?.instruments ?? [];
+
+        const isOptionDisabled = (opt: ScannerLocation): boolean => {
+          if (!isStkPreset) return true;
+          // No `instruments` info yet (presets list still loading) — allow all
+          if (compatible.length === 0) return false;
+          return !compatible.includes(opt.instrument);
+        };
+
         return (
           <select
             data-testid="location-override"
             aria-label="Location"
-            value={locationOverride ?? ""}
+            value={locationOverride}
             disabled={!isStkPreset}
-            onChange={(e) => setLocationOverride(e.target.value || null)}
+            onChange={(e) => setLocationOverride(e.target.value)}
             title={
               !isStkPreset
                 ? "Available only for stock presets — this preset uses its own location"
-                : locationOverride
-                  ? `Override scan location: ${locationOverride}`
-                  : "Use preset's bundled location"
+                : `Scan location: ${locationOverride}`
             }
             className="rounded-md border border-[var(--border)] bg-[var(--bg-2)] px-2.5 py-1 font-data text-[11px] text-[var(--text-1)] outline-none transition-colors focus:border-[var(--clr-cyan)] disabled:cursor-not-allowed disabled:opacity-50"
           >
-            {LOCATION_OPTIONS.map((opt) => (
-              <option key={opt.value ?? "_default"} value={opt.value ?? ""}>
-                {opt.label}
-              </option>
-            ))}
+            {locations.map((opt) => {
+              const disabled = isOptionDisabled(opt);
+              return (
+                <option
+                  key={opt.location}
+                  value={opt.location}
+                  disabled={disabled}
+                  title={
+                    disabled && isStkPreset
+                      ? `Not available for ${selectedPreset?.display_name ?? "this scan"}`
+                      : undefined
+                  }
+                >
+                  {opt.label}
+                  {disabled && isStkPreset ? "  (not supported)" : ""}
+                </option>
+              );
+            })}
           </select>
         );
       })()}

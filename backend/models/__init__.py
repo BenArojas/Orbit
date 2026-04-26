@@ -727,18 +727,39 @@ class ScannerPreset(BaseModel):
     """
     An available IBKR scanner preset the user can pick from.
     The screener UI shows these in a grouped combobox:
-      - `popular` presets are always visible,
-      - `niche` presets live under a collapsible "More screens" section.
+      - popular=True presets are always visible at the top,
+      - everything else is grouped under "More screens" by `group`.
     """
-    instrument: str                                     # "STK", "FUT", etc.
+    instrument: str                                     # "STK", "ETF.EQ.US", etc.
     scan_type: str                                      # "TOP_PERC_GAIN", "MOST_ACTIVE", etc.
-    location: str                                       # "STK.US.MAJOR", "STK.EU", etc.
+    location: str                                       # Default location (overridable in UI)
     display_name: str                                   # Human-readable name
-    category: Literal["popular", "niche"] = "popular"   # Grouping for the preset combobox
+    category: Literal["popular", "niche"] = "popular"   # Legacy grouping (kept for back-compat)
     default_filters: list["IbkrFilterItem"] = []       # Optional preset filters
     # Optional caveat shown under the preset name in the UI (e.g. "Pre-market only")
     # so users understand why a scanner returns 0 rows outside its operating window.
     subtitle: str | None = None
+    # Path B addition: which IBKR top-level instrument codes this scan_type
+    # supports. Joined in from the live /iserver/scanner/params response so
+    # the Location dropdown can disable markets that aren't compatible.
+    instruments: list[str] = []
+    # Path B addition: category key from CURATED_SCAN_TYPES (movers,
+    # highs_lows, gaps, options_vol, ...). Drives section grouping under
+    # "More screens" and in the Browse all scans panel.
+    group: str = "movers"
+
+
+class ScannerLocation(BaseModel):
+    """
+    One curated location option for the Location dropdown.
+
+    Carries the IBKR `instrument` code that pairs with the location —
+    sending the wrong instrument with a non-US location gives 500 "No
+    matching locations defined". Source: backend/constants/scan_locations.py.
+    """
+    instrument: str                                     # e.g. "STOCK.HK"
+    location: str                                       # e.g. "STK.HK.TSE_JPN"
+    label: str                                          # e.g. "Japan"
 
 
 class IbkrFilterItem(BaseModel):
@@ -798,6 +819,18 @@ class ScreenerResultRow(BaseModel):
     # from the official fields list). See backend/docs/ibkr_market_data_fields.md.
     # The per-contract quick-peek (ContractInfoResponse below) still carries it
     # because that endpoint fetches it from /iserver/contract/{conid}/info.
+
+    # Path B addition: scanner-native ranking metric for this row, captured
+    # from IBKR's `scan_data` field. For TOP_PERC_GAIN it's the % change
+    # (redundant with change_percent), for FIRST_TRADE_DATE_ASC it's the
+    # next first-trade date (the only meaningful field on those rows since
+    # they haven't traded yet).
+    #
+    # The frontend uses scan_data as a price-column FALLBACK when last_price
+    # is None — that's how IPO rows show "First Trade: 2026-05-12" instead
+    # of an empty cell. See NO_QUOTE_SCAN_TYPES in services/screener.py.
+    scan_data: Optional[str] = None
+    scan_data_label: Optional[str] = None              # IBKR's column header e.g. "First Trade Date"
 
 
 class ScanResponse(BaseModel):

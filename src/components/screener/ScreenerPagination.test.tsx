@@ -34,6 +34,11 @@ const MOCK_RESULTS: ScreenerResultRow[] = Array.from({ length: 30 }, (_, i) => (
   last_price: 100,
   change_percent: 1,
   volume: 1_000_000,
+  // Path B: new fields on the row — null on regular scans (IBKR usually
+  // sends scan_data but the table only renders it as a fallback when
+  // last_price is null, which doesn't apply for these test fixtures).
+  scan_data: null,
+  scan_data_label: null,
 }));
 
 const mockStore = {

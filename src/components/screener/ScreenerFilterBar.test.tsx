@@ -91,7 +91,7 @@ const ACTIVE_FILTER: ActiveFilter = {
 const mockStore = {
   filters: [] as ActiveFilter[],
   selectedPreset: null as ScannerPreset | null,
-  locationOverride: null as string | null,
+  locationOverride: "STK.US.MAJOR" as string,
   isScanning: false,
   results: [],
   isDirty: false,
@@ -103,12 +103,24 @@ const mockStore = {
   setLocationOverride: vi.fn(),
 };
 
+// Path B: locations come from the backend now (curated list — each entry
+// pairs an instrument with its valid location code). This mock matches the
+// shape the real /screener/locations endpoint returns.
+const MOCK_LOCATIONS = [
+  { instrument: "STK", location: "STK.US.MAJOR", label: "US — Listed/NASDAQ" },
+  { instrument: "STK", location: "STK.US.MINOR", label: "US — OTC Markets" },
+  { instrument: "STOCK.NA", location: "STK.NA.CANADA", label: "Canada" },
+  { instrument: "STOCK.HK", location: "STK.HK.TSE_JPN", label: "Japan" },
+  { instrument: "STOCK.EU", location: "STK.EU.LSE", label: "UK — LSE" },
+];
+
 // ── Default useQuery implementation ───────────────────────────
 
 function defaultUseQuery({ queryKey }: { queryKey: unknown[] }) {
   const key = queryKey[0];
   if (key === "screener-presets") return { data: MOCK_PRESETS, isLoading: false };
   if (key === "screener-filter-catalogue") return { data: MOCK_CATALOGUE, isLoading: false };
+  if (key === "screener-locations") return { data: MOCK_LOCATIONS, isLoading: false };
   return { data: undefined, isLoading: false };
 }
 
@@ -118,7 +130,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockStore.filters = [];
   mockStore.selectedPreset = null;
-  mockStore.locationOverride = null;
+  mockStore.locationOverride = "STK.US.MAJOR";
   mockStore.isScanning = false;
   mockStore.results = [];
   mockStore.isDirty = false;
@@ -362,38 +374,39 @@ describe("AI toggle button", () => {
   });
 });
 
-// ── Location override dropdown (Task #19) ─────────────────────
+// ── Location dropdown (Path B — backend-sourced + instrument-aware) ──
+//
+// The dropdown's options come from /screener/locations (mocked above as
+// MOCK_LOCATIONS). There's no longer a "Preset default" entry — the
+// dropdown is always at a real location, defaulting to STK.US.MAJOR.
+// When the selected preset's `instruments` array doesn't include an
+// option's instrument code, that option is disabled (so the user can't
+// pick a market the scan_type doesn't support).
 
-describe("Location override dropdown", () => {
-  it("renders the dropdown with the curated options", () => {
+describe("Location dropdown", () => {
+  it("renders curated options from the backend", () => {
     render(<ScreenerFilterBar onScan={vi.fn()} />);
     const dropdown = screen.getByTestId("location-override") as HTMLSelectElement;
     expect(dropdown).toBeInTheDocument();
-    // First option is the "preset default" (null → "")
-    expect(dropdown.value).toBe("");
-    // A few of the curated options should be present (real IBKR codes only —
-    // these labels match LOCATION_OPTIONS in ScreenerFilterBar.tsx)
-    expect(screen.getByRole("option", { name: "Preset default" })).toBeInTheDocument();
+    // No "Preset default" entry any more
+    expect(screen.queryByRole("option", { name: "Preset default" })).toBeNull();
+    // Several curated options present
+    expect(screen.getByRole("option", { name: "US — Listed/NASDAQ" })).toBeInTheDocument();
     expect(screen.getByRole("option", { name: "Japan" })).toBeInTheDocument();
-    expect(
-      screen.getByRole("option", { name: "US — Listed/NASDAQ" }),
-    ).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "Canada" })).toBeInTheDocument();
+  });
+
+  it("defaults to STK.US.MAJOR (US Listed/NASDAQ)", () => {
+    render(<ScreenerFilterBar onScan={vi.fn()} />);
+    const dropdown = screen.getByTestId("location-override") as HTMLSelectElement;
+    expect(dropdown.value).toBe("STK.US.MAJOR");
   });
 
   it("calls setLocationOverride with the chosen IBKR code", () => {
     render(<ScreenerFilterBar onScan={vi.fn()} />);
     const dropdown = screen.getByTestId("location-override");
-    // STK.HK.TSE_JPN is the real IBKR code for Japan (yes — "HK" tree).
     fireEvent.change(dropdown, { target: { value: "STK.HK.TSE_JPN" } });
     expect(mockStore.setLocationOverride).toHaveBeenCalledWith("STK.HK.TSE_JPN");
-  });
-
-  it("calls setLocationOverride(null) when 'Preset default' is picked", () => {
-    mockStore.locationOverride = "STK.HK.TSE_JPN";
-    render(<ScreenerFilterBar onScan={vi.fn()} />);
-    const dropdown = screen.getByTestId("location-override");
-    fireEvent.change(dropdown, { target: { value: "" } });
-    expect(mockStore.setLocationOverride).toHaveBeenCalledWith(null);
   });
 
   it("reflects the current locationOverride in the dropdown value", () => {
@@ -418,8 +431,6 @@ describe("Location override dropdown", () => {
   });
 
   it("is disabled when the selected preset's instrument is not STK (ETF/FUT)", () => {
-    // Pairing a STK location with an ETF preset gives IBKR 500 — guard the
-    // dropdown so the user can't accidentally do that.
     mockStore.selectedPreset = {
       instrument: "ETF.EQ.US",
       scan_type: "MOST_ACTIVE",
@@ -431,5 +442,48 @@ describe("Location override dropdown", () => {
     const dropdown = screen.getByTestId("location-override") as HTMLSelectElement;
     expect(dropdown).toBeDisabled();
     expect(dropdown.title).toMatch(/stock presets/i);
+  });
+
+  it("disables options whose instrument isn't in preset.instruments", () => {
+    // STK preset with `instruments: ["STK"]` means ONLY US Major/Minor
+    // locations are valid (those have instrument="STK"). Japan (STOCK.HK)
+    // and UK (STOCK.EU) should be disabled.
+    mockStore.selectedPreset = {
+      ...POPULAR_PRESET,
+      instruments: ["STK"],
+    } as ScannerPreset;
+    render(<ScreenerFilterBar onScan={vi.fn()} />);
+    const usOption = screen.getByRole("option", {
+      name: /US — Listed\/NASDAQ/,
+    }) as HTMLOptionElement;
+    const japanOption = screen.getByRole("option", { name: /Japan/ }) as HTMLOptionElement;
+    expect(usOption.disabled).toBe(false);
+    expect(japanOption.disabled).toBe(true);
+    // Disabled options carry a tooltip explaining why
+    expect(japanOption.title).toMatch(/Not available/i);
+  });
+
+  it("enables all options when preset.instruments covers them all", () => {
+    mockStore.selectedPreset = {
+      ...POPULAR_PRESET,
+      instruments: ["STK", "STOCK.HK", "STOCK.EU", "STOCK.NA"],
+    } as ScannerPreset;
+    render(<ScreenerFilterBar onScan={vi.fn()} />);
+    const japanOption = screen.getByRole("option", { name: /Japan/ }) as HTMLOptionElement;
+    const ukOption = screen.getByRole("option", { name: /UK/ }) as HTMLOptionElement;
+    expect(japanOption.disabled).toBe(false);
+    expect(ukOption.disabled).toBe(false);
+  });
+
+  it("enables all options when preset has no instruments info yet", () => {
+    // Presets list still loading — don't punish users by blocking the
+    // dropdown until the array arrives. Empty `instruments` ⇒ permissive.
+    mockStore.selectedPreset = {
+      ...POPULAR_PRESET,
+      instruments: [],
+    } as ScannerPreset;
+    render(<ScreenerFilterBar onScan={vi.fn()} />);
+    const japanOption = screen.getByRole("option", { name: /Japan/ }) as HTMLOptionElement;
+    expect(japanOption.disabled).toBe(false);
   });
 });
