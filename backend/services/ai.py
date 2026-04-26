@@ -245,14 +245,21 @@ class AiService:
         self,
         messages: list[dict[str, str]],
         model: str,
+        *,
+        think: Optional[bool] = None,
     ) -> str:
         """
         Send a chat request to Ollama and return the full response.
         Non-streaming — waits for the complete response.
 
         model: the Ollama model name to use (from user's selection).
+        think: Optional thinking-mode toggle for thinking models (Gemma 4,
+            Qwen3, etc.). None = let Ollama use its model default. False = force
+            off (used by the screener AI where reasoning chain wastes tokens).
+            True = force on (default for Analysis chat where reasoning is
+            valued).
         """
-        payload = {
+        payload: dict = {
             "model": model,
             "messages": messages,
             "stream": False,
@@ -261,6 +268,8 @@ class AiService:
                 "num_predict": 2048,    # Max tokens to generate
             },
         }
+        if think is not None:
+            payload["think"] = think
 
         try:
             resp = await self._http.post("/api/chat", json=payload)
@@ -279,6 +288,8 @@ class AiService:
         messages: list[dict[str, str]],
         model: str,
         json_schema: dict,
+        *,
+        think: Optional[bool] = None,
     ) -> dict:
         """
         Send a chat request with Ollama's structured output (format parameter).
@@ -292,8 +303,9 @@ class AiService:
 
         model: the Ollama model name to use.
         json_schema: JSON Schema dict passed to Ollama's `format` parameter.
+        think: see chat() — None = use Ollama default, True/False forces it.
         """
-        payload = {
+        payload: dict = {
             "model": model,
             "messages": messages,
             "stream": False,
@@ -303,6 +315,8 @@ class AiService:
                 "num_predict": 2048,
             },
         }
+        if think is not None:
+            payload["think"] = think
 
         try:
             resp = await self._http.post("/api/chat", json=payload)
@@ -324,14 +338,17 @@ class AiService:
         self,
         messages: list[dict[str, str]],
         model: str,
+        *,
+        think: Optional[bool] = None,
     ) -> AsyncIterator[str]:
         """
         Send a chat request to Ollama and yield tokens as they arrive.
         Used for the streaming chat experience in the frontend.
 
         model: the Ollama model name to use (from user's selection).
+        think: see chat() — None = use Ollama default, True/False forces it.
         """
-        payload = {
+        payload: dict = {
             "model": model,
             "messages": messages,
             "stream": True,
@@ -340,6 +357,8 @@ class AiService:
                 "num_predict": 2048,
             },
         }
+        if think is not None:
+            payload["think"] = think
 
         try:
             async with self._http.stream(

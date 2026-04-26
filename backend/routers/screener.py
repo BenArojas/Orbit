@@ -299,10 +299,15 @@ async def ai_generate_filters(request: AiFilterRequest):
     # ScreenerAiService is stateless — create per-request (cheap, no state)
     svc = ScreenerAiService()
     try:
+        # think=False — thinking models burn tokens on chain-of-thought before
+        # producing structured JSON, which used to time out the request. The
+        # screener UX needs fast, deterministic filter codes; the Analysis chat
+        # is where reasoning matters.
         result = await svc.generate_filters(
             query=request.query,
             model=request.model,
             preset_context=request.preset_context or "",
+            think=False,
         )
         return AiFilterResponse(**result)
     finally:

@@ -16,6 +16,7 @@ the raw IBKR `/iserver/scanner/params` dump.
 
 import json
 import logging
+import re
 from typing import Any
 
 import httpx
@@ -54,6 +55,30 @@ AI_FILTER_SCHEMA = {
     },
     "required": ["reasoning", "filters", "summary"]
 }
+
+
+# Strips ```json ... ``` (or plain ``` ... ```) wrappers some models add
+# even when given a `format` schema. Pre-compiled at import time.
+_MARKDOWN_FENCE_RE = re.compile(
+    r"^\s*```(?:json|JSON)?\s*\n?(.*?)\n?\s*```\s*$",
+    re.DOTALL,
+)
+
+
+def _strip_markdown_fences(content: str) -> str:
+    """
+    Remove ```json ... ``` markdown wrapping from a model response.
+
+    Some models (Gemma 4 included) ignore Ollama's `format` schema and wrap
+    their structured output in markdown fences anyway. Without stripping,
+    `json.loads()` dies at char 0 on the leading backtick.
+
+    No-op when no fence is detected.
+    """
+    match = _MARKDOWN_FENCE_RE.match(content)
+    if match:
+        return match.group(1).strip()
+    return content.strip()
 
 
 def _build_catalogue_text() -> str:
@@ -105,6 +130,9 @@ Your job is to translate a user's natural language query into IBKR scanner filte
 6. reasoning per filter should be 1 sentence explaining why you chose that code + value.
 7. summary should be one sentence describing the overall filter set.
 8. If the query cannot be mapped to any filters, return an empty filters array and explain in summary.
+9. Output raw JSON only — DO NOT wrap the response in markdown code fences
+   (no ```json, no ```), no commentary before or after. The response must
+   start with `{{` and end with `}}`.
 """
 
 
@@ -115,9 +143,11 @@ class ScreenerAiService:
     """
 
     def __init__(self) -> None:
+        # Timeout bumped to 120s — even with think=False, structured output
+        # over an ~80-filter catalogue can take 30-60s on a 26B model.
         self._http = httpx.AsyncClient(
             base_url=OLLAMA_HOST,
-            timeout=httpx.Timeout(60.0, connect=10.0),
+            timeout=httpx.Timeout(120.0, connect=10.0),
         )
 
     async def generate_filters(
@@ -125,9 +155,22 @@ class ScreenerAiService:
         query: str,
         model: str,
         preset_context: str = "",
+        *,
+        think: bool = False,
     ) -> dict:
         """
         Translate a natural language query into IBKR filter codes.
+
+        Args:
+            query: Natural language query from the user.
+            model: Ollama model tag (e.g. "gemma4:26b").
+            preset_context: Optional name of the currently selected scanner preset.
+            think: Whether to allow the model to use its `thinking` channel.
+                Defaults to False — thinking models (Gemma 4, Qwen3) burn tokens
+                on chain-of-thought before producing the structured JSON, which
+                blew past the httpx timeout in production. The screener UX wants
+                fast structured output, not reasoning. The Analysis chat keeps
+                thinking on (passes think=None / True there).
 
         Returns a dict matching AiFilterResponse shape:
         {
@@ -149,10 +192,14 @@ class ScreenerAiService:
             "model": model,
             "messages": messages,
             "stream": False,
+            "think": think,
             "format": AI_FILTER_SCHEMA,
             "options": {
                 "temperature": 0.2,
-                "num_predict": 1024,
+                # 2048 leaves room for full structured output (filters + reasoning
+                # + summary) even on the largest catalogue. With think=False the
+                # model uses very few tokens before emitting JSON.
+                "num_predict": 2048,
             },
         }
 
@@ -160,9 +207,60 @@ class ScreenerAiService:
             resp = await self._http.post("/api/chat", json=payload)
             resp.raise_for_status()
             data = resp.json()
-            content = data.get("message", {}).get("content", "")
+            message = data.get("message", {}) or {}
+            content = message.get("content", "")
+            done_reason = data.get("done_reason", "")
 
-            result = json.loads(content)
+            # Truncation guard — Ollama returns done_reason="length" when
+            # num_predict is exhausted. Content is usually empty or partial JSON
+            # in that case; surface it as a clear, typed error rather than a
+            # cryptic JSONDecodeError.
+            if done_reason == "length":
+                log.warning(
+                    "Ollama truncated response (done_reason=length, "
+                    "content_len=%d, model=%s)",
+                    len(content), model,
+                )
+                raise AIError(
+                    "AI response was truncated before completing — "
+                    "try a simpler query or a smaller model."
+                )
+
+            # Empty-content guard — happens when a thinking model put everything
+            # into `thinking` and ran out of room before emitting `content`.
+            # Without think=False this is the most common failure mode.
+            if not content.strip():
+                thinking_len = len(message.get("thinking", "") or "")
+                log.warning(
+                    "Ollama returned empty content (thinking_len=%d, "
+                    "done_reason=%s, model=%s, think=%s)",
+                    thinking_len, done_reason, model, think,
+                )
+                raise AIError(
+                    "AI returned empty response — the model may be in "
+                    "thinking mode without leaving room for output."
+                )
+
+            # Diagnostic log — capture exactly what Ollama returned so when
+            # json.loads fails we can see whether it was non-JSON text
+            # (model ignored the format schema) vs malformed JSON.
+            log.info(
+                "Ollama response (model=%s, think=%s, done_reason=%s, "
+                "content_len=%d, content_preview=%r)",
+                model, think, done_reason, len(content), content[:300],
+            )
+
+            # Strip ```json ... ``` wrappers some models add despite the
+            # `format` schema. No-op when content is already raw JSON.
+            cleaned = _strip_markdown_fences(content)
+            if cleaned != content.strip():
+                log.info(
+                    "Stripped markdown fences from Ollama response "
+                    "(original_len=%d, cleaned_len=%d)",
+                    len(content), len(cleaned),
+                )
+
+            result = json.loads(cleaned)
 
             # Validate: only keep filters with codes that exist in our catalogue.
             # FILTER_CODES is a frozenset built from the canonical catalogue
