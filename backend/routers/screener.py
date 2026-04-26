@@ -24,6 +24,7 @@ from models import (
     ScannerLocation,
     ScannerParamsResponse,
     ScannerPreset,
+    ScannerScanType,
     ScanRequest,
     ScanResponse,
 )
@@ -266,6 +267,25 @@ async def list_presets(
     that come back as 500 "No matching locations defined".
     """
     return await screener.list_presets()
+
+
+# ── GET /screener/all-scan-types ─────────────────────────────
+
+
+@router.get("/all-scan-types", response_model=list[ScannerScanType])
+async def list_all_scan_types(
+    screener: ScreenerService = Depends(get_screener),
+):
+    """
+    Return EVERY scan type IBKR exposes in /iserver/scanner/params,
+    bucketed into our category groups (with "other" as fallback).
+
+    Used by the "Browse all scans" panel — power users get access to the
+    full ~60-scan IBKR catalogue without us having to curate each one.
+    Each entry's `is_curated` flag marks scan types that ALSO appear as
+    named presets in the main dropdown.
+    """
+    return await screener.list_all_scan_types()
 
 
 # ── GET /screener/locations ─────────────────────────────────

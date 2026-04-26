@@ -570,6 +570,21 @@ export interface ScannerLocation {
   label: string;
 }
 
+/** One scan type entry from GET /screener/all-scan-types — the full
+ *  IBKR catalogue used by the "Browse all scans" panel. `is_curated`
+ *  marks scan types that also appear as named presets in the main
+ *  dropdown. */
+export interface ScannerScanType {
+  code: string;
+  display_name: string;
+  instruments: string[];
+  /** Our category bucket key — matches the labels in the panel:
+   *  movers / highs_lows / pre_post_market / gaps / options_vol /
+   *  fundamentals / special / etfs / other. */
+  group: string;
+  is_curated: boolean;
+}
+
 /**
  * One entry from GET /screener/filter-catalogue.
  * Mirrors backend FilterCatalogueEntry. The frontend fetches this once per
@@ -918,6 +933,11 @@ export const api = {
    *  the backend (single source of truth for region selection). */
   screenerLocations: () =>
     request<ScannerLocation[]>("GET", "/screener/locations"),
+
+  /** Full IBKR scan-type catalogue with our category bucketing — powers
+   *  the "Browse all scans" slide-over panel. */
+  screenerAllScanTypes: () =>
+    request<ScannerScanType[]>("GET", "/screener/all-scan-types"),
 
   /** Canonical filter catalogue — fetched once per session, staleTime 1h */
   screenerFilterCatalogue: () =>

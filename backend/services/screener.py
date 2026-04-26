@@ -65,9 +65,11 @@ SNAPSHOT_REQUIRED_FIELDS = [
 SNAPSHOT_TIMEOUT_FIRST = 8.0
 SNAPSHOT_TIMEOUT_RETRY = 3.0
 from constants.scan_types import (
+    CATEGORY_ORDER,
     CURATED_SCAN_TYPES,
     NO_QUOTE_SCAN_TYPES,
     SCAN_TYPE_BY_CODE,
+    categorize_scan_type,
 )
 from constants.scan_locations import (
     CURATED_LOCATIONS,
@@ -78,6 +80,7 @@ from models import (
     IbkrFilterItem,
     ScannerLocation,
     ScannerPreset,
+    ScannerScanType,
     ScreenerResultRow,
     ScanResponse,
 )
@@ -288,6 +291,46 @@ class ScreenerService:
         selected. See constants/scan_locations.py.
         """
         return [ScannerLocation(**loc) for loc in CURATED_LOCATIONS]
+
+    # ── Full IBKR catalogue — for the Browse all scans panel ─────
+
+    async def list_all_scan_types(self) -> list[ScannerScanType]:
+        """
+        Return EVERY scan type IBKR exposes in /iserver/scanner/params,
+        bucketed into our category keys (with "other" as the fallback).
+
+        The Browse all scans panel uses this to give power users access
+        to the full ~60-scan IBKR catalogue without expanding our curated
+        preset list. Curated codes are flagged with `is_curated=True` so
+        the panel can mark them differently (these also appear in the
+        main preset dropdown).
+
+        Sorted by category (CATEGORY_ORDER), then alphabetically by
+        display_name within each category — stable and predictable.
+        """
+        params = await self._get_scanner_params()
+        raw_list = params.get("scan_type_list", [])
+
+        items: list[ScannerScanType] = []
+        for st in raw_list:
+            code = st.get("code") or ""
+            if not code:
+                continue
+            items.append(ScannerScanType(
+                code=code,
+                display_name=st.get("display_name") or code,
+                instruments=list(st.get("instruments", [])),
+                group=categorize_scan_type(code),
+                is_curated=code in SCAN_TYPE_BY_CODE,
+            ))
+
+        # Sort by (category index, display_name)
+        cat_index = {cat: i for i, cat in enumerate(CATEGORY_ORDER)}
+        items.sort(key=lambda it: (
+            cat_index.get(it.group, len(CATEGORY_ORDER)),
+            it.display_name.lower(),
+        ))
+        return items
 
     async def scan(
         self,

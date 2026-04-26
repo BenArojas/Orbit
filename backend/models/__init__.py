@@ -762,6 +762,23 @@ class ScannerLocation(BaseModel):
     label: str                                          # e.g. "Japan"
 
 
+class ScannerScanType(BaseModel):
+    """
+    One scan type entry for the "Browse all scans" panel.
+
+    Sourced from IBKR's live scan_type_list (so as their catalogue grows
+    we surface the additions automatically), enriched with our curated
+    category bucketing. `is_curated=True` means this scan_type appears as
+    a named preset in the main dropdown too — the panel marks them so the
+    user can tell "ours" from "long tail".
+    """
+    code: str                                           # IBKR scan type code
+    display_name: str                                   # IBKR's display name
+    instruments: list[str]                              # Compatibility — same shape as ScannerPreset
+    group: str                                          # Our category key (CATEGORY_LABELS)
+    is_curated: bool = False                            # True if also in CURATED_SCAN_TYPES
+
+
 class IbkrFilterItem(BaseModel):
     """
     One native IBKR scanner filter criterion.

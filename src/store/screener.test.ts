@@ -51,6 +51,7 @@ function resetStore() {
     filters: [],
     selectedPreset: null,
     locationOverride: "STK.US.MAJOR",
+    locationResetReason: null,
     isScanning: false,
     results: [],
     lastBatchSize: 0,
@@ -353,5 +354,30 @@ describe("updateFilter (AI replace flow)", () => {
     expect(f.display_label).toBe("Price ≥ 25");
     // Filter count stays at 1 — proves no duplicate was created
     expect(useScreenerStore.getState().filters).toHaveLength(1);
+  });
+});
+
+// ── locationResetReason (Path C — Browse panel banner trigger) ────
+
+describe("setLocationResetReason", () => {
+  it("defaults to null", () => {
+    expect(useScreenerStore.getState().locationResetReason).toBeNull();
+  });
+
+  it("can be set to a string and cleared with null", () => {
+    useScreenerStore
+      .getState()
+      .setLocationResetReason("Location reset to US.");
+    expect(useScreenerStore.getState().locationResetReason).toBe(
+      "Location reset to US.",
+    );
+    useScreenerStore.getState().setLocationResetReason(null);
+    expect(useScreenerStore.getState().locationResetReason).toBeNull();
+  });
+
+  it("is cleared by resetScreener", () => {
+    useScreenerStore.getState().setLocationResetReason("Some reason");
+    useScreenerStore.getState().resetScreener();
+    expect(useScreenerStore.getState().locationResetReason).toBeNull();
   });
 });

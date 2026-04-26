@@ -66,6 +66,8 @@ import ScreenerResultsTable from "@/components/screener/ScreenerResultsTable";
 import ScreenerPagination from "@/components/screener/ScreenerPagination";
 import ScreenerPeekPanel from "@/components/screener/ScreenerPeekPanel";
 import ScreenerAiPanel from "@/components/screener/ScreenerAiPanel";
+import BrowseAllScansPanel from "@/components/screener/BrowseAllScansPanel";
+import LocationResetBanner from "@/components/screener/LocationResetBanner";
 
 /** How many rows we ask the backend for per scan call. Matches IBKR's
  *  effective cap of ~50 results/scan. Future "Search next 50" will keep
@@ -177,6 +179,8 @@ function EmptyCard({
 
 export default function ScreenerPage() {
   const [aiPanelOpen, setAiPanelOpen] = useState(false);
+  // Path C — Browse all scans slide-over open state
+  const [browseOpen, setBrowseOpen] = useState(false);
 
   const {
     selectedPreset,
@@ -188,6 +192,7 @@ export default function ScreenerPage() {
     replaceResults,
     applyPreset,
     resetScreener,
+    setPreset,
   } = useScreenerStore();
 
   // Presets are also fetched in ScreenerFilterBar — React Query deduplicates.
@@ -294,7 +299,13 @@ export default function ScreenerPage() {
           scanMutation.reset();
           setLastScanWasEmpty(false);
         }}
+        onOpenBrowseAllScans={() => setBrowseOpen(true)}
       />
+
+      {/* Path C — auto-dismissing banner shown when the Browse panel had
+          to reset the location override (e.g. picked a US-only scan
+          while Japan was selected). */}
+      <LocationResetBanner />
 
       {/* Error state */}
       {scanMutation.isError && (
@@ -361,6 +372,16 @@ export default function ScreenerPage() {
 
       {/* Quick-peek slide-over (overlay) */}
       <ScreenerPeekPanel />
+
+      {/* Path C — Browse all scans slide-over (full IBKR catalogue).
+          On pick: builds a synthetic preset, sets it active, and may
+          reset locationOverride if it isn't compatible (banner above
+          surfaces the reset). User's filters are preserved. */}
+      <BrowseAllScansPanel
+        isOpen={browseOpen}
+        onClose={() => setBrowseOpen(false)}
+        onPick={(preset) => setPreset(preset)}
+      />
     </div>
   );
 }

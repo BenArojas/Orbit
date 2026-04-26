@@ -1760,3 +1760,145 @@ class TestScannerParamsCache:
         # Only the bundled ETF preset survives (it has hardcoded fields and
         # scan_type_index lookup misses are tolerated)
         assert all(p.instruments == [] for p in presets)
+
+
+# ── Path C: full scan-type catalogue + categorizer ──────────────
+
+
+class TestCategorizeScanType:
+    """Pure-function tests for the heuristic categorizer used by the
+    Browse all scans panel."""
+
+    def test_curated_codes_use_explicit_category(self):
+        from constants.scan_types import categorize_scan_type
+        # CURATED entries return their explicit category, no heuristic
+        assert categorize_scan_type("TOP_PERC_GAIN") == "movers"
+        assert categorize_scan_type("HIGH_VS_52W_HL") == "highs_lows"
+        assert categorize_scan_type("FIRST_TRADE_DATE_ASC") == "special"
+        assert categorize_scan_type("HIGH_DIVIDEND_YIELD_IB") == "fundamentals"
+
+    def test_options_codes_route_to_options_vol(self):
+        from constants.scan_types import categorize_scan_type
+        # Non-curated options scan types
+        assert categorize_scan_type("HIGH_OPT_VOLUME_PUT_CALL_RATIO") == "options_vol"
+        assert categorize_scan_type("LOW_OPT_OPEN_INTEREST_PUT_CALL_RATIO") == "options_vol"
+        assert categorize_scan_type("HOT_BY_OPT_VOLUME") == "options_vol"
+
+    def test_after_hours_routes_to_pre_post_market(self):
+        from constants.scan_types import categorize_scan_type
+        # TOP_AFTER_HOURS_PERC_GAIN is curated, but raw heuristic should still hit
+        assert categorize_scan_type("RANDOM_AFTER_HOURS_THING") == "pre_post_market"
+
+    def test_high_low_routes_to_highs_lows(self):
+        from constants.scan_types import categorize_scan_type
+        # HIGH_VS_26W_HL isn't curated but matches the pattern
+        assert categorize_scan_type("HIGH_VS_26W_HL") == "highs_lows"
+        assert categorize_scan_type("LOW_VS_26W_HL") == "highs_lows"
+
+    def test_fundamentals_heuristics(self):
+        from constants.scan_types import categorize_scan_type
+        # ROE / quick ratio variants
+        assert categorize_scan_type("HIGH_RETURN_ON_EQUITY") == "fundamentals"
+        assert categorize_scan_type("LOW_QUICK_RATIO") == "fundamentals"
+        assert categorize_scan_type("HIGH_GROWTH_RATE") == "fundamentals"
+
+    def test_imbalance_routes_to_special(self):
+        from constants.scan_types import categorize_scan_type
+        assert categorize_scan_type("TOP_STOCK_BUY_IMBALANCE_ADV_RATIO") == "special"
+        assert categorize_scan_type("NOT_YET_TRADED_TODAY") == "special"
+
+    def test_movers_heuristics(self):
+        from constants.scan_types import categorize_scan_type
+        assert categorize_scan_type("LIMIT_UP_DOWN") == "movers"
+        assert categorize_scan_type("MOST_ACTIVE_AVG_USD") == "movers"
+        assert categorize_scan_type("HIGH_STVOLUME_3MIN") == "movers"
+
+    def test_unknown_falls_through_to_other(self):
+        from constants.scan_types import categorize_scan_type
+        # Synthetic code that matches none of our heuristics
+        assert categorize_scan_type("ZZZ_TOTALLY_NEW_CODE") == "other"
+
+
+class TestListAllScanTypes:
+    """Powers the Browse all scans panel — full IBKR catalogue with
+    bucketing, sorting, and curated-flag annotation."""
+
+    @pytest.mark.asyncio
+    async def test_returns_all_scan_types_with_categorization(self):
+        ibkr = make_ibkr_mock()
+        ibkr.scanner_params = AsyncMock(return_value={
+            "scan_type_list": [
+                {"code": "TOP_PERC_GAIN", "display_name": "Top % Gainers", "instruments": ["STK"]},
+                {"code": "HIGH_RETURN_ON_EQUITY", "display_name": "High ROE", "instruments": ["STK"]},
+                {"code": "ZZZ_UNKNOWN", "display_name": "Unknown", "instruments": ["STK"]},
+            ],
+        })
+        svc = ScreenerService(ibkr)
+        items = await svc.list_all_scan_types()
+
+        assert len(items) == 3
+        by_code = {it.code: it for it in items}
+        assert by_code["TOP_PERC_GAIN"].group == "movers"
+        assert by_code["HIGH_RETURN_ON_EQUITY"].group == "fundamentals"
+        assert by_code["ZZZ_UNKNOWN"].group == "other"
+
+    @pytest.mark.asyncio
+    async def test_curated_flag_set_only_for_curated_codes(self):
+        ibkr = make_ibkr_mock()
+        ibkr.scanner_params = AsyncMock(return_value={
+            "scan_type_list": [
+                {"code": "TOP_PERC_GAIN", "display_name": "Top % Gainers", "instruments": ["STK"]},
+                {"code": "HIGH_RETURN_ON_EQUITY", "display_name": "High ROE", "instruments": ["STK"]},
+            ],
+        })
+        svc = ScreenerService(ibkr)
+        items = await svc.list_all_scan_types()
+        by_code = {it.code: it for it in items}
+        # TOP_PERC_GAIN is in CURATED_SCAN_TYPES; HIGH_RETURN_ON_EQUITY is not
+        assert by_code["TOP_PERC_GAIN"].is_curated is True
+        assert by_code["HIGH_RETURN_ON_EQUITY"].is_curated is False
+
+    @pytest.mark.asyncio
+    async def test_sorted_by_category_then_alpha(self):
+        """Sorting puts curated-bucket items before 'other', and within a
+        bucket sorts alphabetically by display_name."""
+        ibkr = make_ibkr_mock()
+        ibkr.scanner_params = AsyncMock(return_value={
+            "scan_type_list": [
+                {"code": "ZZZ_UNKNOWN", "display_name": "Z Unknown", "instruments": ["STK"]},
+                {"code": "TOP_PERC_LOSE", "display_name": "Top % Losers", "instruments": ["STK"]},
+                {"code": "TOP_PERC_GAIN", "display_name": "Top % Gainers", "instruments": ["STK"]},
+            ],
+        })
+        svc = ScreenerService(ibkr)
+        items = await svc.list_all_scan_types()
+        # Movers come before "other"; within movers, alpha order
+        codes = [it.code for it in items]
+        assert codes == ["TOP_PERC_GAIN", "TOP_PERC_LOSE", "ZZZ_UNKNOWN"]
+
+    @pytest.mark.asyncio
+    async def test_skips_entries_without_code(self):
+        ibkr = make_ibkr_mock()
+        ibkr.scanner_params = AsyncMock(return_value={
+            "scan_type_list": [
+                {"code": "TOP_PERC_GAIN", "display_name": "Top % Gainers", "instruments": ["STK"]},
+                {"display_name": "No Code Here", "instruments": ["STK"]},  # malformed
+                {"code": "", "display_name": "Empty Code", "instruments": ["STK"]},
+            ],
+        })
+        svc = ScreenerService(ibkr)
+        items = await svc.list_all_scan_types()
+        assert len(items) == 1
+        assert items[0].code == "TOP_PERC_GAIN"
+
+    @pytest.mark.asyncio
+    async def test_falls_back_to_code_when_display_name_missing(self):
+        ibkr = make_ibkr_mock()
+        ibkr.scanner_params = AsyncMock(return_value={
+            "scan_type_list": [
+                {"code": "WEIRD_NEW_CODE", "instruments": ["STK"]},  # no display_name
+            ],
+        })
+        svc = ScreenerService(ibkr)
+        items = await svc.list_all_scan_types()
+        assert items[0].display_name == "WEIRD_NEW_CODE"

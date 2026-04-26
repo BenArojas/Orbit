@@ -211,9 +211,14 @@ CATEGORY_LABELS: dict[str, str] = {
     "fundamentals": "Fundamentals",
     "special": "Special Situations",
     "etfs": "ETFs",
+    # "other" only appears in the Browse all scans panel, never in the
+    # preset dropdown — it's the fallback bucket for IBKR scan types we
+    # haven't curated into one of the named categories above.
+    "other": "Other Scans",
 }
 
 # Ordered list of categories for stable section ordering in the UI.
+# "other" is intentionally last so curated buckets surface first.
 CATEGORY_ORDER: list[str] = [
     "movers",
     "highs_lows",
@@ -223,7 +228,52 @@ CATEGORY_ORDER: list[str] = [
     "fundamentals",
     "special",
     "etfs",
+    "other",
 ]
+
+
+def categorize_scan_type(code: str) -> str:
+    """
+    Bucket an IBKR scan_type code into one of our category keys.
+
+    Used by the "Browse all scans" panel to organize scan types IBKR
+    returns that aren't in our curated list. Curated codes return their
+    explicit category. Unknown codes fall through pattern heuristics
+    derived from IBKR's naming conventions; ultimate fallback is "other".
+
+    Pure function — no side effects, easy to unit-test.
+    """
+    curated = SCAN_TYPE_BY_CODE.get(code)
+    if curated is not None:
+        return curated["category"]
+
+    upper = code.upper()
+    # Order matters — most specific matches first.
+    if "OPT" in upper or "IMP_VOL" in upper or "PUT_CALL" in upper:
+        return "options_vol"
+    if "AFTER_HOURS" in upper or "OPEN_PERC" in upper:
+        return "pre_post_market"
+    if "GAP" in upper:
+        return "gaps"
+    if "VS_52W" in upper or "VS_13W" in upper or "VS_26W" in upper:
+        return "highs_lows"
+    if any(s in upper for s in (
+        "ACTIVE", "VOLUME", "TRADE_COUNT", "TRADE_RATE",
+        "PRICE_RANGE", "STVOLUME", "HOT_BY",
+        "PERC_GAIN", "PERC_LOSE", "HALTED", "LIMIT_UP_DOWN",
+    )):
+        return "movers"
+    if any(s in upper for s in (
+        "DIVIDEND", "GROWTH", "PE_RATIO", "ROE", "RETURN_ON",
+        "PRICE2BK", "QUICK", "EPS",
+    )):
+        return "fundamentals"
+    if any(s in upper for s in (
+        "FIRST_TRADE", "IMBALANCE", "NOT_YET",
+    )):
+        return "special"
+
+    return "other"
 
 # Scan types where IBKR returns rows that have NO snapshot quote data —
 # the conids haven't started trading yet (IPOs) or are in some pre-trade

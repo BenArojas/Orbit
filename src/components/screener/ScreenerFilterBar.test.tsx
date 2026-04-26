@@ -92,6 +92,7 @@ const mockStore = {
   filters: [] as ActiveFilter[],
   selectedPreset: null as ScannerPreset | null,
   locationOverride: "STK.US.MAJOR" as string,
+  locationResetReason: null as string | null,
   isScanning: false,
   results: [],
   isDirty: false,
@@ -101,6 +102,7 @@ const mockStore = {
   clearFilters: vi.fn(),
   setPreset: vi.fn(),
   setLocationOverride: vi.fn(),
+  setLocationResetReason: vi.fn(),
 };
 
 // Path B: locations come from the backend now (curated list — each entry
@@ -485,5 +487,33 @@ describe("Location dropdown", () => {
     render(<ScreenerFilterBar onScan={vi.fn()} />);
     const japanOption = screen.getByRole("option", { name: /Japan/ }) as HTMLOptionElement;
     expect(japanOption.disabled).toBe(false);
+  });
+});
+
+// ── "Browse all scans →" preset dropdown entry (Path C) ───────
+
+describe("Browse all scans entry", () => {
+  it("renders the Browse entry only when onOpenBrowseAllScans is provided", () => {
+    const { rerender } = render(<ScreenerFilterBar onScan={vi.fn()} />);
+    // No prop ⇒ no entry
+    expect(
+      screen.queryByRole("option", { name: /Browse all scans/i }),
+    ).toBeNull();
+
+    rerender(
+      <ScreenerFilterBar onScan={vi.fn()} onOpenBrowseAllScans={vi.fn()} />,
+    );
+    expect(
+      screen.getByRole("option", { name: /Browse all scans/i }),
+    ).toBeInTheDocument();
+  });
+
+  it("calls onOpenBrowseAllScans (and NOT setPreset) when the Browse entry is picked", () => {
+    const onOpenBrowse = vi.fn();
+    render(<ScreenerFilterBar onScan={vi.fn()} onOpenBrowseAllScans={onOpenBrowse} />);
+    const select = screen.getByTestId("preset-select");
+    fireEvent.change(select, { target: { value: "__BROWSE_ALL_SCANS__" } });
+    expect(onOpenBrowse).toHaveBeenCalledTimes(1);
+    expect(mockStore.setPreset).not.toHaveBeenCalled();
   });
 });

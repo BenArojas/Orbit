@@ -469,6 +469,7 @@ export default function ScreenerFilterBar({
   onToggleAiPanel,
   onClearResults,
   showClearResults = false,
+  onOpenBrowseAllScans,
 }: {
   onScan: () => void;
   aiPanelOpen?: boolean;
@@ -477,6 +478,9 @@ export default function ScreenerFilterBar({
   onClearResults?: () => void;
   /** Show the Clear Results button (results exist or there is a scan error). */
   showClearResults?: boolean;
+  /** Path C — called when the user picks "Browse all scans →" from the
+   *  preset dropdown. Parent owns the panel's open state. */
+  onOpenBrowseAllScans?: () => void;
 }) {
   const {
     filters,
@@ -522,9 +526,19 @@ export default function ScreenerFilterBar({
   const popularPresets = presets?.filter((p) => p.category === "popular") ?? [];
   const nichePresets = presets?.filter((p) => p.category === "niche") ?? [];
 
+  // Sentinel value for the "Browse all scans →" entry at the bottom of
+  // the dropdown — picking it opens the BrowseAllScansPanel rather than
+  // selecting an actual preset.
+  const BROWSE_SENTINEL = "__BROWSE_ALL_SCANS__";
+
   const handlePresetChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const val = e.target.value;
+    if (val === BROWSE_SENTINEL) {
+      onOpenBrowseAllScans?.();
+      return;
+    }
     const preset = presets?.find(
-      (p) => `${p.instrument}:${p.scan_type}:${p.location}` === e.target.value
+      (p) => `${p.instrument}:${p.scan_type}:${p.location}` === val
     );
     if (preset) setPreset(preset);
   };
@@ -573,6 +587,12 @@ export default function ScreenerFilterBar({
                 </option>
               ))}
             </optgroup>
+          )}
+          {/* Path C — escape hatch into the full IBKR catalogue. The
+              sentinel value triggers onOpenBrowseAllScans (handled in
+              handlePresetChange) instead of selecting a preset. */}
+          {onOpenBrowseAllScans && (
+            <option value={BROWSE_SENTINEL}>Browse all scans →</option>
           )}
         </select>
       )}

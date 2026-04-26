@@ -93,6 +93,15 @@ interface ScreenerState {
   /** Quick-peek slide-over */
   peekConid: number | null;
 
+  /**
+   * Transient banner shown under the filter bar when the location had to
+   * be auto-reset (e.g. user picked a Browse all scans entry whose
+   * `instruments` array doesn't include the current location override).
+   * null = no banner. The component clears it on dismiss or after 5s.
+   * Not persisted across navigations.
+   */
+  locationResetReason: string | null;
+
   // ── Actions ────────────────────────────────────────────────
   addFilter: (filter: ActiveFilter) => void;
   /** Update an existing filter's value + display_label in-place (click-to-edit pill). */
@@ -135,12 +144,16 @@ interface ScreenerState {
   setSort: (col: string, dir: SortDir) => void;
   setPage: (page: number) => void;
   setPeekConid: (conid: number | null) => void;
+
+  /** Set the transient location-reset banner message (null clears it). */
+  setLocationResetReason: (reason: string | null) => void;
 }
 
 export const useScreenerStore = create<ScreenerState>()((set) => ({
   filters: [],
   selectedPreset: null,
   locationOverride: DEFAULT_LOCATION_CODE,
+  locationResetReason: null,
   isScanning: false,
   results: [],
   lastBatchSize: 0,
@@ -237,6 +250,7 @@ export const useScreenerStore = create<ScreenerState>()((set) => ({
       filters: [],
       selectedPreset: null,
       locationOverride: DEFAULT_LOCATION_CODE,
+      locationResetReason: null,
       results: [],
       lastBatchSize: 0,
       totalScanned: 0,
@@ -251,4 +265,6 @@ export const useScreenerStore = create<ScreenerState>()((set) => ({
   setPage: (page) => set({ page }),
 
   setPeekConid: (conid) => set({ peekConid: conid }),
+
+  setLocationResetReason: (reason) => set({ locationResetReason: reason }),
 }));
