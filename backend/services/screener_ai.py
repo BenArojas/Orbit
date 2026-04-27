@@ -113,10 +113,11 @@ Your job is to translate a user's natural language query into IBKR scanner filte
 2. Values must be strings (the API expects strings, not numbers).
 3. Choose 2–6 filters that best capture the user's intent. Don't over-filter.
 4. For ambiguous terms, use these sensible trading defaults (every code below is
-   a valid IBKR scanner filter):
-   - "large cap"           → marketCapAbove1e6 ≥ 10000 ($10B)
-   - "mid cap"             → marketCapAbove1e6 ≥ 2000 AND marketCapBelow1e6 ≤ 10000
-   - "small cap"           → marketCapAbove1e6 ≥ 300  AND marketCapBelow1e6 ≤ 2000
+   a valid IBKR scanner filter; market-cap values are in MILLIONS of the
+   listing currency):
+   - "large cap"           → marketCapAbove1e6 ≥ 50000 ($50B+)
+   - "mid cap"             → marketCapAbove1e6 ≥ 5000  AND marketCapBelow1e6 ≤ 50000  ($5B–$50B)
+   - "small cap"           → marketCapAbove1e6 ≥ 300   AND marketCapBelow1e6 ≤ 5000   ($300M–$5B)
    - "oversold"            → lastVsEMAChangeRatio20Below ≤ -5
    - "overbought"          → lastVsEMAChangeRatio20Above ≥ 5
    - "momentum"            → changePercAbove ≥ 2 AND volumeAbove ≥ 1000000

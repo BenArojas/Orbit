@@ -61,6 +61,33 @@ function resolveScanTarget(
   }
   return { instrument: opt.instrument, location: opt.location };
 }
+
+/**
+ * Resolve the US-only card lock — for cards with `usOnly: true` (currently
+ * just "S&P 500 gainers"), the scan must run against STK.US.MAJOR
+ * regardless of the user's selected location, because their criteria
+ * don't translate to non-US markets (S&P 500 is US-only; market-cap
+ * thresholds are in listing currency so a "$50B large cap" filter
+ * doesn't mean the same thing in JPY or CHF).
+ *
+ * Returns the effective location for this scan, plus a banner message
+ * to surface via setLocationResetReason when the lock actually changed
+ * something (null when the user was already on US).
+ *
+ * Pure function — no side effects, easy to unit-test.
+ */
+export function resolveUsOnlyLock(
+  card: { usOnly?: boolean; title: string },
+  currentLocation: string,
+): { effectiveLocation: string; banner: string | null } {
+  if (card.usOnly && currentLocation !== "STK.US.MAJOR") {
+    return {
+      effectiveLocation: "STK.US.MAJOR",
+      banner: `Location set to US — Listed/NASDAQ. ${card.title} is US-only.`,
+    };
+  }
+  return { effectiveLocation: currentLocation, banner: null };
+}
 import ScreenerFilterBar from "@/components/screener/ScreenerFilterBar";
 import ScreenerResultsTable from "@/components/screener/ScreenerResultsTable";
 import ScreenerPagination from "@/components/screener/ScreenerPagination";
@@ -85,18 +112,44 @@ interface CardDef {
   location: string;
   instrument: string;
   filters: Array<{ code: string; value: string; display_label: string }>;
+  /**
+   * If true, clicking the card forces locationOverride to STK.US.MAJOR.
+   * Used for cards whose criteria are inherently US-bound (e.g. "S&P 500
+   * names" only makes sense for STK.US.MAJOR, and IBKR's market-cap filter
+   * is in the listing currency so a $50B threshold doesn't translate to
+   * non-US markets).
+   *
+   * The filter bar shows a small "US-only" chip on these cards. If the
+   * user had a non-US location selected, we fire the LocationResetBanner
+   * to explain why the location just changed.
+   */
+  usOnly?: boolean;
 }
+
+// Market-cap brackets used by the cards (and mirrored in the AI prompt's
+// sensible-defaults table — see services/screener_ai.py SYSTEM_PROMPT).
+//   Small cap:   $300M – $5B
+//   Mid cap:     $5B   – $50B
+//   Large cap:   $50B+ (anything at or above this floor)
+// IBKR's marketCapAbove1e6 / marketCapBelow1e6 filters take values in
+// MILLIONS of the listing currency. So 50000 = $50B in USD for US stocks.
+const MC_LARGE_FLOOR_M = 50000;
 
 const EMPTY_CARDS: CardDef[] = [
   {
-    id: "large-cap-gainers",
-    title: "Large cap gainers",
-    description: "S&P 500 names up today with market cap above $10B",
+    id: "sp500-gainers",
+    title: "S&P 500 gainers",
+    description: "S&P 500 names up today with market cap above $50B",
     scanType: "TOP_PERC_GAIN",
     location: "STK.US.MAJOR",
     instrument: "STK",
+    usOnly: true,
     filters: [
-      { code: "marketCapAbove1e6", value: "10000", display_label: "Market Cap ≥ $10B" },
+      {
+        code: "marketCapAbove1e6",
+        value: String(MC_LARGE_FLOOR_M),
+        display_label: "Market Cap ≥ $50B",
+      },
     ],
   },
   {
@@ -131,7 +184,11 @@ const EMPTY_CARDS: CardDef[] = [
     location: "STK.US.MAJOR",
     instrument: "STK",
     filters: [
-      { code: "marketCapAbove1e6", value: "10000", display_label: "Market Cap ≥ $10B" },
+      {
+        code: "marketCapAbove1e6",
+        value: String(MC_LARGE_FLOOR_M),
+        display_label: "Market Cap ≥ $50B",
+      },
       { code: "lastVsEMAChangeRatio20Below", value: "-5", display_label: "Vs EMA(20) ≤ -5%" },
     ],
   },
@@ -154,8 +211,19 @@ function EmptyCard({
       disabled={disabled}
       className="group flex flex-col gap-1 rounded-xl border border-[var(--border)] bg-[var(--bg-2)] p-4 text-left transition-all hover:border-[var(--clr-cyan)]/50 hover:bg-[var(--bg-3)] disabled:opacity-40 disabled:cursor-not-allowed"
     >
-      <span className="text-[12px] font-semibold text-[var(--text-1)] group-hover:text-[var(--clr-cyan)] transition-colors">
-        {card.title}
+      <span className="flex items-center gap-2">
+        <span className="text-[12px] font-semibold text-[var(--text-1)] group-hover:text-[var(--clr-cyan)] transition-colors">
+          {card.title}
+        </span>
+        {card.usOnly && (
+          <span
+            data-testid={`card-us-only-chip-${card.id}`}
+            title="This card always runs against US — Listed/NASDAQ"
+            className="rounded-full bg-[var(--clr-orange)]/15 border border-[var(--clr-orange)]/30 px-1.5 py-0.5 text-[8px] font-medium text-[var(--clr-orange)]"
+          >
+            US-only
+          </span>
+        )}
       </span>
       <span className="text-[10px] text-[var(--text-3)] leading-relaxed">
         {card.description}
@@ -193,6 +261,8 @@ export default function ScreenerPage() {
     applyPreset,
     resetScreener,
     setPreset,
+    setLocationOverride,
+    setLocationResetReason,
   } = useScreenerStore();
 
   // Presets are also fetched in ScreenerFilterBar — React Query deduplicates.
@@ -260,6 +330,17 @@ export default function ScreenerPage() {
       );
       if (!preset || isScanning) return;
 
+      // US-only cards (e.g. "S&P 500 gainers") force the location override
+      // back to STK.US.MAJOR. resolveUsOnlyLock returns the effective
+      // location to use for this scan + a banner string when the lock
+      // actually changed something (so the user knows why their location
+      // dropdown just snapped back to US).
+      const lock = resolveUsOnlyLock(card, locationOverride);
+      if (lock.banner) {
+        setLocationOverride(lock.effectiveLocation);
+        setLocationResetReason(lock.banner);
+      }
+
       const activeFilters: ActiveFilter[] = card.filters.map((f, i) => ({
         ...f,
         id: `card-${card.id}-${f.code}-${i}`,
@@ -268,8 +349,9 @@ export default function ScreenerPage() {
       applyPreset(preset, activeFilters);
 
       // Scan immediately — use card data directly to avoid stale closure.
-      // Location override applies here too, matching the manual-scan path.
-      const target = resolveScanTarget(preset, locationOverride, locations);
+      // Location override applies here too (lock.effectiveLocation has
+      // already been clamped to STK.US.MAJOR for US-only cards above).
+      const target = resolveScanTarget(preset, lock.effectiveLocation, locations);
       const req: ScanRequest = {
         instrument: target.instrument,
         scan_type: preset.scan_type,
@@ -281,7 +363,16 @@ export default function ScreenerPage() {
       };
       scanMutation.mutate(req);
     },
-    [presets, locationOverride, locations, isScanning, applyPreset, scanMutation]
+    [
+      presets,
+      locationOverride,
+      locations,
+      isScanning,
+      applyPreset,
+      scanMutation,
+      setLocationOverride,
+      setLocationResetReason,
+    ],
   );
 
   const showEmptyState = results.length === 0 && !isScanning && !scanMutation.isError;

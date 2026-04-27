@@ -490,6 +490,42 @@ describe("Location dropdown", () => {
   });
 });
 
+// ── Scan button styling (Commit 3 — primary CTA) ──────────────
+
+describe("Scan button (primary CTA)", () => {
+  it("uses solid amber styling so it stands out from cyan UI", () => {
+    mockStore.selectedPreset = POPULAR_PRESET;
+    render(<ScreenerFilterBar onScan={vi.fn()} />);
+    const scanBtn = screen.getByRole("button", { name: /Scan/i });
+    // Solid amber background + dark text — distinguishes from the
+    // tinted-cyan AI button + filter pills.
+    expect(scanBtn.className).toMatch(/bg-\[var\(--clr-orange\)\]/);
+    expect(scanBtn.className).toMatch(/text-\[var\(--bg-0\)\]/);
+    expect(scanBtn.className).toMatch(/font-semibold/);
+  });
+
+  it("renders a CYAN dirty-pulse dot (not amber) so it pops on the amber button", () => {
+    // results > 0 + isDirty = true triggers the pulse
+    mockStore.selectedPreset = POPULAR_PRESET;
+    mockStore.results = [{ conid: 1 }] as unknown as typeof mockStore.results;
+    mockStore.isDirty = true;
+    render(<ScreenerFilterBar onScan={vi.fn()} />);
+    const pulse = screen.getByTestId("scan-dirty-pulse");
+    expect(pulse).toBeInTheDocument();
+    // Cyan, NOT amber — visibility against the amber button
+    expect(pulse.innerHTML).toMatch(/bg-\[var\(--clr-cyan\)\]/);
+    expect(pulse.innerHTML).not.toMatch(/bg-\[var\(--clr-orange\)\]/);
+  });
+
+  it("hides the pulse when no results yet", () => {
+    mockStore.selectedPreset = POPULAR_PRESET;
+    mockStore.results = [];
+    mockStore.isDirty = true;
+    render(<ScreenerFilterBar onScan={vi.fn()} />);
+    expect(screen.queryByTestId("scan-dirty-pulse")).toBeNull();
+  });
+});
+
 // ── "Browse all scans →" preset dropdown entry (Path C) ───────
 
 describe("Browse all scans entry", () => {

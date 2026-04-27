@@ -736,10 +736,14 @@ export default function ScreenerFilterBar({
         </button>
       )}
 
-      {/* Scan button
+      {/* Scan button — primary CTA.
+          Solid amber fill (visually distinct from all the other tinted-cyan
+          UI elements: AI button, filter pills, Apply All Filters). Slightly
+          bigger + semibold so it reads as "the action".
+
           When the user has existing results AND has since changed filters/preset
-          without rescanning, we show a small amber pulse so the current results
-          can't be mistaken for the latest criteria. */}
+          without rescanning, we show a small CYAN pulse dot — cyan instead of
+          amber so the dot stands out against the amber button background. */}
       <div className="relative">
         <Button
           size="sm"
@@ -750,7 +754,7 @@ export default function ScreenerFilterBar({
               ? "Filters changed — press Scan to refresh results"
               : undefined
           }
-          className="gap-1.5 border-[var(--clr-cyan)]/30 bg-[var(--clr-cyan)]/15 text-[var(--clr-cyan)] hover:bg-[var(--clr-cyan)]/25 disabled:opacity-40"
+          className="gap-1.5 px-3.5 py-1.5 border-[var(--clr-orange)] bg-[var(--clr-orange)] text-[var(--bg-0)] font-semibold hover:bg-[var(--clr-orange)]/90 hover:text-[var(--bg-0)] disabled:opacity-40"
         >
           {isScanning ? (
             <>
@@ -767,10 +771,11 @@ export default function ScreenerFilterBar({
         {isDirty && results.length > 0 && !isScanning && (
           <span
             aria-hidden="true"
+            data-testid="scan-dirty-pulse"
             className="pointer-events-none absolute -right-1 -top-1 flex h-2.5 w-2.5"
           >
-            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[var(--clr-orange)] opacity-75" />
-            <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-[var(--clr-orange)]" />
+            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[var(--clr-cyan)] opacity-75" />
+            <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-[var(--clr-cyan)] ring-1 ring-[var(--bg-0)]" />
           </span>
         )}
       </div>
