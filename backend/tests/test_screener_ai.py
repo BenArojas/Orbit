@@ -21,6 +21,7 @@ from services.screener_ai import (
     ScreenerAiService,
     FILTER_CATALOGUE,
     _build_catalogue_text,
+    _strip_markdown_fences,
 )
 
 
@@ -50,9 +51,9 @@ class TestBuildCatalogueText:
         # At least some examples should be in the text
         assert "10000" in text or "2000" in text
 
-    def test_includes_notes_when_present(self):
+    def test_includes_description_when_present(self):
         text = _build_catalogue_text()
-        # Some filters have notes
+        # Some filters have a description — rendered after " // " in the prompt
         assert "//" in text
 
 
@@ -341,6 +342,198 @@ class TestGenerateFilters:
         await svc.shutdown()
 
 
+# ── Tests for the think parameter (Task #16) ────────────────────
+
+
+class TestThinkParameter:
+    """
+    Screener AI must default to think=False (thinking models like Gemma 4 26B
+    burn their token budget on chain-of-thought before producing structured
+    JSON, which timed out in production). The Analysis chat keeps thinking on
+    via its own caller — that is verified separately in test_ai (when added).
+    """
+
+    @pytest.mark.asyncio
+    async def test_think_defaults_to_false_in_payload(self):
+        svc = ScreenerAiService()
+        mock_response = MagicMock()
+        mock_response.json.return_value = {
+            "message": {"content": '{"reasoning":"x","filters":[],"summary":"x"}'}
+        }
+
+        with patch.object(svc._http, "post", new_callable=AsyncMock) as mock_post:
+            mock_post.return_value = mock_response
+            await svc.generate_filters(query="test", model="gemma4:26b")
+
+            payload = mock_post.call_args.kwargs["json"]
+            assert payload["think"] is False, (
+                "Screener AI must default to think=False so thinking models "
+                "don't burn the token budget before emitting JSON."
+            )
+
+        await svc.shutdown()
+
+    @pytest.mark.asyncio
+    async def test_think_can_be_overridden_to_true(self):
+        svc = ScreenerAiService()
+        mock_response = MagicMock()
+        mock_response.json.return_value = {
+            "message": {"content": '{"reasoning":"x","filters":[],"summary":"x"}'}
+        }
+
+        with patch.object(svc._http, "post", new_callable=AsyncMock) as mock_post:
+            mock_post.return_value = mock_response
+            await svc.generate_filters(
+                query="test", model="gemma4:26b", think=True,
+            )
+            assert mock_post.call_args.kwargs["json"]["think"] is True
+
+        await svc.shutdown()
+
+
+# ── Truncation / empty-content guards (Task #16) ────────────────
+
+
+class TestTruncationGuards:
+    """
+    Two specific Ollama failure modes were silently surfacing as either a
+    cryptic JSONDecodeError or a 60s timeout in production. Both should now
+    raise a typed AIError with a user-actionable message.
+    """
+
+    @pytest.mark.asyncio
+    async def test_done_reason_length_raises_ai_error(self):
+        """num_predict exhausted → typed AIError, not JSONDecodeError."""
+        svc = ScreenerAiService()
+        mock_response = MagicMock()
+        mock_response.json.return_value = {
+            # Partial / truncated JSON — would otherwise blow up in json.loads
+            "message": {"content": '{"reasoning":"...","filt'},
+            "done_reason": "length",
+        }
+
+        with patch.object(svc._http, "post", new_callable=AsyncMock) as mock_post:
+            mock_post.return_value = mock_response
+            with pytest.raises(AIError, match="truncated"):
+                await svc.generate_filters(query="test", model="gemma4:26b")
+
+        await svc.shutdown()
+
+    @pytest.mark.asyncio
+    async def test_empty_content_raises_ai_error(self):
+        """Thinking model put everything in `thinking` → empty content."""
+        svc = ScreenerAiService()
+        mock_response = MagicMock()
+        mock_response.json.return_value = {
+            "message": {
+                "content": "",
+                "thinking": "Long chain of thought went here...",
+            },
+            "done_reason": "stop",
+        }
+
+        with patch.object(svc._http, "post", new_callable=AsyncMock) as mock_post:
+            mock_post.return_value = mock_response
+            with pytest.raises(AIError, match="empty"):
+                await svc.generate_filters(query="test", model="gemma4:26b")
+
+        await svc.shutdown()
+
+    @pytest.mark.asyncio
+    async def test_whitespace_only_content_raises_ai_error(self):
+        """Whitespace counts as empty — same guard fires."""
+        svc = ScreenerAiService()
+        mock_response = MagicMock()
+        mock_response.json.return_value = {
+            "message": {"content": "   \n  \t "},
+            "done_reason": "stop",
+        }
+
+        with patch.object(svc._http, "post", new_callable=AsyncMock) as mock_post:
+            mock_post.return_value = mock_response
+            with pytest.raises(AIError, match="empty"):
+                await svc.generate_filters(query="test", model="gemma4:26b")
+
+        await svc.shutdown()
+
+
+# ── Markdown fence stripping (Task #16) ─────────────────────────
+
+
+class TestStripMarkdownFences:
+    """
+    Some models (Gemma 4 included) wrap their structured output in markdown
+    code fences even when given a JSON Schema via Ollama's `format` param.
+    Without stripping, json.loads dies at char 0 on the leading backtick.
+    """
+
+    def test_strips_json_fence(self):
+        wrapped = '```json\n{"hello": "world"}\n```'
+        assert _strip_markdown_fences(wrapped) == '{"hello": "world"}'
+
+    def test_strips_uppercase_json_fence(self):
+        wrapped = '```JSON\n{"hello": "world"}\n```'
+        assert _strip_markdown_fences(wrapped) == '{"hello": "world"}'
+
+    def test_strips_plain_fence(self):
+        wrapped = '```\n{"hello": "world"}\n```'
+        assert _strip_markdown_fences(wrapped) == '{"hello": "world"}'
+
+    def test_strips_fence_with_surrounding_whitespace(self):
+        wrapped = '\n\n  ```json\n{"a":1}\n```  \n\n'
+        assert _strip_markdown_fences(wrapped) == '{"a":1}'
+
+    def test_no_op_on_raw_json(self):
+        raw = '{"hello": "world"}'
+        assert _strip_markdown_fences(raw) == '{"hello": "world"}'
+
+    def test_handles_multiline_json_inside_fence(self):
+        wrapped = '```json\n{\n  "filters": [\n    {"code": "x"}\n  ]\n}\n```'
+        result = _strip_markdown_fences(wrapped)
+        assert result.startswith("{")
+        assert result.endswith("}")
+        # Round-trips through json.loads
+        import json as _json
+        parsed = _json.loads(result)
+        assert parsed["filters"][0]["code"] == "x"
+
+    @pytest.mark.asyncio
+    async def test_generate_filters_handles_markdown_wrapped_response(self):
+        """End-to-end: Ollama wraps JSON in fences, we still parse it."""
+        svc = ScreenerAiService()
+        mock_response = MagicMock()
+        # This is the exact shape we saw Gemma 4 26B produce in production.
+        mock_response.json.return_value = {
+            "message": {
+                "content": (
+                    '```json\n'
+                    '{\n'
+                    '  "reasoning": "...",\n'
+                    '  "filters": [\n'
+                    '    {"code": "maxPeRatio", "value": "15", '
+                    '"display_label": "P/E ≤ 15", "reasoning": "value"}\n'
+                    '  ],\n'
+                    '  "summary": "value stocks"\n'
+                    '}\n'
+                    '```'
+                )
+            },
+            "done_reason": "stop",
+        }
+
+        with patch.object(svc._http, "post", new_callable=AsyncMock) as mock_post:
+            mock_post.return_value = mock_response
+            result = await svc.generate_filters(
+                query="value stocks", model="gemma4:26b",
+            )
+
+        assert len(result["filters"]) == 1
+        assert result["filters"][0]["code"] == "maxPeRatio"
+        assert result["summary"] == "value stocks"
+
+        await svc.shutdown()
+
+
 # ── Tests for models ──────────────────────────────────────────
 
 
@@ -438,14 +631,14 @@ class TestFilterCatalogue:
         """Test that key technical filters are in the catalogue."""
         codes = {f["code"] for f in FILTER_CATALOGUE}
         assert "volumeAbove" in codes
-        assert "priceVsEMA20Above" in codes
+        assert "lastVsEMAChangeRatio20Above" in codes
         assert "changePercAbove" in codes
 
     def test_sample_analyst_filters(self):
         """Test that analyst filters are in the catalogue."""
         codes = {f["code"] for f in FILTER_CATALOGUE}
         assert "avgRatingAbove" in codes
-        assert "targetPriceRatioAbove" in codes
+        assert "avgAnalystTarget2PriceRatioAbove" in codes
 
 
 # ── Integration tests ──────────────────────────────────────────
@@ -497,7 +690,7 @@ class TestScreenerAiIntegration:
                 "content": """{
                     "reasoning": "User wants stocks that are oversold but showing momentum",
                     "filters": [
-                        {"code": "priceVsEMA20Below", "value": "-5", "display_label": "Price 5% Below EMA(20)", "reasoning": "Oversold condition"},
+                        {"code": "lastVsEMAChangeRatio20Below", "value": "-5", "display_label": "Price 5% Below EMA(20)", "reasoning": "Oversold condition"},
                         {"code": "changePercAbove", "value": "2", "display_label": "Day Change ≥ 2%", "reasoning": "Momentum indicator"}
                     ],
                     "summary": "Oversold stocks with upward momentum"
@@ -515,7 +708,75 @@ class TestScreenerAiIntegration:
 
             assert len(result["filters"]) == 2
             codes = {f["code"] for f in result["filters"]}
-            assert "priceVsEMA20Below" in codes
+            assert "lastVsEMAChangeRatio20Below" in codes
             assert "changePercAbove" in codes
+
+        await svc.shutdown()
+
+
+# ── Canonical-catalogue wiring ─────────────────────────────────
+
+
+class TestCanonicalCatalogueWiring:
+    """
+    The AI service must pull its catalogue from `constants.ibkr_filters`,
+    not keep a local duplicate. These tests lock that contract in place so
+    the next time someone tries to fork the catalogue, a test goes red.
+    """
+
+    def test_ai_catalogue_is_canonical_catalogue(self):
+        """`services.screener_ai.FILTER_CATALOGUE` must be the canonical list."""
+        from constants.ibkr_filters import FILTER_CATALOGUE as CANONICAL
+        from services.screener_ai import FILTER_CATALOGUE as AI_CATALOGUE
+
+        # Same object, not just same contents — proves it's a re-export.
+        assert AI_CATALOGUE is CANONICAL
+
+    @pytest.mark.asyncio
+    async def test_unknown_code_drop_logs_the_code_string(self, caplog):
+        """
+        When Ollama returns a code outside FILTER_CODES, we must log the
+        *actual code string* (not just a count) so prompt drift is diagnosable.
+        """
+        import logging
+
+        svc = ScreenerAiService()
+
+        mock_response = MagicMock()
+        mock_response.json.return_value = {
+            "message": {
+                "content": """{
+                    "reasoning": "Mix of valid and bogus codes",
+                    "filters": [
+                        {"code": "marketCapAbove1e6", "value": "10000", "display_label": "Market Cap >= $10B", "reasoning": "valid"},
+                        {"code": "totallyFakeCodeABC", "value": "1", "display_label": "bogus", "reasoning": "invalid"}
+                    ],
+                    "summary": "mixed"
+                }"""
+            }
+        }
+
+        with patch.object(svc._http, "post", new_callable=AsyncMock) as mock_post:
+            mock_post.return_value = mock_response
+
+            with caplog.at_level(logging.WARNING, logger="parallax.screener_ai"):
+                result = await svc.generate_filters(
+                    query="test",
+                    model="gemma4:26b",
+                )
+
+        # The valid code survives validation, the bogus one is dropped.
+        assert len(result["filters"]) == 1
+        assert result["filters"][0]["code"] == "marketCapAbove1e6"
+
+        # The dropped code string appears in the warning log record.
+        warning_messages = [
+            rec.getMessage()
+            for rec in caplog.records
+            if rec.levelno == logging.WARNING
+        ]
+        assert any("totallyFakeCodeABC" in msg for msg in warning_messages), (
+            f"expected dropped code in log, got: {warning_messages}"
+        )
 
         await svc.shutdown()

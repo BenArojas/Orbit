@@ -28,9 +28,9 @@ export {
 } from "./watchlist";
 export {
   useScreenerStore,
+  SCREENER_PAGE_SIZE,
   type ActiveFilter,
   type SortDir,
-  type ScannerSort,
 } from "./screener";
 export { useSettingsStore } from "./settings";
 export {

@@ -8,79 +8,24 @@ Flow:
   4. Frontend wires filters into the filter bar
 
 Uses Ollama's structured output (format parameter) for guaranteed valid JSON.
+
+The filter catalogue is imported from `constants.ibkr_filters` — the single
+source of truth. Every code in that file has been grep-verified against
+the raw IBKR `/iserver/scanner/params` dump.
 """
 
 import json
 import logging
+import re
 from typing import Any
 
 import httpx
 
 from config import OLLAMA_HOST
+from constants.ibkr_filters import FILTER_CATALOGUE, FILTER_CODES
 from exceptions import AIError
 
 log = logging.getLogger("parallax.screener_ai")
-
-# ── Curated filter catalogue ──────────────────────────────────
-# Subset of IBKR filter codes we surface in the UI.
-# Each entry includes the code, human label, example value, and unit.
-# This is embedded in the AI prompt so the model knows what's available.
-
-FILTER_CATALOGUE = [
-    # Fundamental
-    {"code": "marketCapAbove1e6", "label": "Market Cap ≥ X ($M)", "example": "10000", "unit": "$M", "notes": "Large cap = 10000+, Mid = 2000-10000, Small = 300-2000, Micro < 300"},
-    {"code": "marketCapBelow1e6", "label": "Market Cap ≤ X ($M)", "example": "2000", "unit": "$M"},
-    {"code": "minPeRatio", "label": "P/E ≥ X", "example": "10"},
-    {"code": "maxPeRatio", "label": "P/E ≤ X", "example": "25", "notes": "Value stocks typically < 15, growth > 30"},
-    {"code": "minROE", "label": "ROE ≥ X (%)", "example": "15"},
-    {"code": "maxROE", "label": "ROE ≤ X (%)", "example": "50"},
-    {"code": "minOperatingMargin", "label": "Operating Margin ≥ X (%)", "example": "10"},
-    {"code": "maxOperatingMargin", "label": "Operating Margin ≤ X (%)", "example": "50"},
-    {"code": "minNetMargin", "label": "Net Margin ≥ X (%)", "example": "5"},
-    {"code": "maxNetMargin", "label": "Net Margin ≤ X (%)", "example": "30"},
-    {"code": "minRevenueChangePercentTTM", "label": "Revenue Growth TTM ≥ X (%)", "example": "10", "notes": "Strong growth > 20%"},
-    {"code": "maxRevenueChangePercentTTM", "label": "Revenue Growth TTM ≤ X (%)", "example": "5"},
-    {"code": "minRevenuePctChange5Y", "label": "Revenue Growth 5Y ≥ X (%)", "example": "10"},
-    {"code": "minEpsChangePercent", "label": "EPS Growth TTM ≥ X (%)", "example": "10", "notes": "Strong = 20%+"},
-    {"code": "maxEpsChangePercent", "label": "EPS Growth TTM ≤ X (%)", "example": "-10", "notes": "Negative for declining earnings"},
-    {"code": "minPriceBook", "label": "Price/Book ≥ X", "example": "1"},
-    {"code": "maxPriceBook", "label": "Price/Book ≤ X", "example": "3", "notes": "Value < 1, growth stocks often > 5"},
-    {"code": "minQuickRatio", "label": "Quick Ratio ≥ X", "example": "1", "notes": "Healthy = 1+"},
-    {"code": "maxQuickRatio", "label": "Quick Ratio ≤ X", "example": "0.5"},
-    {"code": "wshEarningsDate", "label": "Earnings within X days", "example": "5", "notes": "WSH calendar — stocks with upcoming earnings"},
-    # Technical
-    {"code": "priceAbove", "label": "Price ≥ $X", "example": "5", "notes": "Penny stocks < $1, institutional quality > $5"},
-    {"code": "priceBelow", "label": "Price ≤ $X", "example": "100"},
-    {"code": "changePercAbove", "label": "Day Change ≥ X (%)", "example": "3", "notes": "Big movers > 5%"},
-    {"code": "changePercBelow", "label": "Day Change ≤ X (%)", "example": "-3", "notes": "Big losers < -5%"},
-    {"code": "volumeAbove", "label": "Volume ≥ X", "example": "1000000"},
-    {"code": "volumeBelow", "label": "Volume ≤ X", "example": "500000"},
-    {"code": "priceVsEMA20Above", "label": "Price vs EMA(20) ≥ X (%)", "example": "0", "notes": "Above EMA = bullish, 0 = at EMA"},
-    {"code": "priceVsEMA20Below", "label": "Price vs EMA(20) ≤ X (%)", "example": "0", "notes": "Below EMA = bearish"},
-    {"code": "priceVsEMA50Above", "label": "Price vs EMA(50) ≥ X (%)", "example": "0"},
-    {"code": "priceVsEMA50Below", "label": "Price vs EMA(50) ≤ X (%)", "example": "0"},
-    {"code": "priceVsEMA200Above", "label": "Price vs EMA(200) ≥ X (%)", "example": "0", "notes": "Long-term uptrend"},
-    {"code": "priceVsEMA200Below", "label": "Price vs EMA(200) ≤ X (%)", "example": "0", "notes": "Long-term downtrend"},
-    {"code": "macdHistAbove", "label": "MACD Histogram ≥ X", "example": "0", "notes": "Positive histogram = bullish momentum"},
-    {"code": "macdHistBelow", "label": "MACD Histogram ≤ X", "example": "0"},
-    {"code": "ivRankAbove", "label": "IV Rank 52W ≥ X (%)", "example": "50", "notes": "High IV = options expensive, potential mean reversion"},
-    {"code": "ivRankBelow", "label": "IV Rank 52W ≤ X (%)", "example": "30", "notes": "Low IV = cheap options"},
-    # Analyst
-    {"code": "avgRatingAbove", "label": "Analyst Rating ≥ X (1=Strong Buy, 5=Strong Sell)", "example": "2"},
-    {"code": "avgRatingBelow", "label": "Analyst Rating ≤ X", "example": "2.5"},
-    {"code": "numRatingsAbove", "label": "# Analyst Ratings ≥ X", "example": "5"},
-    {"code": "avgTargetPriceAbove", "label": "Avg Price Target ≥ $X", "example": "50"},
-    {"code": "targetPriceRatioAbove", "label": "Target/Current Price ≥ X", "example": "1.1", "notes": "1.2 means analysts expect 20% upside"},
-    {"code": "targetPriceRatioBelow", "label": "Target/Current Price ≤ X", "example": "0.9"},
-    # Short Interest
-    {"code": "shortableSharesAbove", "label": "Short Utilization ≥ X (%)", "example": "50"},
-    {"code": "shortableSharesBelow", "label": "Short Utilization ≤ X (%)", "example": "20"},
-    {"code": "rebateRateAbove", "label": "Borrow Fee Rate ≥ X (%)", "example": "1"},
-    {"code": "insiderOwnershipAbove", "label": "Insider Ownership ≥ X (%)", "example": "10"},
-    {"code": "insiderOwnershipBelow", "label": "Insider Ownership ≤ X (%)", "example": "5"},
-    {"code": "institutionalOwnershipAbove", "label": "Institutional Ownership ≥ X (%)", "example": "50"},
-    {"code": "institutionalOwnershipBelow", "label": "Institutional Ownership ≤ X (%)", "example": "20"},
-]
 
 # JSON schema for structured Ollama output
 AI_FILTER_SCHEMA = {
@@ -112,13 +57,46 @@ AI_FILTER_SCHEMA = {
 }
 
 
+# Strips ```json ... ``` (or plain ``` ... ```) wrappers some models add
+# even when given a `format` schema. Pre-compiled at import time.
+_MARKDOWN_FENCE_RE = re.compile(
+    r"^\s*```(?:json|JSON)?\s*\n?(.*?)\n?\s*```\s*$",
+    re.DOTALL,
+)
+
+
+def _strip_markdown_fences(content: str) -> str:
+    """
+    Remove ```json ... ``` markdown wrapping from a model response.
+
+    Some models (Gemma 4 included) ignore Ollama's `format` schema and wrap
+    their structured output in markdown fences anyway. Without stripping,
+    `json.loads()` dies at char 0 on the leading backtick.
+
+    No-op when no fence is detected.
+    """
+    match = _MARKDOWN_FENCE_RE.match(content)
+    if match:
+        return match.group(1).strip()
+    return content.strip()
+
+
 def _build_catalogue_text() -> str:
-    """Format the filter catalogue as a concise reference table for the prompt."""
-    lines = []
+    """
+    Format the canonical filter catalogue as a concise reference table.
+
+    One line per code. Direction is rendered as ≥ (above) or ≤ (below).
+    The `description` field is appended after ` // `; dropped when None.
+    """
+    lines: list[str] = []
     for f in FILTER_CATALOGUE:
-        notes = f" // {f['notes']}" if f.get("notes") else ""
+        arrow = "≥" if f["direction"] == "above" else "≤"
         unit = f" ({f['unit']})" if f.get("unit") else ""
-        lines.append(f"  {f['code']}{unit} — {f['label']}, e.g. value={f['example']!r}{notes}")
+        desc = f" // {f['description']}" if f.get("description") else ""
+        lines.append(
+            f"  {f['code']}{unit} — {f['label']} {arrow} X, "
+            f"e.g. value={f['example']!r}{desc}"
+        )
     return "\n".join(lines)
 
 
@@ -134,21 +112,28 @@ Your job is to translate a user's natural language query into IBKR scanner filte
 1. Only use filter codes from the list above — never invent new codes.
 2. Values must be strings (the API expects strings, not numbers).
 3. Choose 2–6 filters that best capture the user's intent. Don't over-filter.
-4. For ambiguous terms, use sensible trading defaults:
-   - "large cap" → marketCapAbove1e6 ≥ 10000 ($10B)
-   - "mid cap" → marketCapAbove1e6 ≥ 2000, marketCapBelow1e6 ≤ 10000
-   - "small cap" → marketCapAbove1e6 ≥ 300, marketCapBelow1e6 ≤ 2000
-   - "oversold" → priceVsEMA20Below ≤ -5 (price more than 5% below 20 EMA)
-   - "overbought" → priceVsEMA20Above ≥ 5
-   - "momentum" → changePercAbove ≥ 2 AND volumeAbove ≥ 1000000
-   - "value" → maxPeRatio ≤ 15 AND maxPriceBook ≤ 2
-   - "growth" → minRevenueChangePercentTTM ≥ 15 AND minEpsChangePercent ≥ 15
-   - "high volume" → volumeAbove ≥ 2000000
-   - "institutional interest" → institutionalOwnershipAbove ≥ 60
+4. For ambiguous terms, use these sensible trading defaults (every code below is
+   a valid IBKR scanner filter; market-cap values are in MILLIONS of the
+   listing currency):
+   - "large cap"           → marketCapAbove1e6 ≥ 50000 ($50B+)
+   - "mid cap"             → marketCapAbove1e6 ≥ 5000  AND marketCapBelow1e6 ≤ 50000  ($5B–$50B)
+   - "small cap"           → marketCapAbove1e6 ≥ 300   AND marketCapBelow1e6 ≤ 5000   ($300M–$5B)
+   - "oversold"            → lastVsEMAChangeRatio20Below ≤ -5
+   - "overbought"          → lastVsEMAChangeRatio20Above ≥ 5
+   - "momentum"            → changePercAbove ≥ 2 AND volumeAbove ≥ 1000000
+   - "value"               → maxPeRatio ≤ 15 AND maxPrice2Bk ≤ 2
+   - "growth"              → revChangeAbove ≥ 15 AND epsChangeTTMAbove ≥ 15
+   - "high volume"         → volumeAbove ≥ 2000000
+   - "high IV"             → ivRank52wAbove ≥ 70
+   - "short squeeze"       → utilizationAbove ≥ 90 AND feeRateAbove ≥ 10
+   - "institutional"       → iiInstitutionalOfFloatPercAbove ≥ 60
 5. display_label must be human-readable, e.g. "Market Cap ≥ $10B", "P/E ≤ 15".
 6. reasoning per filter should be 1 sentence explaining why you chose that code + value.
 7. summary should be one sentence describing the overall filter set.
 8. If the query cannot be mapped to any filters, return an empty filters array and explain in summary.
+9. Output raw JSON only — DO NOT wrap the response in markdown code fences
+   (no ```json, no ```), no commentary before or after. The response must
+   start with `{{` and end with `}}`.
 """
 
 
@@ -159,9 +144,11 @@ class ScreenerAiService:
     """
 
     def __init__(self) -> None:
+        # Timeout bumped to 120s — even with think=False, structured output
+        # over an ~80-filter catalogue can take 30-60s on a 26B model.
         self._http = httpx.AsyncClient(
             base_url=OLLAMA_HOST,
-            timeout=httpx.Timeout(60.0, connect=10.0),
+            timeout=httpx.Timeout(120.0, connect=10.0),
         )
 
     async def generate_filters(
@@ -169,9 +156,22 @@ class ScreenerAiService:
         query: str,
         model: str,
         preset_context: str = "",
+        *,
+        think: bool = False,
     ) -> dict:
         """
         Translate a natural language query into IBKR filter codes.
+
+        Args:
+            query: Natural language query from the user.
+            model: Ollama model tag (e.g. "gemma4:26b").
+            preset_context: Optional name of the currently selected scanner preset.
+            think: Whether to allow the model to use its `thinking` channel.
+                Defaults to False — thinking models (Gemma 4, Qwen3) burn tokens
+                on chain-of-thought before producing the structured JSON, which
+                blew past the httpx timeout in production. The screener UX wants
+                fast structured output, not reasoning. The Analysis chat keeps
+                thinking on (passes think=None / True there).
 
         Returns a dict matching AiFilterResponse shape:
         {
@@ -193,10 +193,14 @@ class ScreenerAiService:
             "model": model,
             "messages": messages,
             "stream": False,
+            "think": think,
             "format": AI_FILTER_SCHEMA,
             "options": {
                 "temperature": 0.2,
-                "num_predict": 1024,
+                # 2048 leaves room for full structured output (filters + reasoning
+                # + summary) even on the largest catalogue. With think=False the
+                # model uses very few tokens before emitting JSON.
+                "num_predict": 2048,
             },
         }
 
@@ -204,22 +208,80 @@ class ScreenerAiService:
             resp = await self._http.post("/api/chat", json=payload)
             resp.raise_for_status()
             data = resp.json()
-            content = data.get("message", {}).get("content", "")
+            message = data.get("message", {}) or {}
+            content = message.get("content", "")
+            done_reason = data.get("done_reason", "")
 
-            result = json.loads(content)
+            # Truncation guard — Ollama returns done_reason="length" when
+            # num_predict is exhausted. Content is usually empty or partial JSON
+            # in that case; surface it as a clear, typed error rather than a
+            # cryptic JSONDecodeError.
+            if done_reason == "length":
+                log.warning(
+                    "Ollama truncated response (done_reason=length, "
+                    "content_len=%d, model=%s)",
+                    len(content), model,
+                )
+                raise AIError(
+                    "AI response was truncated before completing — "
+                    "try a simpler query or a smaller model."
+                )
 
-            # Validate: only keep filters with codes that exist in our catalogue
-            valid_codes = {f["code"] for f in FILTER_CATALOGUE}
+            # Empty-content guard — happens when a thinking model put everything
+            # into `thinking` and ran out of room before emitting `content`.
+            # Without think=False this is the most common failure mode.
+            if not content.strip():
+                thinking_len = len(message.get("thinking", "") or "")
+                log.warning(
+                    "Ollama returned empty content (thinking_len=%d, "
+                    "done_reason=%s, model=%s, think=%s)",
+                    thinking_len, done_reason, model, think,
+                )
+                raise AIError(
+                    "AI returned empty response — the model may be in "
+                    "thinking mode without leaving room for output."
+                )
+
+            # Diagnostic log — capture exactly what Ollama returned so when
+            # json.loads fails we can see whether it was non-JSON text
+            # (model ignored the format schema) vs malformed JSON.
+            log.info(
+                "Ollama response (model=%s, think=%s, done_reason=%s, "
+                "content_len=%d, content_preview=%r)",
+                model, think, done_reason, len(content), content[:300],
+            )
+
+            # Strip ```json ... ``` wrappers some models add despite the
+            # `format` schema. No-op when content is already raw JSON.
+            cleaned = _strip_markdown_fences(content)
+            if cleaned != content.strip():
+                log.info(
+                    "Stripped markdown fences from Ollama response "
+                    "(original_len=%d, cleaned_len=%d)",
+                    len(content), len(cleaned),
+                )
+
+            result = json.loads(cleaned)
+
+            # Validate: only keep filters with codes that exist in our catalogue.
+            # FILTER_CODES is a frozenset built from the canonical catalogue
+            # (constants/ibkr_filters.py) — single source of truth.
+            suggested = result.get("filters", [])
             validated_filters = [
-                f for f in result.get("filters", [])
-                if f.get("code") in valid_codes
+                f for f in suggested if f.get("code") in FILTER_CODES
             ]
 
-            if len(validated_filters) < len(result.get("filters", [])):
-                dropped = len(result.get("filters", [])) - len(validated_filters)
+            dropped_codes = [
+                f.get("code", "<missing>")
+                for f in suggested
+                if f.get("code") not in FILTER_CODES
+            ]
+            if dropped_codes:
                 log.warning(
-                    "AI suggested %d filter(s) with unknown codes — dropped",
-                    dropped,
+                    "AI suggested %d/%d filter(s) with unknown codes — dropped: %s",
+                    len(dropped_codes),
+                    len(suggested),
+                    ", ".join(dropped_codes),
                 )
 
             return {

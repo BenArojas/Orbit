@@ -48,3 +48,6 @@ src-tauri/binaries/
 
 # FUSE filesystem tombstones (created when a file is unlinked while open)
 .fuse_hidden*
+
+# IBKR response samples (dev only, not committed)
+backend/dev_samples/*.json

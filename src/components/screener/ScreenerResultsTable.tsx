@@ -1,13 +1,29 @@
 /**
- * ScreenerResultsTable — Sortable table of screener scan results
+ * ScreenerResultsTable — Sortable, paginated table of screener scan results
  *
- * Columns: Symbol, Name, Type, Price, Chg%, Volume, Market Cap
- * Click any row → navigateToAnalysis(conid)
- * All columns sortable.
+ * Columns: Symbol, Name, Type, Price, Chg%, Volume
+ * Click any row → open quick-peek (ScreenerPeekPanel) — mkt cap lives there,
+ * not in the table row. IBKR snapshot doesn't expose it reliably.
+ *
+ * Sort model (client-side):
+ *   - sortBy === "" → preserve IBKR scanner's natural arrival order.
+ *   - Click a column header to sort by that column (toggles asc/desc).
+ *
+ * Pagination model (client-side):
+ *   - The full sorted view is sliced to the current page.
+ *   - ScreenerPagination owns the page counter.
+ *
+ * Disclaimer strip (top):
+ *   - If lastBatchSize === 50 → "Searched top 50 results."
+ *     (button deferred — see TODO)
+ *   - If 0 < lastBatchSize < 50 → "Showing all N matching results."
+ *
+ * TODO (next pass): "Search next 50" button
+ *   Wire it to appendResults() once IBKR offset paging is implemented.
  */
 
 import { useMemo } from "react";
-import { ArrowUpDown, ArrowUp, ArrowDown, TrendingUp } from "lucide-react";
+import { ArrowUpDown, ArrowUp, ArrowDown, TrendingUp, Info } from "lucide-react";
 import {
   Table,
   TableHeader,
@@ -17,8 +33,16 @@ import {
   TableCell,
 } from "@/components/ui/table";
 import type { ScreenerResultRow } from "@/lib/api";
-import { useScreenerStore, type SortDir } from "@/store/screener";
+import {
+  useScreenerStore,
+  SCREENER_PAGE_SIZE,
+  type SortDir,
+} from "@/store/screener";
 import { TableSkeleton } from "./ScreenerSkeleton";
+
+/** The IBKR /iserver/scanner/run cap we ask for per call. If we got exactly
+ *  this many rows back, IBKR likely has more to give us. */
+const IBKR_SCAN_BATCH_CAP = 50;
 
 // ── Helpers ───────────────────────────────────────────────────
 
@@ -38,14 +62,6 @@ function fmtVolume(v: number | null): string {
   if (v >= 1_000_000) return `${(v / 1_000_000).toFixed(1)}M`;
   if (v >= 1_000) return `${(v / 1_000).toFixed(0)}K`;
   return v.toFixed(0);
-}
-
-function fmtMarketCap(v: number | null): string {
-  // v is already in $M from IBKR field 7289
-  if (v == null) return "—";
-  if (v >= 1_000_000) return `$${(v / 1_000_000).toFixed(1)}T`;
-  if (v >= 1_000) return `$${(v / 1_000).toFixed(1)}B`;
-  return `$${v.toFixed(0)}M`;
 }
 
 function changeColor(v: number | null): string {
@@ -101,7 +117,31 @@ const COLUMNS: ColDef[] = [
     key: "last_price",
     label: "Price",
     align: "right",
-    render: (r) => <span className="text-[var(--text-2)]">{fmtPrice(r.last_price)}</span>,
+    // For no-quote scan rows (FIRST_TRADE_DATE_ASC etc.) last_price is null
+    // and IBKR's scan_data carries the meaningful value (e.g. the next
+    // first-trade date). Render it as the cell content with a small label
+    // chip so the column tells the user what they're looking at.
+    render: (r) => {
+      if (r.last_price != null) {
+        return <span className="text-[var(--text-2)]">{fmtPrice(r.last_price)}</span>;
+      }
+      if (r.scan_data) {
+        return (
+          <span
+            className="text-[var(--text-2)] font-data text-[10px]"
+            title={r.scan_data_label ?? undefined}
+          >
+            {r.scan_data_label && (
+              <span className="text-[var(--text-3)] mr-1">
+                {r.scan_data_label}:
+              </span>
+            )}
+            {r.scan_data}
+          </span>
+        );
+      }
+      return <span className="text-[var(--text-3)]">—</span>;
+    },
   },
   {
     key: "change_percent",
@@ -117,26 +157,19 @@ const COLUMNS: ColDef[] = [
     align: "right",
     render: (r) => <span className="text-[var(--text-2)]">{fmtVolume(r.volume)}</span>,
   },
-  {
-    key: "market_cap",
-    label: "Mkt Cap",
-    align: "right",
-    render: (r) => <span className="text-[var(--text-2)]">{fmtMarketCap(r.market_cap)}</span>,
-  },
 ];
 
 // ── Sort helpers ──────────────────────────────────────────────
 
 function getSortValue(row: ScreenerResultRow, col: string): number | string {
   switch (col) {
-    case "symbol":      return row.symbol;
-    case "company_name": return row.company_name;
-    case "sec_type":    return row.sec_type;
-    case "last_price":  return row.last_price ?? -Infinity;
+    case "symbol":         return row.symbol;
+    case "company_name":   return row.company_name;
+    case "sec_type":       return row.sec_type;
+    case "last_price":     return row.last_price ?? -Infinity;
     case "change_percent": return row.change_percent ?? -Infinity;
-    case "volume":      return row.volume ?? -Infinity;
-    case "market_cap":  return row.market_cap ?? -Infinity;
-    default:            return -Infinity;
+    case "volume":         return row.volume ?? -Infinity;
+    default:               return -Infinity;
   }
 }
 
@@ -179,38 +212,101 @@ function EmptyState({ hasPreset }: { hasPreset: boolean }) {
   );
 }
 
+// ── Disclaimer strip ──────────────────────────────────────────
+
+/**
+ * Shows whether the user has seen all matching results or only the top N.
+ *
+ * TODO (next pass): render a "Search next 50" button here when lastBatchSize
+ * equals IBKR_SCAN_BATCH_CAP. It should call appendResults() with the next
+ * batch once IBKR offset paging is implemented. For now we only render the
+ * informational disclaimer.
+ */
+function DisclaimerStrip({
+  total,
+  lastBatchSize,
+}: {
+  total: number;
+  lastBatchSize: number;
+}) {
+  // First call returned fewer than the cap → we have everything IBKR matched.
+  const exhausted = lastBatchSize > 0 && lastBatchSize < IBKR_SCAN_BATCH_CAP;
+  // Last call returned the full cap → IBKR probably has more but we're capped.
+  const mayHaveMore = lastBatchSize === IBKR_SCAN_BATCH_CAP;
+
+  let text: string;
+  if (exhausted) {
+    text = `Showing all ${total} matching results.`;
+  } else if (mayHaveMore) {
+    text = `Searched the top ${total} results only.`;
+  } else {
+    return null;
+  }
+
+  return (
+    <div className="flex items-center gap-2 border-b border-border bg-[var(--bg-1)]/50 px-4 py-1.5">
+      <Info size={11} className="text-[var(--text-3)]" />
+      <span className="font-data text-[10px] text-[var(--text-3)]">{text}</span>
+    </div>
+  );
+}
+
 // ── Main component ────────────────────────────────────────────
 
 export default function ScreenerResultsTable() {
   const {
     results,
     isScanning,
-    totalScanned,
-    totalMatched,
+    lastBatchSize,
     sortBy,
     sortDir,
     setSort,
+    page,
     selectedPreset,
     setPeekConid,
   } = useScreenerStore();
 
-  const sorted = useMemo(() => {
+  /**
+   * Sorted + paginated slice.
+   *
+   * - When `sortBy === ""` we keep the scanner's natural arrival order
+   *   (so Top Gainers stays in % gain order, Most Active in volume order,
+   *   etc.) and only slice for the current page.
+   * - When a column is selected, we sort the full buffer then slice. Sorting
+   *   the full buffer (not just the visible page) is important so paging
+   *   through sorted results stays consistent.
+   */
+  const pageRows = useMemo(() => {
     if (!results.length) return [];
-    const copy = [...results];
-    copy.sort((a, b) => {
-      const aVal = getSortValue(a, sortBy);
-      const bVal = getSortValue(b, sortBy);
-      const cmp =
-        typeof aVal === "string"
-          ? (aVal as string).localeCompare(bVal as string)
-          : (aVal as number) - (bVal as number);
-      return sortDir === "asc" ? cmp : -cmp;
-    });
-    return copy;
-  }, [results, sortBy, sortDir]);
+
+    const sorted = sortBy
+      ? [...results].sort((a, b) => {
+          const aVal = getSortValue(a, sortBy);
+          const bVal = getSortValue(b, sortBy);
+          const cmp =
+            typeof aVal === "string"
+              ? (aVal as string).localeCompare(bVal as string)
+              : (aVal as number) - (bVal as number);
+          return sortDir === "asc" ? cmp : -cmp;
+        })
+      : results;
+
+    const totalPages = Math.max(1, Math.ceil(sorted.length / SCREENER_PAGE_SIZE));
+    const safePage = Math.min(page, totalPages);
+    const start = (safePage - 1) * SCREENER_PAGE_SIZE;
+    return sorted.slice(start, start + SCREENER_PAGE_SIZE);
+  }, [results, sortBy, sortDir, page]);
 
   const handleSort = (col: string) => {
-    setSort(col, sortBy === col && sortDir === "desc" ? "asc" : "desc");
+    if (sortBy !== col) {
+      // First click on a new column → desc
+      setSort(col, "desc");
+    } else if (sortDir === "desc") {
+      setSort(col, "asc");
+    } else {
+      // Third click returns to natural order
+      setSort("", "desc");
+    }
   };
 
   // Show skeleton while scanning
@@ -224,14 +320,8 @@ export default function ScreenerResultsTable() {
 
   return (
     <div className="flex flex-1 flex-col overflow-hidden">
-      {/* Summary bar */}
-      <div className="flex items-center gap-3 border-b border-border bg-[var(--bg-1)]/50 px-4 py-1.5">
-        <span className="font-data text-[10px] text-[var(--text-3)]">
-          <span className="text-[var(--clr-cyan)]">{totalMatched}</span>
-          {" matched / "}
-          {totalScanned} scanned
-        </span>
-      </div>
+      {/* Disclaimer strip — top/bottom cap messaging */}
+      <DisclaimerStrip total={results.length} lastBatchSize={lastBatchSize} />
 
       {/* Table */}
       <div className="flex-1 overflow-auto">
@@ -258,7 +348,7 @@ export default function ScreenerResultsTable() {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {sorted.map((row) => (
+            {pageRows.map((row) => (
               <TableRow
                 key={row.conid}
                 onClick={() => setPeekConid(row.conid)}

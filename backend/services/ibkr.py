@@ -39,6 +39,7 @@ from exceptions import (
     IBKRRequestError,
     SymbolNotFoundError,
 )
+from ibkr_dumper import dump_if_first
 from rate_control import paced
 from state import IBKRState
 
@@ -458,18 +459,62 @@ class IBKRService:
         fields: str = DEFAULT_QUOTE_FIELDS_STR,
         timeout: float = 5.0,
         poll_interval: float = 1.0,
+        required_fields: list[str] | None = None,
     ) -> list[dict]:
         """
         Get a market data snapshot for one or more conids.
-        Polls until all requested fields are present or timeout is reached.
-        IBKR requires calling snapshot twice — first call "warms up" the data.
+        Polls until all *required* fields are present or timeout is reached.
+
+        Args:
+            conids: IBKR contract IDs to fetch.
+            fields: Comma-separated field codes to request (all sent to IBKR).
+            timeout: Max seconds to poll before returning partial data.
+            poll_interval: Seconds between polls.
+            required_fields: Field codes that MUST be present before returning.
+                If None, ALL requested fields are required (original behaviour).
+                Pass a subset (e.g. ["31","55","83","7762"]) to treat the
+                remaining requested fields as best-effort. Use this whenever
+                you ask for fields that IBKR fills lazily or not at all.
+
+        ────────────────────────────────────────────────────────────
+        SAMPLE RESPONSE (from /iserver/marketdata/snapshot, fields=31,55,83,7762,7051):
+        ────────────────────────────────────────────────────────────
+        [
+          {
+            "server_id": "q0",
+            "conid": 265598,
+            "conidEx": "265598",
+            "_updated": 1719446872109,
+            "6119": "q0",
+            "6509": "RB",                # market-data availability flag
+            "55": "AAPL",                # symbol
+            "7051": "APPLE INC",         # company name
+            "31": "214.29",              # last price (STRING — parse to float)
+            "83": "+1.42",               # % change (STRING, may start with + or -)
+            "7762": "52100000"           # volume long (STRING, high precision)
+          },
+          ...
+        ]
+
+        Field notes:
+          - ALL values come back as STRINGS — must _safe_float on read.
+          - "87" (formatted volume) arrives as "52.1M" / "900K". Prefer "7762"
+            for parsing.
+          - "7289" (market cap) is NOT on IBKR's documented fields list. Don't
+            put it in `fields`; don't add it to `required_fields`. Use the
+            contract endpoint (/iserver/contract/{conid}/info → `marketCap`)
+            for mc instead. See backend/docs/ibkr_market_data_fields.md.
+          - Partial responses are common: IBKR may return the row with only
+            55 + 6509 filled while it warms its cache. The poll loop above
+            waits through this and returns once `required_fields` are all set.
         """
         await self.ensure_accounts()
         params = {
             "conids": ",".join(str(c) for c in conids),
             "fields": fields,
         }
-        requested_fields = fields.split(",")
+        # Determine which fields are required for the "done" check
+        gate_fields = required_fields if required_fields is not None else fields.split(",")
         start = time.monotonic()
         response = []
 
@@ -478,20 +523,22 @@ class IBKRService:
                 "GET", "/iserver/marketdata/snapshot", params=params
             )
             if response and isinstance(response, list):
-                # Check if all conids have all requested fields
+                # Check if all conids have all *required* fields
                 conids_in_resp = {str(item.get("conid")) for item in response}
                 all_conids_present = set(str(c) for c in conids).issubset(conids_in_resp)
                 all_fields_present = all(
-                    all(f in item for f in requested_fields)
+                    all(f in item for f in gate_fields)
                     for item in response
                 )
                 if all_conids_present and all_fields_present:
+                    dump_if_first("marketdata_snapshot", response)
                     return response
 
             await asyncio.sleep(poll_interval)
 
         # Return whatever we have after timeout
         log.warning("Snapshot timed out for conids %s after %.1fs", conids, timeout)
+        dump_if_first("marketdata_snapshot", response)
         return response if isinstance(response, list) else []
 
     @cached(ttl=300)
@@ -512,19 +559,58 @@ class IBKRService:
             "bar": bar,
             "outsideRth": "true",
         }
-        return await self._request(
+        result = await self._request(
             "GET", "/iserver/marketdata/history", params=params
         )
+        dump_if_first("marketdata_history", result)
+        return result
 
     @cached(ttl=3600)
     async def contract_info(self, conid: int) -> dict:
         """
         Fetch full contract details for a conid.
         Returns exchange, currency, sector, industry, etc.
-        Used by the screener quick-peek slide-over.
+        Used by the screener quick-peek slide-over AND as the market-cap
+        fallback when /iserver/marketdata/snapshot field 7289 is missing.
+
+        ────────────────────────────────────────────────────────────
+        SAMPLE RESPONSE (from /iserver/contract/{conid}/info for AAPL):
+        ────────────────────────────────────────────────────────────
+        {
+          "conid": 265598,
+          "company_name": "APPLE INC",
+          "company_header": "APPLE INC - NASDAQ",
+          "exchange": "NASDAQ",
+          "listing_exchange": "NASDAQ",
+          "symbol": "AAPL",
+          "instrument_type": "STK",
+          "currency": "USD",
+          "category": "Computers",
+          "industry": "Computer Hardware",
+          "rule": true,
+          "valid_exchanges": "SMART,AMEX,NYSE,CBOE,...",
+          "allow_sell_long": true,
+          "is_zero_commission_security": false,
+          "contract_clarification_type": null,
+          "underConid": 0,
+          "r_t_h": true,
+          "marketCap": "3285420"          # STRING, in MILLIONS — same unit as snapshot 7289
+        }
+
+        Field notes:
+          - `marketCap` is a STRING in MILLIONS (so "3285420" = $3.285T). Parse
+            with `_safe_float` and keep as-is — the frontend already formats
+            millions for display.
+          - Values are cached by IBKR at ~1h granularity; our @cached(ttl=3600)
+            matches. This is more stable than snapshot 7289 which is derived
+            live and frequently drops fields.
+          - Not every instrument has `marketCap` (indices, some ETFs, futures).
+            Missing value ⇒ `_safe_float` returns None ⇒ row just keeps None.
         """
         await self.ensure_accounts()
-        return await self._request("GET", f"/iserver/contract/{conid}/info")
+        result = await self._request("GET", f"/iserver/contract/{conid}/info")
+        dump_if_first("contract_info", result)
+        return result
 
     # ── Watchlist Methods (Step 3.5) ───────────────────────────
 
@@ -817,7 +903,9 @@ class IBKRService:
         the user can build scans from.
         """
         await self.ensure_accounts()
-        return await self._request("GET", "/iserver/scanner/params")
+        result = await self._request("GET", "/iserver/scanner/params")
+        dump_if_first("scanner_params", result)
+        return result
 
     async def scanner_run(
         self,
@@ -847,19 +935,44 @@ class IBKRService:
             "type": scan_type,
             "location": location,
         }
-        if filters:
-            body["filter"] = filters
+        # IBKR requires "filter" to always be an array — omitting the key
+        # causes a 400 "filter must be an array" error even for no-filter scans.
+        body["filter"] = filters if filters is not None else []
         if sort:
             body["sort"] = sort
 
-        data = await self._request("POST", "/iserver/scanner/run", json=body)
+        # IBKR quirk: when a scanner matches zero rows server-side it returns
+        # HTTP 500 with body {"error":"Finished: EMPTY response is received."}
+        # instead of an empty contracts array. This happens for time-of-day
+        # gated scanners (52W highs on a slow tape, pre-market scanners outside
+        # pre-market hours, 13W highs/lows on quiet days). Treat as "no matches"
+        # rather than a real failure so the UI shows the empty state instead of
+        # an error banner.
+        try:
+            data = await self._request("POST", "/iserver/scanner/run", json=body)
+        except IBKRRequestError as exc:
+            if exc.status_code == 500 and "EMPTY response" in str(exc):
+                log.info(
+                    "Scanner %s/%s/%s returned EMPTY (IBKR 500) — treating as no matches",
+                    instrument, scan_type, location,
+                )
+                return []
+            raise
+        dump_if_first("scanner_run", data)
 
-        # IBKR returns: {"Contracts": {"Contract": [...]}} or a list
+        # /iserver/scanner/run returns {"contracts": [...], "scan_data_column_name": "..."}
+        # The HMDS /hmds/scanner endpoint uses {"Contracts": {"Contract": [...]}} —
+        # keep that as a fallback so this parser is safe for both shapes.
         if isinstance(data, dict):
-            contracts = data.get("Contracts", data)
-            if isinstance(contracts, dict):
-                return contracts.get("Contract", [])
-            return contracts if isinstance(contracts, list) else []
+            lower = data.get("contracts")
+            if isinstance(lower, list):
+                return lower
+            upper = data.get("Contracts")
+            if isinstance(upper, dict):
+                return upper.get("Contract", [])
+            if isinstance(upper, list):
+                return upper
+            return []
         return data if isinstance(data, list) else []
 
     # ── WebSocket (Step 1.6) ─────────────────────────────────

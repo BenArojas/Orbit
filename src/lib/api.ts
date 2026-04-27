@@ -542,7 +542,68 @@ export interface ScannerPreset {
   scan_type: string;
   location: string;
   display_name: string;
+  /** "popular" = always-visible section; "niche" = collapsed "More screens" */
+  category?: "popular" | "niche";
   default_filters?: IbkrFilterItem[];
+  /** Optional caveat shown next to the preset name in the UI
+   *  (e.g. "Pre-market only" so users know why a scan returns 0 outside hours). */
+  subtitle?: string | null;
+  /** Path B: Live IBKR `instruments` array — which top-level instrument
+   *  codes this scan_type supports (e.g. ["STK", "STOCK.HK", "STOCK.EU"]).
+   *  Used by the Location dropdown to disable markets the scan can't run
+   *  in. Joined in by the backend from /iserver/scanner/params. */
+  instruments?: string[];
+  /** Path B: Curated category key for grouping in the preset dropdown's
+   *  "More screens" section AND in the Browse all scans panel (movers /
+   *  highs_lows / pre_post_market / gaps / options_vol / fundamentals /
+   *  special / etfs). */
+  group?: string;
+}
+
+/** Curated Location dropdown option — instrument+location pair from
+ *  GET /screener/locations. The instrument field MUST be sent to IBKR
+ *  alongside the location code (sending instrument=STK with a non-US
+ *  location returns 500 "No matching locations defined"). */
+export interface ScannerLocation {
+  instrument: string;
+  location: string;
+  label: string;
+}
+
+/** One scan type entry from GET /screener/all-scan-types — the full
+ *  IBKR catalogue used by the "Browse all scans" panel. `is_curated`
+ *  marks scan types that also appear as named presets in the main
+ *  dropdown. */
+export interface ScannerScanType {
+  code: string;
+  display_name: string;
+  instruments: string[];
+  /** Our category bucket key — matches the labels in the panel:
+   *  movers / highs_lows / pre_post_market / gaps / options_vol /
+   *  fundamentals / special / etfs / other. */
+  group: string;
+  is_curated: boolean;
+}
+
+/**
+ * One entry from GET /screener/filter-catalogue.
+ * Mirrors backend FilterCatalogueEntry. The frontend fetches this once per
+ * session and hydrates the filter bar + quick-pick chips.
+ *
+ * `description` — same short guidance string Ollama sees in its system prompt.
+ * Rendered as a native `title` tooltip on the Add Filter menu items so UI
+ * guidance stays consistent with what the AI screener uses.
+ */
+export interface FilterCatalogueEntry {
+  code: string;
+  label: string;
+  direction: "above" | "below";
+  unit: string | null;
+  example: string;
+  category: "fundamental" | "technical" | "analyst" | "short_ownership";
+  popular: boolean;
+  description: string | null;
+  paired_code: string; // opposite-direction code, or "" if none
 }
 
 /** A native IBKR scanner filter — passed directly to the scanner endpoint */
@@ -571,7 +632,16 @@ export interface ScreenerResultRow {
   last_price: number | null;
   change_percent: number | null;
   volume: number | null;
-  market_cap: number | null;  // In $M (IBKR field 7289)
+  // Note: market_cap intentionally omitted — not reliably available via
+  // /iserver/marketdata/snapshot. Quick-peek row (ContractInfoResponse) still
+  // carries it because that comes from /iserver/contract/{conid}/info.
+  /** Path B: IBKR's per-row scanner ranking metric. For TOP_PERC_GAIN
+   *  it's the % change (redundant with change_percent), for
+   *  FIRST_TRADE_DATE_ASC it's the next first-trade date. The table uses
+   *  it as a price-column FALLBACK when last_price is null. */
+  scan_data: string | null;
+  /** IBKR's column header for scan_data, e.g. "First Trade Date". */
+  scan_data_label: string | null;
 }
 
 export interface ScanResponse {
@@ -595,12 +665,22 @@ export interface ContractInfoResponse {
   currency: string;
   industry: string;
   category: string;
+  sector: string;           // Alias for category — broader grouping
   avg_volume: number | null;
   market_cap: number | null;
   high_52w: number | null;
   low_52w: number | null;
   pe_ratio: number | null;
   dividend_yield: number | null;
+  // 52-week positioning (derived from 1y daily history)
+  w52_pct_from_high: number | null;
+  w52_pct_from_low: number | null;
+  w52_days_since_high: number | null;
+  // Relative performance (derived from 1y daily history)
+  perf_5d: number | null;
+  perf_1m: number | null;
+  perf_3m: number | null;
+  perf_ytd: number | null;
 }
 
 export interface ScannerParamsResponse {
@@ -848,6 +928,20 @@ export const api = {
 
   screenerPresets: () =>
     request<ScannerPreset[]>("GET", "/screener/presets"),
+
+  /** Curated Location dropdown options — instrument+location pairs from
+   *  the backend (single source of truth for region selection). */
+  screenerLocations: () =>
+    request<ScannerLocation[]>("GET", "/screener/locations"),
+
+  /** Full IBKR scan-type catalogue with our category bucketing — powers
+   *  the "Browse all scans" slide-over panel. */
+  screenerAllScanTypes: () =>
+    request<ScannerScanType[]>("GET", "/screener/all-scan-types"),
+
+  /** Canonical filter catalogue — fetched once per session, staleTime 1h */
+  screenerFilterCatalogue: () =>
+    request<FilterCatalogueEntry[]>("GET", "/screener/filter-catalogue"),
 
   screenerParams: () =>
     request<ScannerParamsResponse>("GET", "/screener/params"),

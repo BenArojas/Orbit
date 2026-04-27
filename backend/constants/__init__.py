@@ -2,6 +2,10 @@
 IBKR Client Portal API constants.
 Field codes, period/bar mappings, and default snapshot fields.
 Ported from MoonMarket — these are stable IBKR API constants.
+
+This package also hosts:
+  - constants.ibkr_filters: canonical FILTER_CATALOGUE for the screener
+    and AI translation layer (single source of truth for filter codes).
 """
 
 # ── IBKR Snapshot Field Codes ────────────────────────────────

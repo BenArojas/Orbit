@@ -726,13 +726,57 @@ class ModelSelectRequest(BaseModel):
 class ScannerPreset(BaseModel):
     """
     An available IBKR scanner preset the user can pick from.
-    The screener UI shows these as a dropdown for "universe source."
+    The screener UI shows these in a grouped combobox:
+      - popular=True presets are always visible at the top,
+      - everything else is grouped under "More screens" by `group`.
     """
-    instrument: str                                     # "STK", "FUT", etc.
+    instrument: str                                     # "STK", "ETF.EQ.US", etc.
     scan_type: str                                      # "TOP_PERC_GAIN", "MOST_ACTIVE", etc.
-    location: str                                       # "STK.US.MAJOR", "STK.EU", etc.
+    location: str                                       # Default location (overridable in UI)
     display_name: str                                   # Human-readable name
+    category: Literal["popular", "niche"] = "popular"   # Legacy grouping (kept for back-compat)
     default_filters: list["IbkrFilterItem"] = []       # Optional preset filters
+    # Optional caveat shown under the preset name in the UI (e.g. "Pre-market only")
+    # so users understand why a scanner returns 0 rows outside its operating window.
+    subtitle: str | None = None
+    # Path B addition: which IBKR top-level instrument codes this scan_type
+    # supports. Joined in from the live /iserver/scanner/params response so
+    # the Location dropdown can disable markets that aren't compatible.
+    instruments: list[str] = []
+    # Path B addition: category key from CURATED_SCAN_TYPES (movers,
+    # highs_lows, gaps, options_vol, ...). Drives section grouping under
+    # "More screens" and in the Browse all scans panel.
+    group: str = "movers"
+
+
+class ScannerLocation(BaseModel):
+    """
+    One curated location option for the Location dropdown.
+
+    Carries the IBKR `instrument` code that pairs with the location —
+    sending the wrong instrument with a non-US location gives 500 "No
+    matching locations defined". Source: backend/constants/scan_locations.py.
+    """
+    instrument: str                                     # e.g. "STOCK.HK"
+    location: str                                       # e.g. "STK.HK.TSE_JPN"
+    label: str                                          # e.g. "Japan"
+
+
+class ScannerScanType(BaseModel):
+    """
+    One scan type entry for the "Browse all scans" panel.
+
+    Sourced from IBKR's live scan_type_list (so as their catalogue grows
+    we surface the additions automatically), enriched with our curated
+    category bucketing. `is_curated=True` means this scan_type appears as
+    a named preset in the main dropdown too — the panel marks them so the
+    user can tell "ours" from "long tail".
+    """
+    code: str                                           # IBKR scan type code
+    display_name: str                                   # IBKR's display name
+    instruments: list[str]                              # Compatibility — same shape as ScannerPreset
+    group: str                                          # Our category key (CATEGORY_LABELS)
+    is_curated: bool = False                            # True if also in CURATED_SCAN_TYPES
 
 
 class IbkrFilterItem(BaseModel):
@@ -787,7 +831,23 @@ class ScreenerResultRow(BaseModel):
     last_price: Optional[float] = None
     change_percent: Optional[float] = None
     volume: Optional[float] = None
-    market_cap: Optional[float] = None                  # In $M (IBKR field 7289)
+    # Note: market cap intentionally NOT part of screener rows. IBKR does not
+    # expose mc reliably via /iserver/marketdata/snapshot (field 7289 is absent
+    # from the official fields list). See backend/docs/ibkr_market_data_fields.md.
+    # The per-contract quick-peek (ContractInfoResponse below) still carries it
+    # because that endpoint fetches it from /iserver/contract/{conid}/info.
+
+    # Path B addition: scanner-native ranking metric for this row, captured
+    # from IBKR's `scan_data` field. For TOP_PERC_GAIN it's the % change
+    # (redundant with change_percent), for FIRST_TRADE_DATE_ASC it's the
+    # next first-trade date (the only meaningful field on those rows since
+    # they haven't traded yet).
+    #
+    # The frontend uses scan_data as a price-column FALLBACK when last_price
+    # is None — that's how IPO rows show "First Trade: 2026-05-12" instead
+    # of an empty cell. See NO_QUOTE_SCAN_TYPES in services/screener.py.
+    scan_data: Optional[str] = None
+    scan_data_label: Optional[str] = None              # IBKR's column header e.g. "First Trade Date"
 
 
 class ScanResponse(BaseModel):
@@ -813,6 +873,25 @@ class ScannerParamsResponse(BaseModel):
     locations: list[dict] = []                          # Available market locations
     scan_types: list[dict] = []                         # Available scan types
     filters: list[dict] = []                            # Available filter codes
+
+
+class FilterCatalogueEntry(BaseModel):
+    """
+    One entry in the canonical IBKR filter catalogue exposed to the frontend.
+
+    Mirrors `FilterEntry` in `constants/ibkr_filters.py`. The `description`
+    field is served to both surfaces — Ollama (as prompt context) and the
+    UI (as a `title` tooltip on the Add Filter menu items).
+    """
+    code: str                          # IBKR filter code, e.g. "marketCapAbove1e6"
+    label: str                         # Human label, e.g. "Market Cap"
+    direction: Literal["above", "below"]
+    unit: Optional[str] = None         # "$M", "%", "$", or None
+    example: str                       # Example value (string) for placeholders
+    category: Literal["fundamental", "technical", "analyst", "short_ownership"]
+    popular: bool                      # True → shown as an always-visible quick-pick chip
+    description: Optional[str] = None  # Short natural-language tooltip / Ollama context
+    paired_code: str = ""              # Opposite-direction code (or "" if none)
 
 
 class AiFilterRequest(BaseModel):
@@ -845,11 +924,22 @@ class ContractInfoResponse(BaseModel):
     sec_type: str = ""
     exchange: str = ""
     currency: str = ""
+    # IBKR `industry` = narrow sub-industry, `category` = broader sector grouping
     industry: str = ""
     category: str = ""
+    sector: str = ""          # Alias for category — broader grouping shown in peek panel
     avg_volume: Optional[float] = None
     market_cap: Optional[float] = None
     high_52w: Optional[float] = None
     low_52w: Optional[float] = None
     pe_ratio: Optional[float] = None
     dividend_yield: Optional[float] = None
+    # 52-week positioning (derived from history)
+    w52_pct_from_high: Optional[float] = None   # % below 52W high (negative = below)
+    w52_pct_from_low: Optional[float] = None    # % above 52W low (positive = above)
+    w52_days_since_high: Optional[int] = None   # Calendar days since last 52W high close
+    # Relative performance vs. period start close (derived from history)
+    perf_5d: Optional[float] = None    # 5-day % return
+    perf_1m: Optional[float] = None    # 1-month % return
+    perf_3m: Optional[float] = None    # 3-month % return
+    perf_ytd: Optional[float] = None   # Year-to-date % return

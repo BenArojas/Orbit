@@ -20,6 +20,7 @@ import {
   Send,
   Loader2,
   Plus,
+  RefreshCw,
   AlertCircle,
   CheckCircle2,
   ChevronRight,
@@ -28,12 +29,30 @@ import { api, type AiFilterSuggestion } from "@/lib/api";
 import { useScreenerStore, type ActiveFilter } from "@/store/screener";
 import { useAiStatus } from "@/hooks/useAiStatus";
 
+/**
+ * State of an AI suggestion vs the user's existing filter list, by code.
+ *
+ *   "new"       — code isn't in the bar yet → "Add" button
+ *   "duplicate" — same code AND same value already in the bar → "Added" pill
+ *   "differs"   — same code but different value → "Update" button (replace)
+ */
+export type SuggestionState = "new" | "duplicate" | "differs";
+
+export function classifySuggestion(
+  suggestion: AiFilterSuggestion,
+  filters: ActiveFilter[],
+): { state: SuggestionState; existing?: ActiveFilter } {
+  const existing = filters.find((f) => f.code === suggestion.code);
+  if (!existing) return { state: "new" };
+  if (existing.value === suggestion.value) return { state: "duplicate", existing };
+  return { state: "differs", existing };
+}
+
 // ── Preset chips ──────────────────────────────────────────────
 
 const PRESET_QUERIES = [
   "Oversold large caps",
   "High momentum small caps",
-  "Earnings this week + high IV",
   "Low float high volume",
   "Strong uptrend breakout",
   "Value stocks with growth",
@@ -43,14 +62,19 @@ const PRESET_QUERIES = [
 
 function SuggestionCard({
   suggestion,
+  state,
+  existing,
   onAdd,
-  isAdded,
 }: {
   suggestion: AiFilterSuggestion;
+  state: SuggestionState;
+  existing?: ActiveFilter;
   onAdd: () => void;
-  isAdded: boolean;
 }) {
   const [showReasoning, setShowReasoning] = useState(false);
+
+  const isDuplicate = state === "duplicate";
+  const isUpdate = state === "differs";
 
   return (
     <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-2)] p-2.5">
@@ -63,21 +87,45 @@ function SuggestionCard({
           <span className="font-mono text-[9px] text-[var(--text-3)]">
             {suggestion.code} = {suggestion.value}
           </span>
+          {/* When the AI's value differs from the user's, surface the diff so
+              they know what "Update" will do. */}
+          {isUpdate && existing && (
+            <span
+              data-testid="ai-suggestion-diff"
+              className="font-mono text-[9px] text-[var(--clr-orange)]"
+            >
+              your value: {existing.value}
+            </span>
+          )}
         </div>
 
         <button
           onClick={onAdd}
-          disabled={isAdded}
+          disabled={isDuplicate}
+          aria-label={
+            isDuplicate
+              ? `${suggestion.code} already added`
+              : isUpdate
+              ? `Update ${suggestion.code} value`
+              : `Add ${suggestion.code}`
+          }
           className={`flex-shrink-0 flex items-center gap-1 rounded px-2 py-1 text-[10px] font-medium transition-colors ${
-            isAdded
+            isDuplicate
               ? "text-[var(--clr-green)] cursor-default"
+              : isUpdate
+              ? "bg-[var(--clr-orange)]/15 text-[var(--clr-orange)] hover:bg-[var(--clr-orange)]/25"
               : "bg-[var(--clr-cyan)]/15 text-[var(--clr-cyan)] hover:bg-[var(--clr-cyan)]/25"
           }`}
         >
-          {isAdded ? (
+          {isDuplicate ? (
             <>
               <CheckCircle2 size={10} />
               Added
+            </>
+          ) : isUpdate ? (
+            <>
+              <RefreshCw size={10} />
+              Update
             </>
           ) : (
             <>
@@ -120,11 +168,13 @@ export default function ScreenerAiPanel({ isOpen }: ScreenerAiPanelProps) {
   const [query, setQuery] = useState("");
   const [suggestions, setSuggestions] = useState<AiFilterSuggestion[]>([]);
   const [summary, setSummary] = useState("");
-  const [addedCodes, setAddedCodes] = useState<Set<string>>(new Set());
   const [error, setError] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  const { addFilter, selectedPreset } = useScreenerStore();
+  // `filters` is read live so the panel reflects the actual filter bar state
+  // (no local addedCodes drift after the user removes a pill, picks a new
+  // scanner, or applies a Try-this card).
+  const { filters, addFilter, updateFilter, selectedPreset } = useScreenerStore();
   const { isReady, selectedModel, ollamaState } = useAiStatus();
 
   // ── AI mutation ──
@@ -142,7 +192,6 @@ export default function ScreenerAiPanel({ isOpen }: ScreenerAiPanelProps) {
       setError(null);
       setSuggestions([]);
       setSummary("");
-      setAddedCodes(new Set());
     },
     onSuccess: (data) => {
       setSuggestions(data.filters);
@@ -174,6 +223,21 @@ export default function ScreenerAiPanel({ isOpen }: ScreenerAiPanelProps) {
   };
 
   const handleAddSuggestion = (suggestion: AiFilterSuggestion) => {
+    const { state, existing } = classifySuggestion(suggestion, filters);
+
+    if (state === "duplicate") {
+      // Same code + same value already in the bar — no-op
+      return;
+    }
+
+    if (state === "differs" && existing) {
+      // Same code, different value → replace the existing filter's value
+      // in-place rather than creating a duplicate pill with two values.
+      updateFilter(existing.id, suggestion.value, suggestion.display_label);
+      return;
+    }
+
+    // state === "new" — append a fresh pill
     const filter: ActiveFilter = {
       id: `ai-${suggestion.code}-${Date.now()}`,
       code: suggestion.code,
@@ -181,15 +245,12 @@ export default function ScreenerAiPanel({ isOpen }: ScreenerAiPanelProps) {
       display_label: suggestion.display_label,
     };
     addFilter(filter);
-    setAddedCodes((prev) => new Set([...prev, suggestion.code]));
   };
 
   const handleApplyAll = () => {
-    suggestions.forEach((s) => {
-      if (!addedCodes.has(s.code)) {
-        handleAddSuggestion(s);
-      }
-    });
+    // No-ops on duplicates, replaces on differs, adds on new — all routed
+    // through handleAddSuggestion so behavior matches the per-card click.
+    suggestions.forEach(handleAddSuggestion);
   };
 
   // ── Not open ──
@@ -334,18 +395,28 @@ export default function ScreenerAiPanel({ isOpen }: ScreenerAiPanelProps) {
                   </p>
                 )}
 
-                {/* Filter cards */}
-                {suggestions.map((s) => (
-                  <SuggestionCard
-                    key={s.code}
-                    suggestion={s}
-                    onAdd={() => handleAddSuggestion(s)}
-                    isAdded={addedCodes.has(s.code)}
-                  />
-                ))}
+                {/* Filter cards — classification is recomputed per render
+                    so any external change (filter removed, scanner switched,
+                    Try-this card applied) is reflected immediately. */}
+                {suggestions.map((s) => {
+                  const { state, existing } = classifySuggestion(s, filters);
+                  return (
+                    <SuggestionCard
+                      key={s.code}
+                      suggestion={s}
+                      state={state}
+                      existing={existing}
+                      onAdd={() => handleAddSuggestion(s)}
+                    />
+                  );
+                })}
 
-                {/* Apply all */}
-                {suggestions.some((s) => !addedCodes.has(s.code)) && (
+                {/* Apply all — visible whenever any suggestion is "new" or
+                    "differs" (i.e. would do something). Hidden only when
+                    every suggestion already matches the filter bar exactly. */}
+                {suggestions.some(
+                  (s) => classifySuggestion(s, filters).state !== "duplicate",
+                ) && (
                   <button
                     onClick={handleApplyAll}
                     className="mt-1 w-full rounded-lg border border-[var(--clr-cyan)]/30 bg-[var(--clr-cyan)]/10 py-2 text-[11px] font-medium text-[var(--clr-cyan)] transition-colors hover:bg-[var(--clr-cyan)]/20"
@@ -354,9 +425,12 @@ export default function ScreenerAiPanel({ isOpen }: ScreenerAiPanelProps) {
                   </button>
                 )}
 
-                {/* All applied */}
+                {/* All applied — every suggestion already in the bar with
+                    the same value the AI suggested. */}
                 {suggestions.length > 0 &&
-                  suggestions.every((s) => addedCodes.has(s.code)) && (
+                  suggestions.every(
+                    (s) => classifySuggestion(s, filters).state === "duplicate",
+                  ) && (
                     <div className="flex items-center justify-center gap-1.5 rounded-lg border border-[var(--clr-green)]/20 bg-[var(--clr-green)]/5 py-2 text-[10px] text-[var(--clr-green)]">
                       <CheckCircle2 size={12} />
                       All filters added — click Scan

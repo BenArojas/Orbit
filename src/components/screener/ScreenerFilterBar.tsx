@@ -1,123 +1,276 @@
 /**
  * ScreenerFilterBar — Preset selector + IBKR native filter pills + scan button
  *
- * Layout: [Preset Dropdown] | [+ Add Filter ▾] [Filter Pills...] [Clear] | [Scan]
+ * Layout:
+ *   Row 1: [Preset Dropdown] | [Quick-pick chips] | [+ Add Filter ▾] [Clear] | [AI] [Scan]
+ *   Filter pills appear inline after quick-picks / add button.
  *
  * Filters are IBKR native scanner filter codes (code/value pairs).
- * Grouped by category: Fundamental, Technical, Analyst, Short Interest.
+ * Categories and codes come from GET /screener/filter-catalogue — no hardcoded local list.
+ *
+ * Quick-pick chips: the 5 `popular=true` catalogue entries — one click opens a
+ * compact value input and adds the filter directly to the bar.
+ *
+ * Preset grouping: popular presets at the top, niche ("More screens") below.
  */
 
 import { useState, useRef, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Plus, X, Play, Loader2, ChevronDown, RotateCcw, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { api } from "@/lib/api";
+import { api, type FilterCatalogueEntry, type ScannerLocation } from "@/lib/api";
 import { useScreenerStore, type ActiveFilter } from "@/store/screener";
 import { PresetSkeleton } from "./ScreenerSkeleton";
+import NumericFilterInput from "./NumericFilterInput";
 
-// ── Filter catalogue ─────────────────────────────────────────
+// ── Helpers ───────────────────────────────────────────────────
 
-interface FilterDef {
-  label: string;
-  aboveCode: string;
-  belowCode: string;
-  unit?: string;         // Display unit (e.g. "$B", "%")
-  placeholder?: string;  // Input placeholder
-}
+const CAT_LABELS: Record<string, string> = {
+  fundamental: "Fundamental",
+  technical: "Technical",
+  analyst: "Analyst",
+  short_ownership: "Short Interest",
+};
 
-interface FilterCategory {
-  label: string;
-  filters: FilterDef[];
-}
+/** Category order for the Add Filter dropdown */
+const CAT_ORDER = ["fundamental", "technical", "analyst", "short_ownership"];
 
-const FILTER_CATEGORIES: FilterCategory[] = [
-  {
-    label: "Fundamental",
-    filters: [
-      { label: "Market Cap", aboveCode: "marketCapAbove1e6", belowCode: "marketCapBelow1e6", unit: "$M", placeholder: "1000" },
-      { label: "P/E Ratio", aboveCode: "minPeRatio", belowCode: "maxPeRatio", placeholder: "15" },
-      { label: "ROE", aboveCode: "minROE", belowCode: "maxROE", unit: "%", placeholder: "15" },
-      { label: "Operating Margin TTM", aboveCode: "minOperatingMargin", belowCode: "maxOperatingMargin", unit: "%", placeholder: "10" },
-      { label: "Net Margin TTM", aboveCode: "minNetMargin", belowCode: "maxNetMargin", unit: "%", placeholder: "5" },
-      { label: "Revenue Chg TTM", aboveCode: "minRevenueChangePercentTTM", belowCode: "maxRevenueChangePercentTTM", unit: "%", placeholder: "10" },
-      { label: "Revenue Growth 5Y", aboveCode: "minRevenuePctChange5Y", belowCode: "maxRevenuePctChange5Y", unit: "%", placeholder: "10" },
-      { label: "EPS Chg TTM", aboveCode: "minEpsChangePercent", belowCode: "maxEpsChangePercent", unit: "%", placeholder: "10" },
-      { label: "Price/Book", aboveCode: "minPriceBook", belowCode: "maxPriceBook", placeholder: "1" },
-      { label: "Quick Ratio", aboveCode: "minQuickRatio", belowCode: "maxQuickRatio", placeholder: "1" },
-      { label: "Earnings Within (days)", aboveCode: "wshEarningsDate", belowCode: "wshEarningsDate", unit: "days", placeholder: "5" },
-    ],
-  },
-  {
-    label: "Technical",
-    filters: [
-      { label: "Price", aboveCode: "priceAbove", belowCode: "priceBelow", unit: "$", placeholder: "10" },
-      { label: "Day Change %", aboveCode: "changePercAbove", belowCode: "changePercBelow", unit: "%", placeholder: "3" },
-      { label: "Volume vs Avg", aboveCode: "volumeAbove", belowCode: "volumeBelow", placeholder: "1000000" },
-      { label: "Price vs EMA(20) %", aboveCode: "priceVsEMA20Above", belowCode: "priceVsEMA20Below", unit: "%", placeholder: "5" },
-      { label: "Price vs EMA(50) %", aboveCode: "priceVsEMA50Above", belowCode: "priceVsEMA50Below", unit: "%", placeholder: "5" },
-      { label: "Price vs EMA(200) %", aboveCode: "priceVsEMA200Above", belowCode: "priceVsEMA200Below", unit: "%", placeholder: "5" },
-      { label: "MACD Histogram", aboveCode: "macdHistAbove", belowCode: "macdHistBelow", placeholder: "0" },
-      { label: "IV Rank 52W", aboveCode: "ivRankAbove", belowCode: "ivRankBelow", unit: "%", placeholder: "50" },
-    ],
-  },
-  {
-    label: "Analyst",
-    filters: [
-      { label: "Avg Rating", aboveCode: "avgRatingAbove", belowCode: "avgRatingBelow", placeholder: "3" },
-      { label: "# Analyst Ratings", aboveCode: "numRatingsAbove", belowCode: "numRatingsBelow", placeholder: "5" },
-      { label: "Avg Price Target", aboveCode: "avgTargetPriceAbove", belowCode: "avgTargetPriceBelow", unit: "$", placeholder: "50" },
-      { label: "Target/Price Ratio", aboveCode: "targetPriceRatioAbove", belowCode: "targetPriceRatioBelow", placeholder: "1.1" },
-    ],
-  },
-  {
-    label: "Short Interest",
-    filters: [
-      { label: "Utilization", aboveCode: "shortableSharesAbove", belowCode: "shortableSharesBelow", unit: "%", placeholder: "50" },
-      { label: "Borrow Fee Rate", aboveCode: "rebateRateAbove", belowCode: "rebateRateBelow", unit: "%", placeholder: "1" },
-      { label: "Insider % of Float", aboveCode: "insiderOwnershipAbove", belowCode: "insiderOwnershipBelow", unit: "%", placeholder: "10" },
-      { label: "Institutional % of Float", aboveCode: "institutionalOwnershipAbove", belowCode: "institutionalOwnershipBelow", unit: "%", placeholder: "50" },
-    ],
-  },
-];
+// LOCATION_OPTIONS used to live here as a hardcoded list. Now sourced
+// from GET /screener/locations (backend/constants/scan_locations.py) so
+// each option carries the IBKR `instrument` it pairs with — sending the
+// wrong instrument with a non-US location returns 500 "No matching
+// locations defined".
 
-// Flat lookup: code → label (for display in pill)
-const CODE_TO_LABEL: Record<string, string> = {};
-for (const cat of FILTER_CATEGORIES) {
-  for (const f of cat.filters) {
-    CODE_TO_LABEL[f.aboveCode] = `${f.label} ≥`;
-    CODE_TO_LABEL[f.belowCode] = `${f.label} ≤`;
-  }
+/** Build a human-readable display label for a filter value */
+function buildLabel(entry: FilterCatalogueEntry, value: string, direction: "above" | "below") {
+  const arrow = direction === "above" ? "≥" : "≤";
+  const unitSuffix = entry.unit ? ` ${entry.unit}` : "";
+  return `${entry.label} ${arrow} ${value}${unitSuffix}`;
 }
 
 // ── Active filter pill ────────────────────────────────────────
+// Clicking the pill opens a compact popover pre-filled with the current value,
+// so users can tweak a threshold without removing + re-adding.
+// The catalogue `entry` is looked up by the parent via filter.code and passed
+// down — when it's missing (AI-suggested code not in our catalogue, rare) the
+// pill falls back to read-only mode with just the remove button.
 
 function FilterPill({
   filter,
+  entry,
   onRemove,
+  onUpdate,
 }: {
   filter: ActiveFilter;
+  entry: FilterCatalogueEntry | undefined;
   onRemove: () => void;
+  onUpdate: (value: string, display_label: string) => void;
 }) {
+  const [open, setOpen] = useState(false);
+  const [value, setValue] = useState(filter.value);
+  const ref = useRef<HTMLDivElement>(null);
+
+  // Keep local input in sync if the filter is reset externally
+  useEffect(() => {
+    setValue(filter.value);
+  }, [filter.value]);
+
+  // Close on outside click
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [open]);
+
+  const direction: "above" | "below" = entry?.direction ?? "above";
+
+  const handleSave = () => {
+    if (!entry || !value) return;
+    onUpdate(value, buildLabel(entry, value, direction));
+    setOpen(false);
+  };
+
+  // If we don't have the catalogue entry, render a non-editable pill
+  // (still removable) so we never lose the user's filter.
+  if (!entry) {
+    return (
+      <span className="group flex items-center gap-1.5 rounded-full border border-[var(--clr-cyan)]/40 bg-[var(--glow-cyan)] px-2.5 py-1 font-data text-[10px] font-medium text-[var(--clr-cyan)]">
+        <span>{filter.display_label}</span>
+        <button
+          onClick={onRemove}
+          className="opacity-0 transition-opacity group-hover:opacity-100 hover:text-[var(--clr-red)]"
+          aria-label={`Remove filter: ${filter.display_label}`}
+        >
+          <X size={10} />
+        </button>
+      </span>
+    );
+  }
+
   return (
-    <span className="group flex items-center gap-1.5 rounded-full border border-[var(--clr-cyan)]/40 bg-[var(--glow-cyan)] px-2.5 py-1 font-data text-[10px] font-medium text-[var(--clr-cyan)]">
-      <span>{filter.display_label}</span>
-      <button
-        onClick={onRemove}
-        className="opacity-0 transition-opacity group-hover:opacity-100 hover:text-[var(--clr-red)]"
-        aria-label={`Remove filter: ${filter.display_label}`}
+    <div ref={ref} className="relative">
+      <span
+        className={`group flex items-center gap-1.5 rounded-full border px-2.5 py-1 font-data text-[10px] font-medium transition-colors ${
+          open
+            ? "border-[var(--clr-cyan)] bg-[var(--clr-cyan)]/20 text-[var(--clr-cyan)]"
+            : "border-[var(--clr-cyan)]/40 bg-[var(--glow-cyan)] text-[var(--clr-cyan)] hover:border-[var(--clr-cyan)]"
+        }`}
       >
-        <X size={10} />
-      </button>
-    </span>
+        <button
+          type="button"
+          onClick={() => setOpen((v) => !v)}
+          className="cursor-pointer text-left"
+          title={entry.description ?? `Click to edit ${entry.label}`}
+          aria-label={`Edit filter: ${filter.display_label}`}
+          aria-expanded={open}
+        >
+          {filter.display_label}
+        </button>
+        <button
+          type="button"
+          onClick={onRemove}
+          className="opacity-0 transition-opacity group-hover:opacity-100 hover:text-[var(--clr-red)]"
+          aria-label={`Remove filter: ${filter.display_label}`}
+        >
+          <X size={10} />
+        </button>
+      </span>
+
+      {open && (
+        <div className="absolute left-0 top-full z-20 mt-1 rounded-lg border border-[var(--border)] bg-[var(--bg-2)] p-2.5 shadow-xl">
+          <p className="mb-1.5 text-[10px] font-medium text-[var(--text-2)]">
+            {entry.label}&nbsp;{direction === "above" ? "≥" : "≤"}
+          </p>
+          <div className="flex items-center gap-1.5">
+            <NumericFilterInput
+              value={value}
+              onChange={setValue}
+              onEnter={handleSave}
+              onEscape={() => setOpen(false)}
+              className="w-24 rounded border border-[var(--border)] bg-[var(--bg-3)] px-2 py-1 font-data text-[11px] text-[var(--text-1)] outline-none focus:border-[var(--clr-cyan)]"
+              autoFocus
+            />
+            {entry.unit && (
+              <span className="text-[10px] text-[var(--text-3)]">{entry.unit}</span>
+            )}
+            <button
+              type="button"
+              onClick={handleSave}
+              className="rounded bg-[var(--clr-cyan)]/20 px-2 py-1 text-[10px] font-medium text-[var(--clr-cyan)] transition-colors hover:bg-[var(--clr-cyan)]/30"
+            >
+              Save
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 
-// ── Add filter dropdown + form ────────────────────────────────
+// ── Quick-pick chip ───────────────────────────────────────────
+// One chip per popular=true catalogue entry. Clicking opens a compact
+// inline value input — no category/filter navigation needed.
 
-function AddFilterDropdown({ onAdd }: { onAdd: (filter: ActiveFilter) => void }) {
+function QuickPickChip({
+  entry,
+  onAdd,
+}: {
+  entry: FilterCatalogueEntry;
+  onAdd: (filter: ActiveFilter) => void;
+}) {
   const [open, setOpen] = useState(false);
-  const [selectedCat, setSelectedCat] = useState<FilterCategory | null>(null);
-  const [selectedFilter, setSelectedFilter] = useState<FilterDef | null>(null);
+  const [value, setValue] = useState(entry.example);
+  const ref = useRef<HTMLDivElement>(null);
+
+  // Close on outside click
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [open]);
+
+  const handleOpen = () => {
+    setValue(entry.example);
+    setOpen(true);
+  };
+
+  const handleAdd = () => {
+    if (!value) return;
+    const filter: ActiveFilter = {
+      id: `${entry.code}-${Date.now()}`,
+      code: entry.code,
+      value,
+      display_label: buildLabel(entry, value, entry.direction),
+    };
+    onAdd(filter);
+    setOpen(false);
+  };
+
+  return (
+    <div ref={ref} className="relative">
+      <button
+        onClick={handleOpen}
+        className="rounded-full border border-dashed border-[var(--border)] px-2.5 py-1 text-[10px] text-[var(--text-3)] transition-colors hover:border-[var(--clr-cyan)] hover:text-[var(--clr-cyan)]"
+      >
+        {entry.label}
+      </button>
+
+      {open && (
+        <div className="absolute left-0 top-full z-20 mt-1 rounded-lg border border-[var(--border)] bg-[var(--bg-2)] p-2.5 shadow-xl">
+          <p className="mb-1.5 text-[10px] font-medium text-[var(--text-2)]">
+            {entry.label}&nbsp;{entry.direction === "above" ? "≥" : "≤"}
+          </p>
+          <div className="flex items-center gap-1.5">
+            <NumericFilterInput
+              value={value}
+              onChange={setValue}
+              onEnter={handleAdd}
+              onEscape={() => setOpen(false)}
+              className="w-24 rounded border border-[var(--border)] bg-[var(--bg-3)] px-2 py-1 font-data text-[11px] text-[var(--text-1)] outline-none focus:border-[var(--clr-cyan)]"
+              autoFocus
+            />
+            {entry.unit && (
+              <span className="text-[10px] text-[var(--text-3)]">{entry.unit}</span>
+            )}
+            <button
+              onClick={handleAdd}
+              className="rounded bg-[var(--clr-cyan)]/20 px-2 py-1 text-[10px] font-medium text-[var(--clr-cyan)] transition-colors hover:bg-[var(--clr-cyan)]/30"
+            >
+              Add
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Add filter dropdown ───────────────────────────────────────
+// Three-column panel: category → filter (above-direction entries only) → value + direction toggle.
+// Catalogue is fetched once by the parent and passed as a prop.
+
+interface SelectedEntry {
+  entry: FilterCatalogueEntry;
+  /** below entry from the catalogue (undefined if paired_code is empty) */
+  belowEntry?: FilterCatalogueEntry;
+}
+
+function AddFilterDropdown({
+  catalogue,
+  onAdd,
+}: {
+  catalogue: FilterCatalogueEntry[];
+  onAdd: (filter: ActiveFilter) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [selectedCat, setSelectedCat] = useState<string | null>(null);
+  const [selected, setSelected] = useState<SelectedEntry | null>(null);
   const [direction, setDirection] = useState<"above" | "below">("above");
   const [value, setValue] = useState("");
   const ref = useRef<HTMLDivElement>(null);
@@ -126,43 +279,46 @@ function AddFilterDropdown({ onAdd }: { onAdd: (filter: ActiveFilter) => void })
   useEffect(() => {
     if (!open) return;
     const handler = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) {
-        setOpen(false);
-      }
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
     };
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
   }, [open]);
 
+  // Only show "above"-direction entries as primary list items to avoid duplicates.
+  // below entries are looked up via paired_code when building the value form.
+  const primaryByCat = CAT_ORDER.reduce<Record<string, FilterCatalogueEntry[]>>((acc, cat) => {
+    acc[cat] = catalogue.filter((e) => e.category === cat && e.direction === "above");
+    return acc;
+  }, {});
+
   const handleOpen = () => {
     setOpen(true);
     setSelectedCat(null);
-    setSelectedFilter(null);
+    setSelected(null);
     setValue("");
     setDirection("above");
   };
 
-  const handleSelectFilter = (cat: FilterCategory, filter: FilterDef) => {
-    setSelectedCat(cat);
-    setSelectedFilter(filter);
-    setValue(filter.placeholder ?? "");
+  const handleSelectEntry = (entry: FilterCatalogueEntry) => {
+    const belowEntry = entry.paired_code
+      ? catalogue.find((e) => e.code === entry.paired_code)
+      : undefined;
+    setSelected({ entry, belowEntry });
+    setValue(entry.example);
+    setDirection("above");
   };
 
   const handleAdd = () => {
-    if (!selectedFilter || value === "") return;
-    const parsed = parseFloat(value);
-    if (isNaN(parsed)) return;
-
-    const code = direction === "above" ? selectedFilter.aboveCode : selectedFilter.belowCode;
-    const dirLabel = direction === "above" ? "≥" : "≤";
-    const unitSuffix = selectedFilter.unit ? ` ${selectedFilter.unit}` : "";
-    const displayLabel = `${selectedFilter.label} ${dirLabel} ${parsed}${unitSuffix}`;
+    if (!selected || !value) return;
+    const activeEntry = direction === "above" ? selected.entry : selected.belowEntry;
+    if (!activeEntry) return;
 
     const filter: ActiveFilter = {
-      id: `${code}-${Date.now()}`,
-      code,
-      value: String(parsed),
-      display_label: displayLabel,
+      id: `${activeEntry.code}-${Date.now()}`,
+      code: activeEntry.code,
+      value,
+      display_label: buildLabel(selected.entry, value, direction),
     };
     onAdd(filter);
     setOpen(false);
@@ -197,84 +353,89 @@ function AddFilterDropdown({ onAdd }: { onAdd: (filter: ActiveFilter) => void })
       <div className="absolute left-0 top-full mt-1 flex gap-0 rounded-lg border border-[var(--border)] bg-[var(--bg-2)] shadow-xl">
         {/* Category list */}
         <div className="flex min-w-[140px] flex-col border-r border-[var(--border)] py-1">
-          {FILTER_CATEGORIES.map((cat) => (
+          {CAT_ORDER.map((cat) => (
             <button
-              key={cat.label}
-              onClick={() => { setSelectedCat(cat); setSelectedFilter(null); }}
+              key={cat}
+              onClick={() => { setSelectedCat(cat); setSelected(null); }}
               className={`px-3 py-1.5 text-left text-[11px] transition-colors hover:bg-[var(--bg-3)] ${
-                selectedCat?.label === cat.label
+                selectedCat === cat
                   ? "text-[var(--clr-cyan)] font-medium"
                   : "text-[var(--text-2)]"
               }`}
             >
-              {cat.label}
+              {CAT_LABELS[cat] ?? cat}
             </button>
           ))}
         </div>
 
         {/* Filter list */}
         {selectedCat && (
-          <div className="flex min-w-[180px] flex-col py-1 border-r border-[var(--border)]">
-            {selectedCat.filters.map((f) => (
+          <div className="flex min-w-[190px] flex-col py-1 border-r border-[var(--border)] overflow-y-auto max-h-60">
+            {(primaryByCat[selectedCat] ?? []).map((e) => (
               <button
-                key={f.aboveCode}
-                onClick={() => handleSelectFilter(selectedCat, f)}
+                key={e.code}
+                onClick={() => handleSelectEntry(e)}
+                title={e.description ?? undefined}
                 className={`px-3 py-1.5 text-left text-[11px] transition-colors hover:bg-[var(--bg-3)] ${
-                  selectedFilter?.aboveCode === f.aboveCode
+                  selected?.entry.code === e.code
                     ? "text-[var(--clr-cyan)] font-medium"
                     : "text-[var(--text-2)]"
                 }`}
               >
-                {f.label}
+                {e.label}
+                {e.unit && (
+                  <span className="ml-1 text-[9px] text-[var(--text-3)]">({e.unit})</span>
+                )}
               </button>
             ))}
           </div>
         )}
 
         {/* Value input form */}
-        {selectedFilter && (
+        {selected && (
           <div className="flex min-w-[200px] flex-col gap-2 p-3">
             <p className="text-[11px] font-medium text-[var(--text-1)]">
-              {selectedFilter.label}
+              {selected.entry.label}
             </p>
 
-            {/* Direction toggle */}
-            <div className="flex rounded-md border border-[var(--border)] overflow-hidden text-[10px]">
-              <button
-                onClick={() => setDirection("above")}
-                className={`flex-1 py-1 transition-colors ${
-                  direction === "above"
-                    ? "bg-[var(--clr-cyan)]/20 text-[var(--clr-cyan)] font-medium"
-                    : "text-[var(--text-3)] hover:bg-[var(--bg-3)]"
-                }`}
-              >
-                ≥ Above
-              </button>
-              <button
-                onClick={() => setDirection("below")}
-                className={`flex-1 py-1 transition-colors ${
-                  direction === "below"
-                    ? "bg-[var(--clr-cyan)]/20 text-[var(--clr-cyan)] font-medium"
-                    : "text-[var(--text-3)] hover:bg-[var(--bg-3)]"
-                }`}
-              >
-                ≤ Below
-              </button>
-            </div>
+            {/* Direction toggle — only when paired_code exists */}
+            {selected.belowEntry && (
+              <div className="flex overflow-hidden rounded-md border border-[var(--border)] text-[10px]">
+                <button
+                  onClick={() => setDirection("above")}
+                  className={`flex-1 py-1 transition-colors ${
+                    direction === "above"
+                      ? "bg-[var(--clr-cyan)]/20 font-medium text-[var(--clr-cyan)]"
+                      : "text-[var(--text-3)] hover:bg-[var(--bg-3)]"
+                  }`}
+                >
+                  ≥ Above
+                </button>
+                <button
+                  onClick={() => setDirection("below")}
+                  className={`flex-1 py-1 transition-colors ${
+                    direction === "below"
+                      ? "bg-[var(--clr-cyan)]/20 font-medium text-[var(--clr-cyan)]"
+                      : "text-[var(--text-3)] hover:bg-[var(--bg-3)]"
+                  }`}
+                >
+                  ≤ Below
+                </button>
+              </div>
+            )}
 
             {/* Value input */}
             <div className="flex items-center gap-1">
-              <input
-                type="number"
+              <NumericFilterInput
                 value={value}
-                onChange={(e) => setValue(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && handleAdd()}
-                placeholder={selectedFilter.placeholder ?? "0"}
+                onChange={setValue}
+                onEnter={handleAdd}
+                placeholder={selected.entry.example}
                 className="w-full rounded border border-[var(--border)] bg-[var(--bg-3)] px-2 py-1 font-data text-[11px] text-[var(--text-1)] outline-none focus:border-[var(--clr-cyan)]"
                 autoFocus
               />
-              {selectedFilter.unit && (
-                <span className="text-[10px] text-[var(--text-3)]">{selectedFilter.unit}</span>
+              {selected.entry.unit && (
+                <span className="text-[10px] text-[var(--text-3)]">{selected.entry.unit}</span>
               )}
             </div>
 
@@ -306,21 +467,34 @@ export default function ScreenerFilterBar({
   onScan,
   aiPanelOpen = false,
   onToggleAiPanel,
+  onClearResults,
+  showClearResults = false,
+  onOpenBrowseAllScans,
 }: {
   onScan: () => void;
   aiPanelOpen?: boolean;
   onToggleAiPanel?: () => void;
+  /** Parent supplies the reset side-effects (store reset + scanMutation.reset). */
+  onClearResults?: () => void;
+  /** Show the Clear Results button (results exist or there is a scan error). */
+  showClearResults?: boolean;
+  /** Path C — called when the user picks "Browse all scans →" from the
+   *  preset dropdown. Parent owns the panel's open state. */
+  onOpenBrowseAllScans?: () => void;
 }) {
   const {
     filters,
     selectedPreset,
+    locationOverride,
     isScanning,
-    scannerSort,
+    results,
+    isDirty,
     addFilter,
+    updateFilter,
     removeFilter,
     clearFilters,
     setPreset,
-    setScannerSort,
+    setLocationOverride,
   } = useScreenerStore();
 
   const { data: presets, isLoading: presetsLoading } = useQuery({
@@ -329,16 +503,45 @@ export default function ScreenerFilterBar({
     staleTime: 60_000 * 60,
   });
 
-  const handlePresetChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    const preset = presets?.find(
-      (p) => `${p.instrument}:${p.scan_type}:${p.location}` === e.target.value
-    );
-    if (preset) setPreset(preset);
-  };
+  const { data: catalogue = [] } = useQuery({
+    queryKey: ["screener-filter-catalogue"],
+    queryFn: () => api.screenerFilterCatalogue(),
+    staleTime: Infinity, // catalogue is static
+  });
+
+  // Path B — curated locations come from the backend so each option carries
+  // the IBKR instrument it pairs with. Cached for 1h (rarely changes).
+  const { data: locations = [] } = useQuery({
+    queryKey: ["screener-locations"],
+    queryFn: () => api.screenerLocations(),
+    staleTime: 60 * 60 * 1000,
+  });
+
+  const popularChips = catalogue.filter((e) => e.popular);
 
   const presetKey = selectedPreset
     ? `${selectedPreset.instrument}:${selectedPreset.scan_type}:${selectedPreset.location}`
     : "";
+
+  const popularPresets = presets?.filter((p) => p.category === "popular") ?? [];
+  const nichePresets = presets?.filter((p) => p.category === "niche") ?? [];
+
+  // Sentinel value for the "Browse all scans →" entry at the bottom of
+  // the dropdown — picking it opens the BrowseAllScansPanel rather than
+  // selecting an actual preset.
+  const BROWSE_SENTINEL = "__BROWSE_ALL_SCANS__";
+
+  const handlePresetChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const val = e.target.value;
+    if (val === BROWSE_SENTINEL) {
+      onOpenBrowseAllScans?.();
+      return;
+    }
+    const preset = presets?.find(
+      (p) => `${p.instrument}:${p.scan_type}:${p.location}` === val
+    );
+    if (preset) setPreset(preset);
+  };
 
   return (
     <div className="flex flex-wrap items-center gap-2 border-b border-border bg-[var(--bg-1)] px-4 py-2.5">
@@ -347,77 +550,154 @@ export default function ScreenerFilterBar({
         Screener
       </span>
 
-      {/* Preset selector */}
+      {/* Grouped preset selector */}
       {presetsLoading ? (
         <PresetSkeleton />
       ) : (
         <select
+          data-testid="preset-select"
+          aria-label="Scanner preset"
           value={presetKey}
           onChange={handlePresetChange}
           className="rounded-md border border-[var(--border)] bg-[var(--bg-2)] px-2.5 py-1 font-data text-[11px] text-[var(--text-1)] outline-none transition-colors focus:border-[var(--clr-cyan)]"
         >
           <option value="">Select preset…</option>
-          {presets?.map((p) => (
-            <option
-              key={`${p.instrument}:${p.scan_type}:${p.location}:${p.display_name}`}
-              value={`${p.instrument}:${p.scan_type}:${p.location}`}
-            >
-              {p.display_name}
-            </option>
-          ))}
+          {popularPresets.length > 0 && (
+            <optgroup label="Popular">
+              {popularPresets.map((p) => (
+                <option
+                  key={`${p.instrument}:${p.scan_type}:${p.location}:${p.display_name}`}
+                  value={`${p.instrument}:${p.scan_type}:${p.location}`}
+                >
+                  {p.display_name}
+                  {p.subtitle ? ` — ${p.subtitle}` : ""}
+                </option>
+              ))}
+            </optgroup>
+          )}
+          {nichePresets.length > 0 && (
+            <optgroup label="More screens">
+              {nichePresets.map((p) => (
+                <option
+                  key={`${p.instrument}:${p.scan_type}:${p.location}:${p.display_name}`}
+                  value={`${p.instrument}:${p.scan_type}:${p.location}`}
+                >
+                  {p.display_name}
+                  {p.subtitle ? ` — ${p.subtitle}` : ""}
+                </option>
+              ))}
+            </optgroup>
+          )}
+          {/* Path C — escape hatch into the full IBKR catalogue. The
+              sentinel value triggers onOpenBrowseAllScans (handled in
+              handlePresetChange) instead of selecting a preset. */}
+          {onOpenBrowseAllScans && (
+            <option value={BROWSE_SENTINEL}>Browse all scans →</option>
+          )}
         </select>
       )}
 
-      {/* Scanner sort (server-side) */}
-      <select
-        value={scannerSort.field}
-        onChange={(e) =>
-          setScannerSort({ field: e.target.value, direction: scannerSort.direction })
-        }
-        className="rounded-md border border-[var(--border)] bg-[var(--bg-2)] px-2 py-1 font-data text-[10px] text-[var(--text-2)] outline-none transition-colors focus:border-[var(--clr-cyan)]"
-      >
-        <option value="">Sort: Default</option>
-        <option value="changePercAbove">Sort: Chg%</option>
-        <option value="volumeAbove">Sort: Volume</option>
-        <option value="marketCapAbove1e6">Sort: Mkt Cap</option>
-        <option value="priceAbove">Sort: Price</option>
-        <option value="minPeRatio">Sort: P/E</option>
-      </select>
-
-      {/* Sort direction toggle */}
-      {scannerSort.field && (
-        <button
-          onClick={() =>
-            setScannerSort({
-              field: scannerSort.field,
-              direction: scannerSort.direction === "desc" ? "asc" : "desc",
-            })
-          }
-          className="rounded border border-[var(--border)] px-1.5 py-1 font-data text-[10px] text-[var(--text-3)] transition-colors hover:text-[var(--text-1)]"
+      {/* Preset subtitle hint (e.g. "Pre-market only") — explains why a scan
+          may legitimately return 0 rows outside its operating window. */}
+      {selectedPreset?.subtitle && (
+        <span
+          data-testid="preset-subtitle"
+          className="rounded-full bg-[var(--bg-2)] border border-[var(--border)] px-2 py-0.5 text-[10px] italic text-[var(--text-3)]"
         >
-          {scannerSort.direction === "desc" ? "↓ Desc" : "↑ Asc"}
-        </button>
+          {selectedPreset.subtitle}
+        </span>
       )}
+
+      {/* Location dropdown — single source of truth for the scan region.
+          Each option carries an IBKR `instrument` code (STK, STOCK.HK,
+          STOCK.EU, ...) that matches its location code; the scan path uses
+          that instrument so non-US locations actually work.
+
+          When the selected preset advertises an `instruments` array (from
+          live IBKR data), options whose instrument isn't in that array are
+          DISABLED with a tooltip — picking one would 500 because the
+          scan_type doesn't support that market.
+
+          Disabled outright when the preset's instrument isn't STK
+          (ETF/FUT presets use their bundled location, dropdown is moot). */}
+      {(() => {
+        const isStkPreset =
+          !selectedPreset || selectedPreset.instrument === "STK";
+        const compatible = selectedPreset?.instruments ?? [];
+
+        const isOptionDisabled = (opt: ScannerLocation): boolean => {
+          if (!isStkPreset) return true;
+          // No `instruments` info yet (presets list still loading) — allow all
+          if (compatible.length === 0) return false;
+          return !compatible.includes(opt.instrument);
+        };
+
+        return (
+          <select
+            data-testid="location-override"
+            aria-label="Location"
+            value={locationOverride}
+            disabled={!isStkPreset}
+            onChange={(e) => setLocationOverride(e.target.value)}
+            title={
+              !isStkPreset
+                ? "Available only for stock presets — this preset uses its own location"
+                : `Scan location: ${locationOverride}`
+            }
+            className="rounded-md border border-[var(--border)] bg-[var(--bg-2)] px-2.5 py-1 font-data text-[11px] text-[var(--text-1)] outline-none transition-colors focus:border-[var(--clr-cyan)] disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {locations.map((opt) => {
+              const disabled = isOptionDisabled(opt);
+              return (
+                <option
+                  key={opt.location}
+                  value={opt.location}
+                  disabled={disabled}
+                  title={
+                    disabled && isStkPreset
+                      ? `Not available for ${selectedPreset?.display_name ?? "this scan"}`
+                      : undefined
+                  }
+                >
+                  {opt.label}
+                  {disabled && isStkPreset ? "  (not supported)" : ""}
+                </option>
+              );
+            })}
+          </select>
+        );
+      })()}
 
       {/* Separator */}
       <div className="h-4 w-px bg-[var(--border)]" />
 
-      {/* Add filter dropdown */}
-      <AddFilterDropdown onAdd={addFilter} />
+      {/* Quick-pick chips (popular catalogue entries) */}
+      {popularChips.map((entry) => (
+        <QuickPickChip key={entry.code} entry={entry} onAdd={addFilter} />
+      ))}
+
+      {/* Separator */}
+      {popularChips.length > 0 && <div className="h-4 w-px bg-[var(--border)]" />}
+
+      {/* Add filter dropdown (full catalogue) */}
+      <AddFilterDropdown catalogue={catalogue} onAdd={addFilter} />
 
       {/* Active filter pills */}
       {filters.map((f) => (
         <FilterPill
           key={f.id}
           filter={f}
+          entry={catalogue.find((e) => e.code === f.code)}
           onRemove={() => removeFilter(f.id)}
+          onUpdate={(value, display_label) => updateFilter(f.id, value, display_label)}
         />
       ))}
 
-      {/* Clear all */}
+      {/* Clear filters (in-place — keeps results visible) */}
       {filters.length > 0 && (
         <button
           onClick={clearFilters}
+          title="Remove all filters (keeps current results)"
           className="flex items-center gap-1 text-[10px] text-[var(--text-3)] transition-colors hover:text-[var(--clr-red)]"
         >
           <RotateCcw size={10} />
@@ -427,6 +707,18 @@ export default function ScreenerFilterBar({
 
       {/* Spacer */}
       <div className="flex-1" />
+
+      {/* Clear results — wipes results + preset + filters so the empty-state cards reappear */}
+      {showClearResults && onClearResults && (
+        <button
+          onClick={onClearResults}
+          title="Clear results and return to the start screen"
+          className="flex items-center gap-1.5 rounded-md border border-[var(--border)] px-2.5 py-1 text-[11px] font-medium text-[var(--text-3)] transition-colors hover:border-[var(--clr-red)] hover:text-[var(--clr-red)]"
+        >
+          <RotateCcw size={12} />
+          Clear results
+        </button>
+      )}
 
       {/* AI panel toggle */}
       {onToggleAiPanel && (
@@ -444,25 +736,49 @@ export default function ScreenerFilterBar({
         </button>
       )}
 
-      {/* Scan button */}
-      <Button
-        size="sm"
-        onClick={onScan}
-        disabled={isScanning || !selectedPreset}
-        className="gap-1.5 border-[var(--clr-cyan)]/30 bg-[var(--clr-cyan)]/15 text-[var(--clr-cyan)] hover:bg-[var(--clr-cyan)]/25 disabled:opacity-40"
-      >
-        {isScanning ? (
-          <>
-            <Loader2 size={12} className="animate-spin" />
-            Scanning…
-          </>
-        ) : (
-          <>
-            <Play size={12} />
-            Scan
-          </>
+      {/* Scan button — primary CTA.
+          Solid amber fill (visually distinct from all the other tinted-cyan
+          UI elements: AI button, filter pills, Apply All Filters). Slightly
+          bigger + semibold so it reads as "the action".
+
+          When the user has existing results AND has since changed filters/preset
+          without rescanning, we show a small CYAN pulse dot — cyan instead of
+          amber so the dot stands out against the amber button background. */}
+      <div className="relative">
+        <Button
+          size="sm"
+          onClick={onScan}
+          disabled={isScanning || !selectedPreset}
+          title={
+            isDirty && results.length > 0
+              ? "Filters changed — press Scan to refresh results"
+              : undefined
+          }
+          className="gap-1.5 px-3.5 py-1.5 border-[var(--clr-orange)] bg-[var(--clr-orange)] text-[var(--bg-0)] font-semibold hover:bg-[var(--clr-orange)]/90 hover:text-[var(--bg-0)] disabled:opacity-40"
+        >
+          {isScanning ? (
+            <>
+              <Loader2 size={12} className="animate-spin" />
+              Scanning…
+            </>
+          ) : (
+            <>
+              <Play size={12} />
+              Scan
+            </>
+          )}
+        </Button>
+        {isDirty && results.length > 0 && !isScanning && (
+          <span
+            aria-hidden="true"
+            data-testid="scan-dirty-pulse"
+            className="pointer-events-none absolute -right-1 -top-1 flex h-2.5 w-2.5"
+          >
+            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[var(--clr-cyan)] opacity-75" />
+            <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-[var(--clr-cyan)] ring-1 ring-[var(--bg-0)]" />
+          </span>
         )}
-      </Button>
+      </div>
     </div>
   );
 }
