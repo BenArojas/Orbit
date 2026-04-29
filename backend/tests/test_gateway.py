@@ -782,3 +782,292 @@ class TestHealthProbeMethod:
 
         result = await gw._is_gateway_healthy()
         assert result is False
+
+
+# ── PID file + orphan recovery ──────────────────────────────────────────
+
+
+class TestPidFileRoundTrip:
+    """The pid file is the cornerstone of orphan recovery — it must
+    serialize and parse cleanly across launches."""
+
+    def test_write_then_read_roundtrip(self, tmp_path):
+        gw = GatewayLifecycle(gateway_home=str(tmp_path))
+        gw._write_pid_file(12345, 12340)
+
+        pid, pgid = gw._read_pid_file()
+        assert pid == 12345
+        assert pgid == 12340
+
+    def test_write_without_pgid_windows_case(self, tmp_path):
+        """Windows has no pgid concept — pid alone must round-trip."""
+        gw = GatewayLifecycle(gateway_home=str(tmp_path))
+        gw._write_pid_file(12345, None)
+
+        pid, pgid = gw._read_pid_file()
+        assert pid == 12345
+        assert pgid is None
+
+    def test_read_missing_file_returns_none(self, tmp_path):
+        gw = GatewayLifecycle(gateway_home=str(tmp_path))
+        # No pid file written — read should be a clean (None, None).
+        pid, pgid = gw._read_pid_file()
+        assert pid is None
+        assert pgid is None
+
+    def test_read_garbage_file_returns_none(self, tmp_path):
+        """Truncated / hand-edited pid file must not crash parsing."""
+        gw = GatewayLifecycle(gateway_home=str(tmp_path))
+        gw.home.mkdir(parents=True, exist_ok=True)
+        gw.pid_path.write_text("garbage\nnot=a=number\n")
+
+        pid, pgid = gw._read_pid_file()
+        assert pid is None
+        assert pgid is None
+
+    def test_clear_pid_file_is_idempotent(self, tmp_path):
+        gw = GatewayLifecycle(gateway_home=str(tmp_path))
+        gw._clear_pid_file()  # missing file — must not raise
+        gw._write_pid_file(99, 99)
+        gw._clear_pid_file()
+        assert not gw.pid_path.exists()
+        gw._clear_pid_file()  # already gone — still must not raise
+
+
+class TestIsManagedGatewayProcess:
+    """
+    The cmdline check is what protects users from us killing unrelated
+    processes when a PID happens to be recycled.  Both branches of the
+    fingerprint matter:
+      - alive process whose cmdline contains our home → ours
+      - alive process whose cmdline does NOT contain our home → not ours
+    """
+
+    def test_recognises_our_home_path_in_cmdline(self, tmp_path):
+        gw = GatewayLifecycle(gateway_home=str(tmp_path))
+        fake_proc = MagicMock()
+        # Simulates the post-exec Java cmdline.
+        fake_proc.cmdline.return_value = [
+            "java",
+            "-classpath",
+            f"{tmp_path}/dist/ibgroup.web.core.iblink.router.clientportal.gw.jar",
+            "ibgroup.web.core.iblink.router.clientportal.gw.GatewayStart",
+            "root/conf.yaml",
+        ]
+        with patch("services.gateway.psutil.Process", return_value=fake_proc):
+            assert gw._is_managed_gateway_process(12345) is True
+
+    def test_rejects_unrelated_process(self, tmp_path):
+        """An editor / another tool happens to share the recycled pid."""
+        gw = GatewayLifecycle(gateway_home=str(tmp_path))
+        fake_proc = MagicMock()
+        fake_proc.cmdline.return_value = ["/usr/bin/python3", "manage.py", "runserver"]
+        with patch("services.gateway.psutil.Process", return_value=fake_proc):
+            assert gw._is_managed_gateway_process(12345) is False
+
+    def test_rejects_dead_pid(self, tmp_path):
+        """psutil raises NoSuchProcess for dead pids — must not crash."""
+        import psutil
+
+        gw = GatewayLifecycle(gateway_home=str(tmp_path))
+        with patch(
+            "services.gateway.psutil.Process",
+            side_effect=psutil.NoSuchProcess(12345),
+        ):
+            assert gw._is_managed_gateway_process(12345) is False
+
+    def test_rejects_docker_hosted_gateway(self, tmp_path):
+        """
+        A user running the Gateway in Docker would have ibgroup.web.core in
+        cmdline but a path under /opt or /app inside the container — never
+        our parallax home.  We must NOT adopt it.
+        """
+        gw = GatewayLifecycle(gateway_home=str(tmp_path))
+        fake_proc = MagicMock()
+        fake_proc.cmdline.return_value = [
+            "java",
+            "-classpath",
+            "/opt/clientportal.gw/dist/ibgroup.web.core.iblink.router.clientportal.gw.jar",
+            "ibgroup.web.core.iblink.router.clientportal.gw.GatewayStart",
+            "root/conf.yaml",
+        ]
+        with patch("services.gateway.psutil.Process", return_value=fake_proc):
+            assert gw._is_managed_gateway_process(12345) is False
+
+
+class TestOrphanRecovery:
+    """
+    Happy path + safety: _recover_existing_process() reads the pid file,
+    verifies the cmdline, health-checks the gateway, and adopts.
+    Refuses to adopt anything that doesn't pass the cmdline match.
+    """
+
+    @pytest.mark.asyncio
+    async def test_adopts_orphan_when_cmdline_matches(self, tmp_path):
+        gw = GatewayLifecycle(gateway_home=str(tmp_path))
+        # Pretend a previous launch left a healthy JVM with a valid pid file.
+        gw._write_pid_file(54321, 54321)
+
+        fake_proc = MagicMock()
+        fake_proc.cmdline.return_value = [
+            "java", "-classpath", f"{tmp_path}/dist/gw.jar",
+            "ibgroup.web.core.iblink.router.clientportal.gw.GatewayStart",
+        ]
+
+        with (
+            patch("services.gateway.psutil.Process", return_value=fake_proc),
+            patch.object(gw, "_is_gateway_healthy", new=AsyncMock(return_value=True)),
+        ):
+            adopted = await gw._recover_existing_process()
+
+        assert adopted is True
+        assert gw._adopted_pid == 54321
+        assert gw._process is None  # no Popen for an adopted process
+        assert gw.state == GatewayState.RUNNING
+
+    @pytest.mark.asyncio
+    async def test_refuses_to_adopt_unrelated_process(self, tmp_path):
+        """
+        Pid file points at a pid that's alive but belongs to a different
+        program (e.g. a recycled pid).  We MUST NOT mark it as adopted —
+        and MUST NOT later send signals to it.
+        """
+        gw = GatewayLifecycle(gateway_home=str(tmp_path))
+        gw._write_pid_file(99999, 99999)
+
+        unrelated_proc = MagicMock()
+        unrelated_proc.cmdline.return_value = ["/Applications/Slack.app/Contents/MacOS/Slack"]
+
+        with (
+            patch("services.gateway.psutil.Process", return_value=unrelated_proc),
+            # process_iter finds nothing matching — no other gateway running.
+            patch(
+                "services.gateway.psutil.process_iter",
+                return_value=iter([]),
+            ),
+            patch.object(
+                gw, "_is_gateway_healthy", new=AsyncMock(return_value=False),
+            ),
+        ):
+            adopted = await gw._recover_existing_process()
+
+        assert adopted is False
+        assert gw._adopted_pid is None
+        assert gw.state != GatewayState.RUNNING
+        # Stale pid file MUST be cleared so the next launch isn't poisoned.
+        assert not gw.pid_path.exists()
+
+    @pytest.mark.asyncio
+    async def test_no_pid_file_returns_false(self, tmp_path):
+        gw = GatewayLifecycle(gateway_home=str(tmp_path))
+        # No pid file at all → nothing to adopt → False.
+        with patch(
+            "services.gateway.psutil.process_iter", return_value=iter([])
+        ):
+            adopted = await gw._recover_existing_process()
+        assert adopted is False
+
+    @pytest.mark.asyncio
+    async def test_orphan_found_via_scan_when_pid_file_missing(self, tmp_path):
+        """
+        Edge case: pid file got nuked (user manually deleted it, or a crash
+        prevented the write) but a Java orphan still holds port 5001.  The
+        cmdline-based system scan picks it up.
+        """
+        gw = GatewayLifecycle(gateway_home=str(tmp_path))
+
+        scanned_proc = MagicMock()
+        scanned_proc.info = {
+            "pid": 88888,
+            "cmdline": [
+                "java",
+                "-classpath",
+                f"{tmp_path}/dist/gw.jar",
+                "ibgroup.web.core.iblink.router.clientportal.gw.GatewayStart",
+            ],
+        }
+
+        with (
+            patch(
+                "services.gateway.psutil.process_iter",
+                return_value=iter([scanned_proc]),
+            ),
+            patch("services.gateway.os.getpgid", return_value=88888),
+            patch.object(
+                gw, "_is_gateway_healthy", new=AsyncMock(return_value=True),
+            ),
+        ):
+            adopted = await gw._recover_existing_process()
+
+        assert adopted is True
+        assert gw._adopted_pid == 88888
+
+    @pytest.mark.asyncio
+    async def test_health_check_failure_aborts_adoption(self, tmp_path):
+        """
+        Pid file points at a matching process, but the gateway port isn't
+        responding (Java is wedged or paused).  We refuse to adopt — caller
+        will fall through to a fresh start.
+        """
+        gw = GatewayLifecycle(gateway_home=str(tmp_path))
+        gw._write_pid_file(11111, 11111)
+
+        ok_proc = MagicMock()
+        ok_proc.cmdline.return_value = [
+            "java", f"{tmp_path}/dist/gw.jar",
+            "ibgroup.web.core.iblink.router.clientportal.gw.GatewayStart",
+        ]
+
+        with (
+            patch("services.gateway.psutil.Process", return_value=ok_proc),
+            patch.object(
+                gw, "_is_gateway_healthy", new=AsyncMock(return_value=False),
+            ),
+        ):
+            adopted = await gw._recover_existing_process()
+
+        assert adopted is False
+        assert gw._adopted_pid is None
+
+
+class TestStopHandlesAdoptedOrphan:
+    """
+    stop() must work for an adopted process even though _process is None.
+    Without this, the orphan would survive every shutdown until killed
+    manually — exactly the bug we're fixing.
+    """
+
+    @pytest.mark.asyncio
+    async def test_stop_signals_adopted_pgid(self, tmp_path):
+        gw = GatewayLifecycle(gateway_home=str(tmp_path))
+        _make_fake_jre(gw.jre_dir)
+        _make_fake_gateway(gw.home)
+        # Simulate a successful adoption from a previous launch.
+        gw._process = None
+        gw._adopted_pid = 77777
+        gw._process_pgid = 77777
+        gw._write_pid_file(77777, 77777)
+        gw.state = GatewayState.RUNNING
+
+        with (
+            patch("services.gateway.platform") as mock_plat,
+            patch("services.gateway.os") as mock_os,
+            # `psutil.pid_exists` is consulted in two places:
+            #   1. stop()'s "is the adopted pid still alive?" gate
+            #   2. _kill_process_group()'s wait-loop after sending signals
+            # Returning [True, False, ...] means the orphan was alive at the
+            # gate, then died during the kill loop.
+            patch(
+                "services.gateway.psutil.pid_exists",
+                side_effect=[True, False],
+            ),
+        ):
+            mock_plat.system.return_value = "Linux"
+            mock_os.killpg = MagicMock()
+
+            await gw.stop()
+
+        mock_os.killpg.assert_called()  # we did try to signal it
+        assert gw._adopted_pid is None  # state cleared
+        assert gw.state == GatewayState.PROVISIONED
+        assert not gw.pid_path.exists()  # pid file removed
