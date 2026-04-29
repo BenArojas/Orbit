@@ -12,6 +12,11 @@
  *   stopping         → dimmed spinner
  *   error            → error text + retry button
  *
+ * Three-level recovery (escalating cost):
+ *   Logout         — POST IBKR /v1/api/logout. JVM stays up. ~1 s.
+ *   Restart Gateway — kill the JVM and respawn. ~10 s.
+ *   Factory Reset  — Settings page only; wipes on-disk session files.
+ *
  * D1: Uses switch() instead of nested ternaries — easier to extend.
  * D4: Three colour states: green (authed), amber (running/login needed), red (error).
  * D5: actionError auto-clears after 5 s.
@@ -70,9 +75,18 @@ function StatusDot({ color }: { color: DotColor }) {
 
 // ── Spinner ────────────────────────────────────────────────────
 
-function Spinner() {
+function Spinner({ tone = "cyan" }: { tone?: "cyan" | "fg" | "orange" }) {
+  const color =
+    tone === "cyan"
+      ? "var(--clr-cyan)"
+      : tone === "orange"
+        ? "var(--clr-orange)"
+        : "var(--text-1)";
   return (
-    <span className="inline-block h-3 w-3 animate-spin rounded-full border border-[var(--clr-cyan)] border-t-transparent" />
+    <span
+      className="inline-block h-3 w-3 animate-spin rounded-full border border-t-transparent"
+      style={{ borderColor: color, borderTopColor: "transparent" }}
+    />
   );
 }
 
@@ -117,7 +131,8 @@ export function GatewaySetup() {
     sessionDropped,
     provision,
     start,
-    resetSession,
+    logout,
+    restartGateway,
     actionLoading,
   } = useGatewayContext();
 
@@ -197,11 +212,12 @@ export function GatewaySetup() {
             This is a one-time setup (~30–60 s).
           </p>
           <button
-            className="cursor-pointer rounded-md px-3 py-1.5 text-[11px] font-medium text-[var(--bg-0)] disabled:opacity-50 disabled:cursor-not-allowed"
+            className="inline-flex cursor-pointer items-center gap-2 rounded-md px-3 py-1.5 text-[11px] font-medium text-[var(--bg-0)] disabled:opacity-50 disabled:cursor-not-allowed"
             style={{ background: "var(--clr-cyan)" }}
             onClick={() => provision()}
             disabled={actionLoading}
           >
+            {actionLoading && <Spinner tone="fg" />}
             {actionLoading ? "Setting up…" : "Set Up Gateway"}
           </button>
         </div>
@@ -222,17 +238,36 @@ export function GatewaySetup() {
             Gateway is ready. Start it to connect to IBKR.
           </p>
           <button
-            className="cursor-pointer rounded-md px-3 py-1.5 text-[11px] font-medium text-[var(--bg-0)] disabled:opacity-50 disabled:cursor-not-allowed"
+            className="inline-flex cursor-pointer items-center gap-2 rounded-md px-3 py-1.5 text-[11px] font-medium text-[var(--bg-0)] disabled:opacity-50 disabled:cursor-not-allowed"
             style={{ background: "var(--clr-cyan)" }}
             onClick={start}
             disabled={actionLoading}
           >
+            {actionLoading && <Spinner tone="fg" />}
             {actionLoading ? "Starting…" : "Start Gateway"}
           </button>
         </div>
       )}
 
-      {/* running — show auth state */}
+      {/* starting — keep dead-time narrated so the 5-10 s of JVM
+          cold-start doesn't look frozen.  The header dot is already a
+          spinner from the optimistic state flip; this bodies it out. */}
+      {state === "starting" && (
+        <div className="flex items-center gap-2 text-[11px] text-[var(--text-2)]">
+          <Spinner />
+          <span>Starting Java runtime… (this takes 5–10 s)</span>
+        </div>
+      )}
+
+      {/* stopping — same idea on the way down. */}
+      {state === "stopping" && (
+        <div className="flex items-center gap-2 text-[11px] text-[var(--text-2)]">
+          <Spinner />
+          <span>Stopping Gateway…</span>
+        </div>
+      )}
+
+      {/* running — show auth state + escalating recovery actions */}
       {state === "running" && (
         <div>
           <p className="mb-2 text-[11px] text-[var(--text-2)]">
@@ -245,15 +280,16 @@ export function GatewaySetup() {
               {status.auth_message}
             </p>
           )}
-          {/* Login button — only shown when re-auth is required.
-              Hidden when already authenticated because opening the gateway
-              URL would just land on the login page again (the session cookie
-              isn't shared with a freshly-opened browser tab).
-              Tauri v2 blocks <a target="_blank"> inside the webview — we must
-              call the opener plugin explicitly to open the URL in the user's
-              default browser. */}
-          {needsLogin && !bannerIsShowing && (
-            <div className="flex flex-wrap items-center gap-3">
+
+          {/* Action row — only the primary CTA is a coloured pill; the
+              recovery actions (Logout, Restart Gateway) sit beside it as
+              quiet text links so the user reaches for the cheapest one
+              first.  Tauri v2 blocks <a target="_blank"> inside the webview,
+              so we call the opener plugin to open the URL in the user's
+              default browser.  All actions disable themselves while
+              actionLoading so we don't double-fire. */}
+          <div className="flex flex-wrap items-center gap-3">
+            {needsLogin && !bannerIsShowing && (
               <button
                 type="button"
                 onClick={() => {
@@ -271,22 +307,38 @@ export function GatewaySetup() {
               >
                 Open IBKR Login
               </button>
-              {/* R2 — recover from a wedged session (client login succeeded but
-                  UI never updated, dispatcher stopped downloading, etc.).
-                  Acts immediately, no confirmation dialog: it just restarts
-                  the gateway and clears in-memory state. Files on disk are
-                  untouched — for that, see Factory Reset in Settings. */}
-              <button
-                type="button"
-                onClick={resetSession}
-                disabled={actionLoading}
-                className="cursor-pointer text-[10px] text-[var(--text-3)] underline-offset-2 hover:text-[var(--text-1)] hover:underline disabled:opacity-40 disabled:cursor-not-allowed"
-                title="Restart the gateway and clear the in-memory session"
-              >
-                {actionLoading ? "Resetting…" : "Reset session"}
-              </button>
-            </div>
-          )}
+            )}
+
+            {/* R1 — soft logout: POST IBKR /v1/api/logout. Drops the IBKR
+                session in ~1 s without touching the JVM.  First reach
+                whenever the session feels wedged (dispatcher loops,
+                stuck "Authenticating…", etc.). */}
+            <button
+              type="button"
+              onClick={logout}
+              disabled={actionLoading}
+              className="inline-flex cursor-pointer items-center gap-1.5 text-[10px] text-[var(--text-3)] underline-offset-2 hover:text-[var(--text-1)] hover:underline disabled:opacity-40 disabled:cursor-not-allowed"
+              title="Drop the IBKR session without restarting Java"
+            >
+              {actionLoading && <Spinner tone="fg" />}
+              {actionLoading ? "Logging out…" : "Logout"}
+            </button>
+
+            {/* R2 — kill the JVM and respawn.  Use when Logout doesn't
+                fix it — Java itself is wedged or the gateway is unreachable
+                after the session drop.  Files on disk are untouched; for
+                that escalation see Factory Reset in Settings. */}
+            <button
+              type="button"
+              onClick={restartGateway}
+              disabled={actionLoading}
+              className="inline-flex cursor-pointer items-center gap-1.5 text-[10px] text-[var(--text-3)] underline-offset-2 hover:text-[var(--text-1)] hover:underline disabled:opacity-40 disabled:cursor-not-allowed"
+              title="Stop and restart the Gateway JVM"
+            >
+              {actionLoading && <Spinner tone="fg" />}
+              {actionLoading ? "Restarting…" : "Restart Gateway"}
+            </button>
+          </div>
         </div>
       )}
 
@@ -297,11 +349,12 @@ export function GatewaySetup() {
             {status.error ?? "An unknown error occurred."}
           </p>
           <button
-            className="cursor-pointer rounded-md px-3 py-1.5 text-[11px] font-medium text-[var(--bg-0)] disabled:opacity-50 disabled:cursor-not-allowed"
+            className="inline-flex cursor-pointer items-center gap-2 rounded-md px-3 py-1.5 text-[11px] font-medium text-[var(--bg-0)] disabled:opacity-50 disabled:cursor-not-allowed"
             style={{ background: "var(--clr-orange)" }}
             onClick={() => provision(true)}
             disabled={actionLoading}
           >
+            {actionLoading && <Spinner tone="fg" />}
             {actionLoading ? "Retrying…" : "Retry Setup"}
           </button>
         </div>

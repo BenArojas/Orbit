@@ -284,3 +284,120 @@ class TestFactoryResetRoute:
 
         assert resp.status_code == 200
         assert call_order == ["stop", "clear", "start"]
+
+
+# ── /gateway/logout — R1 soft logout (POST IBKR /v1/api/logout) ───────────────
+
+
+class TestLogoutRoute:
+    """
+    POST /gateway/logout drops the IBKR session via the gateway's own
+    /v1/api/logout endpoint.  The Java JVM stays running, so the user
+    can immediately re-authenticate without a cold start.
+    """
+
+    def test_calls_logout_method_and_resets_state(self, client):
+        c, app = client
+        gw = app.state.gateway
+        ibkr = app.state.ibkr
+        _dirty_state(ibkr)
+
+        with (
+            patch.object(ibkr, "_stop_tickle", new=AsyncMock()) as mock_stop_tickle,
+            patch.object(ibkr, "stop_ibkr_websocket", new=AsyncMock()) as mock_stop_ws,
+            patch.object(
+                gw, "logout", new=AsyncMock(return_value={"status": True}),
+            ) as mock_logout,
+            patch.object(gw, "status", return_value=dict(_RUNNING_STATUS)),
+            # Logout MUST NOT touch the JVM — verify stop()/start() unused.
+            patch.object(gw, "stop", new=AsyncMock()) as mock_stop,
+            patch.object(gw, "start", new=AsyncMock()) as mock_start,
+        ):
+            resp = c.post("/gateway/logout")
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["reset"] == "logout"
+        assert body["logout_response"] == {"status": True}
+
+        mock_stop_tickle.assert_awaited_once()
+        mock_stop_ws.assert_awaited_once()
+        mock_logout.assert_awaited_once()
+        # Crucial: Java is left alone.
+        mock_stop.assert_not_awaited()
+        mock_start.assert_not_awaited()
+        _assert_state_cleared(ibkr)
+
+    def test_propagates_gateway_unreachable(self, client):
+        """If the gateway endpoint is unreachable, the route surfaces a 502."""
+        c, app = client
+        gw = app.state.gateway
+        ibkr = app.state.ibkr
+
+        from exceptions import GatewayStartError
+
+        with (
+            patch.object(ibkr, "_stop_tickle", new=AsyncMock()),
+            patch.object(ibkr, "stop_ibkr_websocket", new=AsyncMock()),
+            patch.object(
+                gw, "logout",
+                new=AsyncMock(side_effect=GatewayStartError("connect refused")),
+            ),
+            patch.object(gw, "status", return_value=dict(_RUNNING_STATUS)),
+        ):
+            resp = c.post("/gateway/logout")
+
+        # GatewayError → 502 via the handler in main.py
+        assert resp.status_code == 502
+        body = resp.json()
+        assert body["error"] == "gateway_error"
+
+
+class TestLogoutMethod:
+    """Direct unit tests of GatewayLifecycle.logout() — HTTP behaviour only."""
+
+    @pytest.mark.asyncio
+    async def test_returns_status_true_on_200(self, tmp_path):
+        from services.gateway import GatewayLifecycle
+
+        gw = GatewayLifecycle(gateway_home=str(tmp_path))
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {"status": True}
+        gw._http = AsyncMock()
+        gw._http.post = AsyncMock(return_value=mock_resp)
+
+        result = await gw.logout()
+        assert result == {"status": True}
+
+    @pytest.mark.asyncio
+    async def test_treats_401_as_already_logged_out(self, tmp_path):
+        """
+        IBKR returns 401 on /logout when there's no active session.  That's
+        not a failure from the user's perspective — they ARE logged out.
+        """
+        from services.gateway import GatewayLifecycle
+
+        gw = GatewayLifecycle(gateway_home=str(tmp_path))
+        mock_resp = MagicMock()
+        mock_resp.status_code = 401
+        mock_resp.json.return_value = {}
+        gw._http = AsyncMock()
+        gw._http.post = AsyncMock(return_value=mock_resp)
+
+        result = await gw.logout()
+        # No exception raised — caller can treat it as success.
+        assert isinstance(result, dict)
+
+    @pytest.mark.asyncio
+    async def test_raises_on_connect_error(self, tmp_path):
+        import httpx
+        from exceptions import GatewayStartError
+        from services.gateway import GatewayLifecycle
+
+        gw = GatewayLifecycle(gateway_home=str(tmp_path))
+        gw._http = AsyncMock()
+        gw._http.post = AsyncMock(side_effect=httpx.ConnectError("refused"))
+
+        with pytest.raises(GatewayStartError):
+            await gw.logout()

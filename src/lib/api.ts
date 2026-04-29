@@ -968,6 +968,11 @@ export const api = {
   gatewayReprovision: () =>
     request<GatewayStatusResponse>("POST", "/gateway/reprovision"),
 
+  // R1 — soft logout: POST IBKR /v1/api/logout, drop session, leave JVM alive.
+  // Fastest recovery (~1 s); user can re-login immediately without a Java cold start.
+  gatewayLogout: () =>
+    request<GatewayStatusResponse>("POST", "/gateway/logout"),
+
   // R2 — stop tickle + WS + gateway, clear in-memory state, restart gateway.
   // Files on disk are untouched.
   gatewayResetSession: () =>
