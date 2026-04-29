@@ -20,7 +20,34 @@
 
 import { useCallback } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { toast } from "sonner";
 import { api, GatewayStatusResponse, GatewayState } from "@/lib/api";
+
+// Root-level query keys whose data depends on the IBKR session.  When the
+// session is reset (logout / restart / factory reset) we invalidate these
+// so the UI doesn't show stale prices, watchlists, or scanner metadata
+// until something else asks for fresh data.  Local-only state (gateway
+// status, settings, AI status, trigger-rule config) is intentionally left
+// alone — that data isn't tied to an IBKR session.
+const IBKR_QUERY_PREFIXES: ReadonlyArray<string> = [
+  "quote",
+  "candles",
+  "chart-data",
+  "contract-info",
+  "conid",
+  "watchlists",
+  "watchlist-instruments",
+  "watchlist-quotes",
+  "sectors",
+  "sector-rotation",
+  "market-breadth",
+  "trigger-hits",
+  "health-details",
+  "screener-presets",
+  "screener-filter-catalogue",
+  "screener-locations",
+  "screener-all-scan-types",
+];
 
 // Poll cadence — mirror HealthStrip so both widgets update in lockstep.
 const FAST_POLL_MS = 2_000;
@@ -36,6 +63,18 @@ const PROVISIONING_STATES: GatewayState[] = [
   "downloading_gw",
   "starting",
 ];
+
+/**
+ * Optional feedback layer for an action — toasts on success/failure
+ * and IBKR-cache invalidation.  Kept as an opts bag so the
+ * cheap actions (provision/start/stop) can opt out — their state
+ * change is already obvious from the gateway card body.
+ */
+interface ActionFeedback {
+  successToast?: string;
+  errorToast?: boolean;
+  invalidateIbkr?: boolean;
+}
 
 interface UseGatewayReturn {
   /** Current Gateway state from the backend */
@@ -151,11 +190,27 @@ export function useGateway(): UseGatewayReturn {
     [queryClient, setCacheStatus],
   );
 
+  /**
+   * Invalidate every IBKR-session-dependent query so cached data
+   * (prices, watchlists, scanner metadata, …) is refetched once the
+   * session is restored.  Local-only data (gateway status, settings,
+   * AI, trigger-rule config) is left alone.
+   */
+  const invalidateIbkrQueries = useCallback(() => {
+    queryClient.invalidateQueries({
+      predicate: (q) => {
+        const root = Array.isArray(q.queryKey) ? q.queryKey[0] : q.queryKey;
+        return typeof root === "string" && IBKR_QUERY_PREFIXES.includes(root);
+      },
+    });
+  }, [queryClient]);
+
   const runAction = useCallback(
     async (
       fn: () => Promise<GatewayStatusResponse>,
       fallbackMsg: string,
       optimisticState?: GatewayState,
+      feedback: ActionFeedback = {},
     ): Promise<void> => {
       setActionState({ error: null, loading: true });
       if (optimisticState) {
@@ -167,14 +222,29 @@ export function useGateway(): UseGatewayReturn {
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : fallbackMsg;
         setActionState({ error: msg, loading: false });
+        if (feedback.errorToast) {
+          toast.error(`${fallbackMsg}: ${msg}`);
+        }
         // Trigger a real refetch so the UI doesn't get stuck on the
         // optimistic state if the action threw mid-flight.
         queryClient.invalidateQueries({ queryKey: GATEWAY_QUERY_KEY });
         return;
       }
       setActionState({ error: null, loading: false });
+      if (feedback.successToast) {
+        toast.success(feedback.successToast);
+      }
+      if (feedback.invalidateIbkr) {
+        invalidateIbkrQueries();
+      }
     },
-    [setActionState, setCacheStatus, optimisticFlip, queryClient],
+    [
+      setActionState,
+      setCacheStatus,
+      optimisticFlip,
+      queryClient,
+      invalidateIbkrQueries,
+    ],
   );
 
   const provision = useCallback(
@@ -201,8 +271,15 @@ export function useGateway(): UseGatewayReturn {
 
   const logout = useCallback(
     // Soft logout — JVM stays up so we don't flip the lifecycle state.
-    // The Spinner inside the button is feedback enough.
-    () => runAction(api.gatewayLogout, "Logout failed"),
+    // The toast tells the user the IBKR session was actually dropped, and
+    // the cache invalidation forces stale prices/watchlists/etc. to refetch
+    // once the new session lands.
+    () =>
+      runAction(api.gatewayLogout, "Logout failed", undefined, {
+        successToast: "Logged out of IBKR",
+        errorToast: true,
+        invalidateIbkr: true,
+      }),
     [runAction],
   );
 
@@ -212,6 +289,11 @@ export function useGateway(): UseGatewayReturn {
         api.gatewayResetSession,
         "Failed to restart Gateway",
         "stopping",
+        {
+          successToast: "Gateway restarted",
+          errorToast: true,
+          invalidateIbkr: true,
+        },
       ),
     [runAction],
   );
@@ -222,6 +304,11 @@ export function useGateway(): UseGatewayReturn {
         api.gatewayFactoryReset,
         "Factory reset failed",
         "stopping",
+        {
+          successToast: "Factory reset complete",
+          errorToast: true,
+          invalidateIbkr: true,
+        },
       ),
     [runAction],
   );
