@@ -165,6 +165,37 @@ async def gateway_reset_conf(gw: GatewayLifecycle = Depends(get_gateway)) -> dic
     return status
 
 
+@router.post("/logout")
+async def gateway_logout(
+    gw: GatewayLifecycle = Depends(get_gateway),
+    ibkr: IBKRService = Depends(get_ibkr),
+) -> dict:
+    """
+    R1-soft: POST IBKR /logout — drops the session without restarting Java.
+
+    Sequence:
+      1. Stop the tickle keep-alive loop (would otherwise race a dead session).
+      2. Close the IBKR WebSocket.
+      3. POST to the Gateway's /v1/api/logout endpoint.
+      4. Reset in-memory auth state.
+
+    The Gateway JVM keeps running and port 5001 stays bound — the user can
+    immediately click "Open IBKR Login" to re-authenticate without waiting
+    for a Java cold start.
+
+    For deeper recovery (e.g. Java itself wedged) use /reset-session.
+    """
+    log.info("Gateway logout requested")
+    await ibkr._stop_tickle()
+    await ibkr.stop_ibkr_websocket()
+    result = await gw.logout()
+    ibkr.state.reset()
+    status = _enrich_status(gw.status())
+    status["reset"] = "logout"
+    status["logout_response"] = result
+    return status
+
+
 @router.post("/reset-session")
 async def gateway_reset_session(
     gw: GatewayLifecycle = Depends(get_gateway),

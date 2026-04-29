@@ -38,6 +38,7 @@ from pathlib import Path
 from typing import Optional
 
 import httpx
+import psutil
 
 from config import (
     ADOPTIUM_API_BASE,
@@ -188,13 +189,26 @@ class GatewayLifecycle:
         # PIPE buffers (~64 KB) fill quickly with Java logs, causing Gateway
         # to block on write and never become healthy.  A log file has no limit.
         self.log_path = self.home / "gateway.log"
+        # PID file — survives the backend process so the next launch can
+        # detect orphaned Java JVMs left behind by a hard kill (terminal
+        # closed, OS crash, uvicorn --reload watcher dropping signals).
+        # Without this we'd see "port 5001 in use" forever and the only
+        # recovery would be Factory Reset.
+        self.pid_path = self.home / "gateway.pid"
         self.state: GatewayState = GatewayState.NOT_PROVISIONED
         self.error_message: str = ""
         self.progress = ProvisionProgress()
         self._process: Optional[subprocess.Popen] = None
         # process-group id — set to the child's pgid on POSIX so we can
         # kill the entire Java process tree on stop(), not just the shell.
+        # Also populated when we adopt an orphan from a previous run; in
+        # that case `_process` stays None (Popen can't adopt) but pgid
+        # alone is enough to terminate the JVM via os.killpg.
         self._process_pgid: Optional[int] = None
+        # Adopted PID — set when we recover an orphan from a previous run.
+        # Mutually exclusive with _process: if we spawned the JVM ourselves,
+        # we have a Popen handle; if we adopted it, we have only a pid.
+        self._adopted_pid: Optional[int] = None
         self._http: httpx.AsyncClient = httpx.AsyncClient(
             verify=False,  # Gateway uses self-signed cert
             timeout=httpx.Timeout(10.0, connect=5.0),
@@ -457,6 +471,176 @@ class GatewayLifecycle:
         log.info("Reset conf.yaml to defaults at %s", conf_file)
         return conf_file
 
+    # ── PID file + orphan recovery ─────────────────────────────
+    #
+    # Why: in dev mode (uvicorn --reload + 2 terminals), `Ctrl+C` runs
+    # lifespan shutdown reliably, but **closing the terminal window**
+    # sends SIGHUP only to the foreground process group.  Java is in a
+    # separate POSIX session (start_new_session=True) so it survives,
+    # ending up reparented to launchd/init as a zombie holding port 5001.
+    #
+    # Without recovery the next launch sees "port already in use" and the
+    # user's only recourse is Factory Reset (re-download or wipe).
+    # The pid file lets us detect "this Java is mine, not a foreign tool"
+    # and decide: adopt-and-keep, kill-and-respawn, or leave-alone.
+
+    def _is_managed_gateway_process(self, pid: int) -> bool:
+        """
+        Return True iff `pid` belongs to a process that looks like our Gateway.
+
+        Defence-in-depth: refuse to send signals to anything we can't positively
+        identify as ours.  Without this a stale or PID-recycled entry could
+        lead us to kill an unrelated process (the user's editor, an IDE, etc).
+
+        The fingerprint is the absolute path to our gateway home directory —
+        it appears in cmdline both during the brief shell phase
+        (`/bin/sh /home/.parallax/gateway/bin/run.sh ...`) and after run.sh
+        execs Java (`java -classpath /home/.parallax/gateway/dist/*.jar ...`).
+        We deliberately don't accept the `ibgroup.web.core` class name alone,
+        because a Docker-hosted Gateway running outside our home directory
+        would match it but isn't ours to manage.
+        """
+        try:
+            proc = psutil.Process(pid)
+            cmdline = " ".join(proc.cmdline())
+        except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+            return False
+
+        if not cmdline:
+            return False
+
+        return str(self.home) in cmdline
+
+    def _write_pid_file(self, pid: int, pgid: Optional[int]) -> None:
+        """Persist the spawned process's pid (+ pgid on POSIX) to disk."""
+        try:
+            self.home.mkdir(parents=True, exist_ok=True)
+            content = f"pid={pid}\n"
+            if pgid is not None:
+                content += f"pgid={pgid}\n"
+            self.pid_path.write_text(content)
+        except OSError as e:
+            log.warning("Failed to write pid file %s: %s", self.pid_path, e)
+
+    def _read_pid_file(self) -> tuple[Optional[int], Optional[int]]:
+        """
+        Return (pid, pgid) recorded in the pid file, or (None, None)
+        if the file is missing or unreadable.
+        """
+        if not self.pid_path.exists():
+            return (None, None)
+        try:
+            text = self.pid_path.read_text()
+        except OSError as e:
+            log.warning("Failed to read pid file %s: %s", self.pid_path, e)
+            return (None, None)
+
+        pid: Optional[int] = None
+        pgid: Optional[int] = None
+        for line in text.splitlines():
+            line = line.strip()
+            if line.startswith("pid="):
+                try:
+                    pid = int(line.split("=", 1)[1])
+                except ValueError:
+                    pass
+            elif line.startswith("pgid="):
+                try:
+                    pgid = int(line.split("=", 1)[1])
+                except ValueError:
+                    pass
+        return (pid, pgid)
+
+    def _clear_pid_file(self) -> None:
+        """Best-effort delete of the pid file. Safe to call when missing."""
+        try:
+            self.pid_path.unlink(missing_ok=True)
+        except OSError as e:
+            log.debug("Failed to remove pid file %s: %s", self.pid_path, e)
+
+    def _scan_for_orphan_gateway(self) -> Optional[int]:
+        """
+        System-wide scan for an orphaned Gateway process.
+
+        Used as a fallback when the pid file is missing or stale (PID died
+        or got recycled) but the user reports port 5001 in use — meaning a
+        Java process is still bound somewhere we don't know about.
+
+        Returns the first pid whose cmdline matches our fingerprint, or
+        None if nothing relevant is running.
+        """
+        try:
+            for proc in psutil.process_iter(["pid", "cmdline"]):
+                try:
+                    cmdline = " ".join(proc.info.get("cmdline") or [])
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    continue
+                if not cmdline:
+                    continue
+                if str(self.home) in cmdline:
+                    return proc.info["pid"]
+        except psutil.Error as e:
+            log.debug("psutil.process_iter failed during orphan scan: %s", e)
+        return None
+
+    async def _recover_existing_process(self) -> bool:
+        """
+        Try to adopt a Gateway process left running from a previous launch.
+
+        Returns True if an orphan was found and adopted (state set to RUNNING,
+        no spawn needed). Returns False if there's nothing to adopt — the
+        caller should proceed to a fresh `start()`.
+
+        The pid file is the primary source. As a fallback we walk the process
+        list looking for an `ibgroup.web.core` cmdline (covers the case where
+        the shell exited and Java got reparented under a different pid that
+        we never recorded).
+        """
+        pid, pgid = self._read_pid_file()
+
+        if pid is not None and self._is_managed_gateway_process(pid):
+            log.info("Found managed Gateway at pid=%s — verifying health", pid)
+        else:
+            # PID file missing, stale, or pointing at something that isn't us.
+            # Clear the bad file before scanning so we don't trip over it twice.
+            self._clear_pid_file()
+            scanned_pid = self._scan_for_orphan_gateway()
+            if scanned_pid is None:
+                return False
+            log.info(
+                "Discovered orphan Gateway via cmdline scan at pid=%s", scanned_pid,
+            )
+            pid = scanned_pid
+            try:
+                pgid = (
+                    os.getpgid(pid) if platform.system() != "Windows" else None
+                )
+            except (ProcessLookupError, OSError):
+                return False
+
+        # Confirm the orphan is actually responding before declaring victory.
+        if not await self._is_gateway_healthy():
+            log.warning(
+                "Orphan pid=%s exists but port %s isn't responding — abandoning recovery",
+                pid, IBKR_GATEWAY_PORT,
+            )
+            return False
+
+        # Adopt: track pid + pgid so stop()/status() can manage it like a
+        # process we spawned ourselves, but leave _process as None (we have
+        # no Popen handle for a process we didn't start).
+        self._adopted_pid = pid
+        self._process_pgid = pgid
+        self._process = None
+        self.state = GatewayState.RUNNING
+        # Refresh the pid file with the verified pgid so subsequent recoveries
+        # find a clean record even if the original was scanned-not-read.
+        self._write_pid_file(pid, pgid)
+        log.info(
+            "Adopted existing Gateway (pid=%s, pgid=%s) — skipping spawn", pid, pgid,
+        )
+        return True
+
     # ── Process lifecycle ──────────────────────────────────────
 
     async def _is_gateway_healthy(self) -> bool:
@@ -484,25 +668,37 @@ class GatewayLifecycle:
         """
         Kill the Gateway process and all its children (e.g. the Java JVM).
 
+        Handles two cases:
+          1. We spawned the JVM ourselves → `self._process` is a Popen.
+             We have a child pid + pgid and can `wait()` on the handle.
+          2. We adopted an orphan from a previous run → `self._process` is
+             None, but `self._adopted_pid` and `self._process_pgid` are set.
+             We still know enough to signal it; we just can't `wait()`.
+
         On POSIX we stored the process-group id at launch (start_new_session=True
         ensures the shell and the Java child share a pgid).  Sending SIGTERM to
         the group terminates everything; SIGKILL follows if they don't exit.
 
         On Windows we use taskkill /T /F to forcibly kill the process tree.
         """
-        if not self._process:
+        target_pid: Optional[int] = (
+            self._process.pid if self._process else self._adopted_pid
+        )
+        if target_pid is None:
+            # Nothing to kill — neither spawned nor adopted.
+            self._clear_pid_file()
             return
 
         if platform.system() == "Windows":
             try:
                 subprocess.run(
-                    ["taskkill", "/T", "/F", "/PID", str(self._process.pid)],
+                    ["taskkill", "/T", "/F", "/PID", str(target_pid)],
                     capture_output=True,
                 )
             except OSError as e:
                 log.warning("taskkill failed: %s", e)
         else:
-            pgid = self._process_pgid or self._process.pid
+            pgid = self._process_pgid or target_pid
             for sig in (signal.SIGTERM, signal.SIGKILL):
                 try:
                     os.killpg(pgid, sig)
@@ -512,14 +708,33 @@ class GatewayLifecycle:
                     log.warning("killpg(%d, %s): %s", pgid, sig, e)
                     break
 
-        # Reap the process entry so it doesn't become a zombie
-        try:
-            self._process.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            pass  # SIGKILL was sent — OS will clean up
+        # Reap our spawned process so it doesn't become a zombie.
+        # Adopted orphans were already reparented to init/launchd at
+        # the OS level, so the OS reaps them — we just wait for them
+        # to actually exit before clearing local state.
+        if self._process is not None:
+            try:
+                self._process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                pass  # SIGKILL was sent — OS will clean up
+        elif target_pid is not None:
+            # Best-effort poll: wait up to 5 s for the adopted pid to die.
+            for _ in range(50):
+                try:
+                    if not psutil.pid_exists(target_pid):
+                        break
+                except psutil.Error:
+                    break
+                # busy-wait in 100 ms slices — total ≤ 5 s
+                # (no async context here; this is intentionally synchronous
+                # so callers can rely on the process being gone on return)
+                import time as _time  # local import keeps top of file clean
+                _time.sleep(0.1)
 
         self._process = None
         self._process_pgid = None
+        self._adopted_pid = None
+        self._clear_pid_file()
 
     def _is_port_in_use(self, host: str, port: int) -> bool:
         """Return True if something else is already listening on the target port."""
@@ -530,13 +745,36 @@ class GatewayLifecycle:
     async def start(self) -> None:
         """
         Start the Gateway process.
-        If it's already running externally (e.g. Docker, manual), detect and skip.
+
+        Order of operations:
+          1. If we already think a process is alive (Popen handle, adopted pid,
+             or a healthy responder on the port) — short-circuit.
+          2. Try to adopt an orphan from a previous run via the pid file
+             (and a system-wide cmdline scan as fallback).
+          3. Otherwise: provisioning check, port check, spawn run.sh.
         """
-        # Already running externally?
-        if await self._is_gateway_healthy():
-            log.info("Gateway already running (external process or Docker)")
-            self.state = GatewayState.RUNNING
+        # Already running under our control?
+        if (self._process and self._process.poll() is None) or self._adopted_pid:
+            log.info("Gateway already managed by this process")
             return
+
+        # Already running externally?  Could be Docker, a manual launch, or
+        # an orphan we haven't adopted yet.  If so, try to adopt it so we
+        # can manage it (kill cleanly on shutdown, surface "Restart Gateway"
+        # in the UI, etc).  Adoption is best-effort — if it fails we still
+        # report RUNNING because the user can use the gateway either way.
+        if await self._is_gateway_healthy():
+            log.info("Gateway already responding on port %s", IBKR_GATEWAY_PORT)
+            adopted = await self._recover_existing_process()
+            if not adopted:
+                # External (Docker, manual) — we don't own its lifecycle.
+                self.state = GatewayState.RUNNING
+            return
+
+        # Nothing on the port — but maybe a stale pid file points at a dead
+        # process.  Clear it before we try to spawn so we don't carry it
+        # forward into the new run.
+        self._clear_pid_file()
 
         if not self.is_provisioned():
             raise GatewayNotProvisionedError()
@@ -619,6 +857,10 @@ class GatewayLifecycle:
                 if platform.system() != "Windows"
                 else None
             )
+            # Persist the pid so the next launch can recover this process
+            # if our backend exits without running shutdown (terminal closed,
+            # uvicorn --reload watcher missed signal, OS crash, etc).
+            self._write_pid_file(self._process.pid, self._process_pgid)
         except OSError as e:
             log_file.close()
             self.state = GatewayState.ERROR
@@ -680,22 +922,88 @@ class GatewayLifecycle:
         except Exception as e:  # noqa: BLE001
             log.debug("Gateway warm-up request failed (non-fatal): %s", e)
 
+    async def logout(self) -> dict:
+        """
+        Soft session reset — POST to the Gateway's /v1/api/logout endpoint.
+
+        Drops the IBKR-side session without touching the JVM.  This is the
+        cheapest of the three recovery levels: takes ~1 s vs ~10 s for a
+        Java restart, and keeps the user from waiting for cold-start JIT
+        on every wedged-session recovery.
+
+        Returns the IBKR response shape `{"status": bool}` on success, or
+        raises GatewayStartError if the gateway isn't reachable. The caller
+        is responsible for resetting any IBKR-side state (tickle loop,
+        websocket, ibkr.state) — this method is intentionally narrow.
+        """
+        url = f"https://{IBKR_GATEWAY_HOST}:{IBKR_GATEWAY_PORT}/v1/api/logout"
+        try:
+            resp = await self._http.post(
+                url,
+                json={},
+                timeout=httpx.Timeout(10.0, connect=2.0),
+            )
+        except httpx.ConnectError as e:
+            raise GatewayStartError(
+                f"Cannot reach Gateway at {IBKR_GATEWAY_HOST}:{IBKR_GATEWAY_PORT}: {e}"
+            ) from e
+        except httpx.TimeoutException as e:
+            raise GatewayStartError(
+                f"Gateway logout timed out: {e}"
+            ) from e
+
+        # IBKR's /logout returns 200 with {"status": true} on success.
+        # 401 is technically possible if no session existed in the first place;
+        # treat that as a no-op success since the user is, in fact, logged out.
+        if resp.status_code in (200, 401):
+            try:
+                data = resp.json()
+            except ValueError:
+                data = {"status": True}
+            log.info("Gateway logout succeeded: %s", data)
+            return data
+
+        raise GatewayStartError(
+            f"Gateway logout failed: HTTP {resp.status_code} {resp.text[:200]}"
+        )
+
     async def stop(self) -> None:
         """
         Stop the Gateway and its entire Java process tree.
 
-        Uses _kill_process_group() so the JVM child (spawned by run.sh)
-        is also terminated — not just the shell wrapper.
+        Handles three states:
+          1. We spawned the JVM and the Popen handle is alive → kill via pgid.
+          2. We adopted an orphan from a previous run (`_adopted_pid` is set)
+             → kill via pgid (or pid on Windows).
+          3. Nothing is managed → no-op, just demote state.
+
+        Always clears the pid file on exit so a future launch starts clean.
         """
-        if not self._process or self._process.poll() is not None:
+        spawned_alive = (
+            self._process is not None and self._process.poll() is None
+        )
+        adopted_alive = (
+            self._adopted_pid is not None
+            and psutil.pid_exists(self._adopted_pid)
+        )
+
+        if not spawned_alive and not adopted_alive:
             log.info("No managed Gateway process to stop")
+            self._clear_pid_file()
+            self._process = None
+            self._process_pgid = None
+            self._adopted_pid = None
             if self.is_provisioned():
                 self.state = GatewayState.PROVISIONED
             return
 
         self.state = GatewayState.STOPPING
-        log.info("Stopping Gateway process group (pid=%d)...", self._process.pid)
-        # _kill_process_group handles SIGTERM→SIGKILL escalation and reaping
+        target_pid = (
+            self._process.pid if spawned_alive else self._adopted_pid
+        )
+        log.info("Stopping Gateway process group (pid=%s)...", target_pid)
+        # _kill_process_group handles SIGTERM→SIGKILL escalation, reaping,
+        # and pid-file cleanup for both spawned and adopted cases.
         self._kill_process_group()
         log.info("Gateway stopped")
         self.state = GatewayState.PROVISIONED
@@ -836,20 +1144,38 @@ class GatewayLifecycle:
         on the very next poll. Without this the state would stay RUNNING
         until something else tried to talk to the gateway and failed.
         """
-        # Reconcile state with the actual process before reporting
-        if (
-            self.state == GatewayState.RUNNING
-            and self._process is not None
-            and self._process.poll() is not None
-        ):
-            exit_code = self._process.returncode
-            log.warning(
-                "Gateway process exited unexpectedly (code=%s) — "
-                "transitioning RUNNING → PROVISIONED",
-                exit_code,
-            )
+        # Reconcile state with the actual process before reporting.
+        # Two ways the JVM can die under our nose:
+        #   1. We spawned it (Popen) and it exited — `_process.poll()` is set.
+        #   2. We adopted an orphan and the OS reaped it — `psutil.pid_exists`
+        #      goes False.
+        # In either case demote the state so the UI reflects reality on the
+        # very next /gateway/status poll, without waiting for a downstream
+        # IBKR call to fail.
+        spawned_dead = (
+            self._process is not None and self._process.poll() is not None
+        )
+        adopted_dead = (
+            self._adopted_pid is not None
+            and not psutil.pid_exists(self._adopted_pid)
+        )
+        if self.state == GatewayState.RUNNING and (spawned_dead or adopted_dead):
+            if spawned_dead:
+                log.warning(
+                    "Gateway process exited unexpectedly (code=%s) — "
+                    "transitioning RUNNING → PROVISIONED",
+                    self._process.returncode if self._process else None,
+                )
+            else:
+                log.warning(
+                    "Adopted Gateway pid=%s no longer exists — "
+                    "transitioning RUNNING → PROVISIONED",
+                    self._adopted_pid,
+                )
             self._process = None
             self._process_pgid = None
+            self._adopted_pid = None
+            self._clear_pid_file()
             self.state = GatewayState.PROVISIONED
 
         result: dict = {
