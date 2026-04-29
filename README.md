@@ -7,6 +7,45 @@ IBKR provides — stocks, ETFs, futures, forex, options.
 **Not a trading bot** — technical analysis, screening, and watchlists with
 trigger-based alerts to help make better trading decisions.
 
+## Documentation map
+
+If you're looking for something specific, this is where it lives.
+
+### Project state & planning
+
+| File | What it covers |
+|------|----------------|
+| [`PROJECT_PLAN.md`](PROJECT_PLAN.md) | Phase-by-phase task tracker, locked decisions, owner assignments, "what shipped where". The canonical source of truth for "what's done and what's next." |
+| [`CLAUDE.md`](CLAUDE.md) | Project rules (Polars only, typed errors, conid as universal key, etc.) and pointers to the skill files below. Loaded automatically by Claude Code. |
+
+### Setup & how-to
+
+| File | What it covers |
+|------|----------------|
+| [`README.md`](README.md) | This file — stack overview, architecture diagram, dev setup, packaging instructions. |
+| [`backend/README.md`](backend/README.md) | Backend module map (services, routers, exceptions). Quick `uv sync` + run + test recipes. |
+
+### Reference & learning
+
+| File | What it covers |
+|------|----------------|
+| [`backend/docs/gateway-lifecycle.md`](backend/docs/gateway-lifecycle.md) | How the IBKR Gateway lifecycle actually works — process trees, signals, the cleanup chain, pid-file recovery, the three recovery levels in the UI. Read this when you want to understand *why* the gateway code is the way it is. |
+| [`backend/docs/ibkr_market_data_fields.md`](backend/docs/ibkr_market_data_fields.md) | IBKR Client Portal market-data field IDs (e.g. `31` = last price, `7762` = volume). Reference when adding new fields to snapshot endpoints. |
+
+### Claude skills (loaded on demand by Claude Code)
+
+These are not meant to be read top-to-bottom. Claude loads them when a task matches their trigger. Listed here so you know what context is available.
+
+| Skill | Triggers on |
+|-------|-------------|
+| [`.claude/skills/parallax-backend/SKILL.md`](.claude/skills/parallax-backend/SKILL.md) | Any backend task — routers, services, models, indicators, IBKR, DB. |
+| [`.claude/skills/parallax-frontend/SKILL.md`](.claude/skills/parallax-frontend/SKILL.md) | Any frontend task — components, hooks, pages, stores, charts, styling. |
+| [`.claude/skills/parallax-git/SKILL.md`](.claude/skills/parallax-git/SKILL.md) | Branching, commit messages, PR workflow, merge policy. |
+| [`.claude/skills/parallax-hub/SKILL.md`](.claude/skills/parallax-hub/SKILL.md) | Cross-module concerns: instruments table, conid lookups, MoonMarket/Inflect boundaries. |
+| [`.claude/skills/parallax-v2-roadmap/SKILL.md`](.claude/skills/parallax-v2-roadmap/SKILL.md) | Future features, deferred work, "is this v1 or v2?" decisions. |
+
+---
+
 ## Stack
 
 | Layer | Tech |
@@ -58,17 +97,27 @@ into `~/.parallax/gateway/`. No system Java required.
 ### Running in Development
 
 ```bash
-# Terminal 1 — backend sidecar (with hot reload)
-cd backend
-uv sync
-uv run uvicorn main:app --reload --port 8000
+# One-time setup
+cd backend && uv sync && cd ..
+npm install
+
+# Terminal 1 — backend sidecar (with hot reload + clean shutdown)
+./scripts/dev-backend.sh        # macOS / Linux
+pwsh ./scripts/dev-backend.ps1  # Windows
 
 # Terminal 2 — Tauri dev shell (opens the app window)
-npm install
 npm run tauri dev
 ```
 
 Authenticate with IBKR at `https://localhost:5001` when prompted.
+
+> **Why the wrapper?**  `uvicorn --reload` doesn't always propagate shutdown
+> signals to the worker — closing the terminal window in particular skips
+> lifespan shutdown, leaving the IBKR Gateway JVM running on `:5001` as an
+> orphan.  The wrapper traps `SIGINT/SIGTERM/SIGHUP` and kills any process
+> listed in `~/.parallax/gateway/gateway.pid` before exiting.  If the
+> wrapper itself is hard-killed, the next launch's pid-file recovery
+> picks up the orphan and either adopts or replaces it cleanly.
 
 ### Tests
 
