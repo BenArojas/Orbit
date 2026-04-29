@@ -56,8 +56,10 @@ interface UseGatewayReturn {
   start: () => Promise<void>;
   /** Stop the Gateway process */
   stop: () => Promise<void>;
-  /** R2 — stop tickle/WS, restart gateway, clear in-memory state */
-  resetSession: () => Promise<void>;
+  /** R1 — soft logout via IBKR /logout, JVM stays running */
+  logout: () => Promise<void>;
+  /** R2 — kill JVM and respawn (renamed from resetSession in UI as "Restart Gateway") */
+  restartGateway: () => Promise<void>;
   /** R3 — reset-session + wipe root/logs, root/Jts, *.cookie, *.session */
   factoryReset: () => Promise<void>;
   /** Error from the last action, if any */
@@ -129,48 +131,98 @@ export function useGateway(): UseGatewayReturn {
     [queryClient],
   );
 
+  /**
+   * Optimistically flip the cached state before the API call returns so the
+   * UI stops looking frozen between click and the next poll.  The backend
+   * response (or the next /gateway/status poll, whichever lands first)
+   * will overwrite this synthetic state with reality — there's no need for
+   * a clear-on-timeout because the cache is always re-written within
+   * one poll cycle.
+   */
+  const optimisticFlip = useCallback(
+    (nextState: GatewayState) => {
+      const current = queryClient.getQueryData<GatewayStatusResponse>(
+        GATEWAY_QUERY_KEY,
+      );
+      if (current) {
+        setCacheStatus({ ...current, state: nextState });
+      }
+    },
+    [queryClient, setCacheStatus],
+  );
+
   const runAction = useCallback(
     async (
       fn: () => Promise<GatewayStatusResponse>,
       fallbackMsg: string,
+      optimisticState?: GatewayState,
     ): Promise<void> => {
       setActionState({ error: null, loading: true });
+      if (optimisticState) {
+        optimisticFlip(optimisticState);
+      }
       try {
         const data = await fn();
         setCacheStatus(data);
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : fallbackMsg;
         setActionState({ error: msg, loading: false });
+        // Trigger a real refetch so the UI doesn't get stuck on the
+        // optimistic state if the action threw mid-flight.
+        queryClient.invalidateQueries({ queryKey: GATEWAY_QUERY_KEY });
         return;
       }
       setActionState({ error: null, loading: false });
     },
-    [setActionState, setCacheStatus],
+    [setActionState, setCacheStatus, optimisticFlip, queryClient],
   );
 
   const provision = useCallback(
     (force = false) =>
-      runAction(() => api.gatewayProvision(force), "Provisioning failed"),
+      runAction(
+        () => api.gatewayProvision(force),
+        "Provisioning failed",
+        // Show an immediate "downloading" state until the first progress
+        // poll arrives. Backend will replace this with the precise step.
+        "downloading_jre",
+      ),
     [runAction],
   );
 
   const start = useCallback(
-    () => runAction(api.gatewayStart, "Failed to start Gateway"),
+    () => runAction(api.gatewayStart, "Failed to start Gateway", "starting"),
     [runAction],
   );
 
   const stop = useCallback(
-    () => runAction(api.gatewayStop, "Failed to stop Gateway"),
+    () => runAction(api.gatewayStop, "Failed to stop Gateway", "stopping"),
     [runAction],
   );
 
-  const resetSession = useCallback(
-    () => runAction(api.gatewayResetSession, "Failed to reset session"),
+  const logout = useCallback(
+    // Soft logout — JVM stays up so we don't flip the lifecycle state.
+    // The Spinner inside the button is feedback enough.
+    () => runAction(api.gatewayLogout, "Logout failed"),
+    [runAction],
+  );
+
+  const restartGateway = useCallback(
+    () =>
+      runAction(
+        api.gatewayResetSession,
+        "Failed to restart Gateway",
+        "stopping",
+      ),
     [runAction],
   );
 
   const factoryReset = useCallback(
-    () => runAction(api.gatewayFactoryReset, "Factory reset failed"),
+    () =>
+      runAction(
+        api.gatewayFactoryReset,
+        "Factory reset failed",
+        "stopping",
+      ),
     [runAction],
   );
 
@@ -188,7 +240,8 @@ export function useGateway(): UseGatewayReturn {
     provision,
     start,
     stop,
-    resetSession,
+    logout,
+    restartGateway,
     factoryReset,
     actionError: actionState.error,
     actionLoading: actionState.loading,

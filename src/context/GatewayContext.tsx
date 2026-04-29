@@ -29,9 +29,11 @@ interface GatewayContextValue {
   provision: (force?: boolean) => Promise<void>;
   start: () => Promise<void>;
   stop: () => Promise<void>;
-  /** R2 — restart gateway + clear in-memory auth state (no file changes). */
-  resetSession: () => Promise<void>;
-  /** R3 — resetSession + wipe session files on disk. */
+  /** R1 — soft logout (POST /v1/api/logout); JVM keeps running. */
+  logout: () => Promise<void>;
+  /** R2 — kill the JVM and respawn (no file changes). */
+  restartGateway: () => Promise<void>;
+  /** R3 — restartGateway + wipe session files on disk. */
   factoryReset: () => Promise<void>;
   actionError: string | null;
   actionLoading: boolean;
