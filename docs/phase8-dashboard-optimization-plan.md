@@ -127,6 +127,20 @@ These tasks change the foundation. Frontend tasks assume they are merged.
 
 **Acceptance:** In the backend logs, you should no longer see 3–7 retry calls per fresh conid; you should see exactly 2 calls (pre-flight then real) for first-time conids and 1 call for already-warmed conids.
 
+**Footnote — `required_fields` removed (2026-04-30):** The previous version
+of `IBKRService.snapshot()` accepted `timeout`, `poll_interval`, and
+`required_fields` and looped until IBKR populated the requested fields. All
+three were dropped when the documented pre-flight pattern landed. Pre-flight
+handles cache warm-up, which was the dominant cause of "missing fields"
+responses; the screener's existing pass-1/pass-2 logic catches the
+remainder. **Future revisit:** if rows still come back missing core fields
+after pre-flight (pre-market, illiquid, halted contracts), reintroduce
+`required_fields` as a *post-call validator* — log a warning per row missing
+the listed fields, but do NOT trigger any retries inside `snapshot()`. That
+keeps pre-flight as the warm-up mechanism and `required_fields` purely
+diagnostic. Reference: this task's footnote + the removed
+`TestSnapshotRequiredFields` block in `tests/test_screener.py`.
+
 ---
 
 ### Task 1.4 — `/iserver/secdef/search` pre-warm for non-STK contracts

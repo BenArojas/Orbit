@@ -161,7 +161,6 @@ async def get_watchlist_quotes(
             snapshots = await ibkr.snapshot(
                 conids=batch,
                 fields=DEFAULT_QUOTE_FIELDS_STR,
-                timeout=8.0,
             )
             for snap in snapshots:
                 c = snap.get("conid")

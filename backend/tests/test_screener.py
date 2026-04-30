@@ -1201,123 +1201,14 @@ class TestScannerRunResponseParsing:
             )
 
 
-# ── Phase C: required_fields param on snapshot() ─────────────
-# snapshot() now accepts required_fields to decouple which fields are
-# *requested* from IBKR from which must be present before returning.
-# This lets market cap (7289) be best-effort while core fields gate the poll.
-
-
-class TestSnapshotRequiredFields:
-    """Tests for the required_fields parameter added to IBKRService.snapshot()."""
-
-    @pytest.mark.asyncio
-    async def test_required_fields_subset_gates_poll(self):
-        """
-        When required_fields is a subset of fields, polling stops as soon as
-        the required subset is present — even if other fields (e.g. 7289) are missing.
-        """
-        svc = _make_ibkr_svc()
-        svc.ensure_accounts = AsyncMock()
-
-        # Response has core fields but NOT 7289 (market cap)
-        partial_response = [
-            {
-                "conid": 265598,
-                "31": "185.50",   # last price
-                "55": "AAPL",     # symbol
-                "83": "1.23",     # change %
-                "7762": "52000000",  # volume
-                # 7289 intentionally absent
-            }
-        ]
-
-        call_count = 0
-
-        async def fake_request(method, path, **kwargs):
-            nonlocal call_count
-            call_count += 1
-            return partial_response
-
-        svc._request = fake_request
-
-        result = await svc.snapshot(
-            conids=[265598],
-            fields="31,55,83,7762,7289",
-            timeout=5.0,
-            required_fields=["31", "55", "83", "7762"],  # 7289 not required
-        )
-
-        # Should return on first poll (required fields satisfied)
-        assert call_count == 1
-        assert result == partial_response
-
-    @pytest.mark.asyncio
-    async def test_no_required_fields_uses_all_requested(self):
-        """
-        When required_fields is None (default), ALL requested fields must be
-        present — original behaviour preserved.
-        """
-        svc = _make_ibkr_svc()
-        svc.ensure_accounts = AsyncMock()
-
-        # First call: missing 7289; second call: all fields present
-        full_response = [
-            {
-                "conid": 265598,
-                "31": "185.50",
-                "55": "AAPL",
-                "83": "1.23",
-                "7762": "52000000",
-                "7289": "2900000",
-            }
-        ]
-        partial_response = [{k: v for k, v in full_response[0].items() if k != "7289"}]
-
-        responses = iter([partial_response, full_response])
-
-        async def fake_request(method, path, **kwargs):
-            return next(responses)
-
-        svc._request = fake_request
-
-        result = await svc.snapshot(
-            conids=[265598],
-            fields="31,55,83,7762,7289",
-            timeout=5.0,
-            poll_interval=0.0,  # instant re-poll for the test
-            required_fields=None,  # all fields required
-        )
-
-        assert result == full_response
-
-    @pytest.mark.asyncio
-    async def test_required_fields_empty_list_returns_immediately(self):
-        """
-        If required_fields=[] (no fields required), should return on first
-        non-empty response without polling.
-        """
-        svc = _make_ibkr_svc()
-        svc.ensure_accounts = AsyncMock()
-
-        response = [{"conid": 265598}]
-        call_count = 0
-
-        async def fake_request(method, path, **kwargs):
-            nonlocal call_count
-            call_count += 1
-            return response
-
-        svc._request = fake_request
-
-        result = await svc.snapshot(
-            conids=[265598],
-            fields="31",
-            timeout=5.0,
-            required_fields=[],
-        )
-
-        assert call_count == 1
-        assert result == response
+# ── Phase 8 / Task 1.3: required_fields was removed from snapshot() ──
+# The class TestSnapshotRequiredFields used to live here. It tested a
+# field-gated poll loop inside snapshot() that was replaced by the
+# documented IBKR pre-flight pattern (call once + sleep 750ms + call
+# again). Pre-flight + delay coverage now lives in
+# tests/test_ibkr_snapshot_preflight.py. If `required_fields` is
+# re-introduced as a post-call validator (see Phase 8 plan, Task 1.3
+# footnote), restore the relevant cases there — not here.
 
 
 # ── Phase E: contract endpoint enrichment ────────────────────

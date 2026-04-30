@@ -51,3 +51,15 @@ SQLITE_DB_PATH = os.getenv("SQLITE_DB_PATH", "parallax.db")
 
 # Session keep-alive interval (seconds)
 IBKR_TICKLE_INTERVAL = int(os.getenv("IBKR_TICKLE_INTERVAL", "55"))
+
+# Snapshot pre-flight delay (Phase 8 / Task 1.3).
+# IBKR's /iserver/marketdata/snapshot returns empty fields on the first
+# call for a fresh conid — the call itself is a "pre-flight" that primes
+# IBKR's market-data cache. We wait `PREFLIGHT_DELAY_MS` between the
+# pre-flight and the real call so IBKR has a chance to populate fields.
+# Default 750ms — IBKR docs don't pin a number; this is the empirical
+# midpoint that worked for STK conids in MoonMarket. If derivative-class
+# conids still time out (CASH/FUT/OPT/etc.), bisect upward (1500ms,
+# 3000ms) and document the result. See the Phase-8 plan's "Open
+# questions" section for the bisection protocol.
+PREFLIGHT_DELAY_MS = int(os.getenv("PARALLAX_PREFLIGHT_DELAY_MS", "750"))

@@ -39,6 +39,18 @@ class IBKRState(BaseModel):
     accounts: list[str] = Field(default_factory=list)
     selected_account: Optional[str] = None
 
+    # Snapshot pre-flight bookkeeping (Phase 8 / Task 1.3).
+    # IBKR's first /iserver/marketdata/snapshot for a fresh conid returns
+    # empty fields — the call is a "pre-flight" that primes IBKR's cache.
+    # `warmed_conids` tracks conids we've already pre-flighted in this
+    # session; subsequent snapshots for these conids skip the pre-flight.
+    # `preflight_locks` is a per-conid asyncio.Lock so that 5 concurrent
+    # callers for a fresh conid only run one pre-flight.
+    # Both are wiped by `state.reset()` so a logout / session-drop forces
+    # a fresh pre-flight on the next snapshot.
+    warmed_conids: set[int] = Field(default_factory=set)
+    preflight_locks: Any = Field(default_factory=dict)  # dict[int, asyncio.Lock]
+
     # Lifecycle
     shutdown_event: asyncio.Event = Field(default_factory=asyncio.Event)
 
@@ -57,3 +69,5 @@ class IBKRState(BaseModel):
         self.accounts_fetched = False
         self.accounts.clear()
         self.selected_account = None
+        self.warmed_conids.clear()
+        self.preflight_locks.clear()

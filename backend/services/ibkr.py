@@ -30,6 +30,7 @@ from config import (
     IBKR_GATEWAY_HOST,
     IBKR_GATEWAY_PORT,
     IBKR_TICKLE_INTERVAL,
+    PREFLIGHT_DELAY_MS,
 )
 from constants import DEFAULT_QUOTE_FIELDS_STR, LIVE_STREAM_FIELDS
 from exceptions import (
@@ -484,28 +485,76 @@ class IBKRService:
 
         return min(candidates, key=lambda item: item[0])[1]
 
+    async def _preflight_snapshot(self, conid: int, fields: str) -> None:
+        """Run IBKR's documented "pre-flight" snapshot for a fresh conid.
+
+        Per IBKR docs (Snapshot endpoint): "A pre-flight request must be
+        made prior to ever receiving data. For some fields, it may take
+        more than a few moments to receive information."
+
+        Behavior:
+          - Idempotent: if `conid` is already in `state.warmed_conids`, return
+            immediately without issuing any IBKR call.
+          - Coalesced: a per-conid asyncio.Lock ensures that 5 concurrent
+            callers for a fresh conid only run one pre-flight (the other 4
+            await the lock, then re-check `warmed_conids` and skip).
+          - Marks the conid as warmed AFTER the pre-flight request returns
+            and we have slept `PREFLIGHT_DELAY_MS` so IBKR has time to
+            populate the cache.
+        """
+        if conid in self.state.warmed_conids:
+            return
+
+        # Lazily allocate a per-conid lock so concurrent callers for the
+        # same fresh conid only run one pre-flight. The dict lives on
+        # state and is cleared by state.reset().
+        lock = self.state.preflight_locks.get(conid)
+        if lock is None:
+            lock = asyncio.Lock()
+            self.state.preflight_locks[conid] = lock
+
+        async with lock:
+            # Re-check inside the lock — another caller may have just
+            # warmed this conid while we waited.
+            if conid in self.state.warmed_conids:
+                return
+            await self._request(
+                "GET",
+                "/iserver/marketdata/snapshot",
+                params={"conids": str(conid), "fields": fields},
+            )
+            await asyncio.sleep(PREFLIGHT_DELAY_MS / 1000.0)
+            self.state.warmed_conids.add(conid)
+
     async def snapshot(
         self,
         conids: list[int],
         fields: str = DEFAULT_QUOTE_FIELDS_STR,
-        timeout: float = 5.0,
-        poll_interval: float = 1.0,
-        required_fields: list[str] | None = None,
     ) -> list[dict]:
         """
         Get a market data snapshot for one or more conids.
-        Polls until all *required* fields are present or timeout is reached.
+
+        Cold-start protocol (Phase 8 / Task 1.3):
+          1. For each conid in `conids` not yet in `state.warmed_conids`,
+             run a pre-flight (one IBKR call + PREFLIGHT_DELAY_MS sleep).
+             Concurrent callers for the same fresh conid coalesce via a
+             per-conid asyncio.Lock so only one pre-flight runs.
+          2. Issue ONE real /iserver/marketdata/snapshot call for the full
+             `conids` list and return the response.
 
         Args:
             conids: IBKR contract IDs to fetch.
-            fields: Comma-separated field codes to request (all sent to IBKR).
-            timeout: Max seconds to poll before returning partial data.
-            poll_interval: Seconds between polls.
-            required_fields: Field codes that MUST be present before returning.
-                If None, ALL requested fields are required (original behaviour).
-                Pass a subset (e.g. ["31","55","83","7762"]) to treat the
-                remaining requested fields as best-effort. Use this whenever
-                you ask for fields that IBKR fills lazily or not at all.
+            fields: Comma-separated field codes to request.
+
+        Note (Phase 8 follow-up): the previous version of this method took
+        `timeout`, `poll_interval`, and `required_fields` and looped until
+        IBKR populated the requested fields. That pattern is replaced by
+        the documented pre-flight + delay above. `required_fields` may be
+        re-introduced in a future task as a post-call quality validator
+        (see Phase 8 plan, Task 1.3 footnote) — pre-flight handles cache
+        warm-up; `required_fields` would handle "row still has missing
+        fields after pre-flight" diagnostics. For now, callers that need
+        that guarantee (e.g. screener) own the check themselves.
 
         ────────────────────────────────────────────────────────────
         SAMPLE RESPONSE (from /iserver/marketdata/snapshot, fields=31,55,83,7762,7051):
@@ -532,45 +581,33 @@ class IBKRService:
           - "87" (formatted volume) arrives as "52.1M" / "900K". Prefer "7762"
             for parsing.
           - "7289" (market cap) is NOT on IBKR's documented fields list. Don't
-            put it in `fields`; don't add it to `required_fields`. Use the
-            contract endpoint (/iserver/contract/{conid}/info → `marketCap`)
-            for mc instead. See backend/docs/ibkr_market_data_fields.md.
-          - Partial responses are common: IBKR may return the row with only
-            55 + 6509 filled while it warms its cache. The poll loop above
-            waits through this and returns once `required_fields` are all set.
+            put it in `fields`. Use the contract endpoint
+            (/iserver/contract/{conid}/info → `marketCap`) instead.
+            See backend/docs/ibkr_market_data_fields.md.
         """
         await self.ensure_accounts()
+
+        # Pre-flight every cold conid. Run in parallel (each cold conid is
+        # independent), but each pre-flight has its own per-conid lock so
+        # we still coalesce across concurrent snapshot() callers.
+        cold = [c for c in conids if c not in self.state.warmed_conids]
+        if cold:
+            await asyncio.gather(
+                *(self._preflight_snapshot(c, fields) for c in cold)
+            )
+
+        # Real bulk call after every cold conid has been warmed.
         params = {
             "conids": ",".join(str(c) for c in conids),
             "fields": fields,
         }
-        # Determine which fields are required for the "done" check
-        gate_fields = required_fields if required_fields is not None else fields.split(",")
-        start = time.monotonic()
-        response = []
-
-        while time.monotonic() - start < timeout:
-            response = await self._request(
-                "GET", "/iserver/marketdata/snapshot", params=params
-            )
-            if response and isinstance(response, list):
-                # Check if all conids have all *required* fields
-                conids_in_resp = {str(item.get("conid")) for item in response}
-                all_conids_present = set(str(c) for c in conids).issubset(conids_in_resp)
-                all_fields_present = all(
-                    all(f in item for f in gate_fields)
-                    for item in response
-                )
-                if all_conids_present and all_fields_present:
-                    dump_if_first("marketdata_snapshot", response)
-                    return response
-
-            await asyncio.sleep(poll_interval)
-
-        # Return whatever we have after timeout
-        log.warning("Snapshot timed out for conids %s after %.1fs", conids, timeout)
+        response = await self._request(
+            "GET", "/iserver/marketdata/snapshot", params=params
+        )
+        if not isinstance(response, list):
+            response = []
         dump_if_first("marketdata_snapshot", response)
-        return response if isinstance(response, list) else []
+        return response
 
     @cached(ttl=300)
     async def history(

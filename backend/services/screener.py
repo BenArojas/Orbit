@@ -43,27 +43,26 @@ from constants import (
     FIELD_VOLUME,
 )
 
-# Fields that MUST be present before the snapshot poll exits.
+# Fields the screener treats as the "core quote" for a row. Used to detect
+# stragglers (rows missing core fields) so pass 2 can re-fetch them.
 #
-# Phase 5C revision (2026-04-23): we previously required 7289 (market cap) and
-# even added a contract_info fallback. Turned out field 7289 isn't on IBKR's
-# official market-data-fields list at all — the poll was waiting ~18s for a
-# value that was never going to arrive. See backend/docs/ibkr_market_data_fields.md
-# for the canonical list. Market cap column was removed from the screener to
-# keep scans fast; we can bring it back later using /trsrv/secdef or fundamentals
-# endpoints if needed.
+# Phase 8 / Task 1.3 (2026-04-30): IBKRService.snapshot() no longer accepts
+# `required_fields` — the documented pre-flight pattern (call once + sleep
+# 750ms + call again) replaces the old field-gated poll loop. The screener
+# still uses this list as a post-snapshot quality check: any conid whose
+# response is missing one of these fields is queued for pass 2.
+#
+# Phase 5C history (2026-04-23): 7289 (market cap) was previously required;
+# turned out it isn't on IBKR's documented market-data fields list at all
+# and the poll waited ~18s for a value that never arrived. Use the
+# contract endpoint (/iserver/contract/{conid}/info → `marketCap`) for
+# market cap instead. See backend/docs/ibkr_market_data_fields.md.
 SNAPSHOT_REQUIRED_FIELDS = [
     FIELD_LAST_PRICE,   # 31
     FIELD_SYMBOL,       # 55
     FIELD_CHANGE_PCT,   # 83
     FIELD_VOLUME,       # 7762
 ]
-
-# Per-batch snapshot timeouts.
-#  - First pass: short — only the four fast fields are required now.
-#  - Stragglers retry: even shorter; these conids already failed once.
-SNAPSHOT_TIMEOUT_FIRST = 8.0
-SNAPSHOT_TIMEOUT_RETRY = 3.0
 from constants.scan_types import (
     CATEGORY_ORDER,
     CURATED_SCAN_TYPES,
@@ -560,23 +559,24 @@ class ScreenerService:
             for i in range(0, len(conids), SNAPSHOT_BATCH_SIZE)
         ]
 
-        async def _fetch_batch(
-            batch: list[int], timeout: float
-        ) -> list[dict] | Exception:
+        async def _fetch_batch(batch: list[int]) -> list[dict] | Exception:
             """Fetch one batch; return exception object instead of raising so
-            `asyncio.gather` doesn't short-circuit on a single bad batch."""
+            `asyncio.gather` doesn't short-circuit on a single bad batch.
+
+            Phase 8 / Task 1.3: snapshot() now does pre-flight + delay + real
+            call internally. Stragglers are detected post-call below by
+            comparing each row to SNAPSHOT_REQUIRED_FIELDS.
+            """
             try:
                 return await self.ibkr.snapshot(
                     batch,
                     fields=SCREENER_SNAPSHOT_FIELDS,
-                    timeout=timeout,
-                    required_fields=SNAPSHOT_REQUIRED_FIELDS,
                 )
             except IBKRError as exc:
                 return exc
 
         pass_1_results = await asyncio.gather(
-            *(_fetch_batch(b, SNAPSHOT_TIMEOUT_FIRST) for b in pass_1_batches),
+            *(_fetch_batch(b) for b in pass_1_batches),
             return_exceptions=False,  # we're already returning exc objects
         )
         for idx, result in enumerate(pass_1_results):
@@ -609,7 +609,7 @@ class ScreenerService:
                 for i in range(0, len(stragglers), SNAPSHOT_BATCH_SIZE)
             ]
             pass_2_results = await asyncio.gather(
-                *(_fetch_batch(b, SNAPSHOT_TIMEOUT_RETRY) for b in pass_2_batches),
+                *(_fetch_batch(b) for b in pass_2_batches),
             )
             for idx, result in enumerate(pass_2_results):
                 if isinstance(result, Exception):
