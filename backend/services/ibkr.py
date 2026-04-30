@@ -153,11 +153,30 @@ class IBKRService:
             is_connected = data.get("connected", False)
             is_valid = is_authenticated and is_connected
 
+            was_authenticated = self.state.authenticated
             self.state.authenticated = is_valid
             if is_valid:
                 # Clear any prior disconnect flag — user successfully re-authed
                 self.state.session_dropped = False
                 self.state.tickle_fail_count = 0
+                # Cold-start protocol: IBKR requires /iserver/accounts to be
+                # called before /iserver/marketdata/snapshot and order
+                # endpoints respond correctly. Bootstrap on the first
+                # False -> True transition (or anytime accounts haven't been
+                # fetched yet — covers state.reset() between probes).
+                # ensure_accounts is idempotent and self-caches.
+                if not was_authenticated or not self.state.accounts_fetched:
+                    try:
+                        await self.ensure_accounts()
+                    except IBKRRequestError as exc:
+                        # Don't block auth on a transient /iserver/accounts
+                        # failure — log + carry on. The next auth probe (or
+                        # any market-data call) will retry via the same
+                        # idempotent path.
+                        log.warning(
+                            "ensure_accounts() failed during auth bootstrap: %s",
+                            exc,
+                        )
             else:
                 self.state.session_token = None
 
@@ -229,14 +248,26 @@ class IBKRService:
             return False
 
     async def ensure_accounts(self) -> None:
-        """Fetch and cache the list of brokerage accounts."""
+        """Fetch and cache the list of brokerage accounts.
+
+        IBKR requires /iserver/accounts to be called before /iserver/marketdata
+        /snapshot and the order endpoints will respond correctly. Idempotent
+        once `state.accounts_fetched` is True; cleared by `state.reset()`.
+        Stores both the account-id list and the response's `selectedAccount`
+        (used implicitly by IBKR for endpoints that omit an explicit acctId).
+        """
         if self.state.accounts_fetched:
             return
         data = await self._request("GET", "/iserver/accounts")
         accounts = data.get("accounts", [])
         self.state.accounts = accounts
+        self.state.selected_account = data.get("selectedAccount")
         self.state.accounts_fetched = True
-        log.info("Fetched %d IBKR account(s)", len(accounts))
+        log.info(
+            "Fetched %d IBKR account(s); selected=%s",
+            len(accounts),
+            self.state.selected_account,
+        )
 
     async def logout(self) -> dict:
         """Log out of the IBKR session and clean up state."""

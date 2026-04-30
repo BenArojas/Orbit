@@ -14,7 +14,7 @@ import logging
 from fastapi import APIRouter, Depends
 
 from deps import get_gateway, get_ibkr
-from exceptions import IBKRConnectionError
+from exceptions import IBKRConnectionError, IBKRRequestError
 from services.gateway import GatewayLifecycle
 from services.ibkr import IBKRService
 
@@ -85,6 +85,20 @@ async def gateway_status(
                     # endpoint the frontend uses to detect auth.
                     if authenticated:
                         await ibkr.start_tickle_loop()
+                        # Cold-start protocol (Phase 8 / Task 1.2):
+                        # /iserver/accounts must be called before snapshot
+                        # and order endpoints respond. auth_status() handles
+                        # this on the first transition; this call is the
+                        # safety net for any path where state was reset
+                        # mid-session before the probe.
+                        if not ibkr.state.accounts_fetched:
+                            try:
+                                await ibkr.ensure_accounts()
+                            except IBKRRequestError as exc:
+                                log.warning(
+                                    "ensure_accounts() failed at /gateway/status response: %s",
+                                    exc,
+                                )
                 except IBKRConnectionError as exc:
                     # Gateway is running (port is up) but not yet ready to answer
                     # auth probes — e.g. JVM still warming up. Return a clean status

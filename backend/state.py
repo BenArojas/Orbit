@@ -31,8 +31,13 @@ class IBKRState(BaseModel):
     ws_subscriptions: set[int] = Field(default_factory=set)  # conids we're subscribed to
 
     # Accounts
+    # `accounts` is the raw list of account IDs from /iserver/accounts (e.g.
+    # ["DU1234567"]). `selected_account` mirrors the response's
+    # `selectedAccount` field — IBKR uses it implicitly for any order /
+    # snapshot endpoint that doesn't take an explicit acctId.
     accounts_fetched: bool = False
     accounts: list[str] = Field(default_factory=list)
+    selected_account: Optional[str] = None
 
     # Lifecycle
     shutdown_event: asyncio.Event = Field(default_factory=asyncio.Event)
@@ -51,3 +56,4 @@ class IBKRState(BaseModel):
         self.ws_subscriptions.clear()
         self.accounts_fetched = False
         self.accounts.clear()
+        self.selected_account = None

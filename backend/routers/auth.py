@@ -11,6 +11,7 @@ import logging
 from fastapi import APIRouter, Depends
 
 from deps import get_ibkr
+from exceptions import IBKRRequestError
 from models import AuthStatusResponse
 from services.ibkr import IBKRService
 
@@ -31,6 +32,19 @@ async def get_auth_status(ibkr: IBKRService = Depends(get_ibkr)):
     # Auto-start tickle loop if we're authenticated
     if status["authenticated"]:
         await ibkr.start_tickle_loop()
+        # Belt-and-suspenders: auth_status() bootstraps accounts on the first
+        # False -> True transition, but if a prior probe partially populated
+        # state and accounts_fetched is still False, retry here so the
+        # response below is the last opportunity before the frontend fires
+        # its first /market/quote call.
+        if not ibkr.state.accounts_fetched:
+            try:
+                await ibkr.ensure_accounts()
+            except IBKRRequestError as exc:
+                log.warning(
+                    "ensure_accounts() failed at /auth/status response: %s",
+                    exc,
+                )
 
     return AuthStatusResponse(**status)
 
