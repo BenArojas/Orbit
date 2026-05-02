@@ -97,6 +97,20 @@ class DatabaseService:
     def __init__(self, db_path: str = SQLITE_DB_PATH) -> None:
         self.db_path = db_path
         self._conn: sqlite3.Connection | None = None
+        # Phase 8 hotfix: the service shares one sqlite3.Connection across
+        # asyncio.to_thread worker threads (check_same_thread=False). The
+        # Python sqlite3 module's connection object is NOT safe for
+        # concurrent use — two workers calling .execute() / .commit() on
+        # the same connection simultaneously can raise
+        # `sqlite3.ProgrammingError: bad parameter or other API misuse`
+        # (SQLITE_MISUSE, error code 21). This bit us during sectors
+        # cold-start where 11 parallel get_conid() calls fan out to 11
+        # parallel upsert_cached_conid() writes. Serialize all writes
+        # behind this asyncio.Lock so only one thread touches the shared
+        # connection at a time. Reads bypass the lock — SQLite's WAL mode
+        # serialises read-vs-write at the file level, and the existing
+        # _fetchone / _fetchall paths are short-lived reads.
+        self._write_lock = asyncio.Lock()
 
     # ── Lifecycle ────────────────────────────────────────────
 
@@ -429,6 +443,27 @@ class DatabaseService:
         cursor = self._execute(sql, params)
         return [dict(row) for row in cursor.fetchall()]
 
+    async def _run_write(self, fn):
+        """Serialise a synchronous SQLite write through the global write
+        lock and dispatch it to the asyncio thread pool.
+
+        Phase 8 hotfix: Python's `sqlite3.Connection` is not safe for
+        concurrent use from multiple threads, even with
+        `check_same_thread=False`. Two `asyncio.to_thread` workers
+        hitting the same connection's cursor simultaneously can raise
+        SQLITE_MISUSE ('bad parameter or other API misuse') or
+        'cannot start a transaction within a transaction'. All write
+        helpers in this class now go through this helper so the
+        connection is touched by at most one worker at a time.
+
+        Reads (`_fetchone` / `_fetchall`) bypass the lock — SQLite's
+        WAL mode serialises read-vs-write at the file level and a
+        bare SELECT on the shared connection is short enough that
+        we accept the residual risk in exchange for read concurrency.
+        """
+        async with self._write_lock:
+            return await asyncio.to_thread(fn)
+
     # ── Trigger Rule Operations ──────────────────────────────
 
     async def get_trigger_rules(self, enabled_only: bool = False) -> list[dict]:
@@ -510,7 +545,7 @@ class DatabaseService:
             assert cursor.lastrowid is not None
             return cursor.lastrowid
 
-        return await asyncio.to_thread(_insert)
+        return await self._run_write(_insert)
 
     async def update_trigger_rule(self, rule_id: int, **fields: Any) -> bool:
         """
@@ -539,7 +574,7 @@ class DatabaseService:
             self._conn.commit()
             return cursor.rowcount > 0
 
-        return await asyncio.to_thread(_update)
+        return await self._run_write(_update)
 
     async def delete_trigger_rule(self, rule_id: int) -> bool:
         """Delete a trigger rule (and its hit history via CASCADE)."""
@@ -551,7 +586,7 @@ class DatabaseService:
             self._conn.commit()
             return cursor.rowcount > 0
 
-        return await asyncio.to_thread(_delete)
+        return await self._run_write(_delete)
 
     # ── Trigger Hit Operations ───────────────────────────────
 
@@ -613,7 +648,7 @@ class DatabaseService:
                 # Duplicate — this trigger already fired for this stock today
                 return None
 
-        return await asyncio.to_thread(_insert)
+        return await self._run_write(_insert)
 
     async def get_trigger_hits(
         self,
@@ -679,7 +714,7 @@ class DatabaseService:
             self._conn.commit()
             return cursor.rowcount > 0
 
-        return await asyncio.to_thread(_mark)
+        return await self._run_write(_mark)
 
     async def acknowledge_trigger_hit(self, hit_id: int) -> bool:
         """Mark a trigger hit as seen/read by the user."""
@@ -692,7 +727,7 @@ class DatabaseService:
             self._conn.commit()
             return cursor.rowcount > 0
 
-        return await asyncio.to_thread(_ack)
+        return await self._run_write(_ack)
 
     async def acknowledge_all_hits(self) -> int:
         """Mark ALL unread trigger hits as acknowledged. Returns count."""
@@ -704,7 +739,7 @@ class DatabaseService:
             self._conn.commit()
             return cursor.rowcount
 
-        return await asyncio.to_thread(_ack_all)
+        return await self._run_write(_ack_all)
 
     # ── Settings Operations ──────────────────────────────────
 
@@ -742,7 +777,7 @@ class DatabaseService:
             assert self._conn is not None
             self._conn.commit()
 
-        await asyncio.to_thread(_upsert)
+        await self._run_write(_upsert)
 
     async def delete_setting(self, key: str) -> bool:
         """Delete a setting. Returns True if it existed."""
@@ -754,7 +789,7 @@ class DatabaseService:
             self._conn.commit()
             return cursor.rowcount > 0
 
-        return await asyncio.to_thread(_delete)
+        return await self._run_write(_delete)
 
     # ── Watchlist Config Operations (Phase 6.8) ─────────────────
 
@@ -796,7 +831,7 @@ class DatabaseService:
             assert self._conn is not None
             self._conn.commit()
 
-        await asyncio.to_thread(_upsert)
+        await self._run_write(_upsert)
 
     async def delete_watchlist_config(self, name: str) -> bool:
         """
@@ -811,7 +846,7 @@ class DatabaseService:
             self._conn.commit()
             return cursor.rowcount > 0
 
-        return await asyncio.to_thread(_delete)
+        return await self._run_write(_delete)
 
     # ── Instrument Cache Operations ────────────────────────────
     #
@@ -872,7 +907,7 @@ class DatabaseService:
             assert self._conn is not None
             self._conn.commit()
 
-        await asyncio.to_thread(_upsert)
+        await self._run_write(_upsert)
 
     async def search_instruments_local(self, query: str) -> list[dict]:
         """
@@ -925,6 +960,10 @@ class DatabaseService:
         `resolved_at` is bumped to now. Conids are stable across IBKR
         sessions, so under normal use the conid value never changes —
         only the timestamp does.
+        Concurrency: serialised behind `self._write_lock` (via
+        `_run_write`) so 11 parallel sectors get_conid() calls don't
+        trip SQLITE_MISUSE on the shared connection. See `__init__`
+        for the full rationale.
         """
         def _upsert() -> None:
             now = int(datetime.now(timezone.utc).timestamp())
@@ -942,7 +981,7 @@ class DatabaseService:
             assert self._conn is not None
             self._conn.commit()
 
-        await asyncio.to_thread(_upsert)
+        await self._run_write(_upsert)
 
     # ── Locked Fibonacci CRUD ─────────────────────────────────
 
@@ -989,7 +1028,7 @@ class DatabaseService:
                 )
                 return row["id"] if row else -1
 
-        return await asyncio.to_thread(_insert)
+        return await self._run_write(_insert)
 
     async def delete_locked_fib(self, lock_id: int) -> bool:
         """Unlock (delete) a locked fib by its row ID."""
@@ -1001,7 +1040,7 @@ class DatabaseService:
             self._conn.commit()
             return cursor.rowcount > 0
 
-        return await asyncio.to_thread(_delete)
+        return await self._run_write(_delete)
 
     async def list_locked_fibs(self, conid: int) -> list[dict]:
         """
@@ -1074,7 +1113,7 @@ class DatabaseService:
                 self._conn.rollback()
                 raise
 
-        await asyncio.to_thread(_replace)
+        await self._run_write(_replace)
 
     async def reset_pulse_config(self) -> list[dict]:
         """

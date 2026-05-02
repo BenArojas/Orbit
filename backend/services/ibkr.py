@@ -275,13 +275,38 @@ class IBKRService:
         once `state.accounts_fetched` is True; cleared by `state.reset()`.
         Stores both the account-id list and the response's `selectedAccount`
         (used implicitly by IBKR for endpoints that omit an explicit acctId).
+
+        Phase 8 hotfix (2026-05-02): IBKR sometimes returns 200 OK with an
+        empty `accounts: []` body when the brokerage session is freshly
+        authenticated but not yet fully attached. Previously we marked the
+        cache "fetched" anyway and never retried — leaving downstream
+        snapshot calls running against an account list that never
+        populated. Now we only mark fetched when the response actually
+        contains at least one account ID. An empty/missing response is
+        logged and left unfetched so the next auth probe retries.
         """
         if self.state.accounts_fetched:
             return
         data = await self._request("GET", "/iserver/accounts")
-        accounts = data.get("accounts", [])
+        # Defensive copy: state.reset() calls self.accounts.clear() which
+        # mutates the list in place. Without copying, that clears the
+        # caller's response dict too — tests with fixture closures get
+        # silently emptied between probes.
+        accounts = list(data.get("accounts") or [])
+        selected = data.get("selectedAccount")
+        if not accounts:
+            # Don't pin a permanent empty cache — IBKR's brokerage session
+            # may still be attaching. Caller (auth_status) will probe
+            # again on the next /gateway/status or /auth/status tick.
+            log.warning(
+                "ensure_accounts(): /iserver/accounts returned empty list "
+                "(selected=%s) — leaving accounts_fetched=False to retry "
+                "on next probe",
+                selected,
+            )
+            return
         self.state.accounts = accounts
-        self.state.selected_account = data.get("selectedAccount")
+        self.state.selected_account = selected
         self.state.accounts_fetched = True
         log.info(
             "Fetched %d IBKR account(s); selected=%s",
