@@ -25,6 +25,7 @@ import websockets
 
 from cache import cached
 from config import (
+    AUTH_STATUS_TTL_SEC,
     IBKR_API_BASE_URL,
     IBKR_GATEWAY_BASE_URL,
     IBKR_GATEWAY_HOST,
@@ -103,6 +104,31 @@ class IBKRService:
             tuple[int, str, str], asyncio.Future
         ] = {}
 
+        # Phase 8 / Task 1.7: server-side cache for /iserver/auth/status.
+        # /gateway/status polls every 2s while not authenticated and each
+        # poll currently fires an IBKR auth probe.  Cache the result for
+        # AUTH_STATUS_TTL_SEC so concurrent / repeated callers in the same
+        # window share a single probe.  Cache holds the FULL response dict
+        # (`{"authenticated", "ws_ready", "message"}`) so callers see
+        # bit-for-bit the same payload they'd get from a fresh probe.
+        #
+        # Invalidation:
+        #   * `invalidate_auth_cache()` clears it explicitly.
+        #   * `state.reset()` (logout / reset-session / factory-reset) clears
+        #     it via the same helper called from the lifecycle paths.
+        #   * The tickle loop calls invalidate_auth_cache() on every failure
+        #     so the next poll re-probes IBKR instead of trusting a stale
+        #     "authenticated: True" answer.
+        #   * A True -> False auth flip inside auth_status() invalidates
+        #     itself so the cached "False" doesn't linger past a re-auth.
+        self._auth_cache: dict | None = None
+        self._auth_cache_at: float = 0.0
+        # Single-flight lock around the actual IBKR probe — prevents two
+        # concurrent callers from both seeing a stale cache and both firing
+        # a probe.  The cache check itself is outside the lock so the hot
+        # path is lock-free.
+        self._auth_cache_lock: asyncio.Lock = asyncio.Lock()
+
     def set_db(self, db: Any) -> None:
         """Wire a DatabaseService for the SQLite conid cache.
 
@@ -111,6 +137,35 @@ class IBKRService:
         avoid a circular import with services.db.
         """
         self.db = db
+
+    def _ensure_auth_cache_attrs(self) -> None:
+        """Lazy-init guard for tests that bypass __init__ via __new__.
+
+        Mirrors the same pattern used by the snapshot-coalescing dicts in
+        Task 1.6 — keeps existing fixtures (which build a bare service
+        with `IBKRService.__new__(IBKRService)`) working without each one
+        having to know about the new fields.
+        """
+        if not hasattr(self, "_auth_cache"):
+            self._auth_cache = None
+            self._auth_cache_at = 0.0
+        if not hasattr(self, "_auth_cache_lock"):
+            self._auth_cache_lock = asyncio.Lock()
+
+    def invalidate_auth_cache(self) -> None:
+        """Drop the cached auth-status payload.
+
+        Called by:
+          * the tickle loop on any failed tickle (so the next probe sees
+            IBKR's actual state, not a stale "authenticated: True"),
+          * `state.reset()` lifecycle paths (logout / reset-session /
+            factory-reset) — wired below,
+          * any future code path that knows the IBKR auth answer just
+            changed under it.
+        """
+        self._ensure_auth_cache_attrs()
+        self._auth_cache = None
+        self._auth_cache_at = 0.0
 
     # ── Core HTTP helper ─────────────────────────────────────
 
@@ -195,6 +250,54 @@ class IBKRService:
         """
         Check if the IBKR session is authenticated and connected.
         This is the first call the frontend makes on app launch.
+
+        Phase 8 / Task 1.7: results are cached for AUTH_STATUS_TTL_SEC.
+        Concurrent / repeated callers within the TTL share one IBKR probe.
+        Cache invalidation: see `invalidate_auth_cache()`.
+        """
+        self._ensure_auth_cache_attrs()
+
+        # Lock-free fast path: serve fresh cache without acquiring the lock.
+        # AUTH_STATUS_TTL_SEC == 0 is the explicit opt-out (always probe).
+        if AUTH_STATUS_TTL_SEC > 0 and self._auth_cache is not None:
+            age = time.monotonic() - self._auth_cache_at
+            if age < AUTH_STATUS_TTL_SEC:
+                return dict(self._auth_cache)  # defensive copy
+
+        # Slow path: lock so concurrent callers don't double-probe.  The
+        # second arrival re-checks the cache after acquiring the lock —
+        # if the first caller just populated it, we serve from cache and
+        # skip the IBKR probe entirely.
+        async with self._auth_cache_lock:
+            if AUTH_STATUS_TTL_SEC > 0 and self._auth_cache is not None:
+                age = time.monotonic() - self._auth_cache_at
+                if age < AUTH_STATUS_TTL_SEC:
+                    return dict(self._auth_cache)
+
+            result = await self._probe_auth_status_uncached()
+
+            # Only cache successful structured responses.  We skip caching
+            # ConnectionError responses so the next poll can detect a
+            # gateway-recovery quickly (5s feels long when the gateway
+            # just came back up).  Auth-False results from IBKR (logged
+            # out, 401) ARE cached — they're stable for 5s and dominate
+            # the polling cost while needsLogin is true.
+            if AUTH_STATUS_TTL_SEC > 0 and not result.get("_no_cache"):
+                self._auth_cache = dict(result)
+                self._auth_cache_at = time.monotonic()
+            # Strip the internal flag before returning to callers.
+            result.pop("_no_cache", None)
+            return result
+
+    async def _probe_auth_status_uncached(self) -> dict:
+        """Actually hit IBKR for auth status — bypasses cache entirely.
+
+        Extracted from `auth_status()` so the cache wrapper above stays
+        readable.  This is the original Task 1.2 / Bug A logic, unchanged
+        in behavior except for one addition: when the gateway is
+        unreachable we tag the response with `_no_cache: True` so the
+        cache wrapper above doesn't pin a "gateway down" answer for 5s
+        (the user might recover the gateway in less time than that).
         """
         try:
             data = await self._request("POST", "/iserver/auth/status")
@@ -272,6 +375,10 @@ class IBKRService:
                     f"Cannot reach IBKR Gateway. "
                     f"Is it running on {IBKR_GATEWAY_HOST}:{IBKR_GATEWAY_PORT}?"
                 ),
+                # Task 1.7: don't cache "gateway unreachable" — the user
+                # may bring the gateway back up in <5s and we want the
+                # next poll to discover that immediately.
+                "_no_cache": True,
             }
 
     async def tickle(self) -> bool:
@@ -355,6 +462,9 @@ class IBKRService:
             return {"message": "Logged out locally (gateway unreachable)."}
         finally:
             self.state.reset()
+            # Task 1.7: drop cached "authenticated: True" so the next probe
+            # sees the actual logged-out state, not a stale cache.
+            self.invalidate_auth_cache()
             await self._stop_tickle()
 
     # ── Session Keep-Alive ───────────────────────────────────
@@ -395,6 +505,11 @@ class IBKRService:
                     self.state.session_dropped = False
                 else:
                     self.state.tickle_fail_count += 1
+                    # Task 1.7: a failed tickle means IBKR's view of our
+                    # session may have changed.  Drop any cached
+                    # "authenticated: True" so the next /gateway/status
+                    # poll re-probes IBKR and gets the truth.
+                    self.invalidate_auth_cache()
                     log.warning(
                         "Tickle failed (%d/%d) — IBKR session may have expired.",
                         self.state.tickle_fail_count,

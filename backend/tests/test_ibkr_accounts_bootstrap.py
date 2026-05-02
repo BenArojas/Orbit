@@ -96,7 +96,13 @@ async def test_auth_status_populates_accounts_on_first_success():
 
 @pytest.mark.asyncio
 async def test_repeated_auth_status_calls_only_one_accounts_fetch():
-    """5 calls to auth_status() must result in exactly 1 /iserver/accounts."""
+    """5 calls to auth_status() must result in exactly 1 /iserver/accounts.
+
+    Phase 8 / Task 1.7: the auth-status cache (TTL 5s by default) means
+    those 5 calls also collapse to a single IBKR /iserver/auth/status
+    probe — that's strictly stronger than the original "1 accounts call"
+    contract this test was written to verify. Both assertions hold.
+    """
     svc, calls = _make_ibkr()
 
     for _ in range(5):
@@ -107,7 +113,10 @@ async def test_repeated_auth_status_calls_only_one_accounts_fetch():
     assert len(accounts_calls) == 1, (
         f"expected exactly 1 /iserver/accounts, got {len(accounts_calls)}"
     )
-    assert len(auth_calls) == 5
+    # Task 1.7: 5 calls within the 5s TTL collapse to 1 probe.
+    assert len(auth_calls) == 1, (
+        f"expected 1 cached IBKR auth probe, got {len(auth_calls)}"
+    )
     assert svc.state.accounts_fetched is True
 
 
@@ -123,6 +132,11 @@ async def test_state_reset_triggers_fresh_accounts_fetch():
 
     # User logs out / session is dropped — state cleared
     svc.state.reset()
+    # Task 1.7: state.reset() lives on the Pydantic state model and can't
+    # reach the auth-status cache that lives on IBKRService. Production
+    # paths (gateway.py logout / reset-session / factory-reset) call both
+    # `state.reset()` AND `invalidate_auth_cache()` — mirror that here.
+    svc.invalidate_auth_cache()
     assert svc.state.accounts_fetched is False
     assert svc.state.accounts == []
     assert svc.state.selected_account is None
@@ -179,6 +193,11 @@ async def test_accounts_fetch_failure_does_not_block_auth(caplog):
         raise AssertionError(endpoint)
 
     svc._request = healthy_request  # type: ignore[method-assign]
+    # Task 1.7: drop the cache so the retry probe actually re-hits IBKR.
+    # In production this happens automatically via the tickle loop's
+    # invalidate-on-failure path (or via gateway-route reset hooks);
+    # here we trigger it manually to keep the test focused.
+    svc.invalidate_auth_cache()
     await svc.auth_status()
     assert ("GET", "/iserver/accounts") in healthy_calls
     assert svc.state.accounts_fetched is True
@@ -224,6 +243,7 @@ async def test_empty_accounts_response_leaves_unfetched_for_retry(caplog):
         raise AssertionError(endpoint)
 
     svc._request = healthy_request  # type: ignore[method-assign]
+    svc.invalidate_auth_cache()  # Task 1.7 — see comment in failure-path test
     await svc.auth_status()
     # Next probe re-fetches and now succeeds
     assert ("GET", "/iserver/accounts") in healthy_calls

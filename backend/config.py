@@ -52,6 +52,16 @@ SQLITE_DB_PATH = os.getenv("SQLITE_DB_PATH", "parallax.db")
 # Session keep-alive interval (seconds)
 IBKR_TICKLE_INTERVAL = int(os.getenv("IBKR_TICKLE_INTERVAL", "55"))
 
+# Auth-status cache TTL (Phase 8 / Task 1.7).
+# Multiple polling clocks (`/gateway/status` every 2s while not logged in,
+# `/auth/status` on app launch / after re-auth) all currently trigger an
+# IBKR `POST /iserver/auth/status`.  Cache the result for this many
+# seconds so all callers in a short window share one IBKR probe.
+# Default 5s — short enough that the user feels reactive after a manual
+# re-login, long enough to drop steady-state IBKR pressure from
+# ~12 POSTs/min to ~2/min.  Set to 0 to disable (always probe).
+AUTH_STATUS_TTL_SEC = float(os.getenv("PARALLAX_AUTH_STATUS_TTL_SEC", "5"))
+
 # Snapshot pre-flight delay (Phase 8 / Task 1.3).
 # IBKR's /iserver/marketdata/snapshot returns empty fields on the first
 # call for a fresh conid — the call itself is a "pre-flight" that primes

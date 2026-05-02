@@ -8,7 +8,6 @@ These endpoints let the frontend:
   - Get provisioning progress during downloads
 """
 
-import asyncio
 import logging
 
 from fastapi import APIRouter, Depends
@@ -22,12 +21,14 @@ log = logging.getLogger("parallax.routers.gateway")
 
 router = APIRouter(prefix="/gateway", tags=["gateway"])
 
-# ── B4: in-flight auth probe lock ────────────────────────────────────────────
-# The frontend polls /gateway/status every 2 s while needsLogin is true.
-# Each poll triggers ibkr.auth_status() → POST to the Gateway.
-# Under fast polling this can overlap.  A simple lock serialises probes so we
-# never fire two concurrent auth checks to the same Gateway endpoint.
-_auth_probe_lock = asyncio.Lock()
+# Note: the in-flight `_auth_probe_lock` that used to serialise concurrent
+# `/gateway/status` polls was removed in Phase 8 / Task 1.7.  The new
+# auth-status cache (TTL = AUTH_STATUS_TTL_SEC, default 5s) handles
+# concurrent polls inside `IBKRService.auth_status()`: the first caller in
+# a 5s window probes IBKR once, every other caller in that window receives
+# the cached payload immediately.  The single-flight asyncio.Lock inside
+# auth_status() additionally prevents two cold-cache concurrent callers
+# from both probing — strictly stronger than the old lock here.
 
 
 def _enrich_status(status: dict) -> dict:
@@ -68,44 +69,41 @@ async def gateway_status(
     auth_message = "Gateway not running."
 
     if status["running"]:
-        # B4: serialise concurrent polls — skip if a probe is already in flight
-        if _auth_probe_lock.locked():
-            # Return last known auth state from ibkr service state
-            authenticated = ibkr.state.authenticated
-            auth_message = "Checking auth status..."
-        else:
-            async with _auth_probe_lock:
-                try:
-                    auth = await ibkr.auth_status()
-                    authenticated = auth["authenticated"]
-                    auth_message = auth["message"]
+        # Task 1.7: auth_status() is now cached (AUTH_STATUS_TTL_SEC = 5s
+        # default).  Concurrent polls share one IBKR probe, and the single-
+        # flight lock inside auth_status() prevents the cold-cache
+        # double-probe that the old `_auth_probe_lock` here used to guard.
+        try:
+            auth = await ibkr.auth_status()
+            authenticated = auth["authenticated"]
+            auth_message = auth["message"]
 
-                    # B1: start tickle loop here too — not only from /auth/status.
-                    # This ensures the session stays alive regardless of which
-                    # endpoint the frontend uses to detect auth.
-                    if authenticated:
-                        await ibkr.start_tickle_loop()
-                        # Cold-start protocol (Phase 8 / Task 1.2):
-                        # /iserver/accounts must be called before snapshot
-                        # and order endpoints respond. auth_status() handles
-                        # this on the first transition; this call is the
-                        # safety net for any path where state was reset
-                        # mid-session before the probe.
-                        if not ibkr.state.accounts_fetched:
-                            try:
-                                await ibkr.ensure_accounts()
-                            except IBKRRequestError as exc:
-                                log.warning(
-                                    "ensure_accounts() failed at /gateway/status response: %s",
-                                    exc,
-                                )
-                except IBKRConnectionError as exc:
-                    # Gateway is running (port is up) but not yet ready to answer
-                    # auth probes — e.g. JVM still warming up. Return a clean status
-                    # instead of crashing the ASGI handler with a ReadTimeout.
-                    log.warning("Auth probe failed (Gateway not ready yet): %s", exc)
-                    authenticated = False
-                    auth_message = "Gateway starting up — auth check pending."
+            # B1: start tickle loop here too — not only from /auth/status.
+            # This ensures the session stays alive regardless of which
+            # endpoint the frontend uses to detect auth.
+            if authenticated:
+                await ibkr.start_tickle_loop()
+                # Cold-start protocol (Phase 8 / Task 1.2):
+                # /iserver/accounts must be called before snapshot
+                # and order endpoints respond. auth_status() handles
+                # this on the first transition; this call is the
+                # safety net for any path where state was reset
+                # mid-session before the probe.
+                if not ibkr.state.accounts_fetched:
+                    try:
+                        await ibkr.ensure_accounts()
+                    except IBKRRequestError as exc:
+                        log.warning(
+                            "ensure_accounts() failed at /gateway/status response: %s",
+                            exc,
+                        )
+        except IBKRConnectionError as exc:
+            # Gateway is running (port is up) but not yet ready to answer
+            # auth probes — e.g. JVM still warming up. Return a clean status
+            # instead of crashing the ASGI handler with a ReadTimeout.
+            log.warning("Auth probe failed (Gateway not ready yet): %s", exc)
+            authenticated = False
+            auth_message = "Gateway starting up — auth check pending."
 
     status["authenticated"] = authenticated
     status["auth_required"] = status["running"] and not authenticated
@@ -204,6 +202,11 @@ async def gateway_logout(
     await ibkr.stop_ibkr_websocket()
     result = await gw.logout()
     ibkr.state.reset()
+    # Task 1.7: drop cached "authenticated: True" so the very next
+    # /gateway/status poll re-probes IBKR and reflects the logged-out
+    # state immediately (otherwise the UI shows authenticated for up
+    # to AUTH_STATUS_TTL_SEC after this call returns).
+    ibkr.invalidate_auth_cache()
     status = _enrich_status(gw.status())
     status["reset"] = "logout"
     status["logout_response"] = result
@@ -234,6 +237,7 @@ async def gateway_reset_session(
     await ibkr.stop_ibkr_websocket()
     await gw.stop()
     ibkr.state.reset()
+    ibkr.invalidate_auth_cache()  # Task 1.7
     await gw.start()
     status = _enrich_status(gw.status())
     status["reset"] = "session"
@@ -259,6 +263,7 @@ async def gateway_factory_reset(
     await ibkr.stop_ibkr_websocket()
     await gw.stop()
     ibkr.state.reset()
+    ibkr.invalidate_auth_cache()  # Task 1.7
     removed = gw.clear_session_files()
     await gw.start()
     status = _enrich_status(gw.status())
