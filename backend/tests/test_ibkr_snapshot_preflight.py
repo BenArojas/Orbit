@@ -69,6 +69,15 @@ def _make_svc(preflight_delay_ms: int = 50):
         params = kwargs.get("params") or {}
         calls.append((method, endpoint, params.get("conids", "")))
         call_times.append(time.monotonic())
+        # Real-time yield so concurrent callers in coalescing tests
+        # actually have a chance to discover the in-flight future in
+        # the dict before it's popped. Real httpx calls always take
+        # measurable time on the wire; sleep(0) is too brief in some
+        # scheduler orderings. 5ms is long enough for all 5 awaiters
+        # in test_concurrent_first_time_callers_coalesce_pre_flight
+        # to converge on the same future, short enough that the test
+        # suite doesn't slow down meaningfully.
+        await asyncio.sleep(0.005)
         # Echo back a minimal valid snapshot row per requested conid.
         conids = [int(c) for c in str(params.get("conids", "")).split(",") if c]
         return [{"conid": c, "31": "100.00"} for c in conids]
@@ -131,29 +140,30 @@ async def test_warmed_conid_skips_pre_flight():
 @pytest.mark.asyncio
 async def test_concurrent_first_time_callers_coalesce_pre_flight():
     """5 concurrent snapshot([99]) calls -> 2 IBKR calls total
-    (1 pre-flight + 1 real). All 5 callers receive the same response."""
+    (1 pre-flight + 1 real bulk call). All 5 callers receive the same
+    response.
+
+    Originally written against Task 1.3 alone — at that point the
+    expectation was 6 calls (1 pre-flight + 5 real, since the real
+    bulk call wasn't coalesced). Task 1.6 added Layer 2 batch
+    coalescing on the real call, so identical-batch concurrent
+    callers now collapse to a single IBKR call there too. This test
+    was tightened to the post-1.6 expectation.
+    """
     svc, calls, _ = _make_svc(preflight_delay_ms=80)
     try:
         results = await asyncio.gather(*(svc.snapshot([99]) for _ in range(5)))
 
-        # Pre-flight is coalesced via per-conid lock; the real call runs once
-        # per snapshot() invocation. So we expect:
-        #   1 pre-flight (gated by lock) + 5 real calls (one per caller).
-        # That's 6 total — NOT 10 (which would be 5 cold pairs without
-        # coalescing). The plan says "2 IBKR calls total"; that wording
-        # treats the 5 callers as a single logical request. Our coalescing
-        # eliminates the duplicate pre-flights, which is the correctness
-        # criterion. Concurrent real calls are coalesced separately in
-        # Task 1.6 (snapshot coalescing).
-        preflights = [c for c in calls if c[2] == "99"]
-        # All preflights are for conid 99; first one is the pre-flight,
-        # subsequent ones are the per-caller real calls.
-        assert len(preflights) == 6, (
-            f"expected 1 pre-flight + 5 real = 6 calls; got {len(calls)}"
+        # 1 pre-flight (per-conid lock) + 1 real bulk call (Task 1.6
+        # batch future) = 2 IBKR calls for 5 concurrent identical
+        # batches.
+        assert len(calls) == 2, (
+            f"expected 1 pre-flight + 1 real (post-Task 1.6) = 2 calls; "
+            f"got {len(calls)}: {calls}"
         )
-        # Critically: no caller fired its OWN pre-flight after the first.
-        # Verify by checking warmed_conids was set after the first call
-        # and the subsequent callers saw it set.
+        for call in calls:
+            assert call[:2] == ("GET", "/iserver/marketdata/snapshot")
+            assert call[2] == "99"
         assert 99 in svc.state.warmed_conids
         # All 5 callers get the same response
         assert all(r == [{"conid": 99, "31": "100.00"}] for r in results)

@@ -73,6 +73,35 @@ class IBKRService:
         # callers (5 simultaneous get_conid("AAPL") -> one IBKR search,
         # not five). Same pattern as the snapshot pre-flight locks.
         self._conid_resolve_locks: dict[tuple[str, str], asyncio.Lock] = {}
+        # Phase 8 / Task 1.6: server-side request coalescing for hot
+        # market-data endpoints. When N concurrent callers ask for the
+        # same conid (or batch / history bar), only the first caller
+        # actually hits IBKR — the rest await a shared asyncio.Future
+        # and receive the same response. Self-cleaning: each future is
+        # popped from the dict in the request's `finally` block, so a
+        # subsequent call after the future resolves issues a fresh
+        # IBKR request (no stale pinning).
+        #
+        #   * batch  — keyed by (sorted-conid-tuple, fields). Coalesces
+        #              identical batch snapshots (e.g. two sector
+        #              panels asking for the same 11 ETF conids).
+        #   * single — keyed by (conid, fields). Coalesces single-conid
+        #              fetches via the new `get_snapshot()` wrapper
+        #              (Layer 1 of Task 1.6). Used by routes that
+        #              fetch one conid at a time.
+        #   * history — keyed by (conid, period, bar). Coalesces
+        #              concurrent history fetches that miss the
+        #              `@cached(ttl=300)` decorator (cold cache or
+        #              first call after expiry).
+        self._snapshot_batch_futures: dict[
+            tuple[tuple[int, ...], str], asyncio.Future
+        ] = {}
+        self._snapshot_single_futures: dict[
+            tuple[int, str], asyncio.Future
+        ] = {}
+        self._history_futures: dict[
+            tuple[int, str, str], asyncio.Future
+        ] = {}
 
     def set_db(self, db: Any) -> None:
         """Wire a DatabaseService for the SQLite conid cache.
@@ -700,6 +729,22 @@ class IBKRService:
                 )
             self.state.secdef_warmed.add(conid)
 
+    def _ensure_coalescing_dicts(self) -> None:
+        """Lazy-init the Task 1.6 coalescing dicts.
+
+        Existing tests build `IBKRService.__new__(IBKRService)` and set
+        only a handful of attributes. To avoid breaking every such test
+        fixture each time we add a new coalescing dict, we lazy-init
+        here at the entry point of every coalesced method. Cheap (3
+        `hasattr` checks per call) and keeps test surface minimal.
+        """
+        if not hasattr(self, "_snapshot_batch_futures"):
+            self._snapshot_batch_futures = {}
+        if not hasattr(self, "_snapshot_single_futures"):
+            self._snapshot_single_futures = {}
+        if not hasattr(self, "_history_futures"):
+            self._history_futures = {}
+
     async def _preflight_snapshot(self, conid: int, fields: str) -> None:
         """Run IBKR's documented "pre-flight" snapshot for a fresh conid.
 
@@ -801,13 +846,14 @@ class IBKRService:
             See backend/docs/ibkr_market_data_fields.md.
         """
         await self.ensure_accounts()
+        self._ensure_coalescing_dicts()
 
         # Cold-start protocol order (Phase 8):
         #   1. /iserver/secdef/search for non-STK conids whose asset_class
         #      is in _SECDEF_PREWARM_CLASSES (Task 1.4) — best-effort,
         #      failures don't block.
         #   2. /iserver/marketdata/snapshot pre-flight + sleep (Task 1.3).
-        #   3. Real bulk snapshot call.
+        #   3. Real bulk snapshot call (Task 1.6 coalesces this layer).
         # Each step is per-conid lock-coalesced, so concurrent snapshot()
         # callers for the same fresh conid only run one of each step.
         cold = [c for c in conids if c not in self.state.warmed_conids]
@@ -835,17 +881,126 @@ class IBKRService:
             )
 
         # Step 3: real bulk call after every cold conid has been warmed.
-        params = {
-            "conids": ",".join(str(c) for c in conids),
-            "fields": fields,
-        }
-        response = await self._request(
-            "GET", "/iserver/marketdata/snapshot", params=params
-        )
-        if not isinstance(response, list):
-            response = []
-        dump_if_first("marketdata_snapshot", response)
-        return response
+        # Task 1.6 — batch coalescing: when 5 concurrent callers ask for
+        # the *same* (sorted conids, fields) tuple, only the first fires
+        # the real /iserver/marketdata/snapshot request; the other 4
+        # await the shared asyncio.Future and receive the same list back.
+        # The future is popped in the `finally` block so the next call
+        # after it resolves issues a fresh IBKR request (no stale pin).
+        # Batches with different conid sets do NOT coalesce — that's the
+        # Layer 1 case handled by `get_snapshot()` (singular).
+        batch_key = (tuple(sorted(conids)), fields)
+        existing_fut = self._snapshot_batch_futures.get(batch_key)
+        if existing_fut is not None:
+            return await existing_fut
+
+        loop = asyncio.get_running_loop()
+        fut: asyncio.Future = loop.create_future()
+        self._snapshot_batch_futures[batch_key] = fut
+
+        try:
+            params = {
+                "conids": ",".join(str(c) for c in conids),
+                "fields": fields,
+            }
+            response = await self._request(
+                "GET", "/iserver/marketdata/snapshot", params=params
+            )
+            if not isinstance(response, list):
+                response = []
+            dump_if_first("marketdata_snapshot", response)
+            if not fut.done():
+                fut.set_result(response)
+            return response
+        except BaseException as exc:
+            # Propagate the exception to every awaiter, then let the
+            # finally block clear the dict entry so future callers
+            # retry fresh (no stale failure pinned).
+            if not fut.done():
+                fut.set_exception(exc)
+            raise
+        finally:
+            # Pop only if the dict still points at our future — defensive
+            # against any future swap-in scenarios. Suppresses the
+            # "Future exception was never retrieved" log if no other
+            # caller awaited a failed future.
+            current = self._snapshot_batch_futures.get(batch_key)
+            if current is fut:
+                self._snapshot_batch_futures.pop(batch_key, None)
+            if fut.done() and fut.exception() is not None:
+                # Touch the exception so asyncio doesn't log
+                # "Future exception was never retrieved" when no
+                # waiter joined this future.
+                try:
+                    fut.exception()
+                except (asyncio.InvalidStateError, asyncio.CancelledError):
+                    pass
+
+    async def get_snapshot(
+        self,
+        conid: int,
+        fields: str = DEFAULT_QUOTE_FIELDS_STR,
+    ) -> dict | None:
+        """Coalesce concurrent single-conid snapshot fetches (Phase 8 / Task 1.6, Layer 1).
+
+        Layer 1 (singular) of the request-coalescing pattern: when 10
+        callers each ask `get_snapshot(99)` simultaneously, only one of
+        them actually invokes the underlying `snapshot([99])` — the
+        others await a shared `asyncio.Future` keyed by `(conid, fields)`
+        and receive the same row. Useful for routes that fetch one conid
+        at a time (e.g. `/market/quote/:id`) where the dashboard mount
+        can hammer the same conid from MarketPulse + Watchlist + Trigger
+        within the same 200ms window.
+
+        Returns the row matching `conid` from the IBKR response, or
+        `None` if IBKR didn't include it (unusual — typically means a
+        bad conid or a still-cold derivative contract that even the
+        Task 1.4 secdef pre-warm couldn't rescue).
+
+        Note: the underlying `snapshot([conid], fields)` call goes
+        through Layer 2 batch coalescing too. So a single-conid future
+        + a batch-of-one future may both exist briefly, but in steady
+        state only one IBKR call leaves the box.
+        """
+        self._ensure_coalescing_dicts()
+        single_key = (conid, fields)
+        existing_fut = self._snapshot_single_futures.get(single_key)
+        if existing_fut is not None:
+            return await existing_fut
+
+        loop = asyncio.get_running_loop()
+        fut: asyncio.Future = loop.create_future()
+        self._snapshot_single_futures[single_key] = fut
+
+        try:
+            rows = await self.snapshot([conid], fields)
+            # IBKR responses sometimes lack `conid` on rows (early
+            # pre-flight returns) — tolerate by checking str/int.
+            match: dict | None = None
+            for row in rows:
+                row_conid = row.get("conid")
+                try:
+                    if row_conid is not None and int(row_conid) == conid:
+                        match = row
+                        break
+                except (TypeError, ValueError):
+                    continue
+            if not fut.done():
+                fut.set_result(match)
+            return match
+        except BaseException as exc:
+            if not fut.done():
+                fut.set_exception(exc)
+            raise
+        finally:
+            current = self._snapshot_single_futures.get(single_key)
+            if current is fut:
+                self._snapshot_single_futures.pop(single_key, None)
+            if fut.done() and fut.exception() is not None:
+                try:
+                    fut.exception()
+                except (asyncio.InvalidStateError, asyncio.CancelledError):
+                    pass
 
     @cached(ttl=300)
     async def history(
@@ -854,22 +1009,64 @@ class IBKRService:
         period: str = "1m",
         bar: str = "30min",
     ) -> dict:
-        """
-        Get historical OHLCV candle data.
+        """Get historical OHLCV candle data.
+
         Returns raw IBKR response with 'data' list of bars.
+
+        Phase 8 / Task 1.6 — request coalescing layered with `@cached`:
+
+          1. The outer `@cached(ttl=300)` decorator handles warm-cache
+             hits: the second call within 5 minutes returns instantly.
+          2. On cache MISS, the body below coalesces concurrent first
+             callers via a `(conid, period, bar)` future. 5 simultaneous
+             callers for the same fresh `(conid, "5d", "5min")` issue
+             ONE IBKR call; the other 4 await the shared future and
+             receive the same response.
+          3. The future is popped in the `finally` block so a fresh
+             call after it resolves issues a new request (no stale pin).
+
+        Failures propagate the same exception to every awaiter, but
+        the future is cleared so the next call retries fresh.
         """
         await self.ensure_accounts()
-        params = {
-            "conid": conid,
-            "period": period,
-            "bar": bar,
-            "outsideRth": "true",
-        }
-        result = await self._request(
-            "GET", "/iserver/marketdata/history", params=params
-        )
-        dump_if_first("marketdata_history", result)
-        return result
+        self._ensure_coalescing_dicts()
+
+        history_key = (conid, period, bar)
+        existing_fut = self._history_futures.get(history_key)
+        if existing_fut is not None:
+            return await existing_fut
+
+        loop = asyncio.get_running_loop()
+        fut: asyncio.Future = loop.create_future()
+        self._history_futures[history_key] = fut
+
+        try:
+            params = {
+                "conid": conid,
+                "period": period,
+                "bar": bar,
+                "outsideRth": "true",
+            }
+            result = await self._request(
+                "GET", "/iserver/marketdata/history", params=params
+            )
+            dump_if_first("marketdata_history", result)
+            if not fut.done():
+                fut.set_result(result)
+            return result
+        except BaseException as exc:
+            if not fut.done():
+                fut.set_exception(exc)
+            raise
+        finally:
+            current = self._history_futures.get(history_key)
+            if current is fut:
+                self._history_futures.pop(history_key, None)
+            if fut.done() and fut.exception() is not None:
+                try:
+                    fut.exception()
+                except (asyncio.InvalidStateError, asyncio.CancelledError):
+                    pass
 
     @cached(ttl=3600)
     async def contract_info(self, conid: int) -> dict:
