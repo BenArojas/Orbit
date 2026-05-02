@@ -455,7 +455,11 @@ class IBKRService:
         if not isinstance(search_results, list):
             raise SymbolNotFoundError(symbol)
 
-        candidates: list[tuple[tuple[int, int, int], int]] = []
+        # Track each candidate's chosen asset_class alongside its conid so
+        # we can populate state.conid_asset_class for the winner. The
+        # asset_class is the first preferred secType that matched (or, if
+        # no preferences matched, any secType the section reports).
+        candidates: list[tuple[tuple[int, int, int], int, str]] = []
         for item in search_results:
             if not isinstance(item, dict):
                 continue
@@ -468,22 +472,117 @@ class IBKRService:
                 continue
 
             sec_rank = len(preferred_sec_types)
+            chosen_class = ""
             for idx, preferred in enumerate(preferred_sec_types):
                 if preferred in item_sec_types:
                     sec_rank = idx
+                    chosen_class = preferred
                     break
+            if not chosen_class and item_sec_types:
+                # No preferred match — pick any reported secType so we
+                # still have an asset_class label for secdef pre-warm.
+                chosen_class = next(iter(item_sec_types))
 
             score = (
                 0 if item_symbol == symbol_upper else 1,
                 sec_rank,
                 _exchange_rank(item),
             )
-            candidates.append((score, conid))
+            candidates.append((score, conid, chosen_class))
 
         if not candidates:
             raise SymbolNotFoundError(symbol)
 
-        return min(candidates, key=lambda item: item[0])[1]
+        winner = min(candidates, key=lambda c: c[0])
+        chosen_conid = winner[1]
+        chosen_asset_class = winner[2]
+        # Phase 8 / Task 1.4: cache (symbol, asset_class) for the winning
+        # conid so snapshot()'s secdef pre-warm step has the data it needs
+        # to call /iserver/secdef/search?symbol=...&secType=... .
+        # Cleared by state.reset().
+        if chosen_asset_class:
+            self.state.conid_asset_class[chosen_conid] = (
+                symbol_upper,
+                chosen_asset_class.upper(),
+            )
+        return chosen_conid
+
+    # Asset classes that require /iserver/secdef/search before snapshot
+    # subscriptions succeed. The IBKR docs literally cover only "derivative
+    # contracts" (OPT/FOP/WAR/FUT in IBKR's vocabulary), but empirical
+    # observation shows CASH (forex), CRYPTO, IND, BOND, FUND also fail to
+    # populate snapshot fields without the warm-up. STK and ETF are the
+    # documented happy path and are excluded.
+    #
+    # Note: the /iserver/secdef/search doc lists only {STK, IND, BOND} as
+    # documented `secType` values. We pass the broader set anyway and
+    # rely on graceful failure handling in `_ensure_secdef` if IBKR
+    # rejects an undocumented value. See Phase 8 plan, Task 1.4 footnote.
+    _SECDEF_PREWARM_CLASSES: frozenset[str] = frozenset({
+        "CASH",   # forex
+        "FUT",    # futures
+        "OPT",    # options
+        "FOP",    # futures options
+        "WAR",    # warrants
+        "BOND",   # bonds
+        "FUND",   # mutual funds
+        "IND",    # indices (e.g. VIX)
+        "CRYPTO", # crypto pairs
+    })
+
+    async def _ensure_secdef(
+        self,
+        conid: int,
+        symbol: str,
+        asset_class: str,
+    ) -> None:
+        """Pre-warm IBKR's security-definition cache for a non-STK contract.
+
+        Per IBKR docs (Snapshot endpoint): "For derivative contracts the
+        endpoint /iserver/secdef/search must be called first."
+
+        Behavior:
+          - No-op if `asset_class` is STK/ETF/empty (documented happy path).
+          - No-op if `conid` is already in `state.secdef_warmed` — even if
+            the previous attempt 4xx'd, we don't retry every snapshot.
+          - Coalesces concurrent first-time callers via per-conid lock.
+          - On IBKRRequestError (e.g. 4xx for an undocumented secType
+            value), logs a warning and marks the conid warmed anyway so
+            the failure doesn't repeat. The downstream snapshot pre-flight
+            (Task 1.3) still runs — secdef-warm is best-effort.
+        """
+        if asset_class.upper() not in self._SECDEF_PREWARM_CLASSES:
+            return
+        if conid in self.state.secdef_warmed:
+            return
+
+        lock = self.state.secdef_locks.get(conid)
+        if lock is None:
+            lock = asyncio.Lock()
+            self.state.secdef_locks[conid] = lock
+
+        async with lock:
+            if conid in self.state.secdef_warmed:
+                return
+            try:
+                await self._request(
+                    "GET",
+                    "/iserver/secdef/search",
+                    params={
+                        "symbol": symbol,
+                        "secType": asset_class.upper(),
+                    },
+                )
+            except IBKRRequestError as exc:
+                # Undocumented secType values (CASH, CRYPTO, OPT, etc.)
+                # may be rejected by IBKR — log + carry on so the
+                # snapshot pre-flight still runs. Mark warmed to avoid
+                # retrying the same failing call on every snapshot.
+                log.warning(
+                    "secdef pre-warm failed for conid=%d symbol=%s class=%s: %s",
+                    conid, symbol, asset_class, exc,
+                )
+            self.state.secdef_warmed.add(conid)
 
     async def _preflight_snapshot(self, conid: int, fields: str) -> None:
         """Run IBKR's documented "pre-flight" snapshot for a fresh conid.
@@ -587,16 +686,39 @@ class IBKRService:
         """
         await self.ensure_accounts()
 
-        # Pre-flight every cold conid. Run in parallel (each cold conid is
-        # independent), but each pre-flight has its own per-conid lock so
-        # we still coalesce across concurrent snapshot() callers.
+        # Cold-start protocol order (Phase 8):
+        #   1. /iserver/secdef/search for non-STK conids whose asset_class
+        #      is in _SECDEF_PREWARM_CLASSES (Task 1.4) — best-effort,
+        #      failures don't block.
+        #   2. /iserver/marketdata/snapshot pre-flight + sleep (Task 1.3).
+        #   3. Real bulk snapshot call.
+        # Each step is per-conid lock-coalesced, so concurrent snapshot()
+        # callers for the same fresh conid only run one of each step.
         cold = [c for c in conids if c not in self.state.warmed_conids]
+
+        # Step 1: secdef pre-warm for any cold non-STK conid we have an
+        # asset_class for. Conids with no cached asset_class fall through
+        # (treated as STK / unknown — _ensure_secdef is a no-op for STK).
+        secdef_targets = []
+        for c in cold:
+            mapping = self.state.conid_asset_class.get(c)
+            if mapping is None:
+                continue
+            sym, cls = mapping
+            secdef_targets.append((c, sym, cls))
+        if secdef_targets:
+            await asyncio.gather(
+                *(self._ensure_secdef(c, sym, cls) for c, sym, cls in secdef_targets)
+            )
+
+        # Step 2: snapshot pre-flight for every cold conid (regardless of
+        # asset class). Runs in parallel; per-conid lock coalesces.
         if cold:
             await asyncio.gather(
                 *(self._preflight_snapshot(c, fields) for c in cold)
             )
 
-        # Real bulk call after every cold conid has been warmed.
+        # Step 3: real bulk call after every cold conid has been warmed.
         params = {
             "conids": ",".join(str(c) for c in conids),
             "fields": fields,

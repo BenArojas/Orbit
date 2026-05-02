@@ -162,7 +162,42 @@ diagnostic. Reference: this task's footnote + the removed
 - 5 concurrent first-time CASH callers issue exactly 1 `secdef/search`.
 - After `state.reset()`, secdef must be re-warmed.
 
-**Acceptance:** The conids 13455763 / 495759171 / 479624278 (and any other non-STK conids) stop appearing in the "Snapshot timed out for conids …" warnings.
+**Acceptance (revised 2026-04-30):** The original acceptance referenced
+the "Snapshot timed out for conids …" warning, but Task 1.3 already
+removed the entire poll loop that emitted those warnings. New acceptance:
+after this task ships, snapshots for non-STK conids return rows with
+populated price fields (e.g. `31` last price) on the first dashboard
+mount instead of the bare `[{conid: X, _updated: Y}]` empty rows we used
+to see for BTC / USD.ILS / VIX / futures. Verify by:
+
+1. Tail the backend log during a fresh dashboard mount with a CASH or
+   CRYPTO conid in the watchlist. You should see one
+   `GET /iserver/secdef/search?symbol=…&secType=…` line BEFORE the first
+   `/iserver/marketdata/snapshot` line for that conid.
+2. The bulk snapshot response for that conid contains field `31`
+   (and any other requested non-system fields), not just `_updated` /
+   `conidEx`.
+3. After `state.reset()` (logout), repeat — the secdef call must fire
+   again before the next snapshot.
+
+**Footnote — IBKR docs vs. plan's asset-class set (2026-04-30):** The
+IBKR Client Portal docs only literally list `{STK, IND, BOND}` as valid
+`secType` values for `/iserver/secdef/search`, and only describe the
+prerequisite for "derivative contracts" (conventionally OPT/FOP/WAR/FUT).
+The plan extends both: it pre-warms `{CASH, FUT, OPT, FOP, WAR, BOND,
+FUND, IND, CRYPTO}` and passes `secType=<class>` for all of them.
+Justification: the broader set is empirical — MoonMarket observed BTC /
+USD.ILS / VIX timing out without the warm-up — and IBKR's full asset-class
+enumeration (visible on the WebSocket `act` topic's `chartPeriods` field:
+STK/CFD/OPT/FOP/WAR/IOPT/FUT/CASH/IND/BOND/FUND/CMDTY/PHYSS/CRYPTO)
+suggests these strings are valid IBKR vocabulary even if they aren't
+documented on the search page. The implementation calls
+`/iserver/secdef/search?symbol=<sym>&secType=<class>` literally and
+catches `IBKRRequestError` (4xx) as a logged warning so an undocumented
+secType rejection never blocks the snapshot path. If telemetry shows
+specific classes always 4xx-ing, drop them from the prewarm set;
+`CMDTY` and `PHYSS` are not currently in the set and can be added if
+gold/silver conids show similar timeouts.
 
 ---
 

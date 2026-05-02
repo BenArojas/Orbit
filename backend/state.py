@@ -51,6 +51,20 @@ class IBKRState(BaseModel):
     warmed_conids: set[int] = Field(default_factory=set)
     preflight_locks: Any = Field(default_factory=dict)  # dict[int, asyncio.Lock]
 
+    # Secdef pre-warm bookkeeping (Phase 8 / Task 1.4).
+    # IBKR's snapshot doc states: "For derivative contracts the endpoint
+    # /iserver/secdef/search must be called first." We extend this to all
+    # non-STK/ETF asset classes empirically (BTC, USD.ILS, VIX historically
+    # time out without the warm-up). `conid_asset_class` is populated
+    # during `get_conid()` so we have the (symbol, asset_class) needed to
+    # call /iserver/secdef/search at snapshot time. `secdef_warmed` tracks
+    # conids we've already pre-warmed (success OR failure — we don't retry
+    # 4xx responses every snapshot). `secdef_locks` coalesces concurrent
+    # first-time callers. All three are wiped by `state.reset()`.
+    conid_asset_class: Any = Field(default_factory=dict)  # dict[int, tuple[str, str]]
+    secdef_warmed: set[int] = Field(default_factory=set)
+    secdef_locks: Any = Field(default_factory=dict)  # dict[int, asyncio.Lock]
+
     # Lifecycle
     shutdown_event: asyncio.Event = Field(default_factory=asyncio.Event)
 
@@ -71,3 +85,6 @@ class IBKRState(BaseModel):
         self.selected_account = None
         self.warmed_conids.clear()
         self.preflight_locks.clear()
+        self.conid_asset_class.clear()
+        self.secdef_warmed.clear()
+        self.secdef_locks.clear()

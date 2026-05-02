@@ -22,11 +22,16 @@ import pytest
 
 from exceptions import SymbolNotFoundError
 from services.ibkr import IBKRService
+from state import IBKRState
 
 
 def _make_service(search_side_effect) -> IBKRService:
     """Build a bare IBKRService with a mocked search() method."""
     svc = IBKRService.__new__(IBKRService)  # bypass __init__
+    # Phase 8 / Task 1.4: get_conid() now writes (symbol, asset_class) to
+    # state.conid_asset_class so snapshot() can pre-warm secdef. Tests
+    # that exercise get_conid need a real state object.
+    svc.state = IBKRState()
     svc.ensure_accounts = AsyncMock(return_value=None)
     svc.search = AsyncMock(side_effect=search_side_effect)
     # Bypass the @cached TTL wrapper so the same svc can run many scenarios.
