@@ -186,6 +186,52 @@ async def test_accounts_fetch_failure_does_not_block_auth(caplog):
 
 
 @pytest.mark.asyncio
+async def test_empty_accounts_response_leaves_unfetched_for_retry(caplog):
+    """IBKR sometimes returns 200 OK with `accounts: []` when the
+    brokerage session has just authenticated but the account list
+    isn't attached yet. Don't pin a permanent empty cache —
+    accounts_fetched stays False so the next auth probe retries."""
+    svc, calls = _make_ibkr(
+        accounts_payload={"accounts": [], "selectedAccount": "DU1234567"},
+    )
+
+    with caplog.at_level("WARNING", logger="parallax.ibkr"):
+        result = await svc.auth_status()
+
+    # Auth itself succeeded
+    assert result["authenticated"] is True
+    assert svc.state.authenticated is True
+    # But accounts cache stays empty AND unfetched
+    assert svc.state.accounts == []
+    assert svc.state.accounts_fetched is False, (
+        "empty accounts response must NOT mark fetched=True (would block retry)"
+    )
+    # A warning was emitted
+    assert any(
+        "empty list" in rec.getMessage().lower()
+        for rec in caplog.records
+    ), "expected a warning log mentioning the empty list"
+
+    # Simulate IBKR's session attaching: now /iserver/accounts has data.
+    healthy_calls: list[tuple[str, str]] = []
+
+    async def healthy_request(method: str, endpoint: str, **kwargs):
+        healthy_calls.append((method, endpoint))
+        if endpoint == "/iserver/auth/status":
+            return {"authenticated": True, "connected": True, "message": "ok"}
+        if endpoint == "/iserver/accounts":
+            return {"accounts": ["DU1234567"], "selectedAccount": "DU1234567"}
+        raise AssertionError(endpoint)
+
+    svc._request = healthy_request  # type: ignore[method-assign]
+    await svc.auth_status()
+    # Next probe re-fetches and now succeeds
+    assert ("GET", "/iserver/accounts") in healthy_calls
+    assert svc.state.accounts_fetched is True
+    assert svc.state.accounts == ["DU1234567"]
+
+
+@pytest.mark.asyncio
 async def test_unauthenticated_response_does_not_call_accounts():
     """If the auth probe says not authenticated, /iserver/accounts is skipped."""
     svc, calls = _make_ibkr(
