@@ -242,6 +242,38 @@ class DatabaseService:
                 cached_at      TEXT DEFAULT (datetime('now'))
             );
 
+            -- ─── Conid Cache (Phase 8 / Task 1.5) ──────────────────
+            -- Lookup-direction cache for conid resolution. The
+            -- `instruments` table above is a result-direction cache
+            -- (PK=conid, used when you have a conid and want metadata).
+            -- This table inverts that: PK=(symbol, sec_type), used when
+            -- you have a symbol and want the conid.
+            --
+            -- TTL is forever — IBKR conids are stable across sessions.
+            -- Force-refresh is available via IBKRService.get_conid(
+            -- force_refresh=True) for the rare case where IBKR re-issues
+            -- a conid (e.g. after a corporate action).
+            --
+            -- `sec_type` is the INPUT secType hint passed to the
+            -- resolver (may be empty string for "no hint"). `asset_class`
+            -- is the OUTPUT — IBKR's reported secType for the winning
+            -- match (STK / IND / CASH / CRYPTO / etc.). They differ when
+            -- the user provides no hint and IBKR resolves to a specific
+            -- class, e.g. ("BTC", "") → asset_class="CRYPTO".
+            --
+            -- `resolved_at` is a Unix-epoch integer for cheap "how stale
+            -- is this row" checks; comparable across SQLite versions
+            -- without timezone juggling.
+            CREATE TABLE IF NOT EXISTS conid_cache (
+                symbol         TEXT NOT NULL,
+                sec_type       TEXT NOT NULL DEFAULT '',
+                conid          INTEGER NOT NULL,
+                asset_class    TEXT NOT NULL DEFAULT '',
+                name           TEXT NOT NULL DEFAULT '',
+                resolved_at    INTEGER NOT NULL,
+                PRIMARY KEY (symbol, sec_type)
+            );
+
             -- ─── Indexes ───────────────────────────────────────────
             -- Indexes are like a book's table of contents — they help
             -- the database find things faster without reading every row.
@@ -855,6 +887,62 @@ class DatabaseService:
                ORDER BY symbol LIMIT 20""",
             (pattern, pattern),
         )
+
+    # ── Conid Cache CRUD (Phase 8 / Task 1.5) ─────────────────
+    # Lookup-direction cache: (symbol, sec_type) → conid. Conid mappings
+    # are stable across IBKR sessions, so the TTL is effectively forever.
+    # IBKRService.get_conid() reads here first; on miss, hits IBKR and
+    # writes via upsert_cached_conid. force_refresh bypasses the read.
+
+    async def get_cached_conid(
+        self, symbol: str, sec_type: str = ""
+    ) -> dict | None:
+        """Look up a previously-resolved conid by (symbol, sec_type).
+
+        Returns the row as a dict (`conid`, `asset_class`, `name`,
+        `resolved_at`) or None on miss. Both lookup keys are uppercased
+        on the way in so the cache is case-insensitive on symbol but
+        preserves the exact stored sec_type hint string.
+        """
+        return await asyncio.to_thread(
+            self._fetchone,
+            "SELECT * FROM conid_cache WHERE symbol = ? AND sec_type = ?",
+            (symbol.upper(), sec_type.upper()),
+        )
+
+    async def upsert_cached_conid(
+        self,
+        symbol: str,
+        sec_type: str,
+        conid: int,
+        asset_class: str = "",
+        name: str = "",
+    ) -> None:
+        """Cache a resolved conid keyed by (symbol, sec_type).
+
+        Idempotent: if the same (symbol, sec_type) is resolved again
+        (e.g. force_refresh), the existing row is updated in place and
+        `resolved_at` is bumped to now. Conids are stable across IBKR
+        sessions, so under normal use the conid value never changes —
+        only the timestamp does.
+        """
+        def _upsert() -> None:
+            now = int(datetime.now(timezone.utc).timestamp())
+            self._execute(
+                """INSERT INTO conid_cache
+                       (symbol, sec_type, conid, asset_class, name, resolved_at)
+                   VALUES (?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(symbol, sec_type) DO UPDATE SET
+                       conid = excluded.conid,
+                       asset_class = excluded.asset_class,
+                       name = excluded.name,
+                       resolved_at = excluded.resolved_at""",
+                (symbol.upper(), sec_type.upper(), conid, asset_class, name, now),
+            )
+            assert self._conn is not None
+            self._conn.commit()
+
+        await asyncio.to_thread(_upsert)
 
     # ── Locked Fibonacci CRUD ─────────────────────────────────
 

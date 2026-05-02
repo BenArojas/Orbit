@@ -83,6 +83,10 @@ async def lifespan(app: FastAPI):
     await db.seed_defaults()
     app.state.db = db
 
+    # Phase 8 / Task 1.5: wire the SQLite conid cache into IBKRService.
+    # Must come AFTER db.initialize() so the conid_cache table exists.
+    ibkr.set_db(db)
+
     # Create the sector service singleton (Step 3.3–3.4)
     # Must be a singleton so the conid cache persists across requests
     app.state.sectors = SectorService(ibkr)

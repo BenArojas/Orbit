@@ -59,6 +59,9 @@ def _make_svc(
     svc.http = MagicMock()
     svc._tickle_task = None
     svc._ws_task = None
+    # Phase 8 / Task 1.5: get_conid uses these.
+    svc.db = None
+    svc._conid_resolve_locks = {}
 
     async def _noop_accounts():
         return None

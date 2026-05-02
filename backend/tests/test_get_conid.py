@@ -32,10 +32,14 @@ def _make_service(search_side_effect) -> IBKRService:
     # state.conid_asset_class so snapshot() can pre-warm secdef. Tests
     # that exercise get_conid need a real state object.
     svc.state = IBKRState()
+    # Phase 8 / Task 1.5: get_conid() now reads/writes a SQLite conid
+    # cache and uses a per-key asyncio.Lock to coalesce concurrent
+    # callers. Tests don't wire a DB (svc.db = None disables caching),
+    # but the lock dict still needs to exist.
+    svc.db = None
+    svc._conid_resolve_locks = {}
     svc.ensure_accounts = AsyncMock(return_value=None)
     svc.search = AsyncMock(side_effect=search_side_effect)
-    # Bypass the @cached TTL wrapper so the same svc can run many scenarios.
-    svc.get_conid = IBKRService.get_conid.__wrapped__.__get__(svc)
     return svc
 
 

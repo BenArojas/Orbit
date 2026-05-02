@@ -63,6 +63,25 @@ class IBKRService:
         )
         self._tickle_task: asyncio.Task | None = None
         self._ws_task: asyncio.Task | None = None
+        # Phase 8 / Task 1.5: optional SQLite cache for conid resolution.
+        # Wired by main.py lifespan via set_db() after both services are
+        # constructed. None when not wired — get_conid() degrades to the
+        # current "always hit IBKR" path so tests that build a bare
+        # IBKRService.__new__(IBKRService) don't break.
+        self.db: Any = None
+        # Per-(symbol, sec_type) lock to coalesce concurrent first-time
+        # callers (5 simultaneous get_conid("AAPL") -> one IBKR search,
+        # not five). Same pattern as the snapshot pre-flight locks.
+        self._conid_resolve_locks: dict[tuple[str, str], asyncio.Lock] = {}
+
+    def set_db(self, db: Any) -> None:
+        """Wire a DatabaseService for the SQLite conid cache.
+
+        Called by main.py lifespan after `db.initialize()`. Service
+        keeps working without it (cache is opt-in). `Any` typed to
+        avoid a circular import with services.db.
+        """
+        self.db = db
 
     # ── Core HTTP helper ─────────────────────────────────────
 
@@ -358,8 +377,12 @@ class IBKRService:
             params["secType"] = sec_type
         return await self._request("GET", "/iserver/secdef/search", params=params)
 
-    @cached(ttl=3600)
-    async def get_conid(self, symbol: str, sec_type: str = "") -> int:
+    async def get_conid(
+        self,
+        symbol: str,
+        sec_type: str = "",
+        force_refresh: bool = False,
+    ) -> int:
         """
         Resolve a ticker symbol to an IBKR conid.
         Raises SymbolNotFoundError if not found.
@@ -372,8 +395,83 @@ class IBKRService:
                     the Hong Kong Gold Futures contract (marked IND).
                     Must be one of IBKR's searchable secTypes ("STK",
                     "IND", "BOND") or "" to apply no filter.
+          force_refresh: When True, bypass the SQLite conid cache and
+                    re-resolve from IBKR (still writes the result back
+                    so the next call uses the fresh value). Intended for
+                    one-off scripts / admin endpoints — production code
+                    should never set this.
 
-        Implementation notes:
+        Phase 8 / Task 1.5: results are persisted in SQLite via
+        `db.upsert_cached_conid` so a fresh app start pays ~1ms instead
+        of the 10–13s IBKR resolution cost. Concurrent first-time
+        callers for the same (symbol, sec_type) coalesce on a per-key
+        asyncio.Lock so only one IBKR search runs.
+        """
+        symbol_upper = symbol.upper()
+        sec_type_upper = sec_type.upper()
+
+        def _populate_state(conid: int, asset_class: str) -> None:
+            """Mirror cached/resolved (symbol, asset_class) into state so
+            the snapshot pre-warm path (Task 1.4) has it without a DB
+            round-trip on every snapshot."""
+            if asset_class:
+                self.state.conid_asset_class[conid] = (
+                    symbol_upper,
+                    asset_class.upper(),
+                )
+
+        # Fast path: SQLite cache hit, no lock needed.
+        if not force_refresh and self.db is not None:
+            cached = await self.db.get_cached_conid(symbol_upper, sec_type_upper)
+            if cached:
+                conid = int(cached["conid"])
+                _populate_state(conid, cached["asset_class"] or "")
+                return conid
+
+        # Coalesce concurrent first-time callers on a per-key lock so 5
+        # simultaneous get_conid("AAPL") -> 1 IBKR search, not 5.
+        key = (symbol_upper, sec_type_upper)
+        lock = self._conid_resolve_locks.get(key)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._conid_resolve_locks[key] = lock
+
+        async with lock:
+            # Re-check inside the lock — another caller may have just
+            # resolved this same (symbol, sec_type).
+            if not force_refresh and self.db is not None:
+                cached = await self.db.get_cached_conid(symbol_upper, sec_type_upper)
+                if cached:
+                    conid = int(cached["conid"])
+                    _populate_state(conid, cached["asset_class"] or "")
+                    return conid
+
+            conid, asset_class = await self._resolve_conid_from_ibkr(
+                symbol, sec_type
+            )
+
+            # Write SQLite cache so the next session skips IBKR entirely.
+            if self.db is not None:
+                await self.db.upsert_cached_conid(
+                    symbol=symbol_upper,
+                    sec_type=sec_type_upper,
+                    conid=conid,
+                    asset_class=asset_class,
+                )
+
+            _populate_state(conid, asset_class)
+            return conid
+
+    async def _resolve_conid_from_ibkr(
+        self, symbol: str, sec_type: str = ""
+    ) -> tuple[int, str]:
+        """
+        Phase 8 / Task 1.5: extracted from the original `get_conid` body.
+        Always hits IBKR (no caching) and returns the chosen
+        (conid, asset_class). The public `get_conid` wraps this with a
+        SQLite cache + per-key lock-coalescing layer.
+
+        Implementation notes (unchanged from prior get_conid):
           - IBKR search responses are mixed: dict rows, bare strings, and
             sometimes error envelopes. We only consider dict candidates
             with a valid top-level conid.
@@ -495,17 +593,10 @@ class IBKRService:
 
         winner = min(candidates, key=lambda c: c[0])
         chosen_conid = winner[1]
-        chosen_asset_class = winner[2]
-        # Phase 8 / Task 1.4: cache (symbol, asset_class) for the winning
-        # conid so snapshot()'s secdef pre-warm step has the data it needs
-        # to call /iserver/secdef/search?symbol=...&secType=... .
-        # Cleared by state.reset().
-        if chosen_asset_class:
-            self.state.conid_asset_class[chosen_conid] = (
-                symbol_upper,
-                chosen_asset_class.upper(),
-            )
-        return chosen_conid
+        chosen_asset_class = (winner[2] or "").upper()
+        # State and SQLite cache population happens in the public
+        # `get_conid` wrapper — this helper only resolves and returns.
+        return chosen_conid, chosen_asset_class
 
     # Asset classes that require /iserver/secdef/search before snapshot
     # subscriptions succeed. The IBKR docs literally cover only "derivative
