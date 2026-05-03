@@ -1811,7 +1811,20 @@ class IBKRService:
                     # Start heartbeat
                     heartbeat_task = asyncio.create_task(self._ws_heartbeat())
 
-                    # Re-subscribe to any active subscriptions after reconnect
+                    # Phase 8 / Task 2.5: subscribe to the IBKR system sts topic
+                    # so we receive auth-state push notifications without polling.
+                    # IBKR Client Portal WebSocket API reference:
+                    #   https://www.interactivebrokers.com/api/doc.html#tag/Streaming/paths/~1ws/get
+                    # The "smd+system" prefix routes to system topics; "+{}" is
+                    # the filter object.  "sts" selects the Session Token Status
+                    # feed which fires on every auth-state change (login, logout,
+                    # competing session).
+                    await ws.send('smd+system+{"sts":"+"}')
+                    log.info("Subscribed to IBKR system sts topic.")
+
+                    # Re-subscribe to any active market-data subscriptions after
+                    # reconnect (sts subscription must come first so we catch any
+                    # auth change that occurs before market-data is established).
                     for conid in list(self.state.ws_subscriptions):
                         fields_json = json.dumps({"fields": LIVE_STREAM_FIELDS})
                         await ws.send(f"smd+{conid}+{fields_json}")
@@ -1860,12 +1873,92 @@ class IBKRService:
                     continue
                 topic = msg.get("topic", "")
 
+                # Auth-state push from IBKR (Task 2.5)
+                if topic == "sts":
+                    await self._handle_sts_message(msg)
+
                 # Market data update (smd+{conid})
-                if topic.startswith("smd+"):
+                elif topic.startswith("smd+"):
                     await self._dispatch_market_data(msg)
 
         except (json.JSONDecodeError, UnicodeDecodeError):
             pass  # Heartbeat or malformed message — safe to ignore
+
+    async def _handle_sts_message(self, msg: dict) -> None:
+        """Handle IBKR 'sts' (Session Token Status) system topic messages.
+
+        Phase 8 / Task 2.5 — auth-state push over WebSocket.
+
+        IBKR pushes these whenever auth state changes, e.g. the user logs out
+        from the Gateway UI, a competing session takes over, or a fresh login
+        succeeds.  Processing this here lets the frontend react within ~1s
+        instead of waiting for the next polling cycle.
+
+        Message shape (IBKR Client Portal WebSocket API):
+            {"topic": "sts", "args": {"authenticated": bool, ...}}
+        Some Gateway builds put the fields at the top level:
+            {"topic": "sts", "authenticated": bool}
+        We accept both forms so the code degrades gracefully if IBKR changes
+        the exact envelope in a future release.
+
+        Side effects:
+          * state.authenticated updated.
+          * On True → False: state.session_dropped set; auth cache invalidated
+            so the next /gateway/status or /health/details poll re-probes IBKR.
+          * On False → True: state.session_dropped cleared; auth cache
+            invalidated so the fresh auth is confirmed by a real probe.
+          * Broadcasts {"type": "auth_state", ...} to all connected frontend
+            WebSocket clients.
+        """
+        # Accept both {"args": {"authenticated": ...}} and {"authenticated": ...}
+        args = msg.get("args") or msg
+        authenticated = args.get("authenticated")
+
+        if authenticated is None:
+            log.debug(
+                "_handle_sts_message: 'authenticated' field missing; "
+                "ignoring message: %s",
+                msg,
+            )
+            return
+
+        authenticated = bool(authenticated)
+        was_authenticated = self.state.authenticated
+        self.state.authenticated = authenticated
+
+        if was_authenticated and not authenticated:
+            # Auth flip True → False: declare session dropped, bust the cache.
+            if not self.state.session_dropped:
+                self.state.session_dropped = True
+                log.warning(
+                    "IBKR sts push: session became unauthenticated "
+                    "— declaring session_dropped."
+                )
+            self.invalidate_auth_cache()
+
+        elif not was_authenticated and authenticated:
+            # Auth flip False → True: clear session_dropped, bust the cache so
+            # the next probe confirms the fresh auth rather than serving a stale
+            # "not authenticated" response.
+            self.state.session_dropped = False
+            self.invalidate_auth_cache()
+            log.info("IBKR sts push: session re-authenticated.")
+
+        log.info(
+            "IBKR sts: authenticated=%s session_dropped=%s",
+            self.state.authenticated,
+            self.state.session_dropped,
+        )
+
+        if hasattr(self, "_broadcast") and self._broadcast:
+            try:
+                await self._broadcast({
+                    "type": "auth_state",
+                    "authenticated": self.state.authenticated,
+                    "session_dropped": self.state.session_dropped,
+                })
+            except (OSError, ConnectionError) as exc:
+                log.warning("Failed to broadcast auth_state: %s", exc)
 
     async def _dispatch_market_data(self, msg: dict) -> None:
         """
