@@ -250,4 +250,46 @@ describe("MarketPulse — Task 3.1 bundled endpoints", () => {
     expect(api.quotesBundled).not.toHaveBeenCalled();
     expect(api.candlesBundled).not.toHaveBeenCalled();
   });
+
+  // ── Task 3.3: candles deferred until quotes settle ──────────
+
+  it("Task 3.3: candles query does not fire while quotes are still loading", async () => {
+    // Quotes hang — simulates a slow IBKR snapshot response on cold start.
+    (api.quotesBundled as ReturnType<typeof vi.fn>).mockImplementation(
+      () => new Promise(() => {}), // never resolves
+    );
+
+    const qc = freshClient();
+    renderPulse(qc);
+
+    // Wait for conid resolution to complete (fast — mocked to resolve immediately).
+    await waitFor(() => {
+      expect(api.quotesBundled).toHaveBeenCalledTimes(1);
+    });
+
+    // Quotes are pending (quotesData == null) → candles must still be disabled.
+    expect(api.candlesBundled).not.toHaveBeenCalled();
+  });
+
+  it("Task 3.3: candles query fires only after the first quotes response arrives", async () => {
+    const qc = freshClient();
+    renderPulse(qc);
+
+    // Quotes resolve first.
+    await waitFor(() => {
+      expect(api.quotesBundled).toHaveBeenCalledTimes(1);
+    });
+
+    // Candles must now fire (quotesData != null → enabled=true).
+    await waitFor(() => {
+      expect(api.candlesBundled).toHaveBeenCalledTimes(1);
+    });
+
+    // Verify the call order: quotes before candles.
+    const quoteOrder = (api.quotesBundled as ReturnType<typeof vi.fn>).mock
+      .invocationCallOrder[0];
+    const candleOrder = (api.candlesBundled as ReturnType<typeof vi.fn>).mock
+      .invocationCallOrder[0];
+    expect(quoteOrder).toBeLessThan(candleOrder);
+  });
 });

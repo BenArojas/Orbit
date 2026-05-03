@@ -223,10 +223,15 @@ export default function MarketPulse() {
   });
 
   // ── Step 3: one bundled candle fetch for the whole bar ──────
+  //
+  // Phase 8 / Task 3.3 — defer candles until quotes have settled.
+  // Quotes paint the bar first; candles (sparklines) fetch only after the
+  // first quote response arrives. This removes one tier of contention
+  // during cold start — the two expensive IBKR fan-outs no longer race.
   const { data: candlesData } = useQuery({
     queryKey: ["candles-bundled", sortedConidsKey, "5D"],
     queryFn: () => api.candlesBundled(knownConids, "5D"),
-    enabled: gate && allResolved,
+    enabled: gate && allResolved && quotesData != null,
     // Candles are daily bars — 60s stale time matches the old per-ticker value.
     staleTime: 60_000,
   });
