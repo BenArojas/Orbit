@@ -8,14 +8,22 @@
  * useGateway's own interval finished firing, which is the lag the user
  * saw on startup.
  *
- * Polling cadence (matches HealthStrip):
- *   - 2 s while provisioning, waiting for login, or we have no status yet
- *   - 10 s once the gateway is running + authenticated (steady state)
+ * Polling cadence (Phase 8 / Task 3.7):
+ *   - false  when the tab is hidden (Page Visibility API — no point
+ *            polling a tab the user isn't looking at)
+ *   - 2 s    while provisioning, cold start, or no status yet
+ *   - 3 s    when the gateway is up but waiting for IBKR login
+ *            (keeps the login-success feedback responsive)
+ *   - 60 s   once fully authenticated (steady-state heartbeat only —
+ *            real auth changes are pushed via WS `auth_state` topic,
+ *            Task 2.5)
  *
- * Immediate refetches are triggered by the WebSocket `session_dropped`
- * event via IbkrReconnectBanner; gateway action mutations (provision,
- * start, stop, reset-session, factory-reset) write their response
- * directly into the cache.
+ * Immediate refetches are triggered by:
+ *   - WebSocket `session_dropped` event via IbkrReconnectBanner
+ *   - WebSocket `auth_state` push → GatewayContext writes cache directly
+ *   - Gateway action mutations (provision/start/stop/reset-session/
+ *     factory-reset) write their response directly into the cache
+ *   - Visibility flip hidden→visible (refetchOnWindowFocus)
  */
 
 import { useCallback } from "react";
@@ -49,12 +57,13 @@ const IBKR_QUERY_PREFIXES: ReadonlyArray<string> = [
   "screener-all-scan-types",
 ];
 
-// Poll cadence — mirror HealthStrip so both widgets update in lockstep.
-const FAST_POLL_MS = 2_000;
-const SLOW_POLL_MS = 10_000;
-// staleTime slightly below SLOW_POLL_MS so background refetches fire without
-// forcing a redundant refetch on component remount.
-const STALE_TIME_MS = 8_000;
+// Poll cadences — Phase 8 / Task 3.7
+const COLD_POLL_MS      = 2_000;   // no data yet / provisioning
+const PRELOGIN_POLL_MS  = 3_000;   // gateway up, waiting for IBKR login
+const STEADY_POLL_MS    = 60_000;  // fully authenticated (WS drives changes)
+// staleTime slightly below the slowest cadence so background refetches fire
+// without forcing a redundant refetch on component remount.
+const STALE_TIME_MS = 55_000;
 
 const GATEWAY_QUERY_KEY = ["gateway-status"] as const;
 
@@ -114,14 +123,38 @@ interface UseGatewayReturn {
   refetch: () => Promise<void>;
 }
 
-function computeRefetchInterval(data: GatewayStatusResponse | undefined): number {
-  // No data yet = cold start — poll fast so the UI catches up the moment
-  // the backend comes online.
-  if (!data) return FAST_POLL_MS;
-  const provisioning = PROVISIONING_STATES.includes(data.state);
-  const needsLogin = data.auth_required ?? false;
-  return provisioning || needsLogin ? FAST_POLL_MS : SLOW_POLL_MS;
+/**
+ * Returns the refetch interval for the gateway-status query, or `false` to
+ * pause polling entirely.
+ *
+ * Priority (highest first):
+ *   1. Tab hidden → pause (Page Visibility API).  No point hitting the
+ *      backend for a tab the user isn't looking at; TanStack's
+ *      refetchOnWindowFocus will fire one immediate fetch when the tab
+ *      comes back into view.
+ *   2. Cold start / provisioning → 2 s fast poll.
+ *   3. Waiting for IBKR login → 3 s (snappy login-success feedback).
+ *   4. Fully authenticated → 60 s heartbeat only; WS auth_state push
+ *      (Task 2.5) drives real-time auth changes.
+ */
+function computeRefetchInterval(
+  data: GatewayStatusResponse | undefined,
+): number | false {
+  // Pause while the tab is hidden — resume on visibility restore.
+  if (typeof document !== "undefined" && document.visibilityState === "hidden") {
+    return false;
+  }
+  if (!data) return COLD_POLL_MS;
+  if (PROVISIONING_STATES.includes(data.state)) return COLD_POLL_MS;
+  if (data.auth_required ?? false) return PRELOGIN_POLL_MS;
+  if (data.authenticated) return STEADY_POLL_MS;
+  // Gateway running but not authenticated and no login required
+  // (e.g. transitioning states) — keep fast poll.
+  return COLD_POLL_MS;
 }
+
+/** @internal Exported for unit testing only. */
+export { computeRefetchInterval as __computeRefetchIntervalForTests };
 
 export function useGateway(): UseGatewayReturn {
   const queryClient = useQueryClient();
@@ -131,6 +164,10 @@ export function useGateway(): UseGatewayReturn {
     queryFn: api.gatewayStatus,
     refetchInterval: (q) => computeRefetchInterval(q.state.data),
     staleTime: STALE_TIME_MS,
+    // When the user switches back to the tab, fire one immediate refetch so
+    // the UI reflects any auth change that happened while it was hidden.
+    // This pairs with the visibility-pause in computeRefetchInterval.
+    refetchOnWindowFocus: true,
     // One retry at 1.5 s covers a transient backend blip on cold start
     // without a rapid burst.  The 2 s fast-poll cadence takes over after
     // that, so extra retries only add noise without shortening perceived

@@ -239,6 +239,72 @@ describe("useGateway feedback — toasts + IBKR cache invalidation", () => {
   });
 });
 
+// ── Task 3.7 — polling cadences + visibility-aware polling ──────────────────
+//
+// computeRefetchInterval is exported as __computeRefetchIntervalForTests so
+// we can drive it directly without needing to wire up real browser timers or
+// await actual refetch cycles.  The tests here match the five scenarios from
+// the plan acceptance criteria.
+
+import { __computeRefetchIntervalForTests as computeRefetchInterval } from "@/hooks/useGateway";
+
+const RUNNING_AUTH: GatewayStatusResponse = {
+  ...RUNNING,
+  authenticated: true,
+  auth_required: false,
+};
+
+const NEEDS_LOGIN: GatewayStatusResponse = {
+  ...RUNNING,
+  authenticated: false,
+  auth_required: true,
+};
+
+const PROVISIONING: GatewayStatusResponse = {
+  ...RUNNING,
+  state: "starting" as GatewayStatusResponse["state"],
+  authenticated: false,
+  auth_required: false,
+};
+
+describe("useGateway — Task 3.7 polling cadences", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("authenticated + visible → 60 s interval", () => {
+    vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
+    expect(computeRefetchInterval(RUNNING_AUTH)).toBe(60_000);
+  });
+
+  it("authenticated + hidden → false (polling paused)", () => {
+    vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
+    expect(computeRefetchInterval(RUNNING_AUTH)).toBe(false);
+  });
+
+  it("pre-login (auth_required) + visible → 3 s interval", () => {
+    vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
+    expect(computeRefetchInterval(NEEDS_LOGIN)).toBe(3_000);
+  });
+
+  it("provisioning + visible → 2 s fast poll", () => {
+    vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
+    expect(computeRefetchInterval(PROVISIONING)).toBe(2_000);
+  });
+
+  it("no data (cold start) + visible → 2 s fast poll", () => {
+    vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
+    expect(computeRefetchInterval(undefined)).toBe(2_000);
+  });
+
+  it("hidden overrides all states — always returns false when hidden", () => {
+    vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
+    expect(computeRefetchInterval(undefined)).toBe(false);
+    expect(computeRefetchInterval(NEEDS_LOGIN)).toBe(false);
+    expect(computeRefetchInterval(PROVISIONING)).toBe(false);
+  });
+});
+
 // ── Task 3.6 — gateway-status retry config ─────────────────────────────────
 //
 // Spy on QueryClient.fetchQuery / the underlying query options to verify
