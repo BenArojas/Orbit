@@ -55,6 +55,27 @@ backend/
 - **Polars** for all dataframe operations — never Pandas
 - Ruff for formatting and linting — run before committing
 - SQLite queries go through `services/db.py` — never raw SQL in routers
+- **`DatabaseService` write-lock invariant** — every method that writes to
+  SQLite must dispatch through `await self._run_write(fn)`, not
+  `await asyncio.to_thread(fn)` directly. The class shares one
+  `sqlite3.Connection` across asyncio worker threads
+  (`check_same_thread=False`), and Python's `sqlite3.Connection` is not
+  safe for concurrent use — two workers calling `.execute()` /
+  `.commit()` simultaneously will raise `SQLITE_MISUSE` ("bad parameter
+  or other API misuse") or `cannot start a transaction within a
+  transaction`. `_run_write` serialises writes behind
+  `self._write_lock` (an `asyncio.Lock`). **Reads** (`_fetchone` /
+  `_fetchall`) bypass the lock — SQLite WAL mode handles read-vs-write
+  at the file level. This rule was introduced after a real production
+  regression in Phase 8 / Task 1.5 (sectors cold-start fanned out 11
+  parallel `get_conid()` calls and tripped MISUSE). See
+  `backend/services/db.py:_run_write` docstring and
+  `backend/tests/test_db_concurrent_writes.py` for the regression suite.
+- **Pacing constants** — IBKR rate limits live exclusively in
+  `backend/constants/ibkr_pacing.py`. Never hardcode `requests_per_second`
+  / RPS / "10 req" literals elsewhere. Add new endpoints to the
+  `ENDPOINT_LIMITS` dict; the `paced` decorator on
+  `IBKRService._request` reads from there at call time.
 - Package manager: **uv**
 
 ## Indicator Set (14 indicators)

@@ -6,6 +6,44 @@ When you finish a task: run the tests, commit on the task branch, and stop. Wait
 
 ---
 
+## Status (as of 2026-05-02)
+
+| Task | Status | Commit / Notes |
+|---|---|---|
+| 1.1 — Pacing constants | ✅ Done | `d9678f5` |
+| 1.2 — `/iserver/accounts` bootstrap | ✅ Done | `a647c30` (+ empty-list retry hardening in hotfix `c753547`) |
+| 1.3 — Snapshot pre-flight | ✅ Done | `da652cb` |
+| 1.4 — `/iserver/secdef/search` pre-warm | ✅ Done | `57e7e40` |
+| 1.5 — Conid SQLite cache | ✅ Done | `f89ab73` (+ SQLITE_MISUSE hotfix `c753547`) |
+| 1.6 — Snapshot/history coalescing | ✅ Done | `726db8d` |
+| 1.7 — Auth-state cache | ✅ Done | `fd8852c` |
+| 2.1 — Bundled `/market/quotes` | ✅ Done | `2860f8b` |
+| 2.2 — Bundled `/market/candles` | ⏳ Next | — |
+| 2.3 — Sectors 60s cache | ⏳ | — |
+| 2.4 — Health/status shape unify | ⏳ Re-scoped | See task footnote |
+| 2.5 — WS auth-state push | ⏳ | — |
+| 3.1–3.7 — Frontend hygiene | ⏳ | 7 tasks |
+| 4.1–4.3 — Docs + observability | ⏳ | 3 tasks |
+
+Cross-cutting invariants introduced during Phase 1 that future contributors
+must respect:
+
+- **`DatabaseService` write-lock invariant** (Task 1.5 hotfix) — every method
+  that writes to SQLite must dispatch through `self._run_write(fn)`, never
+  `asyncio.to_thread(fn)` directly. The shared `sqlite3.Connection` is not
+  safe for concurrent use from multiple worker threads. See the
+  `_run_write` docstring in `backend/services/db.py` and the rule in
+  `.claude/skills/parallax-backend.md` for the full rationale.
+- **Pacing values live in `backend/constants/ibkr_pacing.py` only** (Task
+  1.1) — no hardcoded `requests_per_second` / RPS literals elsewhere in
+  the backend.
+- **`conid` is the universal instrument key** (project rule #6) — caches
+  in this plan key by `(symbol, sec_type)` only at the resolver boundary;
+  every internal store and API parameter downstream of `get_conid()` is
+  keyed by `conid`.
+
+---
+
 ## Background — what we learned from the logs
 
 Frontend (HAR, 170s window, post-login dashboard):
@@ -221,6 +259,58 @@ gold/silver conids show similar timeouts.
 
 **Acceptance:** After one warm session, a fresh app start logs zero `/trsrv/secdef/...` or `/iserver/secdef/search?symbol=...` resolution calls during dashboard mount.
 
+**Status: ✅ Done** (`f89ab73`, hotfix `c753547`).
+
+**Footnote — SQLITE_MISUSE hotfix + write-lock invariant (2026-05-02):**
+
+The first deploy of Task 1.5 introduced a real concurrency regression:
+sectors cold-start fans out 11 parallel `get_conid()` calls, which fanned
+out to 11 parallel `upsert_cached_conid()` writes against the shared
+`sqlite3.Connection`. Python's `sqlite3.Connection` is not safe for
+concurrent use from multiple `asyncio.to_thread` worker threads, even
+with `check_same_thread=False`. Two workers calling `.execute()` /
+`.commit()` simultaneously raised `sqlite3.ProgrammingError: bad
+parameter or other API misuse` (SQLITE_MISUSE, error 21) and
+`OperationalError: cannot start a transaction within a transaction`.
+Symptom: "Could not resolve XLU / XLE: bad parameter or other API
+misuse" warnings on dashboard cold-start, cascading into "XLV fetch
+failed" breadth-gauge errors.
+
+**Hotfix (`c753547`)**: added `self._write_lock = asyncio.Lock()` on
+`DatabaseService` and a `_run_write(fn)` helper that wraps every
+synchronous write through the lock + thread pool. **All 16 write methods
+in the class now go through `_run_write` — `upsert_cached_conid`,
+`upsert_instrument`, `create_trigger_rule`, `record_trigger_hit`,
+`set_setting`, `replace_pulse_config`, etc.** Reads (`_fetchone` /
+`_fetchall`) bypass the lock — SQLite WAL mode serialises read-vs-write
+at the file level. Tests in `tests/test_db_concurrent_writes.py`
+reliably reproduce the bug without the lock.
+
+**Going-forward invariant:** any new write method added to
+`DatabaseService` must dispatch through `_run_write(fn)`, NOT
+`asyncio.to_thread(fn)` directly. Same rule documented in
+`.claude/skills/parallax-backend.md`.
+
+The same hotfix also tightened **Task 1.2's `ensure_accounts`**: IBKR
+sometimes returns 200 OK with an empty `accounts: []` body when the
+brokerage session has just authenticated but the account list isn't yet
+attached. The original code marked `accounts_fetched=True` anyway and
+never retried. Now an empty response logs a warning and leaves
+`accounts_fetched=False` so the next auth probe retries. Also added a
+defensive `list(...)` copy on `state.accounts` so `state.reset()`'s
+in-place `clear()` doesn't mutate caller-held references (a latent
+aliasing bug surfaced by the new test fixture).
+
+**Cache-related details preserved from the implementation:**
+- `force_refresh: bool = False` kwarg added to `IBKRService.get_conid`.
+  No admin endpoint exposes it — call from a one-off script if a conid
+  ever needs forcible refresh (rare; conids are stable).
+- The original `@cached(ttl=3600)` in-process LRU on `get_conid` was
+  removed. SQLite is the single cache layer.
+- A per-`(symbol, sec_type)` `asyncio.Lock` coalesces concurrent
+  first-time callers so 5 simultaneous `get_conid("AAPL")` collapse to
+  one IBKR search.
+
 ---
 
 ### Task 1.6 — Server-side snapshot coalescing
@@ -241,6 +331,30 @@ gold/silver conids show similar timeouts.
 - A failed future (IBKR raises) propagates the same exception to all awaiters but doesn't pin a stale failure for future calls.
 
 **Acceptance:** Backend log on dashboard mount shows ≤1 IBKR snapshot call per conid in any 1s window, regardless of how many frontend callers want it.
+
+**Status: ✅ Done** (`726db8d`).
+
+**Footnote — pre-flight test expectation tightened (2026-05-02):**
+
+Adding Task 1.6's "Layer 2" batch-future coalescing on the *real*
+snapshot call has a knock-on effect on Task 1.3's existing test
+`test_concurrent_first_time_callers_coalesce_pre_flight` in
+`tests/test_ibkr_snapshot_preflight.py`. Before Task 1.6, 5 concurrent
+`snapshot([99])` callers produced 6 IBKR calls (1 pre-flight under the
+per-conid lock + 5 real bulk calls, one per caller). Task 1.6's
+`(conid, fields)`-keyed batch future now coalesces those 5 real calls
+into 1, so the post-1.6 expectation is **exactly 2 IBKR calls** for the
+same scenario (1 pre-flight + 1 real). The Task 1.3 test was retroactively
+tightened to assert `len(calls) == 2`; the test docstring already
+documents the version-dependent expectation. Future contributors editing
+the snapshot path should know that Task 1.3 alone produces 6 and Task
+1.6 collapses it to 2 — both invariants are exercised by the suite.
+
+The mock `_request` in the test fixture now also includes a 5ms
+`asyncio.sleep` so concurrent callers actually have a chance to discover
+the in-flight future in the dict before it's popped — matches the
+behavior of real httpx calls on the wire (see comment in
+`tests/test_ibkr_snapshot_preflight.py:_make_svc.fake_request`).
 
 ---
 
@@ -263,6 +377,29 @@ gold/silver conids show similar timeouts.
 - A `session_dropped` event invalidates the cache.
 
 **Acceptance:** Backend log shows at most 1 IBKR `iserver/auth/status` POST per 5s window in steady state.
+
+**Status: ✅ Done** (`fd8852c`).
+
+**Footnote — `_auth_probe_lock` removed; opt-out via TTL=0 (2026-05-02):**
+
+Implementation matches the plan with two notable details worth recording:
+
+- The old `_auth_probe_lock` (an `asyncio.Lock` in `routers/gateway.py`
+  that serialised in-flight auth probes when the frontend polled fast
+  pre-login) is **gone**. The TTL cache makes it redundant — concurrent
+  callers within `AUTH_STATUS_TTL_SEC` all read the same cached dict.
+  See the comment block at top of `routers/gateway.py` for the migration
+  note.
+- `AUTH_STATUS_TTL_SEC == 0` is treated as an explicit opt-out (always
+  probe, never cache) for any future test or env that needs to bypass
+  the cache without monkey-patching. This matters for tests that exercise
+  the IBKR call path itself rather than the cache layer.
+
+The "5 calls within 5s issue exactly 1 IBKR probe" acceptance test in
+`tests/test_auth_state_cache.py` is now also asserted (with stricter
+counts) by the Task 1.2 test
+`test_state_reset_triggers_fresh_accounts_fetch` — the cache is
+exercised end-to-end across both suites.
 
 ---
 
@@ -290,6 +427,31 @@ gold/silver conids show similar timeouts.
 - 75 conids → 2 IBKR calls (50 + 25).
 
 **Acceptance:** Pulse-bar HAR (after Task 3.1 lands) shows 1 `/market/quotes?conids=...` request instead of 13 individual ones.
+
+**Status: ✅ Done** (`2860f8b`).
+
+**Footnote — chunk ceiling fixed at 50, open question resolved
+(2026-05-02):**
+
+The plan's open question on the IBKR batch ceiling is closed: **50
+conids per chunk works in practice**. `SNAPSHOT_BATCH_SIZE = 50` lives
+in `backend/constants/__init__.py`. Implementation tested with 75 conids
+in one request → 2 IBKR calls (50 + 25). Larger inputs split via
+`asyncio.gather` over chunks; the response order is preserved.
+Pre-flight runs only on the cold conids in the input — warmed conids
+are passed straight through to the bulk call.
+
+The router endpoint is `GET /market/quotes?conids=1,2,3` (per plan).
+The service-side helper is `IBKRService.snapshot()` (NOT
+`get_snapshots_bundled` as the plan called for) — the existing
+`snapshot()` method now handles both single and bundled cases via the
+`SNAPSHOT_BATCH_SIZE` chunking branch, so a separate method wasn't
+needed. Tests in `tests/test_bundled_quotes.py` cover the three
+scenarios called out in the plan.
+
+If telemetry ever shows 50-conid requests timing out or 4xx-ing, drop
+`SNAPSHOT_BATCH_SIZE` to a lower value (the plan's note about existing
+watchlist code using up to 14 stands as a known-good lower bound).
 
 ---
 
@@ -340,16 +502,36 @@ gold/silver conids show similar timeouts.
 ### Task 2.4 — Merge `/health/details` + `/gateway/status` (or unify their auth source)
 
 **Branch:** `feat/health-status-unify`
-**Depends on:** Task 1.7.
+**Depends on:** Task 1.7 (already shipped).
+
+**Re-scoped (2026-05-02):** Task 1.7 already eliminated the duplicate
+IBKR auth probes that motivated this task — both `/health/details` and
+`/gateway/status` now read from the shared `auth_status_cached`
+dictionary. What remains is purely a shape-unification chore, not a
+backend perf fix.
+
 **Files to touch:**
-- `backend/routers/health.py` and `backend/routers/gateway.py` — they should now read auth state from the cache (Task 1.7), so the duplicate IBKR probes are already gone. The remaining question is whether to keep them as two endpoints or merge them. **Decision: keep two endpoints (frontend has different consumers), but add a single unified payload shape that is a strict superset.** `/health/details` returns the gateway-status fields PLUS the per-check breakdown; the frontend can switch to using `/health/details` only and drop the `/gateway/status` poll if desired (Task 3.6 covers the frontend side).
+- `backend/routers/health.py` — extend the response so its top-level
+  keys are a strict superset of `/gateway/status`'s response (same key
+  names, identical values for the overlapping subset, plus the
+  per-check breakdown).
+- `backend/routers/gateway.py` — no change.
 
-**Main change:** No backend behavior change beyond Task 1.7; this is the explicit shape unification + documenting the migration path.
-
-**Source:** No external docs.
+**Main change:** Pure shape work. The frontend (Task 3.6) can then
+switch to polling `/health/details` only and drop the duplicate
+`/gateway/status` polling clock.
 
 **Tests to add (`backend/tests/test_health_status_shape.py`):**
-- `/health/details` response is a strict superset of `/gateway/status` response (same keys present with identical values for the overlapping subset).
+- `/health/details` response contains every key present in
+  `/gateway/status`, with identical values for the shared subset.
+
+**Acceptance:** A snapshot diff between the two responses (filtered to
+the keys both should share) is empty.
+
+**Re-prioritisation note:** Originally Phase 2's anchor task. Now a
+small cleanup that can land anytime — recommended order is to do it
+**after** 2.2 / 2.3 / 2.5 since those have real perf payoff while this
+is mostly preparation for 3.6.
 
 **Acceptance:** Schema diff between the two responses is empty for the shared subset.
 
