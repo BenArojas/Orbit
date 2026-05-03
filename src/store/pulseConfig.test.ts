@@ -63,7 +63,7 @@ afterEach(() => {
 });
 
 describe("usePulseConfigStore.save", () => {
-  it("flushes conid/quote/candle caches on success", async () => {
+  it("flushes conid/bundled-quote/bundled-candle caches on success", async () => {
     mockedApi.setPulseConfig.mockResolvedValueOnce({
       items: [{ label: "SPY", resolve: "SPY", sec_type: "" }],
     });
@@ -72,8 +72,9 @@ describe("usePulseConfigStore.save", () => {
       .getState()
       .save([{ label: "SPY", resolve: "SPY", sec_type: "" }]);
 
+    // Phase 8 / Task 3.1: pulse bar uses bundled query keys.
     const keys = removeQueriesMock.mock.calls.map((c) => c[0].queryKey);
-    expect(keys).toEqual([["conid"], ["quote"], ["candles"]]);
+    expect(keys).toEqual([["conid"], ["quotes-bundled"], ["candles-bundled"]]);
   });
 
   it("does NOT flush caches when save fails (cache stays consistent with reverted state)", async () => {
@@ -90,15 +91,16 @@ describe("usePulseConfigStore.save", () => {
 });
 
 describe("usePulseConfigStore.reset", () => {
-  it("flushes conid/quote/candle caches on success", async () => {
+  it("flushes conid/bundled-quote/bundled-candle caches on success", async () => {
     mockedApi.resetPulseConfig.mockResolvedValueOnce({
       items: [...DEFAULT_PULSE_ITEMS],
     });
 
     await usePulseConfigStore.getState().reset();
 
+    // Phase 8 / Task 3.1: pulse bar uses bundled query keys.
     const keys = removeQueriesMock.mock.calls.map((c) => c[0].queryKey);
-    expect(keys).toEqual([["conid"], ["quote"], ["candles"]]);
+    expect(keys).toEqual([["conid"], ["quotes-bundled"], ["candles-bundled"]]);
   });
 
   it("does NOT flush caches when reset fails", async () => {

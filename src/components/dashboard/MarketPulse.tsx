@@ -1,64 +1,39 @@
 /**
- * Market Pulse Bar — Task 3.1 (Phase 8 / Task 8.9 rewrite)
+ * Market Pulse Bar — Phase 8 / Task 3.1 (bundled endpoints)
  *
  * Horizontal bar at the top of the Dashboard showing key market instruments.
  * Each item is clickable → navigates to Analysis for that conid.
  *
- * Phase 8.9 changes:
- *   - 13 slots in a new order: SPX → SPY → QQQ → DIA → IWM → BTC → ETH → GLD
- *     → SLV → USO → TLT → DXY → USD/ILS (VIX moved to the arc gauges only)
- *   - Row is centered (`justify-center`) instead of left-aligned
- *   - Tier 1 of the 9-tier dashboard cascade (fires ~0 ms after IBKR ready)
- *   - Inner 80 ms per-ticker stagger: each ticker's queries fire in order so
- *     the IBKR snapshot endpoint isn't hammered with 13 parallel requests
- *   - Per-ticker pulse skeleton while its quote is still loading
- *   - Sparkline tooltip explains the window (12 daily closes · last 5 trading days)
+ * Phase 8 / Task 3.1 changes (bundled endpoints):
+ *   - Conid resolution: one useQuery per ticker via useQueries (no stagger
+ *     needed — SQLite cache makes these near-instant on second+ run).
+ *   - Quotes: single parent-level useQuery → GET /market/quotes?conids=...
+ *   - Candles: single parent-level useQuery → GET /market/candles?conids=...
+ *   - PulseItem is now a pure display component — it owns no queries.
+ *   - HAR call count: 2 requests per polling cycle (down from N×2).
  *
- * Data: /market/conid/{symbol} → /market/quote/{conid} → /market/candles/{conid}?timeframe=5D
- * All three queries are gated on ibkrReady + the per-ticker stagger gate.
+ * Prior architecture (pre-Task-3.1):
+ *   13 tickers × (1 quote + 1 candle) = 26 per-ticker fetches per cycle.
+ *   Each fired independently and competed for the same IBKR pacing budget.
+ *
+ * Data flow:
+ *   useQueries([conid resolvers]) → knownConids
+ *   useQuery(["quotes-bundled", conidsKey])  → quoteByConid map
+ *   useQuery(["candles-bundled", conidsKey]) → candlesByConid map
+ *   PulseItem receives its slice by conid (no network calls of its own)
  */
 
-import { useEffect, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
-import { api, type QuoteResponse, type CandleData, type ConidResponse } from "@/lib/api";
+import { useQuery, useQueries } from "@tanstack/react-query";
+import {
+  api,
+  type QuoteResponse,
+  type CandleData,
+  type ConidResponse,
+} from "@/lib/api";
 import { useNavigationStore, usePulseConfigStore } from "@/store";
 import { useIbkrReady } from "@/context/GatewayContext";
 import { useIbkrReadyTier } from "@/hooks/useIbkrReadyTier";
 import { Pulse } from "./skeletons";
-
-// ── Config ───────────────────────────────────────────────────
-//
-// Phase 8.9+: pulse-bar tickers are now user-configurable via Settings.
-// The list lives in SQLite (see `backend/routers/pulse_config.py`) and
-// is loaded into `usePulseConfigStore` on app start. The defaults used
-// before hydration come from DEFAULT_PULSE_ITEMS in the store module —
-// kept in sync with backend `DEFAULT_PULSE_ITEMS` so the first render
-// matches what the DB will eventually return.
-
-/** Per-ticker stagger — each item fires 80 ms after the previous one. */
-const TICKER_STAGGER_MS = 80;
-
-// ── Stagger hook ─────────────────────────────────────────────
-
-/** Returns true after `delayMs`, only once `gate` is true. */
-function useDelayedReady(gate: boolean, delayMs: number): boolean {
-  const [ready, setReady] = useState(delayMs === 0 && gate);
-
-  useEffect(() => {
-    if (!gate) {
-      setReady(false);
-      return;
-    }
-    if (delayMs === 0) {
-      setReady(true);
-      return;
-    }
-    const t = window.setTimeout(() => setReady(true), delayMs);
-    return () => window.clearTimeout(t);
-  }, [gate, delayMs]);
-
-  return ready;
-}
 
 // ── Sparkline ────────────────────────────────────────────────
 
@@ -115,51 +90,30 @@ function PulseItemSkeleton({ label }: { label: string }) {
   );
 }
 
-// ── Pulse Item ───────────────────────────────────────────────
+// ── Pulse Item (pure display) ────────────────────────────────
 
+/**
+ * Pure display component — receives its data slices from the parent.
+ * No network calls; conid resolution and data fetching happen in MarketPulse.
+ */
 function PulseItem({
   label,
-  resolve,
-  secType,
-  enabled,
+  conid,
+  quote,
+  candles,
+  loaded,
 }: {
   label: string;
-  resolve: string;
-  secType?: string;
-  enabled: boolean;
+  conid: number | undefined;
+  quote: QuoteResponse | undefined;
+  candles: CandleData[] | undefined;
+  /** True once the bundled quote response has arrived for the first time. */
+  loaded: boolean;
 }) {
   const navigateToAnalysis = useNavigationStore((s) => s.navigateToAnalysis);
 
-  // Step 1 — resolve symbol → conid (cached indefinitely).
-  // secType is part of the cache key so two items with the same ticker
-  // but different hints don't collide (e.g. a future TWS-paired case).
-  const { data: resolved, isError: resolveError } = useQuery<ConidResponse>({
-    queryKey: ["conid", resolve, secType ?? ""],
-    queryFn: () => api.resolveConid(resolve, secType),
-    staleTime: Infinity,
-    enabled,
-  });
-
-  const conid = resolved?.conid;
-
-  // Step 2 — live quote (fires once conid is known).
-  const { data: quote, isError: quoteError } = useQuery<QuoteResponse>({
-    queryKey: ["quote", conid],
-    queryFn: () => api.quote(conid!),
-    enabled: enabled && conid != null,
-    refetchInterval: 10_000,
-  });
-
-  // Step 3 — recent candles for sparkline.
-  const { data: candles } = useQuery<CandleData[]>({
-    queryKey: ["candles", conid, "5D"],
-    queryFn: () => api.candles(conid!, "5D"),
-    enabled: enabled && conid != null,
-    staleTime: 60_000,
-  });
-
-  // Not yet staggered in, or still waiting on conid + quote → show skeleton.
-  if (!enabled || (!quote && !quoteError && !resolveError)) {
+  // Show skeleton until we have at least a conid and the first quote fetch landed.
+  if (!loaded || !conid) {
     return <PulseItemSkeleton label={label} />;
   }
 
@@ -169,9 +123,8 @@ function PulseItem({
 
   return (
     <button
-      onClick={() => conid && navigateToAnalysis(conid)}
-      disabled={conid == null}
-      className="group relative flex min-w-[115px] flex-col gap-0.5 px-[18px] py-2 transition-colors hover:bg-[var(--bg-2)] disabled:opacity-60"
+      onClick={() => navigateToAnalysis(conid)}
+      className="group relative flex min-w-[115px] flex-col gap-0.5 px-[18px] py-2 transition-colors hover:bg-[var(--bg-2)]"
     >
       {/* Glow underline on hover */}
       <div
@@ -218,68 +171,99 @@ function formatPrice(price: number): string {
   return price.toFixed(2);
 }
 
-// ── Stagger wrapper ──────────────────────────────────────────
-
-/**
- * Thin wrapper that computes `enabled` for a single ticker based on
- * its index in the row and the outer IBKR-ready gate.
- */
-function StaggeredPulseItem({
-  label,
-  resolve,
-  secType,
-  index,
-  gate,
-}: {
-  label: string;
-  resolve: string;
-  secType?: string;
-  index: number;
-  gate: boolean;
-}) {
-  const enabled = useDelayedReady(gate, index * TICKER_STAGGER_MS);
-  return (
-    <PulseItem
-      label={label}
-      resolve={resolve}
-      secType={secType}
-      enabled={enabled}
-    />
-  );
-}
-
 // ── Main bar ─────────────────────────────────────────────────
 
 export default function MarketPulse() {
   const ibkrReady = useIbkrReady();
-  // Tier 1 in the 9-tier dashboard cascade (Phase 8 / Task 8.9): fires
-  // at t=0 as soon as IBKR connects, before everything else on the page.
+  // Tier 1 in the dashboard cascade — fires at t=0 as soon as IBKR connects.
   const tierReady = useIbkrReadyTier(1);
   const gate = ibkrReady && tierReady;
 
-  // User-configurable ticker list (Phase 8.9+). `items` pre-populates with
-  // DEFAULT_PULSE_ITEMS before the backend GET resolves, so the bar never
-  // flashes empty on first render.
+  // User-configurable ticker list. Pre-populates with DEFAULT_PULSE_ITEMS
+  // before the backend GET resolves so the bar never flashes empty on first render.
   const items = usePulseConfigStore((s) => s.items);
 
-  // If the user has emptied the list via Settings, hide the bar entirely
-  // rather than render an empty row that still consumes the 54px track.
+  // ── Step 1: resolve all conids in parallel ─────────────────
+  //
+  // useQueries handles a dynamic-length array of queries without breaking
+  // the rules of hooks. staleTime: Infinity — conids never change once
+  // cached in SQLite (Task 1.5). On warm sessions these are all instant.
+  const conidQueries = useQueries({
+    queries: items.map((item) => ({
+      queryKey: ["conid", item.resolve, item.sec_type ?? ""] as const,
+      queryFn: (): Promise<ConidResponse> =>
+        api.resolveConid(item.resolve, item.sec_type),
+      staleTime: Infinity,
+      enabled: gate,
+    })),
+  });
+
+  // Ordered by items index — undefined while resolving.
+  const resolvedConids: (number | undefined)[] = conidQueries.map(
+    (q) => q.data?.conid,
+  );
+  const knownConids = resolvedConids.filter((c): c is number => c != null);
+  const allResolved = items.length > 0 && knownConids.length === items.length;
+
+  // Stable sort key — must not change once all conids are known to avoid
+  // spurious bundled-query re-fetches.
+  const sortedConidsKey = [...knownConids].sort((a, b) => a - b).join(",");
+
+  // ── Step 2: one bundled quote fetch for the whole bar ───────
+  //
+  // Enabled only when ALL conids are resolved so the key is stable and
+  // we issue exactly 1 request per polling cycle rather than N partial ones.
+  const { data: quotesData } = useQuery({
+    queryKey: ["quotes-bundled", sortedConidsKey],
+    queryFn: () => api.quotesBundled(knownConids),
+    enabled: gate && allResolved,
+    // Quotes refresh every 10s (same cadence as the old per-ticker queries).
+    refetchInterval: 10_000,
+    staleTime: 5_000,
+  });
+
+  // ── Step 3: one bundled candle fetch for the whole bar ──────
+  const { data: candlesData } = useQuery({
+    queryKey: ["candles-bundled", sortedConidsKey, "5D"],
+    queryFn: () => api.candlesBundled(knownConids, "5D"),
+    enabled: gate && allResolved,
+    // Candles are daily bars — 60s stale time matches the old per-ticker value.
+    staleTime: 60_000,
+  });
+
+  // ── Step 4: build lookup maps for O(1) slice access ─────────
+  const quoteByConid = new Map(
+    (quotesData?.items ?? []).map((q) => [q.conid, q]),
+  );
+  const candlesByConid = new Map(
+    (candlesData?.items ?? []).map((c) => [c.conid, c.candles]),
+  );
+
+  // Quotes are considered "loaded" once the first response arrives.
+  // Before that, all items show skeletons so the bar doesn't paint partially.
+  const quotesLoaded = quotesData != null;
+
+  // ── Render ───────────────────────────────────────────────────
+
   if (items.length === 0) {
     return <div className="col-span-2 border-b border-border bg-[var(--bg-1)]" />;
   }
 
   return (
     <div className="col-span-2 flex items-center justify-center overflow-x-auto scrollbar-hidden border-b border-border bg-[var(--bg-1)] px-2 py-1">
-      {items.map((item, i) => (
-        <StaggeredPulseItem
-          key={item.label}
-          label={item.label}
-          resolve={item.resolve}
-          secType={item.sec_type}
-          index={i}
-          gate={gate}
-        />
-      ))}
+      {items.map((item, i) => {
+        const conid = resolvedConids[i];
+        return (
+          <PulseItem
+            key={item.label}
+            label={item.label}
+            conid={conid}
+            quote={conid != null ? quoteByConid.get(conid) : undefined}
+            candles={conid != null ? candlesByConid.get(conid) : undefined}
+            loaded={quotesLoaded && conid != null}
+          />
+        );
+      })}
     </div>
   );
 }

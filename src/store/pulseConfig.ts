@@ -23,9 +23,11 @@ import { queryClient } from "@/lib/query";
  * restart. We flush them after every save()/reset().
  */
 const PULSE_DEPENDENT_QUERY_KEYS: readonly (readonly string[])[] = [
-  ["conid"],   // resolver → conid (staleTime: Infinity)
-  ["quote"],   // live price
-  ["candles"], // sparkline
+  ["conid"],           // resolver → conid (staleTime: Infinity)
+  // Phase 8 / Task 3.1: pulse bar uses bundled queries; flush those too
+  // so a ticker swap (e.g. SLV → XAGUSD) is reflected on the next poll.
+  ["quotes-bundled"],  // bundled quote fetch (MarketPulse)
+  ["candles-bundled"], // bundled candle fetch (MarketPulse)
 ];
 
 function invalidatePulseQueries(): void {

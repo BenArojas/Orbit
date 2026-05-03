@@ -711,6 +711,27 @@ export interface AiFilterResponse {
   raw_query: string;
 }
 
+// ── Bundled market-data responses (Phase 8 / Task 3.1) ────────────────────
+// Returned by GET /market/quotes?conids=... and GET /market/candles?conids=...
+
+/** Bundled quote response — one item per requested conid. */
+export interface QuotesBundledResponse {
+  items: QuoteResponse[];
+}
+
+/** One candle series entry in the bundled candles response. */
+export interface CandlesBundledItem {
+  conid: number;
+  candles: CandleData[];
+}
+
+/** Bundled candles response — one item per requested conid, plus any per-conid errors. */
+export interface CandlesBundledResponse {
+  items: CandlesBundledItem[];
+  /** Keyed by conid (as string). Non-empty when one or more history fetches failed. */
+  errors: Record<string, string>;
+}
+
 // ── Pulse Config (Phase 8.9+) ───────────────────────────────
 // User-configurable ticker list for the dashboard's Market Pulse bar.
 
@@ -800,6 +821,21 @@ export const api = {
 
   candles: (conid: number, period = "3M") =>
     request<CandleData[]>("GET", `/market/candles/${conid}?period=${period}`),
+
+  // Phase 8 / Task 3.1 — bundled endpoints for the pulse bar.
+  // One request replaces N per-ticker requests; backend handles fan-out
+  // and IBKR pacing internally.
+  quotesBundled: (conids: number[]) =>
+    request<QuotesBundledResponse>(
+      "GET",
+      `/market/quotes?conids=${conids.join(",")}`,
+    ),
+
+  candlesBundled: (conids: number[], period = "5D") =>
+    request<CandlesBundledResponse>(
+      "GET",
+      `/market/candles?conids=${conids.join(",")}&period=${period}`,
+    ),
 
   search: (query: string) =>
     request<SearchResult[]>("GET", `/market/search?q=${encodeURIComponent(query)}`),
