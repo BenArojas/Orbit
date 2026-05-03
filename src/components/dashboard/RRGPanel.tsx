@@ -31,9 +31,9 @@ const QUADRANT_COLORS: Record<string, string> = {
 };
 
 export default function RRGPanel() {
-  // Tier 4 in the 9-tier dashboard cascade (Phase 8 / Task 8.9):
-  // fires 750 ms after IBKR connects — right after Sector Performance.
-  const ready = useIbkrReadyTier(4);
+  // Tier 2 in the 4-tier dashboard cascade (Phase 8 / Task 3.4):
+  // fires 200ms with SectorPerformancePanel — both are server-cached.
+  const ready = useIbkrReadyTier(2);
   const { data: rrg, isLoading, error } = useQuery({
     queryKey: ["sectors", "rrg"],
     queryFn: api.sectorRRG,

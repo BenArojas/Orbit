@@ -183,9 +183,9 @@ function rotationBadge(gauge: number, delta: number): string {
 
 export default function ArcGaugeRow() {
   const ibkrReady = useIbkrReady();
-  // Tier 2 in the 9-tier dashboard cascade (Phase 8 / Task 8.9):
-  // fires 250 ms after IBKR connects — right after Market Pulse.
-  const tierReady = useIbkrReadyTier(2);
+  // Tier 1 in the 4-tier dashboard cascade (Phase 8 / Task 3.4):
+  // fires immediately with MarketPulse — bundled endpoints make both cheap.
+  const tierReady = useIbkrReadyTier(1);
 
   const navigateToAnalysis = useNavigationStore((s) => s.navigateToAnalysis);
   const setTimeframe = useChartStore((s) => s.setTimeframe);

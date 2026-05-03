@@ -1,16 +1,21 @@
 /**
- * useIbkrReadyTier unit tests
+ * useIbkrReadyTier unit tests — Phase 8 / Task 3.4 (4-tier, 800ms total)
  *
- * Expanded to 9 tiers at 250ms each (Phase 8 / Task 8.9).
  * Tests the staggered gate hook in isolation by mocking useIbkrReady.
  * Uses fake timers to verify tier delays without real waiting.
+ *
+ * Tier map (Task 3.4):
+ *   Tier 1 —   0ms — MarketPulse, ArcGaugeRow
+ *   Tier 2 — 200ms — SectorPerformancePanel, RRGPanel
+ *   Tier 3 — 400ms — WatchlistSidebar, TriggerWatchlist
+ *   Tier 4 — 800ms — TriggerRules, AlertLog
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { renderHook, act } from "@testing-library/react";
 import { useIbkrReadyTier, TIER_DELAY_MS, type Tier } from "../hooks/useIbkrReadyTier";
 
-// Mock the GatewayContext module so we can control ibkrReady
+// Mock the GatewayContext module so we can control ibkrReady.
 let mockIbkrReady = false;
 vi.mock("@/context/GatewayContext", () => ({
   useIbkrReady: () => mockIbkrReady,
@@ -26,30 +31,34 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe("useIbkrReadyTier (9 tiers, 250ms stagger)", () => {
+describe("useIbkrReadyTier (4 tiers, 800ms total)", () => {
+  // ── Constants ──────────────────────────────────────────────
+
   describe("TIER_DELAY_MS constants", () => {
-    it("has exactly 9 tiers", () => {
-      expect(Object.keys(TIER_DELAY_MS)).toHaveLength(9);
+    it("has exactly 4 tiers", () => {
+      expect(Object.keys(TIER_DELAY_MS)).toHaveLength(4);
     });
 
     it("tier 1 is immediate (0ms)", () => {
       expect(TIER_DELAY_MS[1]).toBe(0);
     });
 
-    it("each subsequent tier is +250ms", () => {
-      for (let t = 2; t <= 9; t++) {
-        const tier = t as Tier;
-        const prev = (t - 1) as Tier;
-        expect(TIER_DELAY_MS[tier] - TIER_DELAY_MS[prev]).toBe(250);
-      }
+    it("tier 2 is 200ms", () => {
+      expect(TIER_DELAY_MS[2]).toBe(200);
     });
 
-    it("tier 9 is 2000ms (total cascade duration)", () => {
-      expect(TIER_DELAY_MS[9]).toBe(2_000);
+    it("tier 3 is 400ms", () => {
+      expect(TIER_DELAY_MS[3]).toBe(400);
+    });
+
+    it("tier 4 is 800ms (total cascade duration)", () => {
+      expect(TIER_DELAY_MS[4]).toBe(800);
     });
   });
 
-  describe("tier 1 (no delay)", () => {
+  // ── Tier 1 (0ms) ──────────────────────────────────────────
+
+  describe("tier 1 — immediate (MarketPulse, ArcGaugeRow)", () => {
     it("returns false when ibkrReady is false", () => {
       mockIbkrReady = false;
       const { result } = renderHook(() => useIbkrReadyTier(1));
@@ -64,55 +73,62 @@ describe("useIbkrReadyTier (9 tiers, 250ms stagger)", () => {
     });
   });
 
-  describe("tier 5 (1000ms — watchlist sidebar)", () => {
-    it("returns false before 1000ms elapses", () => {
+  // ── Tier 4 (800ms) ────────────────────────────────────────
+
+  describe("tier 4 — 800ms (TriggerRules, AlertLog)", () => {
+    it("returns false at 799ms", () => {
       mockIbkrReady = true;
-      const { result } = renderHook(() => useIbkrReadyTier(5));
-      act(() => { vi.advanceTimersByTime(999); });
+      const { result } = renderHook(() => useIbkrReadyTier(4));
+      act(() => { vi.advanceTimersByTime(799); });
       expect(result.current).toBe(false);
     });
 
-    it("returns true at exactly 1000ms", () => {
+    it("returns true at exactly 800ms", () => {
       mockIbkrReady = true;
-      const { result } = renderHook(() => useIbkrReadyTier(5));
-      act(() => { vi.advanceTimersByTime(1_000); });
+      const { result } = renderHook(() => useIbkrReadyTier(4));
+      act(() => { vi.advanceTimersByTime(800); });
       expect(result.current).toBe(true);
     });
   });
 
-  describe("tier 9 (2000ms — alert log)", () => {
-    it("returns false before 2000ms elapses", () => {
-      mockIbkrReady = true;
-      const { result } = renderHook(() => useIbkrReadyTier(9));
-      act(() => { vi.advanceTimersByTime(1_999); });
-      expect(result.current).toBe(false);
-    });
-
-    it("returns true at exactly 2000ms", () => {
-      mockIbkrReady = true;
-      const { result } = renderHook(() => useIbkrReadyTier(9));
-      act(() => { vi.advanceTimersByTime(2_000); });
-      expect(result.current).toBe(true);
-    });
-  });
+  // ── Cascade ordering ───────────────────────────────────────
 
   describe("all tiers fire in ascending order", () => {
-    it("at t=1000ms, tiers 1-5 are ready and 6-9 are not", () => {
+    it("at t=200ms: tiers 1+2 ready, 3+4 not", () => {
       mockIbkrReady = true;
-      const tierHooks = [1, 2, 3, 4, 5, 6, 7, 8, 9].map((t) =>
-        renderHook(() => useIbkrReadyTier(t as Tier))
+      const hooks = ([1, 2, 3, 4] as Tier[]).map((t) =>
+        renderHook(() => useIbkrReadyTier(t)),
       );
-      act(() => { vi.advanceTimersByTime(1_000); });
-      const ready = tierHooks.map((h) => h.result.current);
-      expect(ready).toEqual([true, true, true, true, true, false, false, false, false]);
+      act(() => { vi.advanceTimersByTime(200); });
+      expect(hooks.map((h) => h.result.current)).toEqual([true, true, false, false]);
+    });
+
+    it("at t=400ms: tiers 1+2+3 ready, 4 not", () => {
+      mockIbkrReady = true;
+      const hooks = ([1, 2, 3, 4] as Tier[]).map((t) =>
+        renderHook(() => useIbkrReadyTier(t)),
+      );
+      act(() => { vi.advanceTimersByTime(400); });
+      expect(hooks.map((h) => h.result.current)).toEqual([true, true, true, false]);
+    });
+
+    it("at t=800ms: all 4 tiers ready", () => {
+      mockIbkrReady = true;
+      const hooks = ([1, 2, 3, 4] as Tier[]).map((t) =>
+        renderHook(() => useIbkrReadyTier(t)),
+      );
+      act(() => { vi.advanceTimersByTime(800); });
+      expect(hooks.map((h) => h.result.current)).toEqual([true, true, true, true]);
     });
   });
+
+  // ── Reset on disconnect ────────────────────────────────────
 
   describe("reset on disconnect", () => {
     it("resets to false when ibkrReady drops, re-staggers on reconnect", () => {
       mockIbkrReady = true;
       const { result, rerender } = renderHook(() => useIbkrReadyTier(3));
-      act(() => { vi.advanceTimersByTime(500); });
+      act(() => { vi.advanceTimersByTime(400); });
       expect(result.current).toBe(true);
 
       // Simulate disconnect
@@ -120,13 +136,29 @@ describe("useIbkrReadyTier (9 tiers, 250ms stagger)", () => {
       rerender();
       expect(result.current).toBe(false);
 
-      // Reconnect — delay should apply again
+      // Reconnect — the 400ms delay must apply again
       mockIbkrReady = true;
       rerender();
-      act(() => { vi.advanceTimersByTime(499); });
+      act(() => { vi.advanceTimersByTime(399); });
       expect(result.current).toBe(false);
 
       act(() => { vi.advanceTimersByTime(1); });
+      expect(result.current).toBe(true);
+    });
+
+    it("tier 1 also resets to false on disconnect and recovers immediately", () => {
+      mockIbkrReady = true;
+      const { result, rerender } = renderHook(() => useIbkrReadyTier(1));
+      act(() => { vi.advanceTimersByTime(0); });
+      expect(result.current).toBe(true);
+
+      mockIbkrReady = false;
+      rerender();
+      expect(result.current).toBe(false);
+
+      mockIbkrReady = true;
+      rerender();
+      act(() => { vi.advanceTimersByTime(0); });
       expect(result.current).toBe(true);
     });
   });

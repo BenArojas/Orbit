@@ -44,7 +44,8 @@ export default function WatchlistSidebar() {
   // (Phase 8 / Task 8.9). Within the component, the items query depends on the
   // list query via selectedWatchlistId, so we don't need two separate tiers
   // here — the natural enabled-chain handles sub-ordering.
-  const ibkrReady = useIbkrReadyTier(5);
+  // Tier 3 in the 4-tier dashboard cascade (Phase 8 / Task 3.4): 400ms.
+  const ibkrReady = useIbkrReadyTier(3);
 
   // Fetch all IBKR watchlists
   const { data: watchlists } = useQuery({

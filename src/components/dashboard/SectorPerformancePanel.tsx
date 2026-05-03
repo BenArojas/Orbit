@@ -19,9 +19,9 @@ import { SectorPerformanceSkeleton } from "./skeletons";
 const ROW_HEIGHT_PX = 40;
 
 export default function SectorPerformancePanel() {
-  // Tier 3 in the 9-tier dashboard cascade (Phase 8 / Task 8.9):
-  // fires 500 ms after IBKR connects — after pulse + gauges, before RRG.
-  const ready = useIbkrReadyTier(3);
+  // Tier 2 in the 4-tier dashboard cascade (Phase 8 / Task 3.4):
+  // fires 200ms after IBKR connects — server-side 60s cache makes this cheap.
+  const ready = useIbkrReadyTier(2);
   // Phase 8.9+: on tall viewports (fullscreen, large monitors) show 5 rows
   // without scrolling. On shorter viewports, keep the default 3-row cap so
   // the bottom of the dashboard isn't pushed off-screen.

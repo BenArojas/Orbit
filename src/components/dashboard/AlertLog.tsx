@@ -174,9 +174,8 @@ export default function AlertLog() {
 
   const [toast, setToast] = useState<ToastState | null>(null);
 
-  // Tier 9 (last) in the 9-tier dashboard cascade (Phase 8 / Task 8.9):
-  // the alert log fires ~2 s after IBKR connects, after every other panel.
-  const tierReady = useIbkrReadyTier(9);
+  // Tier 4 in the 4-tier dashboard cascade (Phase 8 / Task 3.4): 800ms.
+  const tierReady = useIbkrReadyTier(4);
 
   const { data: hits, isLoading, isError } = useQuery<TriggerHit[]>({
     queryKey: ["trigger-hits"],

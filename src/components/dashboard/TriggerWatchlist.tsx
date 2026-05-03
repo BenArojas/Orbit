@@ -107,8 +107,8 @@ function TriggerHitItem({ hit }: { hit: TriggerHit }) {
 export default function TriggerWatchlist() {
   // limit=200 matches all other consumers — TanStack Query deduplicates to one request.
   // Slice client-side to cap the sidebar display.
-  // Tier 6 in the 9-tier dashboard cascade (Phase 8 / Task 8.9).
-  const tierReady = useIbkrReadyTier(6);
+  // Tier 3 in the 4-tier dashboard cascade (Phase 8 / Task 3.4): 400ms.
+  const tierReady = useIbkrReadyTier(3);
   const { data: hits, isLoading, isError } = useQuery<TriggerHit[]>({
     queryKey: ["trigger-hits"],
     queryFn: () => api.getTriggerHits(200),
