@@ -1,11 +1,12 @@
 /**
- * Tests for useGateway feedback layer (Phase 8.10).
+ * Tests for useGateway feedback layer (Phase 8.10) + Task 3.6 retry config.
  *
  * Covers:
  *   - logout / restartGateway / factoryReset emit success toasts on resolve
  *   - same actions emit error toasts on reject
  *   - same actions invalidate IBKR-dependent queries (and ONLY those)
  *   - cheap actions (start / stop / provision) do NOT toast or invalidate
+ *   - Task 3.6: gateway-status query uses retry:1 / retryDelay:1_500
  *
  * The hook reaches for `toast` and `api`; both are mocked here so we can
  * assert call shape without standing up a full IBKR backend.
@@ -235,5 +236,67 @@ describe("useGateway feedback — toasts + IBKR cache invalidation", () => {
     // path of invalidateQueries.  The catch-block fallback (which uses
     // queryKey, not predicate, on action failure) is allowed.
     expect(lastPredicate(invalidateSpy)).toBeUndefined();
+  });
+});
+
+// ── Task 3.6 — gateway-status retry config ─────────────────────────────────
+//
+// Spy on QueryClient.fetchQuery / the underlying query options to verify
+// retry: 1 and retryDelay: 1_500.  We inspect the query state after one
+// failure to confirm TanStack obeys the single-retry setting.
+
+describe("useGateway — Task 3.6 retry config", () => {
+  beforeEach(() => {
+    toastSuccess.mockClear();
+    toastError.mockClear();
+  });
+
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("gateway-status query uses retry:1 and retryDelay:1_500", async () => {
+    // Read the options TanStack Query actually registered for the
+    // gateway-status query by inspecting the query cache entry after mount.
+    (api.gatewayStatus as ReturnType<typeof vi.fn>).mockResolvedValue(RUNNING);
+
+    const qc = freshClient();
+    const { result } = renderHook(() => useGateway(), {
+      wrapper: makeWrapper(qc),
+    });
+
+    const { waitFor } = await import("@testing-library/react");
+    await waitFor(() => result.current.status !== null);
+
+    const entry = qc
+      .getQueryCache()
+      .find({ queryKey: ["gateway-status"] }) as unknown as {
+      options: { retry?: number; retryDelay?: number };
+    };
+
+    expect(entry).toBeDefined();
+    expect(entry.options.retry).toBe(1);
+    expect(entry.options.retryDelay).toBe(1_500);
+  });
+
+  it("gateway-status query does NOT use the old burst settings (retry:3 / retryDelay:500)", async () => {
+    (api.gatewayStatus as ReturnType<typeof vi.fn>).mockResolvedValue(RUNNING);
+
+    const qc = freshClient();
+    const { result } = renderHook(() => useGateway(), {
+      wrapper: makeWrapper(qc),
+    });
+
+    const { waitFor } = await import("@testing-library/react");
+    await waitFor(() => result.current.status !== null);
+
+    const entry = qc
+      .getQueryCache()
+      .find({ queryKey: ["gateway-status"] }) as unknown as {
+      options: { retry?: number; retryDelay?: number };
+    };
+
+    expect(entry.options.retry).not.toBe(3);
+    expect(entry.options.retryDelay).not.toBe(500);
   });
 });

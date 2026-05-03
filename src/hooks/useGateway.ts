@@ -131,10 +131,12 @@ export function useGateway(): UseGatewayReturn {
     queryFn: api.gatewayStatus,
     refetchInterval: (q) => computeRefetchInterval(q.state.data),
     staleTime: STALE_TIME_MS,
-    // Backend not ready yet is the common "error" on cold start — keep
-    // retrying quietly so the first successful poll wins fast.
-    retry: 3,
-    retryDelay: 500,
+    // One retry at 1.5 s covers a transient backend blip on cold start
+    // without a rapid burst.  The 2 s fast-poll cadence takes over after
+    // that, so extra retries only add noise without shortening perceived
+    // startup time (the poll would fire in the same window anyway).
+    retry: 1,
+    retryDelay: 1_500,
   });
 
   const status = query.data ?? null;
