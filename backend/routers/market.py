@@ -5,7 +5,8 @@ All data comes from IBKR Client Portal via the IBKRService.
 Endpoints:
   GET  /market/quote/{conid}     — Full quote snapshot for a single instrument
   GET  /market/quotes            — Bundled snapshot for many conids in one call
-  GET  /market/candles/{conid}   — Historical OHLCV bars for charting
+  GET  /market/candles/{conid}   — Historical OHLCV bars for charting (single)
+  GET  /market/candles           — Bundled historical candles for many conids
   GET  /market/search            — Search securities by symbol/name
   GET  /market/conid/{symbol}    — Resolve a ticker to an IBKR conid
 
@@ -151,7 +152,69 @@ async def get_quotes(
     return {"items": items}
 
 
-# ── GET /market/candles/{conid} ──────────────────────────────
+# ── GET /market/candles/{conid} and /market/candles ──────────
+
+
+def _resolve_period(period: str) -> tuple[str, str] | dict:
+    """Map a frontend period label to (ibkr_period, ibkr_bar).
+
+    Returns a dict with an 'error' key on invalid input so callers can
+    short-circuit with a sensible HTTP response.
+    """
+    if period == "YTD":
+        today = datetime.date.today()
+        days = (today - datetime.date(today.year, 1, 1)).days + 1
+        return (f"{days}d", "1d")
+    if period in PERIOD_BAR:
+        return PERIOD_BAR[period]
+    return {
+        "error": (
+            f"Invalid period: {period}. "
+            f"Use one of: {', '.join(PERIOD_BAR.keys())}, YTD"
+        )
+    }
+
+
+@router.get("/candles")
+async def get_candles_bundled(
+    conids: str = Query(..., description="Comma-separated IBKR conids, e.g. 1,2,3"),
+    period: str = Query("1M", description="Time period: 1D, 5D, 1M, 3M, 6M, 1Y, 5Y, YTD"),
+    ibkr: IBKRService = Depends(get_ibkr),
+):
+    """
+    Bundled historical candles for many conids in one request.
+
+    The backend fans out to one /iserver/marketdata/history call per conid,
+    bounded by IBKR's 5-concurrent cap (IBKRService._history_semaphore).
+    On 429, per-conid retries honor Retry-After (up to 3 attempts). One
+    conid failure never cancels the others.
+
+    Response shape:
+        {
+            "items": [{"conid": int, "candles": [TradingView bar, ...]}, ...],
+            "errors": {conid: error_message, ...}
+        }
+    """
+    raw_list = [c.strip() for c in conids.split(",") if c.strip()]
+    parsed: list[int] = []
+    for raw in raw_list:
+        try:
+            parsed.append(int(raw))
+        except ValueError:
+            return {
+                "error": f"Invalid conid: {raw!r} — must be integer",
+                "items": [],
+                "errors": {},
+            }
+    if not parsed:
+        return {"items": [], "errors": {}}
+
+    resolved = _resolve_period(period)
+    if isinstance(resolved, dict):
+        return {**resolved, "items": [], "errors": {}}
+    ibkr_period, ibkr_bar = resolved
+
+    return await ibkr.history_bundled(parsed, period=ibkr_period, bar=ibkr_bar)
 
 
 @router.get("/candles/{conid}")
@@ -161,21 +224,14 @@ async def get_candles(
     ibkr: IBKRService = Depends(get_ibkr),
 ):
     """
-    Fetch historical OHLCV candle data for charting.
+    Fetch historical OHLCV candle data for charting (single conid).
     Period determines both the timespan and bar size.
     Returns data formatted for TradingView Lightweight Charts.
     """
-    # Handle YTD as a dynamic period
-    if period == "YTD":
-        today = datetime.date.today()
-        start_of_year = datetime.date(today.year, 1, 1)
-        days = (today - start_of_year).days + 1
-        ibkr_period = f"{days}d"
-        ibkr_bar = "1d"
-    elif period in PERIOD_BAR:
-        ibkr_period, ibkr_bar = PERIOD_BAR[period]
-    else:
-        return {"error": f"Invalid period: {period}. Use one of: {', '.join(PERIOD_BAR.keys())}, YTD"}
+    resolved = _resolve_period(period)
+    if isinstance(resolved, dict):
+        return resolved
+    ibkr_period, ibkr_bar = resolved
 
     raw = await ibkr.history(conid, period=ibkr_period, bar=ibkr_bar)
     bars = raw.get("data", [])

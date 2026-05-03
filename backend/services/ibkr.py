@@ -37,6 +37,7 @@ from constants import DEFAULT_QUOTE_FIELDS_STR, LIVE_STREAM_FIELDS, SNAPSHOT_BAT
 from exceptions import (
     IBKRAuthError,
     IBKRConnectionError,
+    IBKRError,
     IBKRRateLimitError,
     IBKRRequestError,
     SymbolNotFoundError,
@@ -103,6 +104,15 @@ class IBKRService:
         self._history_futures: dict[
             tuple[int, str, str], asyncio.Future
         ] = {}
+
+        # Phase 8 / Task 2.2: concurrency semaphore for history_bundled.
+        # IBKR caps /iserver/marketdata/history at 5 concurrent in-flight
+        # requests.  The @paced("dynamic") decorator on _request enforces this
+        # at the HTTP layer, but history_bundled also carries an explicit
+        # asyncio.Semaphore so tests can verify the cap without needing to
+        # stub the pacing infrastructure, and so concurrent history_bundled
+        # calls share the same budget.
+        self._history_semaphore: asyncio.Semaphore = asyncio.Semaphore(5)
 
         # Phase 8 / Task 1.7: server-side cache for /iserver/auth/status.
         # /gateway/status polls every 2s while not authenticated and each
@@ -859,6 +869,8 @@ class IBKRService:
             self._snapshot_single_futures = {}
         if not hasattr(self, "_history_futures"):
             self._history_futures = {}
+        if not hasattr(self, "_history_semaphore"):
+            self._history_semaphore = asyncio.Semaphore(5)
 
     async def _preflight_snapshot(self, conid: int, fields: str) -> None:
         """Run IBKR's documented "pre-flight" snapshot for a fresh conid.
@@ -1210,6 +1222,98 @@ class IBKRService:
                     fut.exception()
                 except (asyncio.InvalidStateError, asyncio.CancelledError):
                     pass
+
+    async def history_bundled(
+        self,
+        conids: list[int],
+        period: str = "1m",
+        bar: str = "30min",
+    ) -> dict:
+        """Fetch historical OHLCV candles for many conids concurrently.
+
+        Phase 8 / Task 2.2 — bundled history fan-out.
+
+        Uses asyncio.gather over individual history() calls, bounded by
+        self._history_semaphore (5 slots) to honor IBKR's documented
+        5-concurrent cap on /iserver/marketdata/history. The @paced("dynamic")
+        decorator on _request enforces the same cap at the HTTP layer; the
+        explicit semaphore here makes the constraint observable in tests and
+        ensures concurrent history_bundled calls share the same budget.
+
+        Retry policy:
+          * 429 (IBKRRateLimitError): honor Retry-After, up to 3 retries per
+            conid.  After 3 retries the conid is recorded in `errors`.
+          * 503 / transient: already retried up to 3 times with 0.5s backoff
+            inside _request — no additional handling needed here.
+
+        Partial failure: one conid error never cancels the others.  The result
+        always contains both `items` (successes) and `errors` (failed conids).
+
+        Returns:
+            {
+                "items": [{"conid": int, "candles": [TradingView bar, ...]}, ...],
+                "errors": {conid: error_message, ...}
+            }
+        """
+        self._ensure_coalescing_dicts()
+
+        _MAX_429_RETRIES = 3
+
+        async def fetch_one(conid: int) -> tuple[int, list | None, str | None]:
+            for attempt in range(_MAX_429_RETRIES + 1):
+                try:
+                    async with self._history_semaphore:
+                        raw = await self.history(conid, period=period, bar=bar)
+                    bars_data = raw.get("data", [])
+                    candles = [
+                        {
+                            "time": b["t"] // 1000,
+                            "open": b["o"],
+                            "high": b["h"],
+                            "low": b["l"],
+                            "close": b["c"],
+                            "volume": b.get("v", 0),
+                        }
+                        for b in bars_data
+                        if "t" in b
+                    ]
+                    return conid, candles, None
+                except IBKRRateLimitError as exc:
+                    wait = exc.retry_after or 15
+                    log.warning(
+                        "Rate limit on history for conid %d (attempt %d/%d), "
+                        "waiting %ds before retry",
+                        conid, attempt + 1, _MAX_429_RETRIES + 1, wait,
+                    )
+                    if attempt < _MAX_429_RETRIES:
+                        await asyncio.sleep(wait)
+                    else:
+                        log.error(
+                            "history_bundled: conid %d exhausted retries after "
+                            "%d 429 responses",
+                            conid, _MAX_429_RETRIES + 1,
+                        )
+                        return conid, None, exc.message
+                except IBKRError as exc:
+                    log.warning(
+                        "history_bundled: conid %d failed: %s", conid, exc.message
+                    )
+                    return conid, None, exc.message
+
+            # Should be unreachable, but satisfies the type checker.
+            return conid, None, "history_bundled: unexpected exit"
+
+        results = await asyncio.gather(*[fetch_one(c) for c in conids])
+
+        items: list[dict] = []
+        errors: dict[int, str] = {}
+        for conid, candles, err in results:
+            if err is not None:
+                errors[conid] = err
+            else:
+                items.append({"conid": conid, "candles": candles})
+
+        return {"items": items, "errors": errors}
 
     @cached(ttl=3600)
     async def contract_info(self, conid: int) -> dict:
