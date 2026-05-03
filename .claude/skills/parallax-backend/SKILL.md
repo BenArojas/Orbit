@@ -108,6 +108,43 @@ Uses the **Client Portal Web API** (not the TWS socket API).
 3. Session is cookie-based, will time out — app must detect and prompt re-auth
 4. Only one active session at a time — logging in elsewhere kills the desktop session
 
+## Cold-start Protocol
+
+Every IBKR data request must follow this exact order. Steps are cached so each
+only happens once per session. Skipping any step causes silent failures.
+
+```
+1. auth_status()          — confirm the IBKR session is authenticated
+        ↓
+2. ensure_accounts()      — GET /iserver/accounts
+                            IBKR requires this before any snapshot or order call.
+                            Cached in state.accounts; retried if response is empty.
+        ↓
+3. _ensure_secdef()       — GET /iserver/secdef/search?symbol=X&secType=Y
+                            Required for non-STK instruments only:
+                            {CASH, FUT, OPT, FOP, WAR, BOND, FUND, IND, CRYPTO}
+                            Cached in state.secdef_warmed per conid.
+                            STK conids skip this step entirely.
+        ↓
+4. snapshot pre-flight    — GET /iserver/marketdata/snapshot?conids=X  (1st call)
+                            sleep PREFLIGHT_DELAY_MS (default 750 ms)
+                            IBKR's cache is now warm for this conid.
+                            Cached in state.warmed_conids; subsequent calls skip
+                            straight to step 5.
+        ↓
+5. snapshot (real call)   — GET /iserver/marketdata/snapshot?conids=X  (2nd call)
+                            Returns populated price fields.
+```
+
+**Source:** IBKR Client Portal docs:
+- `/iserver/accounts` — *"must be called prior to /iserver/marketdata/snapshot"*
+- Snapshot — *"A pre-flight request must be made prior to ever receiving data"*
+- Secdef — *"For derivative contracts the endpoint /iserver/secdef/search must be called first"*
+
+**If you see snapshot timeouts or empty price fields** → see the
+troubleshooting section in `docs/ibkr-pacing.md`, which covers the most common
+causes including missing secdef pre-warm (Task 1.4) and cold conid cache.
+
 ## Running Dev
 
 ```bash
