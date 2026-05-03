@@ -177,12 +177,13 @@ export default function AlertLog() {
   // Tier 4 in the 4-tier dashboard cascade (Phase 8 / Task 3.4): 800ms.
   const tierReady = useIbkrReadyTier(4);
 
+  // Rule 4: WS-event-driven — staleTime = refetchInterval / 2 as safety net;
+  // WS trigger_alert invalidation is the primary freshness mechanism (below).
   const { data: hits, isLoading, isError } = useQuery<TriggerHit[]>({
     queryKey: ["trigger-hits"],
     queryFn: () => api.getTriggerHits(200),
-    // 60 s background refetch — new alerts arrive via WS invalidation (below),
-    // so this is only a safety net for missed events / stale data.
     refetchInterval: 60_000,
+    staleTime: 30_000,
     enabled: tierReady,
   });
 

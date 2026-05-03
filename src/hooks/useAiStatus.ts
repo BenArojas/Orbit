@@ -35,11 +35,15 @@ export function useAiStatus() {
 
   // ── Poll /ai/status ──
 
+  // Rule 1: live — staleTime tracks the active refetchInterval / 2
+  //   Setup mode (10s interval): staleTime 5s so remounts within 10s serve
+  //   fresh data but don't suppress the background refetch at the halfway point.
+  //   Ready mode (60s interval): staleTime 30s for the same reason.
   const statusQuery = useQuery({
     queryKey: ["ai", "status"],
     queryFn: () => api.aiStatus(),
     refetchInterval: isReady ? POLL_INTERVAL_READY : POLL_INTERVAL_SETUP,
-    staleTime: 5_000,
+    staleTime: isReady ? 30_000 : 5_000,
   });
 
   // Sync query result → store
@@ -51,11 +55,14 @@ export function useAiStatus() {
 
   // ── Fetch models when Ollama is running ──
 
+  // Rule 3: static — model list only changes when user pulls/deletes a model;
+  // the refresh mutation invalidates explicitly. No polling clock needed.
   const modelsQuery = useQuery({
     queryKey: ["ai", "models"],
     queryFn: () => api.aiModels(),
     enabled: ollamaState === "running" || ollamaState === "no_models" || ollamaState === "ready",
-    staleTime: 30_000,
+    staleTime: Infinity,
+    refetchInterval: false,
   });
 
   useEffect(() => {

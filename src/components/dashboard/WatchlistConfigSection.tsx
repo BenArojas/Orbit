@@ -154,17 +154,21 @@ export default function WatchlistConfigSection() {
 
   // Tier-8 gating is N/A here — fetches only fire when the user opens the
   // section. Retries are handled by the global queryClient default.
+  // Rule 3: static — mutations (put/delete) invalidate explicitly; no polling needed
   const { data: configs } = useQuery<WatchlistConfig[]>({
     queryKey: ["watchlist-configs"],
     queryFn: () => api.getWatchlistConfigs(),
-    staleTime: 30_000,
+    staleTime: Infinity,
+    refetchInterval: false,
     enabled: open,
   });
 
+  // Rule 3: static — watchlist names don't change mid-session
   const { data: watchlists } = useQuery<WatchlistInfo[]>({
     queryKey: ["watchlists"],
     queryFn: () => api.getWatchlists(),
-    staleTime: 60_000,
+    staleTime: Infinity,
+    refetchInterval: false,
     enabled: open,
   });
 

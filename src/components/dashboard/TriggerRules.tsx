@@ -508,17 +508,21 @@ export default function TriggerRules() {
   // Tier 4 in the 4-tier dashboard cascade (Phase 8 / Task 3.4): 800ms.
   const tierReady = useIbkrReadyTier(4);
 
+  // Rule 3: static — mutations (create/toggle/delete) invalidate explicitly
   const { data: rules, isLoading, isError } = useQuery<TriggerRule[]>({
     queryKey: ["trigger-rules"],
     queryFn: () => api.getTriggerRules(),
-    staleTime: 30_000,
+    staleTime: Infinity,
+    refetchInterval: false,
     enabled: tierReady,
   });
 
+  // Rule 3: static — WS trigger_alert events invalidate explicitly
   const { data: hits } = useQuery<TriggerHit[]>({
     queryKey: ["trigger-hits"],
     queryFn: () => api.getTriggerHits(200),
-    staleTime: 30_000,
+    staleTime: Infinity,
+    refetchInterval: false,
     enabled: tierReady,
   });
 

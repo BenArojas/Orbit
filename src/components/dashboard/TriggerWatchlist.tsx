@@ -109,10 +109,12 @@ export default function TriggerWatchlist() {
   // Slice client-side to cap the sidebar display.
   // Tier 3 in the 4-tier dashboard cascade (Phase 8 / Task 3.4): 400ms.
   const tierReady = useIbkrReadyTier(3);
+  // Rule 1: live data — staleTime = refetchInterval / 2
   const { data: hits, isLoading, isError } = useQuery<TriggerHit[]>({
     queryKey: ["trigger-hits"],
     queryFn: () => api.getTriggerHits(200),
     refetchInterval: 30_000,
+    staleTime: 15_000,
     enabled: tierReady,
   });
 

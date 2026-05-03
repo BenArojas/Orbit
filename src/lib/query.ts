@@ -12,6 +12,39 @@ import { QueryClient } from "@tanstack/react-query";
 import { ApiError } from "./api";
 import { NetworkOfflineError } from "./network";
 
+// ── Query timing matrix (Phase 8 / Task 3.5) ──────────────────────────────
+//
+// Rules applied across all useQuery calls in this app:
+//
+//  1. LIVE market data (quotes, VIX):
+//       staleTime = refetchInterval / 2
+//       Ensures a remount within the interval gets a quick background refetch
+//       at the halfway point rather than serving arbitrarily old data.
+//       Example: refetchInterval 10s → staleTime 5s
+//
+//  2. Server-cached data (sectors/breadth/rotation — 60s server TTL):
+//       staleTime: 60_000, refetchInterval: 5 * 60_000
+//       Client staleTime matches server cache TTL so remounts within 60s
+//       serve instantly from local cache, not from a server that's also
+//       serving from cache.
+//
+//  3. Essentially static data (watchlist names, instrument lists,
+//     trigger rules, ai/models, conids):
+//       staleTime: Infinity, refetchInterval: false (or omitted)
+//       Fetched once per session; mutations/WS events invalidate explicitly.
+//       Never burns IBKR quota on a polling clock.
+//
+//  4. WS-event-driven data (trigger-hits, health-details):
+//       staleTime = refetchInterval / 2 as a safety net; WS invalidation
+//       is the primary freshness mechanism.
+//
+//  5. Gateway / health polling:
+//       staleTime slightly below refetchInterval so background refetches
+//       fire without a redundant remount refetch. Managed in useGateway.ts.
+//
+// The default staleTime (30s) is intentionally generous — it's the right
+// floor for live market data but explicit per-query overrides take precedence.
+
 export const queryClient = new QueryClient({
   defaultOptions: {
     queries: {

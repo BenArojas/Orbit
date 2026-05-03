@@ -200,12 +200,13 @@ export default function ArcGaugeRow() {
 
   const vixConid = vixResolved?.conid;
 
-  // VIX quote
+  // VIX quote — Rule 1: staleTime = refetchInterval / 2 (live market data)
   const { data: vixQuote } = useQuery<QuoteResponse>({
     queryKey: ["quote", vixConid],
     queryFn: () => api.quote(vixConid!),
     enabled: tierReady && vixConid != null,
     refetchInterval: 15_000,
+    staleTime: 7_500,
   });
 
   // Market Strength — breadth proxy from /sectors/breadth
@@ -229,16 +230,19 @@ export default function ArcGaugeRow() {
   });
 
   // Trigger rules + hits (local SQLite, always ok)
+  // Rule 3: static data — mutations/WS events invalidate explicitly, no polling clock
   const { data: rules } = useQuery<TriggerRule[]>({
     queryKey: ["trigger-rules"],
     queryFn: () => api.getTriggerRules(),
-    staleTime: 30_000,
+    staleTime: Infinity,
+    refetchInterval: false,
   });
 
   const { data: hits } = useQuery<TriggerHit[]>({
     queryKey: ["trigger-hits"],
     queryFn: () => api.getTriggerHits(200),
-    staleTime: 30_000,
+    staleTime: Infinity,
+    refetchInterval: false,
   });
 
   const vix = vixQuote?.lastPrice ?? 0;

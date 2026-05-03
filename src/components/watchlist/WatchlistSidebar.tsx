@@ -48,10 +48,12 @@ export default function WatchlistSidebar() {
   const ibkrReady = useIbkrReadyTier(3);
 
   // Fetch all IBKR watchlists
+  // Rule 3: static — watchlist names don't change mid-session; mutations invalidate explicitly
   const { data: watchlists } = useQuery({
     queryKey: ["watchlists"],
     queryFn: api.getWatchlists,
-    staleTime: 60_000,
+    staleTime: Infinity,
+    refetchInterval: false,
     enabled: ibkrReady,
   });
 
@@ -63,6 +65,7 @@ export default function WatchlistSidebar() {
   }, [watchlists, selectedWatchlistId]);
 
   // ── Query 1: instruments (fast — no IBKR snapshot call) ──────────────────
+  // Rule 3: static — instrument list for a watchlist id is stable; invalidated on watchlist switch
   const {
     data: instrumentsData,
     isLoading: instrumentsLoading,
@@ -71,7 +74,8 @@ export default function WatchlistSidebar() {
     queryKey: ["watchlist-instruments", selectedWatchlistId],
     queryFn: () => api.getWatchlistInstruments(selectedWatchlistId!),
     enabled: ibkrReady && !!selectedWatchlistId,
-    staleTime: 60_000,
+    staleTime: Infinity,
+    refetchInterval: false,
   });
 
   const instruments = instrumentsData?.items;
@@ -84,11 +88,12 @@ export default function WatchlistSidebar() {
   );
   const conidsKey = conids.join(",");
 
+  // Rule 1: live market data — staleTime = refetchInterval / 2
   const { data: quotesData } = useQuery({
     queryKey: ["watchlist-quotes", selectedWatchlistId, conidsKey],
     queryFn: () => api.getWatchlistQuotes(selectedWatchlistId!, conids),
     enabled: ibkrReady && !!selectedWatchlistId && conids.length > 0,
-    staleTime: 30_000,
+    staleTime: 15_000,
     refetchInterval: 30_000,
   });
 
