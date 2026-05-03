@@ -17,7 +17,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from starlette.middleware.cors import CORSMiddleware
 
-from config import FRONTEND_ORIGIN, TAURI_ORIGIN
+from config import FRONTEND_ORIGIN, TAURI_ORIGIN, REQUEST_LOG_ENABLED
 from exceptions import (
     AIError,
     GatewayError,
@@ -183,6 +183,18 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# ── Request-logging middleware (Phase 8 / Task 4.2) ──────────
+# Default on in dev (BACKEND_PORT == 8000), off in packaged builds.
+# Override with PARALLAX_REQUEST_LOG=1 or =0.
+
+if REQUEST_LOG_ENABLED:
+    from request_logging import RequestLoggingMiddleware
+    app.add_middleware(RequestLoggingMiddleware)
+    log.info("Request logging enabled → backend/logs/requests.log")
+else:
+    log.debug("Request logging disabled (PARALLAX_REQUEST_LOG=0 or packaged build)")
 
 
 # ── Exception handlers ───────────────────────────────────────

@@ -82,3 +82,19 @@ PREFLIGHT_DELAY_MS = int(os.getenv("PARALLAX_PREFLIGHT_DELAY_MS", "750"))
 # serving stale data to users who are actively watching.
 # Set to 0 to disable caching (always compute fresh).
 SECTORS_CACHE_TTL_SEC = int(os.getenv("PARALLAX_SECTORS_CACHE_TTL_SEC", "60"))
+
+# Request-logging middleware toggle (Phase 8 / Task 4.2).
+# When enabled, RequestLoggingMiddleware writes every HTTP + WS event to
+# backend/logs/requests.log (rotating JSONL, 10 MB × 5 backups).
+# Useful for dev tuning (HAR-style analysis without a browser); wasteful
+# in packaged production builds where disk writes serve no purpose.
+#
+# Default: on when BACKEND_PORT == 8000 (standard dev server), off otherwise.
+# Override by setting PARALLAX_REQUEST_LOG=1 (force on) or =0 (force off).
+def _default_request_log() -> bool:
+    explicit = os.getenv("PARALLAX_REQUEST_LOG")
+    if explicit is not None:
+        return explicit.strip() not in ("0", "false", "False", "no", "")
+    return BACKEND_PORT == 8000
+
+REQUEST_LOG_ENABLED: bool = _default_request_log()
