@@ -16,6 +16,8 @@ import asyncio
 import datetime
 import logging
 
+from cache import cache as _cache
+from config import SECTORS_CACHE_TTL_SEC
 from constants import (
     BREADTH_EMA_PERIOD,
     ROTATION_LOOKBACK_DAYS,
@@ -65,11 +67,48 @@ class SectorService:
 
         return self._conid_cache
 
-    async def get_sector_performance(self) -> list[dict]:
+    # ── Phase 8 / Task 2.3: result cache ───────────────────────
+    #
+    # Each public method fans out to ~11 concurrent IBKR history calls and
+    # takes 30–43s cold.  Cache each result for SECTORS_CACHE_TTL_SEC (60s
+    # by default) so a second dashboard load within that window is
+    # served from memory in <1ms.
+    #
+    # Keys are module-scoped so independent SectorService instances (e.g. in
+    # tests) share the same backing store — consistent with every other
+    # @cached usage in the codebase.
+    #
+    # force_refresh=True: skip the read, compute fresh, then overwrite the
+    # cache entry.  Intended for admin / test use, not the regular hot path.
+    # TTL=0: caching disabled (always compute fresh).
+
+    _CACHE_KEY_PERFORMANCE = "sectors:performance"
+    _CACHE_KEY_RRG = "sectors:rrg"
+    _CACHE_KEY_BREADTH = "sectors:breadth"
+    _CACHE_KEY_ROTATION = "sectors:rotation"
+
+    async def get_sector_performance(self, force_refresh: bool = False) -> list[dict]:
         """
         Fetch YTD performance for all 11 sector ETFs.
         Returns sorted by YTD % descending.
+
+        Result is cached for SECTORS_CACHE_TTL_SEC seconds.  Pass
+        force_refresh=True to bypass and overwrite the cached value.
         """
+        if not force_refresh and SECTORS_CACHE_TTL_SEC > 0:
+            hit = await _cache.get(self._CACHE_KEY_PERFORMANCE)
+            if hit is not None:
+                log.debug("sectors:performance cache hit")
+                return hit
+
+        result = await self._compute_sector_performance()
+
+        if SECTORS_CACHE_TTL_SEC > 0:
+            await _cache.set(self._CACHE_KEY_PERFORMANCE, result, ttl=SECTORS_CACHE_TTL_SEC)
+        return result
+
+    async def _compute_sector_performance(self) -> list[dict]:
+        """Underlying computation for get_sector_performance (no caching)."""
         conids = await self._resolve_conids()
 
         # Build the list of sector conids we successfully resolved
@@ -136,9 +175,12 @@ class SectorService:
         results.sort(key=lambda x: x.get("ytdPercent") or -999, reverse=True)
         return results
 
-    async def get_rrg_data(self) -> list[dict]:
+    async def get_rrg_data(self, force_refresh: bool = False) -> list[dict]:
         """
         Compute Relative Rotation Graph data for all sector ETFs.
+
+        Result is cached for SECTORS_CACHE_TTL_SEC seconds.  Pass
+        force_refresh=True to bypass and overwrite the cached value.
 
         Standard JdK RRG method:
           1. Get daily close prices for each sector + SPY (1 year lookback)
@@ -148,6 +190,20 @@ class SectorService:
           5. Normalize both to center at 100
           6. Assign quadrant based on position
         """
+        if not force_refresh and SECTORS_CACHE_TTL_SEC > 0:
+            hit = await _cache.get(self._CACHE_KEY_RRG)
+            if hit is not None:
+                log.debug("sectors:rrg cache hit")
+                return hit
+
+        result = await self._compute_rrg_data()
+
+        if SECTORS_CACHE_TTL_SEC > 0:
+            await _cache.set(self._CACHE_KEY_RRG, result, ttl=SECTORS_CACHE_TTL_SEC)
+        return result
+
+    async def _compute_rrg_data(self) -> list[dict]:
+        """Underlying computation for get_rrg_data (no caching)."""
         conids = await self._resolve_conids()
         benchmark_conid = conids.get(SECTOR_BENCHMARK)
         if not benchmark_conid:
@@ -265,9 +321,12 @@ class SectorService:
 
     # ── Phase 8.9: Dashboard arc-gauge feeds ───────────────────
 
-    async def get_market_breadth(self) -> dict:
+    async def get_market_breadth(self, force_refresh: bool = False) -> dict:
         """
         "% of sector ETFs trading above their 50-day EMA" — breadth proxy.
+
+        Result is cached for SECTORS_CACHE_TTL_SEC seconds.  Pass
+        force_refresh=True to bypass and overwrite the cached value.
 
         We use the 11 SPDR sector ETFs instead of all ~500 S&P constituents so
         we stay within IBKR rate limits while still producing a reasonable
@@ -284,6 +343,20 @@ class SectorService:
             ],
           }
         """
+        if not force_refresh and SECTORS_CACHE_TTL_SEC > 0:
+            hit = await _cache.get(self._CACHE_KEY_BREADTH)
+            if hit is not None:
+                log.debug("sectors:breadth cache hit")
+                return hit
+
+        result = await self._compute_market_breadth()
+
+        if SECTORS_CACHE_TTL_SEC > 0:
+            await _cache.set(self._CACHE_KEY_BREADTH, result, ttl=SECTORS_CACHE_TTL_SEC)
+        return result
+
+    async def _compute_market_breadth(self) -> dict:
+        """Underlying computation for get_market_breadth (no caching)."""
         conids = await self._resolve_conids()
 
         # Pull enough history to seed a 50-period EMA with a buffer.
@@ -342,9 +415,12 @@ class SectorService:
             "etf_states": etf_states,
         }
 
-    async def get_sector_rotation(self) -> dict:
+    async def get_sector_rotation(self, force_refresh: bool = False) -> dict:
         """
         Offensive vs Defensive sector performance over ~1 month (21 trading days).
+
+        Result is cached for SECTORS_CACHE_TTL_SEC seconds.  Pass
+        force_refresh=True to bypass and overwrite the cached value.
 
         Offensive = XLK, XLY, XLC, XLF  (risk-on leaders)
         Defensive = XLP, XLU, XLV       (low-beta safe-haven sectors)
@@ -367,6 +443,20 @@ class SectorService:
             "defensive":      [{"symbol": ..., "pct": ...}, ...],
           }
         """
+        if not force_refresh and SECTORS_CACHE_TTL_SEC > 0:
+            hit = await _cache.get(self._CACHE_KEY_ROTATION)
+            if hit is not None:
+                log.debug("sectors:rotation cache hit")
+                return hit
+
+        result = await self._compute_sector_rotation()
+
+        if SECTORS_CACHE_TTL_SEC > 0:
+            await _cache.set(self._CACHE_KEY_ROTATION, result, ttl=SECTORS_CACHE_TTL_SEC)
+        return result
+
+    async def _compute_sector_rotation(self) -> dict:
+        """Underlying computation for get_sector_rotation (no caching)."""
         conids = await self._resolve_conids()
 
         # Request a tad more than the lookback so we always have enough bars.

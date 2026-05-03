@@ -73,3 +73,12 @@ AUTH_STATUS_TTL_SEC = float(os.getenv("PARALLAX_AUTH_STATUS_TTL_SEC", "5"))
 # 3000ms) and document the result. See the Phase-8 plan's "Open
 # questions" section for the bisection protocol.
 PREFLIGHT_DELAY_MS = int(os.getenv("PARALLAX_PREFLIGHT_DELAY_MS", "750"))
+
+# Sectors result cache TTL (Phase 8 / Task 2.3).
+# Each /sectors/* endpoint fans out to ~11 IBKR history calls and takes
+# 30–43s on a cold start.  Cache the result server-side so a second page
+# load within this window is served instantly from memory.  Frontend polls
+# at 5-minute cadence anyway, so 60s gives meaningful relief without
+# serving stale data to users who are actively watching.
+# Set to 0 to disable caching (always compute fresh).
+SECTORS_CACHE_TTL_SEC = int(os.getenv("PARALLAX_SECTORS_CACHE_TTL_SEC", "60"))
