@@ -31,6 +31,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Depends
 
 from deps import get_db, get_gateway, get_ibkr, get_ollama, get_scanner
+from exceptions import IBKRConnectionError
 from services.db import DatabaseService
 from services.gateway import GatewayLifecycle
 from services.ibkr import IBKRService
@@ -221,9 +222,15 @@ async def health_details(
     """
     Aggregated health check for the frontend health strip (Phase 7.5).
 
-    Polls five subsystems and returns a structured response.
-    The frontend shows a coloured dot and a modal with named checks.
-    The raw JSON is also available via "Copy diagnostics".
+    Phase 8 / Task 2.4 — shape superset of /gateway/status.
+
+    The response is a strict superset of /gateway/status: every key that
+    endpoint returns is present here with an identical value, plus the
+    per-subsystem check breakdown.  This allows the frontend (Task 3.6) to
+    switch to polling /health/details only and drop the /gateway/status clock.
+
+    Auth state comes from IBKRService.auth_status() which is cached for
+    AUTH_STATUS_TTL_SEC (Task 1.7) — no extra IBKR probe is issued.
     """
     checks = [
         _check_gateway(gw, ibkr),
@@ -242,7 +249,31 @@ async def health_details(
     else:
         overall = "ok"
 
+    # ── /gateway/status field parity (Task 2.4) ───────────────────────────
+    # Mirror the exact same logic as gateway_status() so both endpoints
+    # return bit-for-bit identical values for the shared key subset.
+    gw_status = gw.status()
+    authenticated = False
+    auth_message = "Gateway not running."
+
+    if gw_status["running"]:
+        try:
+            auth = await ibkr.auth_status()
+            authenticated = auth["authenticated"]
+            auth_message = auth.get("message", "")
+        except IBKRConnectionError as exc:
+            log.warning("Auth probe in /health/details failed: %s", exc)
+            auth_message = "Gateway starting up — auth check pending."
+
     return {
+        # /gateway/status fields — frontend can drop that polling clock
+        # once it switches to /health/details (Task 3.6).
+        **gw_status,
+        "authenticated": authenticated,
+        "auth_required": gw_status["running"] and not authenticated,
+        "auth_message": auth_message,
+        "session_dropped": ibkr.state.session_dropped,
+        # /health/details-specific fields
         "overall": overall,
         "checks": checks,
         "generated_at": datetime.now(timezone.utc).isoformat(),

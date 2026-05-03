@@ -8,7 +8,7 @@ Covers:
 """
 
 import sys
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 # Stub out pandas_ta before any service chain imports it.
 # The sandbox doesn't have the package; production runs via uv which does.
@@ -25,7 +25,17 @@ from httpx import AsyncClient, ASGITransport
 
 def _make_gateway(running: bool = True, state_value: str = "running") -> MagicMock:
     gw = MagicMock()
-    gw.status.return_value = {"running": running, "state": state_value}
+    # Task 2.4: health_details calls gw.status() and spreads the result
+    # into its own response, so the mock needs the full production shape.
+    gw.status.return_value = {
+        "state": state_value,
+        "provisioned": True,
+        "running": running,
+        "gateway_url": "https://localhost:5001",
+        "gateway_home": "/home/user/.parallax/gateway",
+        "error": None,
+        "platform": "Linux x86_64",
+    }
     return gw
 
 
@@ -36,6 +46,16 @@ def _make_ibkr(
     ibkr = MagicMock()
     ibkr.state.authenticated = authenticated
     ibkr.state.session_dropped = session_dropped
+    # Task 2.4: health_details now calls ibkr.auth_status() (the cached
+    # Task-1.7 path) to populate /gateway/status-parity fields.
+    ibkr.auth_status = AsyncMock(return_value={
+        "authenticated": authenticated,
+        "message": "Connected and authenticated." if authenticated else "Login required.",
+        "ws_ready": True,
+    })
+    # gateway_status() also calls these when authenticated.
+    ibkr.start_tickle_loop = AsyncMock()
+    ibkr.ensure_accounts = AsyncMock()
     return ibkr
 
 
