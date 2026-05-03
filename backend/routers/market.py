@@ -4,6 +4,7 @@ All data comes from IBKR Client Portal via the IBKRService.
 
 Endpoints:
   GET  /market/quote/{conid}     — Full quote snapshot for a single instrument
+  GET  /market/quotes            — Bundled snapshot for many conids in one call
   GET  /market/candles/{conid}   — Historical OHLCV bars for charting
   GET  /market/search            — Search securities by symbol/name
   GET  /market/conid/{symbol}    — Resolve a ticker to an IBKR conid
@@ -73,6 +74,81 @@ async def get_quote(
         "changeAmount": _safe_float(data.get("82")),
         "volume": _safe_float(data.get("7762")),
     }
+
+
+# ── GET /market/quotes ───────────────────────────────────────
+
+
+def _format_quote_row(conid: int, data: dict) -> dict:
+    """Shape one snapshot row into the same fields as /market/quote/{conid}."""
+    return {
+        "conid": conid,
+        "symbol": data.get("55", ""),
+        "companyName": data.get("7051", ""),
+        "lastPrice": _safe_float(data.get("31")),
+        "bid": _safe_float(data.get("84")),
+        "ask": _safe_float(data.get("86")),
+        "open": _safe_float(data.get("7295")),
+        "high": _safe_float(data.get("70")),
+        "low": _safe_float(data.get("71")),
+        "previousClose": _safe_float(data.get("7741")),
+        "changePercent": _safe_float(data.get("83")),
+        "changeAmount": _safe_float(data.get("82")),
+        "volume": _safe_float(data.get("7762")),
+    }
+
+
+@router.get("/quotes")
+async def get_quotes(
+    conids: str = Query(..., description="Comma-separated IBKR conids, e.g. 1,2,3"),
+    ibkr: IBKRService = Depends(get_ibkr),
+):
+    """
+    Bundled market-data snapshot for many conids in a single request.
+
+    The dashboard mounts MarketPulse + Watchlist + Trigger panels which
+    historically each fired their own /market/quote/:id calls. This
+    endpoint collapses that fan-out: the frontend builds one conid list
+    and gets all quotes back via one HTTP round-trip.
+
+    Internally `IBKRService.snapshot()` chunks at 50 conids per IBKR
+    call (Phase 8 / Task 2.1), pre-flights cold conids, and coalesces
+    concurrent identical batches.
+
+    Response shape: {"items": [<quote>, ...]} — each quote is the same
+    shape as GET /market/quote/{conid}.
+    """
+    raw_list = [c.strip() for c in conids.split(",") if c.strip()]
+    parsed: list[int] = []
+    for raw in raw_list:
+        try:
+            parsed.append(int(raw))
+        except ValueError:
+            return {
+                "error": f"Invalid conid: {raw!r} — must be integer",
+                "items": [],
+            }
+    if not parsed:
+        return {"items": []}
+
+    rows = await ibkr.snapshot(conids=parsed, fields=DEFAULT_QUOTE_FIELDS_STR)
+
+    # Index IBKR rows by conid so the response order matches the
+    # request order (gather() preserves chunk order, but within IBKR's
+    # response a chunk row could theoretically come back out of order).
+    by_conid: dict[int, dict] = {}
+    for row in rows:
+        rc = row.get("conid")
+        try:
+            if rc is not None:
+                by_conid[int(rc)] = row
+        except (TypeError, ValueError):
+            continue
+
+    items = [
+        _format_quote_row(c, by_conid.get(c, {})) for c in parsed
+    ]
+    return {"items": items}
 
 
 # ── GET /market/candles/{conid} ──────────────────────────────

@@ -44,6 +44,12 @@ DEFAULT_QUOTE_FIELDS = [
 ]
 DEFAULT_QUOTE_FIELDS_STR = ",".join(DEFAULT_QUOTE_FIELDS)
 
+# Max conids per single /iserver/marketdata/snapshot HTTP call.
+# Phase 8 / Task 2.1: bundled `/market/quotes` chunks larger requests
+# into ≤ this many conids per IBKR call. IBKR's documented hard cap
+# is 50 — going above risks silent truncation.
+SNAPSHOT_BATCH_SIZE = 50
+
 # Minimal fields for live WebSocket streaming
 LIVE_STREAM_FIELDS = [
     FIELD_LAST_PRICE,

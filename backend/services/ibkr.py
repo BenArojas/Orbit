@@ -33,7 +33,7 @@ from config import (
     IBKR_TICKLE_INTERVAL,
     PREFLIGHT_DELAY_MS,
 )
-from constants import DEFAULT_QUOTE_FIELDS_STR, LIVE_STREAM_FIELDS
+from constants import DEFAULT_QUOTE_FIELDS_STR, LIVE_STREAM_FIELDS, SNAPSHOT_BATCH_SIZE
 from exceptions import (
     IBKRAuthError,
     IBKRConnectionError,
@@ -995,15 +995,43 @@ class IBKRService:
                 *(self._preflight_snapshot(c, fields) for c in cold)
             )
 
-        # Step 3: real bulk call after every cold conid has been warmed.
-        # Task 1.6 — batch coalescing: when 5 concurrent callers ask for
-        # the *same* (sorted conids, fields) tuple, only the first fires
-        # the real /iserver/marketdata/snapshot request; the other 4
-        # await the shared asyncio.Future and receive the same list back.
-        # The future is popped in the `finally` block so the next call
-        # after it resolves issues a fresh IBKR request (no stale pin).
-        # Batches with different conid sets do NOT coalesce — that's the
-        # Layer 1 case handled by `get_snapshot()` (singular).
+        # Step 3: real bulk call(s) after every cold conid has been warmed.
+        # Phase 8 / Task 2.1 — chunk into ≤ SNAPSHOT_BATCH_SIZE per IBKR
+        # call. IBKR's documented hard cap is 50; larger requests risk
+        # silent truncation. Chunks fire in parallel via asyncio.gather
+        # and results are concatenated in input order.
+        if len(conids) <= SNAPSHOT_BATCH_SIZE:
+            return await self._snapshot_chunk_request(conids, fields)
+
+        chunks = [
+            conids[i : i + SNAPSHOT_BATCH_SIZE]
+            for i in range(0, len(conids), SNAPSHOT_BATCH_SIZE)
+        ]
+        chunk_results = await asyncio.gather(
+            *(self._snapshot_chunk_request(chunk, fields) for chunk in chunks)
+        )
+        # Flatten chunk responses preserving order.
+        return [row for sublist in chunk_results for row in sublist]
+
+    async def _snapshot_chunk_request(
+        self,
+        conids: list[int],
+        fields: str,
+    ) -> list[dict]:
+        """One IBKR /iserver/marketdata/snapshot call for ≤50 conids.
+
+        Task 1.6 — batch coalescing: when 5 concurrent callers ask for
+        the *same* (sorted conids, fields) tuple, only the first fires
+        the real /iserver/marketdata/snapshot request; the other 4
+        await the shared asyncio.Future and receive the same list back.
+        The future is popped in the `finally` block so the next call
+        after it resolves issues a fresh IBKR request (no stale pin).
+        Chunks with different conid sets do NOT coalesce — that's the
+        Layer 1 case handled by `get_snapshot()` (singular).
+
+        Caller (`snapshot()`) is responsible for pre-flight + warming;
+        this helper only executes the real bulk call.
+        """
         batch_key = (tuple(sorted(conids)), fields)
         existing_fut = self._snapshot_batch_futures.get(batch_key)
         if existing_fut is not None:
