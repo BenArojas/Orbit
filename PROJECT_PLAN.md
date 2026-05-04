@@ -1,7 +1,7 @@
 # Parallax — Project Plan
 
-> Last updated: 2026-04-27
-> Status: Phase 1–7 complete. Phase 8 (E2E testing) in progress — 8.1, 8.3, 8.9 done.
+> Last updated: 2026-05-04
+> Status: Phase 1–7 complete. Phase 8 (E2E testing) in progress — 8.1, 8.3, 8.9, 8.10 done. Phase 9 (Dashboard request-fan-out optimization) complete — all 22 tasks shipped, pending empirical verification with `summarize_request_log.py`.
 ---
 
 ## IBKR Gateway — What We Learned (2026-04-14)
@@ -221,8 +221,79 @@ These are locked in. Don't revisit unless something breaks.
 | 8.6 | Settings persistence | Both | TODO | All settings survive app restart; theme applies on cold launch |
 | 8.7 | Error + empty state coverage | Both | TODO | Force each error condition manually; verify correct state renders, no blank screens |
 | 8.8 | Fresh-install run-through | Both | TODO | Clean macOS VM + clean Windows VM; gateway setup → first symbol → first trigger |
-| 8.9 | Dashboard bugs + request issues | Both | CODE COMPLETE · review pending | Branch `feat/dashboard-phase8-task8.9` off `dev`. Shipped: watchlist 500 fix, 9-tier staggered loads (250 ms cascade), per-component pulse skeletons, Market Pulls rewrite (13 tickers centred, 80 ms inner stagger, sparklines), WS singleton with 10 s teardown grace, real Market Strength + Sector Rotation arc gauges (ETF proxy / 21-day offensive-vs-defensive), VIX click → Analysis(1D), Sector Performance scrollable (3 visible + fade hint), RRG flex-1 min-h 280 px with percentage-based SVG, AlertLog collapse-when-empty + dashboard-scroll-when-populated. 17 new backend tests (9 unwrap + 8 gauges) + 12 tier-hook tests, all green. See [`docs/phase8-task8.9-plan.md`](docs/phase8-task8.9-plan.md). |
-| 8.10 | Gateway lifecycle UX (orphan recovery + 3-level recovery + UI states + cache/toast feedback) | Both | IN REVIEW | Branch `feat/gateway-lifecycle-ux` off `dev`. Backend: PID file at `~/.parallax/gateway/gateway.pid` written on spawn / cleared on stop; `_recover_existing_process()` adopts orphans whose `psutil` cmdline contains our gateway home (refuses Docker / unrelated PIDs); fallback `process_iter` scan when pid file is missing/stale; new `gw.logout()` posts to `/v1/api/logout` and a new `POST /gateway/logout` route maps to it; `run.py` converts `SIGHUP → SIGTERM` so terminal-close runs lifespan. Frontend: 3-level recovery — `Logout` (cheap, JVM stays up) / `Restart Gateway` (kills JVM, formerly Reset session) / `Factory Reset` (Settings only); in-button spinners on every action button; `state === starting / stopping` get narrated bodies; `useGateway` does optimistic state flips so the UI updates on click instead of waiting for the next 2 s poll. **Logout / Restart / Factory Reset now emit Sonner success+error toasts and invalidate every IBKR-session-dependent query (`quote`, `candles`, `watchlists`, `sectors`, `screener-*`, `health-details`, …) via a `predicate` filter — local-only data (gateway status, settings, AI, trigger-rule config) is left alone.** Dev: `scripts/dev-backend.sh` + `.ps1` traps `SIGINT/SIGTERM/SIGHUP` and kills any pid in the pid file before exec-ing uvicorn. Tests: PID file round-trip, cmdline check (accepts ours / rejects Slack-style / rejects Docker), orphan recovery happy path + scan fallback + health-check abort, stop()-on-adopted, /gateway/logout route + GatewayStartError propagation, `logout()` direct unit tests, **`useGateway` toast + IBKR-cache invalidation tests (logout/restart/factory + selectivity guard for start/stop/provision)**. Docs: `backend/docs/gateway-lifecycle.md` learning reference; `README.md` documentation map; `backend/README.md` rewrite. Cleanup: `claude.md` → `CLAUDE.md`, drop `SCREENER_REDESIGN.md` (PR #22 shipped). New dep: `psutil>=6.0.0`. |
+| 8.9 | Dashboard bugs + request issues | Both | DONE | Merged via PR #21. Shipped: watchlist 500 fix, 9-tier staggered loads (250 ms cascade — later collapsed to 4 tiers in Phase 9 / 3.4), per-component pulse skeletons, Market Pulls rewrite (13 tickers centred, 80 ms inner stagger, sparklines), WS singleton with 10 s teardown grace, real Market Strength + Sector Rotation arc gauges (ETF proxy / 21-day offensive-vs-defensive), VIX click → Analysis(1D), Sector Performance scrollable (3 visible + fade hint), RRG flex-1 min-h 280 px with percentage-based SVG, AlertLog collapse-when-empty + dashboard-scroll-when-populated. 17 new backend tests (9 unwrap + 8 gauges) + 12 tier-hook tests, all green. See [`docs/phase8-task8.9-plan.md`](docs/phase8-task8.9-plan.md). |
+| 8.10 | Gateway lifecycle UX (orphan recovery + 3-level recovery + UI states + cache/toast feedback) | Both | DONE | Merged via PR #23. Backend: PID file at `~/.parallax/gateway/gateway.pid` written on spawn / cleared on stop; `_recover_existing_process()` adopts orphans whose `psutil` cmdline contains our gateway home (refuses Docker / unrelated PIDs); fallback `process_iter` scan when pid file is missing/stale; `gw.logout()` posts to `/v1/api/logout` mapped to `POST /gateway/logout`; `run.py` converts `SIGHUP → SIGTERM` so terminal-close runs lifespan. Frontend: 3-level recovery — `Logout` / `Restart Gateway` / `Factory Reset` (Settings only); in-button spinners; `useGateway` does optimistic state flips. **Logout / Restart / Factory Reset emit Sonner success+error toasts and invalidate every IBKR-session-dependent query via a `predicate` filter.** Dev: `scripts/dev-backend.sh` + `.ps1` trap signals + kill stale pid before exec-ing uvicorn. New dep: `psutil>=6.0.0`. |
+
+---
+
+### Phase 9: Dashboard Request-Fan-Out Optimization — COMPLETE (code) · UNVERIFIED (metrics)
+
+> Goal: Cut the 39-call dashboard mount + 60s cold-start time down to <5s by aligning the IBKR call protocol (pre-flight, secdef-warm, accounts bootstrap), bundling endpoints, coalescing concurrent calls, caching where stable, and modernizing frontend polling.
+> Source plan: [`docs/phase8-dashboard-optimization-plan.md`](docs/phase8-dashboard-optimization-plan.md) (named "Phase 8" in its own file but tracked here as Phase 9 to disambiguate from E2E testing).
+> Triggered by: HAR + backend-log analysis after 8.9 — 85 quote calls, 27 gateway-status calls, ~250 IBKR snapshots in a 170s window.
+
+**Sub-phase 1 — IBKR service core**
+
+| # | Task | Branch | Status | Commit |
+|---|---|---|---|---|
+| 9.1.1 | Externalize pacing table to `backend/constants/ibkr_pacing.py` | `feat/ibkr-pacing-constants` | DONE | `d9678f5` |
+| 9.1.2 | `/iserver/accounts` cold-start bootstrap | `feat/ibkr-accounts-bootstrap` | DONE | `a647c30` (+ empty-list retry hotfix `c753547`) |
+| 9.1.3 | Snapshot pre-flight + warmed-conid set (750ms delay, per-conid lock) | `feat/ibkr-snapshot-preflight` | DONE | `da652cb` |
+| 9.1.4 | `/iserver/secdef/search` pre-warm for non-STK contracts | `feat/ibkr-secdef-prewarm` | DONE | `57e7e40` |
+| 9.1.5 | Server-side conid SQLite cache (forever-TTL, `force_refresh` kwarg) | `feat/conid-cache-sqlite` | DONE | `f89ab73` (+ SQLITE_MISUSE write-lock hotfix `c753547`) |
+| 9.1.6 | Snapshot/history request coalescing via in-flight future map | `feat/snapshot-coalescing` | DONE | `726db8d` |
+| 9.1.7 | Auth-state TTL cache (5s default, replaces `_auth_probe_lock`) | `feat/auth-state-cache` | DONE | `fd8852c` |
+
+**Sub-phase 2 — Backend routers**
+
+| # | Task | Branch | Status | Commit |
+|---|---|---|---|---|
+| 9.2.1 | Bundled `GET /market/quotes?conids=...` (50-conid chunks) | `feat/bundled-quotes-endpoint` | DONE | `2860f8b` |
+| 9.2.2 | Bundled `GET /market/candles?conids=...` (5-concurrent semaphore) | `feat/bundled-candles-endpoint` | DONE | `a856f7d` |
+| 9.2.3 | `/sectors/*` 60s server cache | `feat/sectors-cache` | DONE | `fe1ba30` |
+| 9.2.4 | `/health/details` strict-superset of `/gateway/status` (shape unify) | `feat/health-status-unify` | DONE | `294cc39` |
+| 9.2.5 | WebSocket auth-state push (subscribe to IBKR `sts` topic) | `feat/ws-auth-state-push` | DONE | `d053055` |
+
+**Sub-phase 3 — Frontend hygiene**
+
+| # | Task | Branch | Status | Commit |
+|---|---|---|---|---|
+| 9.3.1 | MarketPulse uses bundled quotes + candles endpoints | `feat/pulse-bundled-quotes` | DONE | `49c598a` |
+| 9.3.2 | Validate cached conid resolution (no code change — manual HAR check) | `feat/pulse-cached-conids` | DONE | (covered by 9.1.5) |
+| 9.3.3 | Defer pulse candles until quotes settle | `feat/defer-pulse-candles` | DONE | `9ef8f11` |
+| 9.3.4 | Tier reduction (9 → 4 tiers, 800ms total stagger) | `feat/dashboard-4-tiers` | DONE | `5ee0afe` |
+| 9.3.5 | `staleTime` / `refetchInterval` audit across all queries | `chore/query-timing-audit` | DONE | `fd991ec` |
+| 9.3.6 | `/gateway/status` retry burst fix (3×500ms → 1×1500ms) | `fix/gateway-status-retry` | DONE | `e00a945` |
+| 9.3.7 | Pre/post-login cadences + visibility-aware polling + WS auth subscription | `feat/auth-polling-modernized` | DONE | `0d650e9` |
+
+**Sub-phase 4 — Observability + docs**
+
+| # | Task | Branch | Status | Commit |
+|---|---|---|---|---|
+| 9.4.1 | Cold-start protocol docs + `docs/ibkr-pacing.md` | `docs/ibkr-cold-start-protocol` | DONE | `f4d3ef5` |
+| 9.4.2 | Gate `RequestLoggingMiddleware` behind `PARALLAX_REQUEST_LOG` env var | `chore/request-logging-toggle` | DONE | `5be2e30` |
+| 9.4.3 | `summarize_request_log.py` Polars acceptance-dashboard script | `chore/log-summary-tool` | DONE | `d689e99` |
+
+**Cross-cutting invariants introduced (must be respected by future work):**
+
+- `DatabaseService` write-lock (Task 9.1.5 hotfix) — every SQLite-write method dispatches through `self._run_write(fn)`, never `asyncio.to_thread(fn)` directly. Reads bypass the lock (WAL mode serialises read-vs-write at the file level).
+- Pacing values live in `backend/constants/ibkr_pacing.py` only — no hardcoded RPS literals elsewhere.
+- `conid` is the universal instrument key — caches key by `(symbol, sec_type)` only at the resolver boundary; everything downstream of `get_conid()` is keyed by `conid`.
+
+**Outstanding for Phase 9 — empirical verification (not yet run):**
+
+Per the plan's target table (`docs/phase8-dashboard-optimization-plan.md` line 786), confirm post-optimization metrics on a fresh 170s post-login dashboard run:
+
+| Metric | Before | Target | Verified? |
+|---|---|---|---|
+| `/market/quote/:id` count | 85 | <5 | ⏳ |
+| `/market/candles/:id` count | 20 | <5 | ⏳ |
+| `/gateway/status` count | 27 | <5 | ⏳ |
+| Backend → IBKR snapshot calls | ~250 | <60 | ⏳ |
+| `Snapshot timed out` warnings | many | 0 | ⏳ |
+| Dashboard time-to-fully-rendered | ~60s cold | <5s cold / <1s warm | ⏳ |
+
+Run `uv run python backend/scripts/summarize_request_log.py` after a 170s post-login session and record the numbers back into the optimization plan's status table.
 
 ---
 
