@@ -113,6 +113,9 @@
   --glow-purple: rgba(180, 77, 255, 0.12);
   --glow-blue: rgba(68, 136, 255, 0.12);
 
+  /* ── Chart grid line colour (used by chartTheme.ts) ── */
+  --chart-grid: rgba(255, 255, 255, 0.03);
+
   /* ── shadcn semantic tokens mapped to mockup palette ── */
   --background: #05080e;
   --foreground: #e8edf5;
@@ -179,6 +182,9 @@
   --clr-orange: #cc7a0f;
   --clr-purple: #8a38c9;
   --clr-blue: #2f6bcf;
+
+  /* Chart grid */
+  --chart-grid: rgba(15, 23, 36, 0.05);
 
   /* Glows — stronger alpha so pills/badges still read as glows on light bg */
   --glow-green: rgba(16, 163, 83, 0.12);

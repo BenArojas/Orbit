@@ -112,6 +112,15 @@ export interface ConidResponse {
   symbol: string;
 }
 
+/** Cached instrument record returned by GET /instruments/{conid} */
+export interface InstrumentCacheResponse {
+  conid: number;
+  symbol: string;
+  company_name: string;
+  sec_type: string;
+  cached_at: string;
+}
+
 /** Hub integration: shared instrument cache — used by all Hub modules */
 export interface Instrument {
   conid: number;
@@ -847,6 +856,10 @@ export const api = {
       `/market/conid/${encodeURIComponent(symbol)}${qs}`,
     );
   },
+
+  /** Fetch a cached instrument record by conid. Returns null if not cached. */
+  getInstrument: (conid: number) =>
+    request<InstrumentCacheResponse | null>("GET", `/instruments/${conid}`),
 
   // Indicators
   computeIndicators: (req: IndicatorRequest) =>

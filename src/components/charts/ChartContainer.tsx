@@ -1,24 +1,24 @@
 /**
- * ChartContainer — Main candlestick chart with volume overlay.
+ * ChartContainer — Main candlestick chart with conditional volume overlay.
  *
  * Wraps TradingView Lightweight Charts v5. Manages the chart instance
- * lifecycle (create, resize, destroy) and renders candlestick + volume
- * series. Indicator overlays are added via the indicatorOverlays module.
+ * lifecycle (create, resize, destroy) and renders candlestick series.
+ * Volume and indicator overlays are conditional — all driven by activeIndicators.
  *
- * The chart fills its parent container and auto-resizes via ResizeObserver.
+ * Theme awareness: chart colours are read from CSS custom properties at
+ * create time and re-applied when the theme class on <html> changes.
  *
  * Props:
- *   candles — OHLCV bar data (time-sorted, Unix seconds)
- *   indicators — computed indicator results from the backend
- *   fibonacci — Fibonacci retracement result (reserved for task 4.4)
+ *   candles          — OHLCV bar data (time-sorted, Unix seconds)
+ *   indicators       — computed indicator results from the backend
+ *   fibonacci        — Fibonacci retracement result
  *   activeIndicators — set of toggled-on indicator IDs
- *   liveTick — latest WebSocket price tick for real-time last-candle updates
+ *   liveTick         — latest WebSocket price tick for real-time last-candle updates
  */
 
 import {
   createChart,
   CandlestickSeries,
-  HistogramSeries,
   type IChartApi,
   type ISeriesApi,
   type CandlestickData,
@@ -30,26 +30,31 @@ import {
 import { useEffect, useRef } from "react";
 import type { CandleData, IndicatorResult, FibonacciResult } from "@/lib/api";
 import type { IndicatorId } from "@/store/chart";
-import { addIndicatorOverlays, removeIndicatorOverlays, type OverlayState } from "./indicatorOverlays";
+import {
+  addIndicatorOverlays,
+  removeIndicatorOverlays,
+  addVolumeOverlay,
+  removeVolumeOverlay,
+  type OverlayState,
+} from "./indicatorOverlays";
 import { addFibonacciOverlay, removeFibonacciOverlay, type FibOverlayState } from "./FibonacciOverlay";
 import FibDrawMode from "./FibDrawMode";
+import { readChartTheme } from "./chartTheme";
 import type { Timeframe } from "@/store/chart";
 
-// ── Theme colors (match styles.css) ──────────────────────────
+// ── Semantic colors (theme-independent) ──────────────────────
+// Up/down/wick/volume colours are intentionally hardcoded — they are
+// semantic (green = bullish, red = bearish) regardless of light/dark theme.
 
-const CHART_COLORS = {
-  bg: "#05080e",
-  gridLines: "rgba(255, 255, 255, 0.03)",
-  crosshair: "rgba(0, 212, 255, 0.4)",
-  text: "#4a5568",
-  borderColor: "rgba(255, 255, 255, 0.06)",
-  upColor: "#00ff88",
+const CANDLE_COLORS = {
+  upColor:   "#00ff88",
   downColor: "#ff4466",
-  upWick: "#00ff88",
-  downWick: "#ff4466",
-  volumeUp: "rgba(0, 255, 136, 0.18)",
-  volumeDown: "rgba(255, 68, 102, 0.18)",
+  upWick:    "#00ff88",
+  downWick:  "#ff4466",
 } as const;
+
+const CROSSHAIR_COLOR = "rgba(0, 212, 255, 0.4)";
+const CROSSHAIR_LABEL_BG = "#0f1724";
 
 // ── Props ────────────────────────────────────────────────────
 
@@ -64,6 +69,8 @@ export interface ChartContainerProps {
   conid?: number | null;
   /** Current timeframe string (for fib draw-mode lock) */
   timeframe?: Timeframe;
+  /** Symbol string shown as chart watermark */
+  symbol?: string;
 }
 
 // ── Component ────────────────────────────────────────────────
@@ -76,6 +83,7 @@ export default function ChartContainer({
   liveTick,
   conid = null,
   timeframe = "1D",
+  symbol,
 }: ChartContainerProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
@@ -90,38 +98,41 @@ export default function ChartContainer({
     const container = containerRef.current;
     if (!container) return;
 
+    const theme = readChartTheme();
+
     const chart = createChart(container, {
       layout: {
-        background: { type: ColorType.Solid, color: CHART_COLORS.bg },
-        textColor: CHART_COLORS.text,
+        background: { type: ColorType.Solid, color: theme.bg },
+        textColor: theme.text,
         fontFamily: "'JetBrains Mono', monospace",
         fontSize: 10,
+        attributionLogo: false,
       },
       grid: {
-        vertLines: { color: CHART_COLORS.gridLines },
-        horzLines: { color: CHART_COLORS.gridLines },
+        vertLines: { color: theme.gridLines },
+        horzLines: { color: theme.gridLines },
       },
       crosshair: {
         mode: CrosshairMode.Normal,
         vertLine: {
-          color: CHART_COLORS.crosshair,
-          width: 1,
-          style: 2, // dashed
-          labelBackgroundColor: "#0f1724",
-        },
-        horzLine: {
-          color: CHART_COLORS.crosshair,
+          color: CROSSHAIR_COLOR,
           width: 1,
           style: 2,
-          labelBackgroundColor: "#0f1724",
+          labelBackgroundColor: CROSSHAIR_LABEL_BG,
+        },
+        horzLine: {
+          color: CROSSHAIR_COLOR,
+          width: 1,
+          style: 2,
+          labelBackgroundColor: CROSSHAIR_LABEL_BG,
         },
       },
       rightPriceScale: {
-        borderColor: CHART_COLORS.borderColor,
-        scaleMargins: { top: 0.05, bottom: 0.2 }, // Leave room for volume
+        borderColor: theme.borderColor,
+        scaleMargins: { top: 0.05, bottom: 0.2 },
       },
       timeScale: {
-        borderColor: CHART_COLORS.borderColor,
+        borderColor: theme.borderColor,
         timeVisible: true,
         secondsVisible: false,
         rightOffset: 5,
@@ -130,28 +141,17 @@ export default function ChartContainer({
       handleScroll: { vertTouchDrag: false },
     });
 
-    // Candlestick series (v5 API: chart.addSeries(SeriesDefinition, options))
+    // Candlestick series (v5 API)
     const candleSeries = chart.addSeries(CandlestickSeries, {
-      upColor: CHART_COLORS.upColor,
-      downColor: CHART_COLORS.downColor,
-      wickUpColor: CHART_COLORS.upWick,
-      wickDownColor: CHART_COLORS.downWick,
+      upColor:      CANDLE_COLORS.upColor,
+      downColor:    CANDLE_COLORS.downColor,
+      wickUpColor:  CANDLE_COLORS.upWick,
+      wickDownColor: CANDLE_COLORS.downWick,
       borderVisible: false,
-    });
-
-    // Volume histogram (overlaid at bottom of main chart)
-    const volumeSeries = chart.addSeries(HistogramSeries, {
-      priceFormat: { type: "volume" },
-      priceScaleId: "volume",
-    });
-
-    chart.priceScale("volume").applyOptions({
-      scaleMargins: { top: 0.82, bottom: 0 },
     });
 
     chartRef.current = chart;
     candleSeriesRef.current = candleSeries;
-    volumeSeriesRef.current = volumeSeries;
 
     // Auto-resize
     const resizeObserver = new ResizeObserver((entries) => {
@@ -160,8 +160,30 @@ export default function ChartContainer({
     });
     resizeObserver.observe(container);
 
+    // Theme change — re-apply layout colours when .dark/.light toggles on <html>
+    const themeObserver = new MutationObserver(() => {
+      const t = readChartTheme();
+      chart.applyOptions({
+        layout: {
+          background: { type: ColorType.Solid, color: t.bg },
+          textColor: t.text,
+        },
+        grid: {
+          vertLines: { color: t.gridLines },
+          horzLines: { color: t.gridLines },
+        },
+        rightPriceScale: { borderColor: t.borderColor },
+        timeScale: { borderColor: t.borderColor },
+      });
+    });
+    themeObserver.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ["class"],
+    });
+
     return () => {
       resizeObserver.disconnect();
+      themeObserver.disconnect();
       removeIndicatorOverlays(chart, overlayStateRef.current);
       overlayStateRef.current = {};
       removeFibonacciOverlay(chart, fibOverlayRef.current);
@@ -173,12 +195,11 @@ export default function ChartContainer({
     };
   }, []); // Chart instance created once
 
-  // ── Update candle + volume data ────────────────────────────
+  // ── Update candle data ─────────────────────────────────────
 
   useEffect(() => {
     const candleSeries = candleSeriesRef.current;
-    const volumeSeries = volumeSeriesRef.current;
-    if (!candleSeries || !volumeSeries || candles.length === 0) return;
+    if (!candleSeries || candles.length === 0) return;
 
     const candleData: CandlestickData<Time>[] = candles.map((c) => ({
       time: c.time as Time,
@@ -188,45 +209,64 @@ export default function ChartContainer({
       close: c.close,
     }));
 
-    const volumeData: HistogramData<Time>[] = candles.map((c) => ({
-      time: c.time as Time,
-      value: c.volume,
-      color: c.close >= c.open ? CHART_COLORS.volumeUp : CHART_COLORS.volumeDown,
-    }));
-
     candleSeries.setData(candleData);
-    volumeSeries.setData(volumeData);
-
-    // Fit content with a small right margin
     chartRef.current?.timeScale().fitContent();
   }, [candles]);
+
+  // ── Volume overlay — controlled by indicator toggle ────────
+
+  useEffect(() => {
+    const chart = chartRef.current;
+    if (!chart) return;
+
+    if (activeIndicators.has("volume")) {
+      // Add series if not already present
+      if (!volumeSeriesRef.current) {
+        volumeSeriesRef.current = addVolumeOverlay(chart, candles);
+      } else if (candles.length > 0) {
+        // Update existing series with fresh candle data
+        const data: HistogramData<Time>[] = candles.map((c) => ({
+          time: c.time as Time,
+          value: c.volume,
+          color: c.close >= c.open ? "rgba(0, 255, 136, 0.18)" : "rgba(255, 68, 102, 0.18)",
+        }));
+        volumeSeriesRef.current.setData(data);
+      }
+    } else {
+      // Remove series when toggled off
+      if (volumeSeriesRef.current) {
+        volumeSeriesRef.current = removeVolumeOverlay(chart, volumeSeriesRef.current);
+      }
+    }
+  }, [activeIndicators, candles]);
 
   // ── Live tick updates (WebSocket) ──────────────────────────
 
   useEffect(() => {
-    if (!liveTick || !candleSeriesRef.current || !volumeSeriesRef.current) return;
+    if (!liveTick || !candleSeriesRef.current) return;
     if (candles.length === 0) return;
 
     const lastCandle = candles[candles.length - 1];
     const time = lastCandle.time as Time;
 
-    // Update the last candle with live data
     candleSeriesRef.current.update({
       time,
       open: lastCandle.open,
       high: Math.max(lastCandle.high, liveTick.high),
-      low: Math.min(lastCandle.low, liveTick.low),
+      low:  Math.min(lastCandle.low, liveTick.low),
       close: liveTick.last,
     });
 
-    volumeSeriesRef.current.update({
-      time,
-      value: liveTick.volume,
-      color:
-        liveTick.last >= lastCandle.open
-          ? CHART_COLORS.volumeUp
-          : CHART_COLORS.volumeDown,
-    });
+    if (volumeSeriesRef.current) {
+      volumeSeriesRef.current.update({
+        time,
+        value: liveTick.volume,
+        color:
+          liveTick.last >= lastCandle.open
+            ? "rgba(0, 255, 136, 0.18)"
+            : "rgba(255, 68, 102, 0.18)",
+      });
+    }
   }, [liveTick, candles]);
 
   // ── Indicator overlays ─────────────────────────────────────
@@ -235,7 +275,6 @@ export default function ChartContainer({
     const chart = chartRef.current;
     if (!chart) return;
 
-    // Remove old overlays, add new ones
     removeIndicatorOverlays(chart, overlayStateRef.current);
     overlayStateRef.current = addIndicatorOverlays(
       chart,
@@ -250,11 +289,9 @@ export default function ChartContainer({
     const chart = chartRef.current;
     if (!chart) return;
 
-    // Remove previous fib lines
     removeFibonacciOverlay(chart, fibOverlayRef.current);
     fibOverlayRef.current = [];
 
-    // Only render if fibonacci toggle is active AND we have fib data
     if (!activeIndicators.has("fibonacci") || !fibonacci || candles.length === 0) {
       return;
     }
@@ -268,6 +305,15 @@ export default function ChartContainer({
       className="relative h-full w-full"
       style={{ minHeight: 300 }}
     >
+      {/* Symbol watermark — absolutely positioned, pointer-events-none */}
+      {symbol && (
+        <div className="pointer-events-none absolute left-3 top-2 z-10 select-none">
+          <span className="font-mono text-2xl font-bold opacity-[0.07]">
+            {symbol}
+          </span>
+        </div>
+      )}
+
       <FibDrawMode
         chart={chartRef.current}
         candleSeries={candleSeriesRef.current}

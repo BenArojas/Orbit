@@ -378,7 +378,7 @@ export default function ScreenerPeekPanel() {
           <Button
             className="flex-1 gap-1.5 border-[var(--clr-cyan)]/30 bg-[var(--clr-cyan)]/15 text-[var(--clr-cyan)] hover:bg-[var(--clr-cyan)]/25"
             onClick={() => {
-              navigateToAnalysis(peekConid);
+              navigateToAnalysis(peekConid, row?.symbol);
               setPeekConid(null);
             }}
           >

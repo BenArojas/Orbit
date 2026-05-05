@@ -21,12 +21,13 @@
  *   - Chart rendering delegation to ChartContainer
  */
 
-import { useState, useMemo, type KeyboardEvent } from "react";
+import { useState, useMemo, useEffect, type KeyboardEvent } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { useChartStore, type Timeframe, type IndicatorId } from "@/store";
 import { api } from "@/lib/api";
 import { ChartContainer, SubChartPanel, SUB_CHART_BACKEND_NAMES, type SubChartType } from "@/components/charts";
 import { useChartData } from "@/hooks/useChartData";
+import { useInstrument } from "@/hooks/useInstrument";
 import { IndicatorToolbar } from "@/components/indicators";
 import { AiChatPanel } from "@/components/ai";
 
@@ -64,6 +65,18 @@ export default function AnalysisPage() {
 
   const [symbolInput, setSymbolInput] = useState(activeSymbol || "");
   const [inputFocused, setInputFocused] = useState(false);
+
+  // Sync symbol input whenever the store's activeSymbol changes externally
+  // (e.g. navigateToAnalysis called from watchlist or screener).
+  // Skip sync while the user is actively typing in the input.
+  useEffect(() => {
+    if (!inputFocused) {
+      setSymbolInput(activeSymbol);
+    }
+  }, [activeSymbol, inputFocused]);
+
+  // Fetch cached instrument metadata for the header badge + watermark
+  const { companyName } = useInstrument(activeConid);
 
   // Fetch chart data (candles + indicators + live tick)
   const {
@@ -128,6 +141,20 @@ export default function AnalysisPage() {
             }`}
           />
 
+          {/* Company name badge — symbol + company name below input */}
+          {(activeSymbol || companyName) && (
+            <div className="flex flex-col leading-tight">
+              <span className="font-mono text-xs font-bold text-[var(--text-1)]">
+                {activeSymbol || "—"}
+              </span>
+              {companyName && (
+                <span className="max-w-[200px] truncate text-[10px] text-[var(--text-3)]">
+                  {companyName}
+                </span>
+              )}
+            </div>
+          )}
+
           {/* Timeframe bar */}
           <div className="flex gap-px rounded-md border border-border bg-[var(--bg-0)] p-0.5">
             {TIMEFRAMES.map((tf) => (
@@ -191,6 +218,7 @@ export default function AnalysisPage() {
               liveTick={liveTick}
               conid={activeConid}
               timeframe={timeframe}
+              symbol={activeSymbol || undefined}
             />
           ) : (
             <div className="flex h-full items-center justify-center">

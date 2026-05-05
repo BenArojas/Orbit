@@ -123,7 +123,7 @@ function PulseItem({
 
   return (
     <button
-      onClick={() => navigateToAnalysis(conid)}
+      onClick={() => navigateToAnalysis(conid, quote?.symbol || label)}
       className="group relative flex min-w-[115px] flex-col gap-0.5 px-[18px] py-2 transition-colors hover:bg-[var(--bg-2)]"
     >
       {/* Glow underline on hover */}

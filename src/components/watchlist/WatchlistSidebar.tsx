@@ -260,7 +260,7 @@ export default function WatchlistSidebar() {
                 >
                   <WatchlistRow
                     item={item}
-                    onClick={() => navigateToAnalysis(item.conid)}
+                    onClick={() => navigateToAnalysis(item.conid, item.symbol)}
                   />
                 </div>
               );

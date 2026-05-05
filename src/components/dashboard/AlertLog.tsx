@@ -200,7 +200,7 @@ export default function AlertLog() {
   const handleClick = useCallback(
     (hit: TriggerHit) => {
       // 1. Jump the chart to this symbol.
-      navigateToAnalysis(hit.conid);
+      navigateToAnalysis(hit.conid, hit.symbol);
 
       // 2. Flash a toast with the description.
       setToast({

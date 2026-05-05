@@ -352,6 +352,9 @@ app.include_router(pulse_config_router)
 from routers.health import router as health_router
 app.include_router(health_router)
 
+from routers.instruments import router as instruments_router
+app.include_router(instruments_router)
+
 
 # ── Health endpoint ──────────────────────────────────────────
 

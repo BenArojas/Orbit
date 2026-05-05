@@ -20,9 +20,13 @@ interface NavigationState {
   /**
    * Navigate to analysis with a specific instrument pre-loaded.
    * Used when clicking a stock in the watchlist or screener results.
-   * Sets the chart store's active conid (see chart store).
+   * Sets both activeConid and activeSymbol in the chart store so the
+   * symbol input doesn't go stale between navigations.
+   *
+   * `symbol` defaults to "" — callers should pass it when available.
+   * The AnalysisPage will re-sync from the store on mount.
    */
-  navigateToAnalysis: (conid: number) => void;
+  navigateToAnalysis: (conid: number, symbol?: string) => void;
 }
 
 export const useNavigationStore = create<NavigationState>()((set) => ({
@@ -30,11 +34,13 @@ export const useNavigationStore = create<NavigationState>()((set) => ({
 
   navigate: (screen) => set({ activeScreen: screen }),
 
-  navigateToAnalysis: (conid) => {
+  navigateToAnalysis: (conid, symbol = "") => {
     // Import chart store dynamically to avoid circular deps
-    // The chart store will be set via its own action
     import("./chart").then(({ useChartStore }) => {
       useChartStore.getState().setActiveConid(conid);
+      if (symbol) {
+        useChartStore.getState().setActiveSymbol(symbol);
+      }
     });
     set({ activeScreen: "analysis" });
   },

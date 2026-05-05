@@ -20,13 +20,15 @@
 
 import {
   LineSeries,
+  HistogramSeries,
   type IChartApi,
   type ISeriesApi,
   type LineData,
+  type HistogramData,
   type Time,
   type SeriesType,
 } from "lightweight-charts";
-import type { IndicatorResult, IndicatorValue } from "@/lib/api";
+import type { IndicatorResult, IndicatorValue, CandleData } from "@/lib/api";
 import type { IndicatorId } from "@/store/chart";
 
 // ── Types ────────────────────────────────────────────────────
@@ -238,4 +240,60 @@ export function removeIndicatorOverlays(
       }
     }
   }
+}
+
+// ── Volume overlay ────────────────────────────────────────────
+// Volume lives on the main chart but is controlled by the "volume" indicator
+// toggle just like any other indicator. It's kept here (separate from
+// addIndicatorOverlays) because its data source is candle data, not
+// IndicatorResult[].
+
+const VOLUME_COLORS = {
+  up: "rgba(0, 255, 136, 0.18)",
+  down: "rgba(255, 68, 102, 0.18)",
+} as const;
+
+/**
+ * Add a volume histogram series to the main chart.
+ * Returns the new series so the caller can track it for removal.
+ */
+export function addVolumeOverlay(
+  chart: IChartApi,
+  candles: CandleData[],
+): ISeriesApi<"Histogram"> | null {
+  if (candles.length === 0) return null;
+
+  const series = chart.addSeries(HistogramSeries, {
+    priceFormat: { type: "volume" },
+    priceScaleId: "volume",
+  });
+
+  chart.priceScale("volume").applyOptions({
+    scaleMargins: { top: 0.82, bottom: 0 },
+  });
+
+  const data: HistogramData<Time>[] = candles.map((c) => ({
+    time: c.time as Time,
+    value: c.volume,
+    color: c.close >= c.open ? VOLUME_COLORS.up : VOLUME_COLORS.down,
+  }));
+  series.setData(data);
+
+  return series;
+}
+
+/**
+ * Remove the volume series from the chart and return null.
+ * Caller should assign the returned null back to their series ref.
+ */
+export function removeVolumeOverlay(
+  chart: IChartApi,
+  series: ISeriesApi<"Histogram">,
+): null {
+  try {
+    chart.removeSeries(series);
+  } catch (_e: unknown) {
+    // Already removed (e.g. chart was destroyed first)
+  }
+  return null;
 }

@@ -10,6 +10,9 @@ Endpoints:
   GET  /market/search            — Search securities by symbol/name
   GET  /market/conid/{symbol}    — Resolve a ticker to an IBKR conid
 
+See also:
+  GET  /instruments/{conid}      — Read cached instrument metadata (see routers/instruments.py)
+
 Hub integration:
   Both /search and /conid/{symbol} auto-populate the `instruments` cache table.
   This means every instrument Parallax touches gets cached locally.

@@ -27,6 +27,7 @@ import {
 } from "lightweight-charts";
 import { useEffect, useRef } from "react";
 import type { IndicatorResult, IndicatorValue } from "@/lib/api";
+import { readChartTheme } from "./chartTheme";
 
 // ── Types ────────────────────────────────────────────────────
 
@@ -37,13 +38,9 @@ export interface SubChartPanelProps {
   indicator: IndicatorResult | undefined;
 }
 
-// ── Theme ────────────────────────────────────────────────────
+// ── Per-indicator colors (semantic, theme-independent) ───────
 
 const COLORS = {
-  bg: "#05080e",
-  gridLines: "rgba(255, 255, 255, 0.02)",
-  borderColor: "rgba(255, 255, 255, 0.06)",
-  text: "#4a5568",
   // Per-indicator colors
   rsi: "#b44dff",          // purple
   macdLine: "#00d4ff",     // cyan
@@ -109,19 +106,22 @@ export default function SubChartPanel({
     const container = containerRef.current;
     if (!container) return;
 
+    const theme = readChartTheme();
+
     const chart = createChart(container, {
       layout: {
-        background: { type: ColorType.Solid, color: COLORS.bg },
-        textColor: COLORS.text,
+        background: { type: ColorType.Solid, color: theme.bg },
+        textColor: theme.text,
         fontFamily: "'JetBrains Mono', monospace",
         fontSize: 9,
+        attributionLogo: false,
       },
       grid: {
-        vertLines: { color: COLORS.gridLines },
-        horzLines: { color: COLORS.gridLines },
+        vertLines: { color: theme.gridLines },
+        horzLines: { color: theme.gridLines },
       },
       rightPriceScale: {
-        borderColor: COLORS.borderColor,
+        borderColor: theme.borderColor,
         scaleMargins: { top: 0.1, bottom: 0.1 },
       },
       timeScale: {
@@ -155,8 +155,29 @@ export default function SubChartPanel({
     });
     resizeObserver.observe(container);
 
+    // Theme change — re-apply layout colours when .dark/.light toggles on <html>
+    const themeObserver = new MutationObserver(() => {
+      const t = readChartTheme();
+      chart.applyOptions({
+        layout: {
+          background: { type: ColorType.Solid, color: t.bg },
+          textColor: t.text,
+        },
+        grid: {
+          vertLines: { color: t.gridLines },
+          horzLines: { color: t.gridLines },
+        },
+        rightPriceScale: { borderColor: t.borderColor },
+      });
+    });
+    themeObserver.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ["class"],
+    });
+
     return () => {
       resizeObserver.disconnect();
+      themeObserver.disconnect();
       chart.remove();
       chartRef.current = null;
       seriesRefs.current = [];

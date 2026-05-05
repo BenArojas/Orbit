@@ -70,7 +70,7 @@ function TriggerHitItem({ hit }: { hit: TriggerHit }) {
 
   return (
     <button
-      onClick={() => navigateToAnalysis(hit.conid)}
+      onClick={() => navigateToAnalysis(hit.conid, hit.symbol)}
       className={`trigger-edge ${display.edgeClass} grid w-full grid-cols-[1fr_50px_52px] items-center gap-1 px-3.5 py-[7px] text-left transition-colors hover:bg-[var(--bg-3)]`}
     >
       {/* Symbol + name + trigger tag */}

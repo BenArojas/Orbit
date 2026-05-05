@@ -260,7 +260,7 @@ export default function ArcGaugeRow() {
   const handleVixClick = () => {
     if (vixConid == null) return;
     setTimeframe("1D");
-    navigateToAnalysis(vixConid);
+    navigateToAnalysis(vixConid, vixResolved?.symbol ?? "VIX");
   };
 
   // ── Market Strength values ──
