@@ -47,6 +47,7 @@ from models import (
     SignalCheck,
     SignalMeta,
 )
+from exceptions import AIAnalysisTimeoutError
 from services.ai import AiService
 from services.db import DatabaseService
 from services.ibkr import IBKRService
@@ -383,15 +384,31 @@ async def analyze(
         request.timeframes, request.indicators, resolved_indicators,
     )
 
-    result = await ai.analyze(
-        symbol=request.symbol,
-        timeframe_data=timeframe_data,
-        indicators_requested=request.indicators,
-        model=model,
-        session_id=request.session_id,
-        watchlist=request.watchlist,
-        indicator_priority=request.indicator_priority,
-    )
+    try:
+        result = await ai.analyze(
+            symbol=request.symbol,
+            timeframe_data=timeframe_data,
+            indicators_requested=request.indicators,
+            model=model,
+            session_id=request.session_id,
+            watchlist=request.watchlist,
+            indicator_priority=request.indicator_priority,
+            context_mode=request.context_mode,
+            context_bars=request.context_bars,
+        )
+    except AIAnalysisTimeoutError as exc:
+        log.warning(
+            "Analysis timed out for %s at stage '%s' (%.0fs) — returning graceful error",
+            request.symbol, exc.stage, exc.timeout_s,
+        )
+        return AnalyzeResponse(
+            session_id=request.session_id or "",
+            signal=None,
+            message=(
+                f"Analysis timed out while {exc.stage.replace('_', ' ')} for {request.symbol} "
+                f"(>{exc.timeout_s:.0f}s). Try a faster model or a shorter timeframe selection."
+            ),
+        )
 
     signal = _parse_signal(result["signal"]) if result.get("signal") else None
 

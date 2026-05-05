@@ -24,7 +24,8 @@ import { useAiStore, type ChatMessage } from "@/store";
 import type { IndicatorId } from "@/store/chart";
 import { useAiStatus } from "@/hooks/useAiStatus";
 import { useAiStream } from "@/hooks/useAiStream";
-import AiConfigPanel, { type AiTimeframe, type AiIndicator, type AiMode } from "./AiConfigPanel";
+import AiConfigPanel, { type AiTimeframe, type AiIndicator } from "./AiConfigPanel";
+import type { AiContextMode } from "@/lib/api";
 import ActionSignalCard from "./ActionSignalCard";
 import AiSetupGuide from "./AiSetupGuide";
 import AiModelSelector from "./AiModelSelector";
@@ -125,6 +126,8 @@ export default function AiChatPanel({ activeConid, activeSymbol, fibonacci, char
     mutationFn: (config: {
       timeframes: AiTimeframe[];
       indicators: AiIndicator[];
+      contextMode: AiContextMode;
+      contextBars: number;
     }) => {
       if (!activeConid || !activeSymbol) {
         throw new Error("No symbol selected");
@@ -135,6 +138,8 @@ export default function AiChatPanel({ activeConid, activeSymbol, fibonacci, char
         timeframes: config.timeframes,
         indicators: config.indicators,
         session_id: sessionId ?? undefined,
+        context_mode: config.contextMode,
+        context_bars: config.contextBars,
       });
     },
     onMutate: () => {
@@ -170,15 +175,28 @@ export default function AiChatPanel({ activeConid, activeSymbol, fibonacci, char
   // ── Handlers ──
 
   const handleRunAnalysis = useCallback(
-    (config: { timeframes: AiTimeframe[]; indicators: AiIndicator[]; mode: AiMode }) => {
+    (config: {
+      timeframes: AiTimeframe[];
+      indicators: AiIndicator[];
+      contextMode: AiContextMode;
+      contextBars: number;
+    }) => {
       if (!isReady || !activeConid) return;
       analyzeMutation.mutate({
         timeframes: config.timeframes,
         indicators: config.indicators,
+        contextMode: config.contextMode,
+        contextBars: config.contextBars,
       });
     },
     [isReady, activeConid, analyzeMutation],
   );
+
+  /** Abort an in-flight analysis — resets mutation state and clears the spinner. */
+  const handleCancelAnalysis = useCallback(() => {
+    analyzeMutation.reset();
+    setAnalyzing(false);
+  }, [analyzeMutation, setAnalyzing]);
 
   const handleSendMessage = useCallback(() => {
     const msg = inputValue.trim();
@@ -276,11 +294,18 @@ export default function AiChatPanel({ activeConid, activeSymbol, fibonacci, char
                   </div>
                 )}
 
-                {/* Loading state for analysis */}
+                {/* Loading state for analysis — with Cancel button */}
                 {isAnalyzing && (
                   <div className="flex items-center gap-2 rounded-lg bg-[var(--bg-0)] px-3 py-2 text-[11px] text-[var(--text-3)]">
-                    <div className="h-3 w-3 animate-spin rounded-full border-2 border-[var(--clr-cyan)] border-t-transparent" />
-                    Analyzing {activeSymbol}...
+                    <div className="h-3 w-3 flex-shrink-0 animate-spin rounded-full border-2 border-[var(--clr-cyan)] border-t-transparent" />
+                    <span className="flex-1">Analyzing {activeSymbol}…</span>
+                    <button
+                      onClick={handleCancelAnalysis}
+                      className="rounded border border-[var(--clr-red)] px-1.5 py-0.5 text-[9px] font-medium text-[var(--clr-red)] transition-colors hover:bg-[rgba(255,68,102,0.1)]"
+                      title="Cancel analysis"
+                    >
+                      Cancel
+                    </button>
                   </div>
                 )}
 

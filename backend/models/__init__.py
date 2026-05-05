@@ -591,6 +591,19 @@ class AnalyzeRequest(BaseModel):
     watchlist: Optional[str] = None                     # Originating watchlist name (if any)
     indicator_priority: Optional[list[str]] = None      # Ordered list — first = most important. None = let AI decide.
 
+    # Chart context mode — controls what raw price history (if any) is appended
+    # to each timeframe section. "none" = indicator values only (default).
+    # "summary" = compact recent-closes string + price action blurb (low cost).
+    # "ohlcv"   = full OHLCV table for the last context_bars bars (high cost).
+    # "patterns" = pre-computed candlestick pattern list (medium cost, no raw flood).
+    context_mode: Literal["none", "summary", "ohlcv", "patterns"] = "none"
+    context_bars: int = Field(
+        default=10,
+        ge=5,
+        le=30,
+        description="Number of bars to include when context_mode != 'none' (5–30).",
+    )
+
 
 class ChatMessage(BaseModel):
     """A single message in a chat conversation."""

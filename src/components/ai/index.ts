@@ -10,7 +10,7 @@
  */
 
 export { default as AiConfigPanel } from "./AiConfigPanel";
-export type { AiTimeframe, AiIndicator, AiMode } from "./AiConfigPanel";
+export type { AiTimeframe, AiIndicator } from "./AiConfigPanel";
 
 export { default as ActionSignalCard } from "./ActionSignalCard";
 export type {

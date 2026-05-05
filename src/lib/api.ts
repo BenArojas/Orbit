@@ -449,6 +449,8 @@ export interface WatchlistQuotesResponse {
 
 // ── AI Analysis (Phase 4 — tasks 4.9–4.12) ────────────────
 
+export type AiContextMode = "none" | "summary" | "ohlcv" | "patterns";
+
 export interface AnalyzeRequest {
   conid: number;
   symbol: string;
@@ -459,6 +461,17 @@ export interface AnalyzeRequest {
   watchlist?: string;
   /** Ordered indicator priority — first = most important. Omit to let AI decide. */
   indicator_priority?: string[];
+  /**
+   * Chart context mode — controls what raw price history is appended to
+   * the indicator context for each timeframe.
+   *   "none"     — indicator values only (default, fastest)
+   *   "summary"  — compact recent-closes + direction blurb (~+5% response time)
+   *   "ohlcv"    — full OHLCV table for context_bars bars (~+25-40% response time)
+   *   "patterns" — pre-computed candlestick patterns (~+10-15% response time)
+   */
+  context_mode?: AiContextMode;
+  /** Number of bars to include when context_mode != "none" (5–30). */
+  context_bars?: number;
 }
 
 export interface ChatRequest {

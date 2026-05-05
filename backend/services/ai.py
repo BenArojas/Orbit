@@ -18,6 +18,7 @@ Prompt strategy:
   This is more reliable than sending raw OHLCV arrays.
 """
 
+import asyncio
 import json
 import logging
 import re
@@ -27,8 +28,16 @@ from typing import AsyncIterator, Optional
 
 import httpx
 
+from exceptions import AIAnalysisTimeoutError
+
 from config import OLLAMA_HOST
 from models import CandleData
+
+# ── Per-stage analysis timeouts (seconds) ────────────────────
+# Defined at module level so tests can patch them without touching internals.
+_NARRATIVE_TIMEOUT: float = 90.0    # Free-text analysis — most token-heavy call
+_EXTRACTION_TIMEOUT: float = 45.0   # Structured signal extraction via Ollama format
+_REFORMAT_TIMEOUT: float = 45.0     # Last-resort free-text reformat attempt
 
 log = logging.getLogger("parallax.ai")
 
@@ -395,6 +404,8 @@ class AiService:
         session_id: Optional[str] = None,
         watchlist: Optional[str] = None,
         indicator_priority: Optional[list[str]] = None,
+        context_mode: str = "none",
+        context_bars: int = 10,
     ) -> dict:
         """
         Run a full technical analysis for a stock.
@@ -438,7 +449,10 @@ class AiService:
         # If priority is set, indicators are reordered so prioritized ones
         # appear first in the context (models attend more to earlier content).
         context = build_multi_timeframe_context(
-            symbol, timeframe_data, indicator_priority=indicator_priority,
+            symbol, timeframe_data,
+            indicator_priority=indicator_priority,
+            context_mode=context_mode,
+            context_bars=context_bars,
         )
         # Per-model token budget — smaller models get aggressive truncation,
         # beefier models get breathing room. See prompt_builder._MODEL_BUDGETS.
@@ -466,7 +480,14 @@ class AiService:
         session.add_user(user_message)
 
         # ── Call 1: Narrative analysis (free text) ──
-        response_text = await self.chat(session.get_messages(), model=model)
+        # Generous timeout — the narrative is the most token-heavy call.
+        try:
+            response_text = await asyncio.wait_for(
+                self.chat(session.get_messages(), model=model),
+                timeout=_NARRATIVE_TIMEOUT,
+            )
+        except asyncio.TimeoutError:
+            raise AIAnalysisTimeoutError("narrative", _NARRATIVE_TIMEOUT)
         session.add_assistant(response_text)
 
         # ── Call 2: Signal extraction (structured output) ──
@@ -478,12 +499,21 @@ class AiService:
                 {"role": "user", "content": SIGNAL_EXTRACTION_PROMPT}
             ]
 
-            raw_signal = await self.chat_structured(
-                signal_messages,
-                model=model,
-                json_schema=SIGNAL_JSON_SCHEMA,
+            raw_signal = await asyncio.wait_for(
+                self.chat_structured(
+                    signal_messages,
+                    model=model,
+                    json_schema=SIGNAL_JSON_SCHEMA,
+                ),
+                timeout=_EXTRACTION_TIMEOUT,
             )
             log.info("Structured signal extracted for %s via Ollama format", symbol)
+        except asyncio.TimeoutError:
+            log.warning(
+                "Structured output timed out for %s after %ss — falling back to regex parse",
+                symbol, _EXTRACTION_TIMEOUT,
+            )
+            raw_signal = parse_signal_from_response(response_text)
         except (ValueError, ConnectionError, TimeoutError, RuntimeError) as e:
             # Structured output failed — fall back to parsing from narrative
             log.warning(
@@ -492,16 +522,27 @@ class AiService:
             )
             raw_signal = parse_signal_from_response(response_text)
 
-            if not raw_signal:
-                # Last resort: ask the model to produce JSON in free text
-                log.info("Regex parse also failed for %s — requesting reformat", symbol)
-                session.add_user(
-                    "Please provide a trading signal as a JSON block wrapped in "
-                    "```json ... ```. Include: direction, confidence, description, "
-                    "entry (price + note), stop (price + note), target (price + note), "
-                    "confirmations, cautions."
+        if not raw_signal:
+            # Last resort: ask the model to produce JSON in free text
+            log.info("Regex parse also failed for %s — requesting reformat", symbol)
+            session.add_user(
+                "Please provide a trading signal as a JSON block wrapped in "
+                "```json ... ```. Include: direction, confidence, description, "
+                "entry (price + note), stop (price + note), target (price + note), "
+                "confirmations, cautions."
+            )
+            try:
+                retry_response = await asyncio.wait_for(
+                    self.chat(session.get_messages(), model=model),
+                    timeout=_REFORMAT_TIMEOUT,
                 )
-                retry_response = await self.chat(session.get_messages(), model=model)
+            except asyncio.TimeoutError:
+                log.warning(
+                    "Reformat call timed out for %s after %ss — signal will be null",
+                    symbol, _REFORMAT_TIMEOUT,
+                )
+                retry_response = ""
+            if retry_response:
                 session.add_assistant(retry_response)
                 raw_signal = parse_signal_from_response(retry_response)
 

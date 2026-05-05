@@ -1,20 +1,21 @@
 /**
  * AiConfigPanel — Analysis configuration section in the AI panel
  *
- * Two sections:
+ * Three configuration rows:
  *   1. Timeframe chips — multi-select which timeframes the AI should analyze
- *   2. Indicator chips — multi-select which indicators to include in analysis
- *   3. "Run Analysis" button
- *
- * Also includes the AI Assist / Manual toggle at the top header area.
+ *   2. Indicator chips — multi-select which indicators to include
+ *   3. Chart Context — single-select mode (None / Price Summary / OHLCV / Patterns)
+ *      + bar-count slider (5–30) when a non-None mode is selected
+ *   4. "Run Analysis" button
  *
  * State is local (useState) since it's only used when sending an analysis
- * request. When Ollama integration is built (4.10–4.12), this state will
- * be passed to the analysis API call.
+ * request. The "Manual" mode concept has been removed — the right-sidebar
+ * tabs (Branch 5) handle non-AI workflows (Watchlists, Triggers).
  */
 
 import { useState, useCallback, useEffect, useRef } from "react";
 import type { IndicatorId } from "@/store/chart";
+import type { AiContextMode } from "@/lib/api";
 
 /* ── Types ── */
 
@@ -31,8 +32,6 @@ type AiIndicator =
   | "VWAP"
   | "OBV";
 
-type AiMode = "assist" | "manual";
-
 /* ── Constants ── */
 
 const TIMEFRAMES: AiTimeframe[] = ["1H", "4H", "D", "W"];
@@ -42,6 +41,52 @@ const INDICATORS: AiIndicator[] = [
 ];
 
 const DEFAULT_TIMEFRAMES: AiTimeframe[] = ["4H", "D"];
+
+/** Default bar count per context mode — applied when mode first changes. */
+const CONTEXT_MODE_DEFAULTS: Record<AiContextMode, number> = {
+  none:     10,
+  summary:  10,
+  ohlcv:    15,
+  patterns: 20,
+};
+
+interface ContextModeOption {
+  value: AiContextMode;
+  label: string;
+  /** Short time-impact label shown below the chip row when this mode is active. */
+  timeNote: string;
+  description: string;
+}
+
+const CONTEXT_MODES: ContextModeOption[] = [
+  {
+    value: "none",
+    label: "None",
+    timeNote: "",
+    description: "Indicator values only — fastest response.",
+  },
+  {
+    value: "summary",
+    label: "Price Summary",
+    timeNote: "⏱ ~+5% response time",
+    description:
+      "Adds recent closes + a direction blurb (e.g. '3 higher closes, near session high').",
+  },
+  {
+    value: "ohlcv",
+    label: "OHLCV History",
+    timeNote: "⏱ ~+25–40% response time",
+    description:
+      "Full OHLCV table for the selected bar count. Enables pattern recognition. Heavy — best on ≥7B models.",
+  },
+  {
+    value: "patterns",
+    label: "Patterns",
+    timeNote: "⏱ ~+10–15% response time",
+    description:
+      "Pre-computed candlestick patterns (Doji, Hammer, Engulfing, etc.) without flooding the model with raw data.",
+  },
+];
 
 /**
  * Map chart-level IndicatorIds → AI-panel display names.
@@ -116,7 +161,8 @@ interface AiConfigPanelProps {
   onRunAnalysis?: (config: {
     timeframes: AiTimeframe[];
     indicators: AiIndicator[];
-    mode: AiMode;
+    contextMode: AiContextMode;
+    contextBars: number;
   }) => void;
   /** Chart-level active indicators — used as default AI selection.
    *  When the trader toggles indicators on the chart, the AI panel
@@ -125,13 +171,14 @@ interface AiConfigPanelProps {
 }
 
 export default function AiConfigPanel({ onRunAnalysis, chartIndicators }: AiConfigPanelProps) {
-  const [mode, setMode] = useState<AiMode>("assist");
   const [selectedTf, setSelectedTf] = useState<Set<AiTimeframe>>(
     () => new Set(DEFAULT_TIMEFRAMES)
   );
   const [selectedInd, setSelectedInd] = useState<Set<AiIndicator>>(
     () => chartIndicatorsToAi(chartIndicators)
   );
+  const [contextMode, setContextMode] = useState<AiContextMode>("none");
+  const [contextBars, setContextBars] = useState<number>(10);
 
   // Track whether the user has manually toggled any AI indicator.
   // Once they have, we stop auto-syncing from the chart so their
@@ -164,44 +211,33 @@ export default function AiConfigPanel({ onRunAnalysis, chartIndicators }: AiConf
     });
   }, []);
 
+  /** Context mode toggle — clicking the active mode deselects back to "none". */
+  const handleContextModeClick = useCallback((mode: AiContextMode) => {
+    setContextMode((prev) => {
+      const next = prev === mode ? "none" : mode;
+      // Reset bar count to the mode's default when switching
+      setContextBars(CONTEXT_MODE_DEFAULTS[next]);
+      return next;
+    });
+  }, []);
+
   const handleRun = () => {
     onRunAnalysis?.({
       timeframes: Array.from(selectedTf),
       indicators: Array.from(selectedInd),
-      mode,
+      contextMode,
+      contextBars,
     });
   };
 
+  const activeContextOption = CONTEXT_MODES.find((m) => m.value === contextMode);
+
   return (
     <div className="flex flex-col gap-3 border-b border-[var(--border)] px-4 py-3">
-      {/* Header with mode toggle */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-1.5 text-xs font-semibold">
-          <div className="h-2 w-2 rounded-full bg-[var(--clr-cyan)] shadow-[0_0_10px_var(--clr-cyan)] animate-glow" />
-          AI Analysis
-        </div>
-        <div className="flex gap-px rounded-full border border-[var(--border)] bg-[var(--bg-0)] p-0.5">
-          <button
-            onClick={() => setMode("assist")}
-            className={`rounded-full px-3 py-1 text-[10px] font-medium transition-all ${
-              mode === "assist"
-                ? "bg-[var(--bg-4)] text-foreground shadow-[0_0_8px_var(--glow-cyan)]"
-                : "text-[var(--text-3)] hover:text-[var(--text-2)]"
-            }`}
-          >
-            AI Assist
-          </button>
-          <button
-            onClick={() => setMode("manual")}
-            className={`rounded-full px-3 py-1 text-[10px] font-medium transition-all ${
-              mode === "manual"
-                ? "bg-[var(--bg-4)] text-foreground shadow-[0_0_8px_var(--glow-cyan)]"
-                : "text-[var(--text-3)] hover:text-[var(--text-2)]"
-            }`}
-          >
-            Manual
-          </button>
-        </div>
+      {/* Header */}
+      <div className="flex items-center gap-1.5 text-xs font-semibold">
+        <div className="h-2 w-2 rounded-full bg-[var(--clr-cyan)] shadow-[0_0_10px_var(--clr-cyan)] animate-glow" />
+        AI Analysis
       </div>
 
       {/* Timeframe row */}
@@ -238,6 +274,74 @@ export default function AiConfigPanel({ onRunAnalysis, chartIndicators }: AiConf
         </div>
       </div>
 
+      {/* Chart Context row */}
+      <div>
+        <div className="mb-1.5 flex items-center gap-1.5">
+          <span className="text-[9px] font-semibold uppercase tracking-wider text-[var(--text-3)]">
+            Chart Context
+          </span>
+          {/* Info tooltip */}
+          <div className="group relative flex items-center">
+            <span
+              className="flex h-3.5 w-3.5 cursor-default items-center justify-center rounded-full border border-[var(--border)] text-[8px] font-bold text-[var(--text-3)] transition-colors group-hover:border-[var(--clr-cyan)] group-hover:text-[var(--clr-cyan)]"
+              aria-label="Chart context information"
+            >
+              i
+            </span>
+            <div
+              className="pointer-events-none absolute bottom-full left-1/2 z-50 mb-1.5 w-56 -translate-x-1/2 rounded-md border border-[var(--border)] bg-[var(--bg-1)] px-2.5 py-2 text-[9px] leading-relaxed text-[var(--text-2)] opacity-0 shadow-lg transition-opacity duration-150 group-hover:opacity-100"
+              role="tooltip"
+            >
+              <p className="mb-1 font-semibold text-[var(--text-1)]">Why does this affect speed?</p>
+              <p>
+                Each mode adds raw price data to the prompt. More data = more tokens the model
+                must process before generating a response.
+              </p>
+              <p className="mt-1">
+                On slower hardware or smaller models, heavier prompts take longer and are more
+                likely to time out. Start with <span className="font-semibold text-[var(--clr-cyan)]">None</span> — add context only if the analysis feels too generic.
+              </p>
+            </div>
+          </div>
+        </div>
+        <div className="flex flex-wrap gap-1.5">
+          {CONTEXT_MODES.map((m) => (
+            <Chip
+              key={m.value}
+              label={m.label}
+              selected={contextMode === m.value}
+              onClick={() => handleContextModeClick(m.value)}
+            />
+          ))}
+        </div>
+
+        {/* Time impact warning — shown when any non-None mode is selected */}
+        {contextMode !== "none" && activeContextOption && (
+          <div className="mt-2 flex flex-col gap-2">
+            <p className="text-[9px] text-[var(--text-3)]">
+              <span className="text-[var(--clr-amber)]">{activeContextOption.timeNote}</span>
+              {" — "}{activeContextOption.description}
+            </p>
+
+            {/* Bar count slider */}
+            <div className="flex items-center gap-2">
+              <span className="w-16 text-[9px] text-[var(--text-3)]">Bars: {contextBars}</span>
+              <input
+                type="range"
+                min={5}
+                max={30}
+                step={1}
+                value={contextBars}
+                onChange={(e) => setContextBars(Number(e.target.value))}
+                className="h-1 flex-1 cursor-pointer accent-[var(--clr-cyan)]"
+                aria-label="Chart context bar count"
+              />
+              <span className="w-4 text-right text-[9px] text-[var(--text-3)]">30</span>
+            </div>
+          </div>
+        )}
+      </div>
+
       {/* Run button */}
       <button
         onClick={handleRun}
@@ -251,4 +355,4 @@ export default function AiConfigPanel({ onRunAnalysis, chartIndicators }: AiConf
 }
 
 /** Re-export types for use by parent components */
-export type { AiTimeframe, AiIndicator, AiMode };
+export type { AiTimeframe, AiIndicator };
