@@ -19,6 +19,7 @@
 
 import { API_BASE } from "@/config/endpoints";
 import { ensureOnline, NetworkOfflineError, showOfflineToast } from "./network";
+import type { Timeframe } from "@/store/chart";
 
 // ── Types ───────────────────────────────────────────────────
 // Mirror the Pydantic models from backend/models/__init__.py.
@@ -221,8 +222,11 @@ export interface TriggerHit {
 
 export interface IndicatorRequest {
   conid: number;
-  period?: string;
+  /** Frontend timeframe — backend maps to canonical IBKR (period, bar) via TIMEFRAME_SPEC */
+  timeframe: Timeframe;
   indicators?: string[];
+  /** @deprecated Use timeframe instead */
+  period?: string;
 }
 
 export interface IndicatorValue {
@@ -294,6 +298,9 @@ export interface FibonacciResult {
 
 export interface IndicatorComputeResponse {
   conid: number;
+  /** Echoed from request — lets the frontend verify cache correctness */
+  timeframe: Timeframe;
+  /** @deprecated Kept for backwards compat — use timeframe */
   period: string;
   candles: CandleData[];
   indicators: IndicatorResult[];

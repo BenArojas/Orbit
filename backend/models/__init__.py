@@ -289,19 +289,28 @@ class IndicatorRequest(BaseModel):
     The frontend sends this when showing a chart or running the screener.
     Example: "Compute RSI and MACD for AAPL on the 1D timeframe"
 
-    conid:      IBKR's unique ID for the stock
-    period:     How much history to load: "1D", "5D", "1M", "3M", "6M", "1Y"
+    conid:     IBKR's unique ID for the stock
+    timeframe: Frontend timeframe string — the router maps this to a
+               canonical (period, bar) pair via TIMEFRAME_SPEC.
+               Valid values: "1m", "5m", "15m", "1h", "4h", "1D", "1W", "1M"
     indicators: Which indicators to compute — use their short names:
-                "rsi", "macd", "ema_9", "ema_21", "ema_50", "ema_200",
-                "bbands", "vwap", "atr", "stoch", "obv", "adx",
-                "volume", "fibonacci"
+               "rsi", "macd", "ema_9", "ema_21", "ema_50", "ema_200",
+               "bbands", "vwap", "atr", "stoch", "obv", "adx",
+               "volume", "fibonacci"
+
+    Deprecated:
+    period:    Legacy period string ("3M", "1Y", etc.). Kept for backwards
+               compatibility — new callers must use `timeframe` instead.
+               Ignored when `timeframe` is provided.
     """
     conid: int
-    period: str = "3M"
+    timeframe: Literal["1m", "5m", "15m", "1h", "4h", "1D", "1W", "1M"] = "1D"
     indicators: list[str] = Field(
         default=["rsi", "macd", "ema_50", "ema_200"],
         description="List of indicator names to compute",
     )
+    # Deprecated — kept for backwards compat, remove in next release
+    period: Optional[str] = None
 
 
 class IndicatorValue(BaseModel):
@@ -425,7 +434,8 @@ class IndicatorComputeResponse(BaseModel):
     has everything it needs in one response.
     """
     conid: int
-    period: str
+    timeframe: str                                     # Echoed from request for cache verification
+    period: str                                        # Deprecated — kept for backwards compat
     candles: list[CandleData]                          # The raw price data used
     indicators: list[IndicatorResult]                  # Computed indicator values
     fibonacci: Optional[FibonacciResult] = None        # Fibonacci levels (if requested)

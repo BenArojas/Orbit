@@ -44,6 +44,27 @@ class IBKRRequestError(IBKRError):
         super().__init__(message)
 
 
+class IBKRBarLimitExceededError(IBKRError):
+    """
+    Raised when a (period, bar) request returns more bars than the
+    est_max_bars ceiling defined in TIMEFRAME_SPEC.
+
+    This protects against silent data truncation caused by invalid
+    period/bar combinations or unexpected IBKR API behaviour changes.
+    Callers should log and surface an error to the user rather than
+    rendering a partial chart silently.
+    """
+
+    def __init__(self, timeframe: str, received: int, limit: int):
+        self.timeframe = timeframe
+        self.received = received
+        self.limit = limit
+        super().__init__(
+            f"Bar limit exceeded for timeframe {timeframe!r}: "
+            f"received {received} bars, limit is {limit}"
+        )
+
+
 class IBKRRateLimitError(IBKRError):
     """Hit IBKR rate limit — caller should back off."""
 

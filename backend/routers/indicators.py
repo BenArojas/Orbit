@@ -13,8 +13,9 @@ import logging
 
 from fastapi import APIRouter, Depends
 
-from constants import PERIOD_BAR
+from constants.ibkr_history import TIMEFRAME_SPEC, IBKR_BAR_LIMIT
 from deps import get_ibkr
+from exceptions import IBKRBarLimitExceededError
 from models import (
     CandleData,
     IndicatorComputeResponse,
@@ -43,29 +44,61 @@ async def compute_indicators(
     Compute technical indicators for a given stock.
 
     The frontend sends:
-      - conid: which stock (IBKR's unique ID)
-      - period: how much history to use ("1D", "5D", "1M", "3M", etc.)
-      - indicators: which indicators to compute (["rsi", "macd", "ema_50", ...])
+      - conid:     which stock (IBKR's unique ID)
+      - timeframe: frontend timeframe string — "1m", "5m", "15m", "1h",
+                   "4h", "1D", "1W", "1M". The router maps this to the
+                   canonical (period, bar) IBKR pair via TIMEFRAME_SPEC.
+      - indicators: which indicators to compute
 
     The backend:
-      1. Fetches historical candle data from IBKR
-      2. Runs the requested indicators through pandas-ta
-      3. Returns everything in one response (candles + indicator values + fibonacci)
-
-    This way the frontend gets all the data it needs in a single API call
-    instead of making separate requests for each indicator.
+      1. Resolves (period, bar) from TIMEFRAME_SPEC
+      2. Fetches historical candle data from IBKR
+      3. Validates bar count against est_max_bars ceiling
+      4. Runs the requested indicators through pandas-ta
+      5. Returns everything in one response (candles + indicator values + fibonacci)
     """
-    # Step 1: Figure out which IBKR period/bar to use
-    if request.period in PERIOD_BAR:
-        ibkr_period, ibkr_bar = PERIOD_BAR[request.period]
-    else:
-        ibkr_period, ibkr_bar = "3m", "1d"  # Sensible fallback
+    # Step 1: Resolve IBKR (period, bar) from timeframe
+    spec = TIMEFRAME_SPEC.get(request.timeframe)
+    if spec is None:
+        # Defensive fallback — model validator should have caught invalid values
+        log.warning(
+            "Unknown timeframe %r, falling back to 1D spec", request.timeframe
+        )
+        spec = TIMEFRAME_SPEC["1D"]
+
+    ibkr_period = spec.period
+    ibkr_bar = spec.bar
+    est_max_bars = spec.est_max_bars
+
+    log.debug(
+        "compute_indicators conid=%d timeframe=%r → period=%r bar=%r",
+        request.conid,
+        request.timeframe,
+        ibkr_period,
+        ibkr_bar,
+    )
 
     # Step 2: Fetch historical candle data from IBKR
     raw = await ibkr.history(request.conid, period=ibkr_period, bar=ibkr_bar)
     bars = raw.get("data", [])
 
-    # Step 3: Convert IBKR bars to our CandleData format
+    # Step 3: Sanity-check bar count against IBKR hard cap
+    if len(bars) > IBKR_BAR_LIMIT:
+        raise IBKRBarLimitExceededError(
+            timeframe=request.timeframe,
+            received=len(bars),
+            limit=IBKR_BAR_LIMIT,
+        )
+    if len(bars) > est_max_bars:
+        log.warning(
+            "Bar count %d for timeframe %r exceeds est_max_bars %d — "
+            "IBKR may have changed the step-size table",
+            len(bars),
+            request.timeframe,
+            est_max_bars,
+        )
+
+    # Step 4: Convert IBKR bars to our CandleData format
     candles: list[CandleData] = []
     for bar in bars:
         if "t" not in bar:
@@ -80,25 +113,33 @@ async def compute_indicators(
         ))
 
     if not candles:
-        log.warning("No candle data for conid %d (period=%s)", request.conid, request.period)
+        log.warning(
+            "No candle data for conid=%d timeframe=%r (period=%s bar=%s)",
+            request.conid,
+            request.timeframe,
+            ibkr_period,
+            ibkr_bar,
+        )
         return IndicatorComputeResponse(
             conid=request.conid,
-            period=request.period,
+            timeframe=request.timeframe,
+            period=ibkr_period,  # deprecated field — echo the IBKR period for compat
             candles=[],
             indicators=[],
             fibonacci=None,
         )
 
-    # Step 4: Compute the requested indicators
+    # Step 5: Compute the requested indicators
     indicator_results, fibonacci = _indicator_service.compute(
         candles=candles,
         indicators=request.indicators,
     )
 
-    # Step 5: Return everything
+    # Step 6: Return everything
     return IndicatorComputeResponse(
         conid=request.conid,
-        period=request.period,
+        timeframe=request.timeframe,
+        period=ibkr_period,  # deprecated field — echo the IBKR period for compat
         candles=candles,
         indicators=indicator_results,
         fibonacci=fibonacci,

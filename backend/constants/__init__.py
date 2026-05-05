@@ -63,9 +63,13 @@ LIVE_STREAM_FIELDS = [
 ]
 
 
-# ── Period → Bar Mappings ────────────────────────────────────
-# Maps user-facing period labels to IBKR (period, bar) format.
-# Used by the /market/candles endpoint.
+# ── Period → Bar Mappings (DEPRECATED) ──────────────────────
+# Maps legacy period labels to IBKR (period, bar) format.
+# Used only by the /market/candles endpoint (which uses a different
+# period vocabulary from the indicator router's timeframe vocabulary).
+#
+# The indicator router now uses TIMEFRAME_SPEC from constants.ibkr_history.
+# Do not add new callers of PERIOD_BAR.
 
 PERIOD_BAR: dict[str, tuple[str, str]] = {
     "1D": ("1d", "1min"),      # 1 day, 1-minute bars (intraday)

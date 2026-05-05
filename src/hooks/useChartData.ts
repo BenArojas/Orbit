@@ -17,20 +17,6 @@ import type { Timeframe, IndicatorId } from "@/store/chart";
 import { useWebSocket, type WsMessage } from "./useWebSocket";
 import { useIbkrReady } from "@/context/GatewayContext";
 
-// ── Map frontend timeframe → backend period ──────────────────
-// The backend PERIOD_BAR dict uses these keys.
-
-const TIMEFRAME_TO_PERIOD: Record<Timeframe, string> = {
-  "1m": "1D",   // 1-minute bars → 1 day of data
-  "5m": "5D",   // 5-minute bars → 5 days
-  "15m": "1M",  // 15-min bars → 1 month
-  "1h": "1M",   // 1-hour bars → 1 month
-  "4h": "3M",   // 4-hour bars → 3 months
-  "1D": "3M",   // Daily bars → 3 months
-  "1W": "1Y",   // Weekly bars → 1 year
-  "1M": "5Y",   // Monthly bars → 5 years
-};
-
 // ── Map frontend indicator IDs → backend indicator names ─────
 
 function indicatorIdsToBackendNames(ids: Set<IndicatorId>): string[] {
@@ -78,18 +64,18 @@ export function useChartData(
 
   // Convert indicator set to a stable string for query key
   const indicatorKey = Array.from(activeIndicators).sort().join(",");
-  const period = TIMEFRAME_TO_PERIOD[timeframe] ?? "3M";
 
   // ── TanStack Query: fetch candles + indicators ─────────────
 
   const ibkrReady = useIbkrReady();
 
   const query = useQuery<IndicatorComputeResponse>({
-    queryKey: ["chart-data", conid, period, indicatorKey],
+    // timeframe is in the key — switching TF invalidates the cache correctly
+    queryKey: ["chart-data", conid, timeframe, indicatorKey],
     queryFn: () =>
       api.computeIndicators({
         conid: conid!,
-        period,
+        timeframe,
         indicators: indicatorIdsToBackendNames(activeIndicators),
       }),
     enabled: ibkrReady && conid != null,
