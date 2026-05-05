@@ -25,7 +25,7 @@ import { useState, useMemo, useEffect, type KeyboardEvent } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { useChartStore, type Timeframe, type IndicatorId } from "@/store";
 import { api } from "@/lib/api";
-import { ChartContainer, SubChartPanel, SUB_CHART_BACKEND_NAMES, type SubChartType } from "@/components/charts";
+import { ChartContainer, SubChartPanel, AtrBadge, SUB_CHART_BACKEND_NAMES, type SubChartType } from "@/components/charts";
 import { useChartData } from "@/hooks/useChartData";
 import { useInstrument } from "@/hooks/useInstrument";
 import { IndicatorToolbar } from "@/components/indicators";
@@ -174,6 +174,11 @@ export default function AnalysisPage() {
 
           {/* Indicator pills (task 4.6 — Ofek's IndicatorToolbar) */}
           <IndicatorToolbar />
+
+          {/* ATR value badge — shown inline when ATR is toggled on */}
+          {activeIndicators.has("atr") && (
+            <AtrBadge indicators={indicators} />
+          )}
 
           {/* Fib draw mode buttons (task 4.5) */}
           <div className="mx-1 h-5 w-px bg-[var(--border)]" />

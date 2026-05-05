@@ -338,17 +338,31 @@ class IndicatorService:
         if bb is None or bb.empty:
             return IndicatorResult(name="bbands", type="overlay", values=[], params={})
 
-        lower_col = f"BBL_{period}_{std_dev}"
-        mid_col = f"BBM_{period}_{std_dev}"
-        upper_col = f"BBU_{period}_{std_dev}"
+        # pandas-ta column names depend on version and float formatting.
+        # "BBL_20_2.0" is typical but some builds emit "BBL_20_2" or "BBL_20_2.00".
+        # Use prefix matching so the column is found regardless of trailing zeros.
+        actual_cols = list(bb.columns)
+        lower_col = next((c for c in actual_cols if c.startswith("BBL_")), None)
+        mid_col   = next((c for c in actual_cols if c.startswith("BBM_")), None)
+        upper_col = next((c for c in actual_cols if c.startswith("BBU_")), None)
+
+        if not lower_col or not mid_col or not upper_col:
+            log.warning(
+                "bbands: unexpected column names from pandas-ta (got %s) — "
+                "cannot extract lower/mid/upper bands",
+                actual_cols,
+            )
+            return IndicatorResult(name="bbands", type="overlay", values=[], params={})
+
+        log.debug("bbands: resolved columns → lower=%s mid=%s upper=%s", lower_col, mid_col, upper_col)
 
         values: list[IndicatorValue] = []
         times = df["time"].values
 
         for i in range(len(df)):
-            mid = bb[mid_col].iloc[i] if mid_col in bb else None
-            upper = bb[upper_col].iloc[i] if upper_col in bb else None
-            lower = bb[lower_col].iloc[i] if lower_col in bb else None
+            mid   = bb[mid_col].iloc[i]
+            upper = bb[upper_col].iloc[i]
+            lower = bb[lower_col].iloc[i]
 
             if pd.isna(mid) and pd.isna(upper) and pd.isna(lower):
                 continue

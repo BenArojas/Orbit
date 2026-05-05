@@ -8,10 +8,12 @@
  *   - MACD (12/26/9) → MACD line + signal line + histogram bars
  *   - Stochastic     → %K line + %D line (0–100 range, 20/80 reference lines)
  *   - OBV            → single cumulative line
+ *   - ADX (14)       → trend-strength line + 25 reference level
  *
- * Each panel auto-syncs its visible time range with the main chart via
- * the optional `timeRangeRef` prop (task 4.3 enhancement — for now each
- * panel manages its own range via fitContent).
+ * Chart creation is DEFERRED: createChart() is only called once the
+ * ResizeObserver reports a non-zero container size. This prevents silent
+ * failures when the panel is conditionally rendered and CSS hasn't laid
+ * out yet (e.g. MACD panel appearing on first toggle with 0×0 dimensions).
  */
 
 import {
@@ -25,7 +27,7 @@ import {
   type Time,
   ColorType,
 } from "lightweight-charts";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { IndicatorResult, IndicatorValue } from "@/lib/api";
 import { readChartTheme } from "./chartTheme";
 
@@ -41,17 +43,16 @@ export interface SubChartPanelProps {
 // ── Per-indicator colors (semantic, theme-independent) ───────
 
 const COLORS = {
-  // Per-indicator colors
-  rsi: "#b44dff",          // purple
-  macdLine: "#00d4ff",     // cyan
-  macdSignal: "#ff9f1c",   // orange
+  rsi: "#b44dff",
+  macdLine: "#00d4ff",
+  macdSignal: "#ff9f1c",
   macdHistUp: "rgba(0, 255, 136, 0.5)",
   macdHistDown: "rgba(255, 68, 102, 0.5)",
-  stochK: "#00d4ff",       // cyan
-  stochD: "#ff9f1c",       // orange
-  obv: "#4488ff",          // blue
-  adx: "#ff9f1c",          // orange
-  refLine: "rgba(255, 255, 255, 0.08)", // reference lines (30/70, 20/80)
+  stochK: "#00d4ff",
+  stochD: "#ff9f1c",
+  obv: "#4488ff",
+  adx: "#ff9f1c",
+  refLine: "rgba(255, 255, 255, 0.08)",
 } as const;
 
 // ── Labels ───────────────────────────────────────────────────
@@ -100,99 +101,115 @@ export default function SubChartPanel({
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRefs = useRef<ISeriesApi<"Line" | "Histogram">[]>([]);
 
-  // ── Create chart instance ──────────────────────────────────
+  // chartReady flips to true once createChart() has been called with
+  // non-zero dimensions. The data effect waits for this before adding series.
+  const [chartReady, setChartReady] = useState(false);
+
+  // ── Create chart instance (deferred until container has non-zero size) ──
 
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
 
-    const theme = readChartTheme();
+    // Theme observer — created after chart is initialised (captured in closure)
+    let themeObserver: MutationObserver | null = null;
 
-    const chart = createChart(container, {
-      layout: {
-        background: { type: ColorType.Solid, color: theme.bg },
-        textColor: theme.text,
-        fontFamily: "'JetBrains Mono', monospace",
-        fontSize: 9,
-        attributionLogo: false,
-      },
-      grid: {
-        vertLines: { color: theme.gridLines },
-        horzLines: { color: theme.gridLines },
-      },
-      rightPriceScale: {
-        borderColor: theme.borderColor,
-        scaleMargins: { top: 0.1, bottom: 0.1 },
-      },
-      timeScale: {
-        visible: false, // Time axis shown on main chart only
-      },
-      crosshair: {
-        vertLine: { visible: false, labelVisible: false },
-        horzLine: {
-          color: "rgba(0, 212, 255, 0.3)",
-          width: 1,
-          style: 2,
-          labelBackgroundColor: "#0f1724",
-        },
-      },
-      // Scroll/scale disabled — panels should follow the main chart's visible
-      // time range. Time-range syncing is a future enhancement: subscribe to
-      // the main chart's timeScale().subscribeVisibleLogicalRangeChange() and
-      // call panel.timeScale().setVisibleLogicalRange() in response.
-      handleScroll: false,
-      handleScale: false,
-    });
-
-    chartRef.current = chart;
-
-    // Auto-resize — read both dimensions from the DOM so the chart
-    // stays correct on window resize (height is controlled by parent CSS,
-    // not a fixed prop).
     const resizeObserver = new ResizeObserver((entries) => {
       const { width, height: h } = entries[0].contentRect;
-      chart.applyOptions({ width, height: h });
-    });
-    resizeObserver.observe(container);
 
-    // Theme change — re-apply layout colours when .dark/.light toggles on <html>
-    const themeObserver = new MutationObserver(() => {
-      const t = readChartTheme();
-      chart.applyOptions({
-        layout: {
-          background: { type: ColorType.Solid, color: t.bg },
-          textColor: t.text,
-        },
-        grid: {
-          vertLines: { color: t.gridLines },
-          horzLines: { color: t.gridLines },
-        },
-        rightPriceScale: { borderColor: t.borderColor },
-      });
+      // Ignore zero-size measurements (panel not yet laid out)
+      if (width === 0 || h === 0) return;
+
+      if (!chartRef.current) {
+        // First non-zero measurement — create the chart now
+        const theme = readChartTheme();
+
+        const chart = createChart(container, {
+          width,
+          height: h,
+          layout: {
+            background: { type: ColorType.Solid, color: theme.bg },
+            textColor: theme.text,
+            fontFamily: "'JetBrains Mono', monospace",
+            fontSize: 9,
+            attributionLogo: false,
+          },
+          grid: {
+            vertLines: { color: theme.gridLines },
+            horzLines: { color: theme.gridLines },
+          },
+          rightPriceScale: {
+            borderColor: theme.borderColor,
+            scaleMargins: { top: 0.1, bottom: 0.1 },
+          },
+          timeScale: {
+            visible: false, // Time axis shown on main chart only
+          },
+          crosshair: {
+            vertLine: { visible: false, labelVisible: false },
+            horzLine: {
+              color: "rgba(0, 212, 255, 0.3)",
+              width: 1,
+              style: 2,
+              labelBackgroundColor: "#0f1724",
+            },
+          },
+          handleScroll: false,
+          handleScale: false,
+        });
+
+        chartRef.current = chart;
+
+        // Theme change observer — safe to wire now that chart exists
+        themeObserver = new MutationObserver(() => {
+          const t = readChartTheme();
+          chart.applyOptions({
+            layout: {
+              background: { type: ColorType.Solid, color: t.bg },
+              textColor: t.text,
+            },
+            grid: {
+              vertLines: { color: t.gridLines },
+              horzLines: { color: t.gridLines },
+            },
+            rightPriceScale: { borderColor: t.borderColor },
+          });
+        });
+        themeObserver.observe(document.documentElement, {
+          attributes: true,
+          attributeFilter: ["class"],
+        });
+
+        // Signal to the data effect that it can now add series
+        setChartReady(true);
+      } else {
+        // Subsequent resize — just update dimensions
+        chartRef.current.applyOptions({ width, height: h });
+      }
     });
-    themeObserver.observe(document.documentElement, {
-      attributes: true,
-      attributeFilter: ["class"],
-    });
+
+    resizeObserver.observe(container);
 
     return () => {
       resizeObserver.disconnect();
-      themeObserver.disconnect();
-      chart.remove();
+      themeObserver?.disconnect();
+      chartRef.current?.remove();
       chartRef.current = null;
       seriesRefs.current = [];
+      setChartReady(false);
     };
-  }, []); // Chart instance created once — size tracked by ResizeObserver
+  }, []); // Chart instance lifecycle — runs once per mount
 
   // ── Update indicator data ──────────────────────────────────
 
   useEffect(() => {
     const chart = chartRef.current;
-    if (!chart) return;
+    // Wait until chart is fully initialised with non-zero dimensions
+    if (!chart || !chartReady) return;
 
     // Remove old series
     for (const s of seriesRefs.current) {
-      try { chart.removeSeries(s); } catch (_e: unknown) { /* series already removed on chart destroy */ }
+      try { chart.removeSeries(s); } catch (_e: unknown) { /* already gone on destroy */ }
     }
     seriesRefs.current = [];
 
@@ -217,7 +234,7 @@ export default function SubChartPanel({
     }
 
     chart.timeScale().fitContent();
-  }, [type, indicator]);
+  }, [type, indicator, chartReady]);
 
   // ── RSI: single line + 30/70 reference lines ───────────────
 
@@ -225,7 +242,6 @@ export default function SubChartPanel({
     const data = toLineData(ind.values);
     if (data.length === 0) return;
 
-    // Main RSI line
     const series = chart.addSeries(LineSeries, {
       color: COLORS.rsi,
       lineWidth: 1,
@@ -237,22 +253,19 @@ export default function SubChartPanel({
     series.setData(data);
     seriesRefs.current.push(series);
 
-    // 30/70 reference lines (as flat line series)
     for (const level of [30, 70]) {
       const refSeries = chart.addSeries(LineSeries, {
         color: COLORS.refLine,
         lineWidth: 1,
-        lineStyle: 2, // dashed
+        lineStyle: 2,
         priceLineVisible: false,
         lastValueVisible: false,
         crosshairMarkerVisible: false,
       });
-      // Create flat line at the reference level across all timestamps
-      const refData: LineData<Time>[] = [
+      refSeries.setData([
         { time: data[0].time, value: level },
         { time: data[data.length - 1].time, value: level },
-      ];
-      refSeries.setData(refData);
+      ]);
       seriesRefs.current.push(refSeries);
     }
   }
@@ -260,7 +273,6 @@ export default function SubChartPanel({
   // ── MACD: line + signal + histogram ────────────────────────
 
   function renderMACD(chart: IChartApi, ind: IndicatorResult) {
-    // Histogram bars (rendered first so lines draw on top)
     const histData: HistogramData<Time>[] = [];
     for (const v of ind.values) {
       if (v.histogram != null && !isNaN(v.histogram)) {
@@ -281,7 +293,6 @@ export default function SubChartPanel({
       seriesRefs.current.push(histSeries);
     }
 
-    // MACD line
     const macdData = toLineData(ind.values, "value");
     if (macdData.length > 0) {
       const macdSeries = chart.addSeries(LineSeries, {
@@ -296,7 +307,6 @@ export default function SubChartPanel({
       seriesRefs.current.push(macdSeries);
     }
 
-    // Signal line
     const signalData = toLineData(ind.values, "signal");
     if (signalData.length > 0) {
       const signalSeries = chart.addSeries(LineSeries, {
@@ -314,7 +324,6 @@ export default function SubChartPanel({
   // ── Stochastic: %K + %D + 20/80 reference lines ───────────
 
   function renderStochastic(chart: IChartApi, ind: IndicatorResult) {
-    // %K line (value field)
     const kData = toLineData(ind.values, "value");
     if (kData.length > 0) {
       const kSeries = chart.addSeries(LineSeries, {
@@ -329,7 +338,6 @@ export default function SubChartPanel({
       seriesRefs.current.push(kSeries);
     }
 
-    // %D line (signal field)
     const dData = toLineData(ind.values, "signal");
     if (dData.length > 0) {
       const dSeries = chart.addSeries(LineSeries, {
@@ -343,7 +351,6 @@ export default function SubChartPanel({
       seriesRefs.current.push(dSeries);
     }
 
-    // 20/80 reference lines
     const allData = kData.length > 0 ? kData : dData;
     if (allData.length > 0) {
       for (const level of [20, 80]) {
@@ -399,11 +406,10 @@ export default function SubChartPanel({
     series.setData(data);
     seriesRefs.current.push(series);
 
-    // 25 reference line — ADX above 25 = trending market
     const refSeries = chart.addSeries(LineSeries, {
       color: COLORS.refLine,
       lineWidth: 1,
-      lineStyle: 2, // dashed
+      lineStyle: 2,
       priceLineVisible: false,
       lastValueVisible: false,
       crosshairMarkerVisible: false,
