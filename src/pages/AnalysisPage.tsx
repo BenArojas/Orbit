@@ -29,7 +29,7 @@ import { ChartContainer, SubChartPanel, AtrBadge, SUB_CHART_BACKEND_NAMES, type 
 import { useChartData } from "@/hooks/useChartData";
 import { useInstrument } from "@/hooks/useInstrument";
 import { IndicatorToolbar } from "@/components/indicators";
-import { AiChatPanel } from "@/components/ai";
+import { RightSidebar } from "@/components/ai";
 
 // ── Constants ────────────────────────────────────────────────
 
@@ -266,8 +266,8 @@ export default function AnalysisPage() {
         )}
       </div>
 
-      {/* ── Right: AI Panel ── */}
-      <AiChatPanel
+      {/* ── Right: tabbed sidebar (AI / Watchlists / Triggers) ── */}
+      <RightSidebar
         activeConid={activeConid}
         activeSymbol={activeSymbol}
         fibonacci={fibonacci}

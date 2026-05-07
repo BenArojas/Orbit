@@ -920,6 +920,25 @@ export const api = {
       `/watchlist/${encodeURIComponent(watchlistId)}/quotes?conids=${conids.join(",")}`,
     ),
 
+  watchlistAddInstrument: (watchlistId: string, conid: number) =>
+    request<{ added: boolean; conid: number }>(
+      "POST",
+      `/watchlist/${encodeURIComponent(watchlistId)}/instruments`,
+      { conid },
+    ),
+
+  watchlistRemoveInstrument: (watchlistId: string, conid: number) =>
+    request<{ removed: boolean; conid: number }>(
+      "DELETE",
+      `/watchlist/${encodeURIComponent(watchlistId)}/instruments/${conid}`,
+    ),
+
+  watchlistMembership: (conid: number) =>
+    request<{ conid: number; watchlist_ids: string[] }>(
+      "GET",
+      `/watchlist/membership?conid=${conid}`,
+    ),
+
   // Triggers (CRUD)
   getTriggerRules: () =>
     request<TriggerRule[]>("GET", "/triggers/rules"),

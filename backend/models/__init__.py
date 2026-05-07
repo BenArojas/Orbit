@@ -559,6 +559,17 @@ class WatchlistResponse(BaseModel):
     items: list[WatchlistItemResponse]
 
 
+class WatchlistAddRequest(BaseModel):
+    """Request body for adding an instrument to a watchlist by conid."""
+    conid: int
+
+
+class WatchlistMembershipResponse(BaseModel):
+    """Watchlist IDs that contain the queried conid."""
+    conid: int
+    watchlist_ids: list[str]
+
+
 # ═══════════════════════════════════════════════════════════════
 #  AI Analysis (Phase 4 — tasks 4.9–4.12)
 # ═══════════════════════════════════════════════════════════════

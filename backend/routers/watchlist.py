@@ -17,13 +17,15 @@ Phase 8.9 / Commit C split:
   stream in as a second query.
 """
 
+import asyncio
 import logging
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from constants import DEFAULT_QUOTE_FIELDS_STR
 from deps import get_db, get_ibkr
 from exceptions import IBKRAuthError, IBKRConnectionError, IBKRRateLimitError, IBKRRequestError
+from models import WatchlistAddRequest
 from services.db import DatabaseService
 from services.ibkr import IBKRService, _safe_float
 
@@ -52,6 +54,91 @@ async def get_watchlists(
         for wl in raw
         if isinstance(wl, dict) and wl.get("id")
     ]
+
+
+@router.get("/membership")
+async def get_watchlist_membership(
+    conid: int = Query(..., description="IBKR contract ID to look up"),
+    ibkr: IBKRService = Depends(get_ibkr),
+):
+    """
+    Return all watchlist IDs that contain the given conid.
+    Checks every watchlist concurrently via asyncio.gather.
+    """
+    all_watchlists = await ibkr.get_watchlists()
+
+    async def _check(wl: dict) -> str | None:
+        wl_id = str(wl.get("id", ""))
+        if not wl_id:
+            return None
+        try:
+            items = await ibkr.get_watchlist_items(wl_id)
+        except Exception as exc:
+            log.warning("membership check failed for watchlist=%s: %s", wl_id, exc)
+            return None
+        for item in items:
+            if isinstance(item, dict):
+                raw = item.get("C") or item.get("conid")
+                try:
+                    if raw and int(raw) == conid:
+                        return wl_id
+                except (TypeError, ValueError):
+                    pass
+        return None
+
+    results = await asyncio.gather(
+        *[_check(wl) for wl in all_watchlists if isinstance(wl, dict)],
+    )
+    return {
+        "conid": conid,
+        "watchlist_ids": [r for r in results if r is not None],
+    }
+
+
+@router.post("/{watchlist_id}/instruments")
+async def add_watchlist_instrument(
+    watchlist_id: str,
+    body: WatchlistAddRequest,
+    ibkr: IBKRService = Depends(get_ibkr),
+):
+    """
+    Add a conid to an IBKR watchlist.
+    Returns {added: bool, conid: int} — added=False means it was already present.
+    """
+    all_watchlists = await ibkr.get_watchlists()
+    watchlist_name = next(
+        (wl.get("name", "") for wl in all_watchlists
+         if isinstance(wl, dict) and str(wl.get("id", "")) == watchlist_id),
+        None,
+    )
+    if watchlist_name is None:
+        raise HTTPException(status_code=404, detail=f"Watchlist {watchlist_id!r} not found")
+
+    added = await ibkr.add_to_watchlist(watchlist_id, watchlist_name, body.conid)
+    return {"added": added, "conid": body.conid}
+
+
+@router.delete("/{watchlist_id}/instruments/{conid}")
+async def remove_watchlist_instrument(
+    watchlist_id: str,
+    conid: int,
+    ibkr: IBKRService = Depends(get_ibkr),
+):
+    """
+    Remove a conid from an IBKR watchlist.
+    Returns {removed: bool, conid: int} — removed=False means it wasn't present.
+    """
+    all_watchlists = await ibkr.get_watchlists()
+    watchlist_name = next(
+        (wl.get("name", "") for wl in all_watchlists
+         if isinstance(wl, dict) and str(wl.get("id", "")) == watchlist_id),
+        None,
+    )
+    if watchlist_name is None:
+        raise HTTPException(status_code=404, detail=f"Watchlist {watchlist_id!r} not found")
+
+    removed = await ibkr.remove_from_watchlist(watchlist_id, watchlist_name, conid)
+    return {"removed": removed, "conid": conid}
 
 
 @router.get("/{watchlist_id}/instruments")

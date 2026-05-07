@@ -24,3 +24,8 @@ export { default as AiChatPanel } from "./AiChatPanel";
 export { default as AiSetupGuide } from "./AiSetupGuide";
 export { default as AiModelSelector } from "./AiModelSelector";
 export { default as FibScoreCard } from "./FibScoreCard";
+
+// Branch 5 — watchlist/triggers tabs
+export { default as RightSidebar } from "./RightSidebar";
+export { default as WatchlistTab } from "./WatchlistTab";
+export { default as TriggersTab } from "./TriggersTab";
