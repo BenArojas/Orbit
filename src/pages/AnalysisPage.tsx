@@ -75,6 +75,12 @@ export default function AnalysisPage() {
     }
   }, [activeSymbol, inputFocused]);
 
+  // Pre-load the AI model into memory when the user navigates here.
+  // Non-fatal: if Ollama isn't ready the warmup endpoint returns 204 silently.
+  useEffect(() => {
+    api.aiWarmup().catch(() => {/* non-fatal */});
+  }, []);
+
   // Fetch cached instrument metadata for the header badge + watermark
   const { companyName } = useInstrument(activeConid);
 
@@ -141,20 +147,6 @@ export default function AnalysisPage() {
             }`}
           />
 
-          {/* Company name badge — symbol + company name below input */}
-          {(activeSymbol || companyName) && (
-            <div className="flex flex-col leading-tight">
-              <span className="font-mono text-xs font-bold text-[var(--text-1)]">
-                {activeSymbol || "—"}
-              </span>
-              {companyName && (
-                <span className="max-w-[200px] truncate text-[10px] text-[var(--text-3)]">
-                  {companyName}
-                </span>
-              )}
-            </div>
-          )}
-
           {/* Timeframe bar */}
           <div className="flex gap-px rounded-md border border-border bg-[var(--bg-0)] p-0.5">
             {TIMEFRAMES.map((tf) => (
@@ -171,6 +163,13 @@ export default function AnalysisPage() {
               </button>
             ))}
           </div>
+
+          {/* Company name badge — shown after the timeframe bar */}
+          {companyName && (
+            <span className="max-w-[240px] truncate text-[10px] text-[var(--text-3)]">
+              {companyName}
+            </span>
+          )}
 
           {/* Indicator pills (task 4.6 — Ofek's IndicatorToolbar) */}
           <IndicatorToolbar />
@@ -247,10 +246,10 @@ export default function AnalysisPage() {
           )}
         </div>
 
-        {/* Sub-chart panels — show only active oscillator/line/value indicators */}
+        {/* Sub-chart panels — stacked vertically, one per active oscillator */}
         {activeSubCharts.length > 0 && (
           <div
-            className="flex border-t border-border"
+            className="flex flex-col border-t border-border"
             style={{ height: activeSubCharts.length * SUB_CHART_HEIGHT }}
           >
             {activeSubCharts.map((type) => (

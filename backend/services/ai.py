@@ -102,6 +102,34 @@ def parse_signal_from_response(text: str) -> Optional[dict]:
     return None
 
 
+def _coerce_confidence(value: int | str | None) -> int:
+    """
+    Coerce model confidence to an int in [0, 100].
+
+    The model sometimes returns a string label ("HIGH", "MEDIUM", "LOW")
+    instead of the integer the schema specifies.  Map those to sensible
+    defaults rather than letting the value fall through to Pydantic where
+    it would raise a ValidationError.
+    """
+    _LABEL_MAP: dict[str, int] = {
+        "HIGH": 75,
+        "MEDIUM": 50,
+        "MED": 50,
+        "LOW": 25,
+    }
+    if isinstance(value, int):
+        return max(0, min(100, value))
+    if isinstance(value, str):
+        upper = value.strip().upper()
+        if upper in _LABEL_MAP:
+            return _LABEL_MAP[upper]
+        try:
+            return max(0, min(100, int(upper)))
+        except ValueError:
+            return 50
+    return 50
+
+
 def signal_to_frontend_format(signal: dict) -> dict:
     """
     Convert the parsed AI signal into the format expected by
@@ -115,7 +143,7 @@ def signal_to_frontend_format(signal: dict) -> dict:
     return {
         "direction": signal.get("direction", "NEUTRAL"),
         "description": signal.get("description", ""),
-        "confidence": signal.get("confidence", 50),
+        "confidence": _coerce_confidence(signal.get("confidence")),
         "levels": [
             {
                 "label": "Entry",
@@ -272,6 +300,7 @@ class AiService:
             "model": model,
             "messages": messages,
             "stream": False,
+            "keep_alive": "20m",
             "options": {
                 "temperature": 0.3,     # Low temp for more consistent analysis
                 "num_predict": 2048,    # Max tokens to generate
@@ -319,6 +348,7 @@ class AiService:
             "messages": messages,
             "stream": False,
             "format": json_schema,
+            "keep_alive": "20m",
             "options": {
                 "temperature": 0.2,     # Even lower temp for structured output
                 "num_predict": 2048,
@@ -361,6 +391,7 @@ class AiService:
             "model": model,
             "messages": messages,
             "stream": True,
+            "keep_alive": "20m",
             "options": {
                 "temperature": 0.3,
                 "num_predict": 2048,
@@ -392,6 +423,31 @@ class AiService:
             yield "\n\n[Error: Cannot connect to Ollama server]"
         except httpx.TimeoutException:
             yield "\n\n[Error: Request timed out]"
+
+    # ── Warmup ──────────────────────────────────────────────────
+
+    async def warmup(self, model: str) -> None:
+        """
+        Pre-load the model into GPU/RAM by sending a minimal 1-token prompt.
+
+        Ollama evicts models from memory after keep_alive expires.  Calling
+        this on Analysis/Screener page mount ensures the first real request
+        is fast.  The keep_alive=20m means the model stays loaded for 20
+        minutes of inactivity, so calling this once per page visit is enough.
+        """
+        payload = {
+            "model": model,
+            "messages": [{"role": "user", "content": "hi"}],
+            "stream": False,
+            "keep_alive": "20m",
+            "options": {"num_predict": 1},
+        }
+        try:
+            resp = await self._http.post("/api/chat", json=payload, timeout=30.0)
+            resp.raise_for_status()
+        except (httpx.ConnectError, httpx.TimeoutException, httpx.HTTPStatusError) as e:
+            # Warmup failure is non-fatal — log and continue
+            log.debug("Warmup request failed (non-fatal): %s", e)
 
     # ── Analysis ────────────────────────────────────────────────
 

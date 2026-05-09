@@ -10,7 +10,7 @@
  * Returns everything the AnalysisPage needs to render the chart and indicators.
  */
 
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, keepPreviousData } from "@tanstack/react-query";
 import { useEffect, useState, useCallback, useRef } from "react";
 import { api, type IndicatorComputeResponse } from "@/lib/api";
 import type { Timeframe, IndicatorId } from "@/store/chart";
@@ -81,6 +81,10 @@ export function useChartData(
     enabled: ibkrReady && conid != null,
     staleTime: 60_000, // 1 min — chart data doesn't need to be as fresh
     gcTime: 5 * 60_000,
+    // Keep the previous candles/indicators on screen while the new query
+    // fetches (e.g. when the user toggles an indicator).  Without this,
+    // data goes to undefined → candles = [] → ChartContainer unmounts.
+    placeholderData: keepPreviousData,
   });
 
   // ── WebSocket: subscribe to live data for active conid ─────

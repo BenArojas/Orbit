@@ -42,17 +42,6 @@ import FibDrawMode from "./FibDrawMode";
 import { readChartTheme } from "./chartTheme";
 import type { Timeframe } from "@/store/chart";
 
-// ── Semantic colors (theme-independent) ──────────────────────
-// Up/down/wick/volume colours are intentionally hardcoded — they are
-// semantic (green = bullish, red = bearish) regardless of light/dark theme.
-
-const CANDLE_COLORS = {
-  upColor:   "#00ff88",
-  downColor: "#ff4466",
-  upWick:    "#00ff88",
-  downWick:  "#ff4466",
-} as const;
-
 const CROSSHAIR_COLOR = "rgba(0, 212, 255, 0.4)";
 const CROSSHAIR_LABEL_BG = "#0f1724";
 
@@ -141,12 +130,12 @@ export default function ChartContainer({
       handleScroll: { vertTouchDrag: false },
     });
 
-    // Candlestick series (v5 API)
+    // Candlestick series (v5 API) — colours read from theme at create time
     const candleSeries = chart.addSeries(CandlestickSeries, {
-      upColor:      CANDLE_COLORS.upColor,
-      downColor:    CANDLE_COLORS.downColor,
-      wickUpColor:  CANDLE_COLORS.upWick,
-      wickDownColor: CANDLE_COLORS.downWick,
+      upColor:       theme.upColor,
+      downColor:     theme.downColor,
+      wickUpColor:   theme.upColor,
+      wickDownColor: theme.downColor,
       borderVisible: false,
     });
 
@@ -160,7 +149,7 @@ export default function ChartContainer({
     });
     resizeObserver.observe(container);
 
-    // Theme change — re-apply layout colours when .dark/.light toggles on <html>
+    // Theme change — re-apply layout + candle colours when .dark/.light toggles
     const themeObserver = new MutationObserver(() => {
       const t = readChartTheme();
       chart.applyOptions({
@@ -174,6 +163,13 @@ export default function ChartContainer({
         },
         rightPriceScale: { borderColor: t.borderColor },
         timeScale: { borderColor: t.borderColor },
+      });
+      // Re-apply candle colours — they differ between dark and light themes
+      candleSeries.applyOptions({
+        upColor:       t.upColor,
+        downColor:     t.downColor,
+        wickUpColor:   t.upColor,
+        wickDownColor: t.downColor,
       });
     });
     themeObserver.observe(document.documentElement, {

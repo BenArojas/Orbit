@@ -11,9 +11,8 @@
  *   --chart-grid  subtle grid line colour
  *   --text-3      axis label colour
  *   --border      price/time scale border
- *
- * Up/down/wick/volume colours are intentionally NOT read from CSS because
- * they are semantic (green = up, red = down) regardless of theme.
+ *   --clr-green   bullish candle colour (neon in dark, muted in light)
+ *   --clr-red     bearish candle colour (neon in dark, muted in light)
  */
 
 export interface ChartThemeColors {
@@ -21,6 +20,10 @@ export interface ChartThemeColors {
   gridLines: string;
   text: string;
   borderColor: string;
+  /** Bullish candle body/wick colour */
+  upColor: string;
+  /** Bearish candle body/wick colour */
+  downColor: string;
 }
 
 /** Read the current theme colors from CSS custom properties. */
@@ -31,5 +34,7 @@ export function readChartTheme(): ChartThemeColors {
     gridLines:   cs.getPropertyValue("--chart-grid").trim(),
     text:        cs.getPropertyValue("--text-3").trim(),
     borderColor: cs.getPropertyValue("--border").trim(),
+    upColor:     cs.getPropertyValue("--clr-green").trim() || "#00ff88",
+    downColor:   cs.getPropertyValue("--clr-red").trim()   || "#ff4466",
   };
 }

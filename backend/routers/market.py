@@ -331,8 +331,29 @@ async def resolve_conid(
         }
     try:
         conid = await ibkr.get_conid(symbol, sec_type=hint)
-        # Cache the resolution so other Hub modules can look up by conid
-        await db.upsert_instrument(conid=conid, symbol=symbol.upper())
-        return {"conid": conid, "symbol": symbol.upper()}
+
+        # Try to get company_name from IBKR search results so the instrument
+        # cache is fully populated for useInstrument() to display after search.
+        company_name = ""
+        try:
+            search_results = await ibkr.search(symbol=symbol)
+            for item in search_results:
+                item_conid = item.get("conid")
+                if item_conid and int(item_conid) == conid:
+                    company_name = item.get("companyHeader", "")
+                    break
+        except Exception:
+            pass  # company_name enrichment is best-effort
+
+        await db.upsert_instrument(
+            conid=conid,
+            symbol=symbol.upper(),
+            company_name=company_name,
+        )
+        return {
+            "conid": conid,
+            "symbol": symbol.upper(),
+            "companyName": company_name,
+        }
     except SymbolNotFoundError:
         return {"error": f"Symbol not found: {symbol}", "symbol": symbol}

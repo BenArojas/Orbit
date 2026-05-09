@@ -422,7 +422,7 @@ export default function SubChartPanel({
   }
 
   return (
-    <div className="relative flex-1 border-r border-border last:border-r-0">
+    <div className="relative flex-1 border-b border-border last:border-b-0">
       {/* Label */}
       <span className="pointer-events-none absolute left-2.5 top-1 z-10 text-[8px] font-semibold text-[var(--text-3)]">
         {LABELS[type]}

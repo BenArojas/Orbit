@@ -29,6 +29,7 @@ import logging
 
 from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
+from pydantic import ValidationError
 
 from deps import get_ibkr, get_db, get_ai, get_ollama
 from models import (
@@ -48,7 +49,7 @@ from models import (
     SignalMeta,
 )
 from exceptions import AIAnalysisTimeoutError
-from services.ai import AiService
+from services.ai import AiService, _coerce_confidence
 from services.db import DatabaseService
 from services.ibkr import IBKRService
 from services.indicators import IndicatorService
@@ -162,14 +163,39 @@ def _parse_signal(raw: dict) -> SignalData | None:
         return SignalData(
             direction=raw["direction"],
             description=raw["description"],
-            confidence=raw["confidence"],
+            confidence=_coerce_confidence(raw.get("confidence")),
             levels=[SignalLevel(**l) for l in raw["levels"]],
             meta=[SignalMeta(**m) for m in raw["meta"]],
             checks=[SignalCheck(**c) for c in raw["checks"]],
         )
-    except (KeyError, TypeError) as e:
+    except (KeyError, TypeError, ValidationError) as e:
         log.warning("Failed to parse signal into model: %s", e)
         return None
+
+
+# ═══════════════════════════════════════════════════════════════
+#  POST /ai/warmup
+# ═══════════════════════════════════════════════════════════════
+
+
+@router.post("/warmup", status_code=204)
+async def warmup(
+    ai: AiService = Depends(get_ai),
+    ollama: OllamaLifecycle = Depends(get_ollama),
+):
+    """
+    Pre-load the selected model into memory.
+
+    The frontend calls this on Analysis/Screener page mount so the first
+    real analysis request doesn't pay the cold-start penalty.  If Ollama
+    isn't ready or no model is selected we return 204 silently (non-fatal).
+    """
+    s = ollama.status()
+    model = s.get("selected_model")
+    if not model or not s.get("ready"):
+        return  # Nothing to warm up — silently succeed
+
+    await ai.warmup(model)
 
 
 # ═══════════════════════════════════════════════════════════════

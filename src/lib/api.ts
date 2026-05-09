@@ -111,6 +111,8 @@ export interface SearchResult {
 export interface ConidResponse {
   conid: number;
   symbol: string;
+  /** Company name — populated when IBKR search finds it (may be empty string) */
+  companyName?: string;
 }
 
 /** Cached instrument record returned by GET /instruments/{conid} */
@@ -983,6 +985,9 @@ export const api = {
 
   aiRefresh: () =>
     request<AiStatusResponse>("POST", "/ai/refresh"),
+
+  aiWarmup: () =>
+    request<void>("POST", "/ai/warmup"),
 
   aiAnalyze: (req: AnalyzeRequest) =>
     request<AnalyzeResponse>("POST", "/ai/analyze", req),

@@ -30,7 +30,7 @@
  *   that calls appendResults() to grow the buffer without clearing page/sort.
  */
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { api, type ScanRequest, type ScannerLocation } from "@/lib/api";
 import { useScreenerStore, type ActiveFilter } from "@/store/screener";
@@ -247,6 +247,11 @@ function EmptyCard({
 
 export default function ScreenerPage() {
   const [aiPanelOpen, setAiPanelOpen] = useState(false);
+
+  // Pre-load the AI model into memory when the user navigates here.
+  useEffect(() => {
+    api.aiWarmup().catch(() => {/* non-fatal */});
+  }, []);
   // Path C — Browse all scans slide-over open state
   const [browseOpen, setBrowseOpen] = useState(false);
 
