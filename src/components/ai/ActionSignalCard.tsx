@@ -64,7 +64,7 @@ export default function ActionSignalCard({ signal }: ActionSignalCardProps) {
   /* Empty state — shown before any analysis has run */
   if (!signal) {
     return (
-      <div className="flex flex-col items-center justify-center gap-2 border-b border-[var(--border)] px-4 py-8">
+      <div className="flex shrink-0 flex-col items-center justify-center gap-2 border-b border-[var(--border)] px-4 py-8">
         <div className="h-8 w-8 rounded-full border border-[var(--border)] bg-[var(--bg-0)] flex items-center justify-center">
           <span className="text-[var(--text-3)] text-sm">?</span>
         </div>
@@ -79,7 +79,7 @@ export default function ActionSignalCard({ signal }: ActionSignalCardProps) {
   const glow = directionGlow(signal.direction);
 
   return (
-    <div className="flex flex-col gap-3 border-b border-[var(--border)] px-4 py-3">
+    <div className="flex shrink-0 flex-col gap-3 border-b border-[var(--border)] px-4 py-3">
       {/* Direction + Confidence */}
       <div className="flex items-start justify-between">
         <div className="flex flex-col gap-1">

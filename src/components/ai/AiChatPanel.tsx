@@ -18,17 +18,17 @@
  */
 
 import { useState, useRef, useEffect, useCallback, type KeyboardEvent } from "react";
-import { useMutation } from "@tanstack/react-query";
-import { api } from "@/lib/api";
 import { useAiStore, type ChatMessage } from "@/store";
 import type { IndicatorId } from "@/store/chart";
 import { useAiStatus } from "@/hooks/useAiStatus";
 import { useAiStream } from "@/hooks/useAiStream";
+import { useAiAnalyzeStream } from "@/hooks/useAiAnalyzeStream";
 import AiConfigPanel, { type AiTimeframe, type AiIndicator } from "./AiConfigPanel";
 import type { AiContextMode } from "@/lib/api";
 import ActionSignalCard from "./ActionSignalCard";
 import AiSetupGuide from "./AiSetupGuide";
 import AiModelSelector from "./AiModelSelector";
+import ResponseTimeBadge from "./ResponseTimeBadge";
 import FibScoreCard from "./FibScoreCard";
 import type { FibonacciResult } from "@/lib/api";
 
@@ -88,17 +88,14 @@ export default function AiChatPanel({ activeConid, activeSymbol, fibonacci, char
   const [inputValue, setInputValue] = useState("");
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  // Store state
+  // Store state — note: setSessionId/addMessage/setSignal/clearChat are now
+  // owned by the streaming analyze hook, but we still pull `messages` and
+  // `isAnalyzing` for rendering.
   const {
     sessionId,
     messages,
     signal,
     isAnalyzing,
-    setSessionId,
-    addMessage,
-    setSignal,
-    setAnalyzing,
-    clearChat,
   } = useAiStore();
 
   // Hooks
@@ -115,62 +112,15 @@ export default function AiChatPanel({ activeConid, activeSymbol, fibonacci, char
 
   const { streamChat, cancelStream, isStreaming, streamingContent } = useAiStream();
 
+  // Streaming analyze — replaces the old useMutation flow. Tokens flow into
+  // the same `streamingContent` that the chat-stream hook already drives,
+  // so the StreamingBubble keeps working without changes.
+  const { startAnalyze, cancelAnalyze } = useAiAnalyzeStream();
+
   // Auto-scroll to bottom when messages change
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, streamingContent]);
-
-  // ── Run Analysis mutation ──
-
-  const analyzeMutation = useMutation({
-    mutationFn: (config: {
-      timeframes: AiTimeframe[];
-      indicators: AiIndicator[];
-      contextMode: AiContextMode;
-      contextBars: number;
-    }) => {
-      if (!activeConid || !activeSymbol) {
-        throw new Error("No symbol selected");
-      }
-      return api.aiAnalyze({
-        conid: activeConid,
-        symbol: activeSymbol,
-        timeframes: config.timeframes,
-        indicators: config.indicators,
-        session_id: sessionId ?? undefined,
-        context_mode: config.contextMode,
-        context_bars: config.contextBars,
-      });
-    },
-    onMutate: () => {
-      setAnalyzing(true);
-      // Clear previous chat but keep config
-      clearChat();
-    },
-    onSuccess: (data) => {
-      setSessionId(data.session_id);
-      setSignal(data.signal);
-
-      // Add the AI response as the first message
-      addMessage({
-        id: `msg_${Date.now()}`,
-        role: "assistant",
-        content: data.message,
-        timestamp: Date.now(),
-      });
-    },
-    onError: (err) => {
-      addMessage({
-        id: `msg_${Date.now()}`,
-        role: "assistant",
-        content: `[Analysis failed: ${(err as Error).message}]`,
-        timestamp: Date.now(),
-      });
-    },
-    onSettled: () => {
-      setAnalyzing(false);
-    },
-  });
 
   // ── Handlers ──
 
@@ -181,22 +131,29 @@ export default function AiChatPanel({ activeConid, activeSymbol, fibonacci, char
       contextMode: AiContextMode;
       contextBars: number;
     }) => {
-      if (!isReady || !activeConid) return;
-      analyzeMutation.mutate({
-        timeframes: config.timeframes,
-        indicators: config.indicators,
-        contextMode: config.contextMode,
-        contextBars: config.contextBars,
-      });
+      if (!isReady || !activeConid || !activeSymbol) return;
+      // Streams narrative tokens into streamingContent, then commits the
+      // final message + signal + session_id once the SSE `done` event lands.
+      void startAnalyze(
+        {
+          conid: activeConid,
+          symbol: activeSymbol,
+          timeframes: config.timeframes,
+          indicators: config.indicators,
+          session_id: sessionId ?? undefined,
+          context_mode: config.contextMode,
+          context_bars: config.contextBars,
+        },
+        selectedModel ?? null,
+      );
     },
-    [isReady, activeConid, analyzeMutation],
+    [isReady, activeConid, activeSymbol, sessionId, selectedModel, startAnalyze],
   );
 
-  /** Abort an in-flight analysis — resets mutation state and clears the spinner. */
+  /** Abort an in-flight analysis — closes the SSE stream and resets the spinner. */
   const handleCancelAnalysis = useCallback(() => {
-    analyzeMutation.reset();
-    setAnalyzing(false);
-  }, [analyzeMutation, setAnalyzing]);
+    cancelAnalyze();
+  }, [cancelAnalyze]);
 
   const handleSendMessage = useCallback(() => {
     const msg = inputValue.trim();
@@ -224,9 +181,9 @@ export default function AiChatPanel({ activeConid, activeSymbol, fibonacci, char
   const showChat = isReady || ollamaState === "running";
 
   return (
-    <div className="flex h-full flex-col border-l border-border bg-[var(--bg-1)]">
+    <div className="flex h-full min-h-0 flex-col border-l border-border bg-[var(--bg-1)]">
       {/* ── Header ── */}
-      <div className="flex items-center justify-between border-b border-[var(--border)] px-4 py-2">
+      <div className="flex shrink-0 items-center justify-between border-b border-[var(--border)] px-4 py-2">
         <div className="flex items-center gap-1.5 text-xs font-semibold">
           <div
             className="h-2 w-2 rounded-full"
@@ -240,15 +197,18 @@ export default function AiChatPanel({ activeConid, activeSymbol, fibonacci, char
           AI Analysis
         </div>
 
-        {/* Model selector — only when we have models */}
+        {/* Model selector + rolling response-time badge */}
         {showChat && availableModels.length > 0 && (
-          <AiModelSelector
-            models={availableModels}
-            selectedModel={selectedModel}
-            onSelect={selectModel}
-            onRefresh={refresh}
-            isRefreshing={isRefreshing}
-          />
+          <div className="flex items-center gap-1.5">
+            <ResponseTimeBadge selectedModel={selectedModel} />
+            <AiModelSelector
+              models={availableModels}
+              selectedModel={selectedModel}
+              onSelect={selectModel}
+              onRefresh={refresh}
+              isRefreshing={isRefreshing}
+            />
+          </div>
         )}
       </div>
 
@@ -281,9 +241,11 @@ export default function AiChatPanel({ activeConid, activeSymbol, fibonacci, char
             </div>
           )}
 
-          {/* Chat messages */}
-          <div className="flex flex-1 flex-col overflow-hidden">
-            <div className="flex-1 overflow-y-auto px-3 py-3">
+          {/* Chat messages — flex-1 + min-h-0 so the scroll area can actually shrink
+              below its content height. Without min-h-0, flex items default to
+              min-height: auto and the scroll never engages. */}
+          <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+            <div className="min-h-0 flex-1 overflow-y-auto px-3 py-3">
               <div className="flex flex-col gap-2.5">
                 {/* Initial prompt when no messages */}
                 {messages.length === 0 && !isAnalyzing && (
@@ -323,8 +285,9 @@ export default function AiChatPanel({ activeConid, activeSymbol, fibonacci, char
               </div>
             </div>
 
-            {/* Chat input */}
-            <div className="flex items-center gap-2 border-t border-[var(--border)] px-3 py-2">
+            {/* Chat input — shrink-0 so it stays pinned at the bottom and the
+                messages area is the one that scrolls. */}
+            <div className="flex shrink-0 items-center gap-2 border-t border-[var(--border)] px-3 py-2">
               <input
                 type="text"
                 value={inputValue}

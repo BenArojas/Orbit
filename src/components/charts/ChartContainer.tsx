@@ -24,12 +24,14 @@ import {
   type CandlestickData,
   type HistogramData,
   type Time,
+  type MouseEventParams,
   ColorType,
   CrosshairMode,
 } from "lightweight-charts";
-import { useEffect, useRef } from "react";
+import { useEffect, useId, useRef } from "react";
 import type { CandleData, IndicatorResult, FibonacciResult } from "@/lib/api";
 import type { IndicatorId } from "@/store/chart";
+import { useCrosshairStore } from "@/store";
 import {
   addIndicatorOverlays,
   removeIndicatorOverlays,
@@ -294,6 +296,60 @@ export default function ChartContainer({
 
     fibOverlayRef.current = addFibonacciOverlay(chart, fibonacci, candles);
   }, [fibonacci, activeIndicators, candles]);
+
+  // ── Crosshair sync — broadcast our own moves, mirror others' ──
+  //
+  // The Analysis page can have up to 5 sub-panels stacked under this main
+  // chart. Each chart subscribes to a shared Zustand store; user-initiated
+  // moves are broadcast (with our chartId as `source`) and other charts
+  // mirror via setCrosshairPosition. The `source !== chartId` check
+  // prevents feedback loops.
+
+  const chartId = useId();
+  const broadcastHovered = useCrosshairStore((s) => s.setHovered);
+  const sharedTime = useCrosshairStore((s) => s.time);
+  const sharedSource = useCrosshairStore((s) => s.source);
+
+  useEffect(() => {
+    const chart = chartRef.current;
+    if (!chart) return;
+    const handler = (param: MouseEventParams) => {
+      if (!param.sourceEvent) return; // ignore programmatic moves
+      const t = (param.time as number | undefined) ?? null;
+      broadcastHovered(t, chartId);
+    };
+    chart.subscribeCrosshairMove(handler);
+    return () => {
+      try { chart.unsubscribeCrosshairMove(handler); } catch { /* chart gone */ }
+    };
+  }, [broadcastHovered, chartId]);
+
+  useEffect(() => {
+    const chart = chartRef.current;
+    const series = candleSeriesRef.current;
+    if (!chart || !series) return;
+    if (sharedSource === chartId) return; // we broadcast this, ignore
+    if (candles.length === 0) return;
+
+    if (sharedTime == null) {
+      chart.clearCrosshairPosition();
+      return;
+    }
+    // Find the close at this time so the crosshair has a vertical anchor
+    let close: number | null = null;
+    for (const c of candles) {
+      if (c.time === sharedTime) { close = c.close; break; }
+    }
+    if (close == null) {
+      chart.clearCrosshairPosition();
+      return;
+    }
+    try {
+      chart.setCrosshairPosition(close, sharedTime as Time, series);
+    } catch {
+      /* series removed mid-update */
+    }
+  }, [sharedTime, sharedSource, chartId, candles]);
 
   return (
     <div

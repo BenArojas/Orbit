@@ -1027,7 +1027,55 @@ def build_analysis_user_message(
         "- 1-3 caution flags or risks to watch"
     )
 
+    # One-shot JSON block requirement — appended at the very end of the
+    # narrative so the frontend can stream the analysis live AND parse a
+    # signal in a single round trip (no separate structured-output call).
+    parts.append("")
+    parts.append(SIGNAL_INLINE_JSON_INSTRUCTION)
+
     return "\n".join(parts)
+
+
+# ─────────────────────────────────────────────────────────────────────────
+#  Inline JSON instruction for the one-shot analyze flow
+# ─────────────────────────────────────────────────────────────────────────
+#
+# The original implementation made TWO Ollama calls per analysis:
+#   1. Free-text narrative
+#   2. Structured-output extraction (format=json) for the signal
+#
+# On a 26B-class model running on consumer hardware, the structured call
+# regularly hit the 45s timeout, falling through to a third reformat call.
+# Total wall time was 2+ minutes.
+#
+# The one-shot approach instead asks the narrative call itself to terminate
+# with a fenced JSON block. Parsing is via the existing regex (handles
+# fenced and unfenced objects). One reformat fallback remains if parsing
+# fails, but it's rare in practice.
+
+SIGNAL_INLINE_JSON_INSTRUCTION = (
+    "After your full written analysis, append a fenced JSON block in this "
+    "EXACT format. The JSON block is REQUIRED and must be the LAST thing "
+    "in your response:\n\n"
+    "```json\n"
+    "{\n"
+    '  "direction": "STRONG LONG | LONG | NEUTRAL | SHORT | STRONG SHORT",\n'
+    '  "confidence": 0-100,\n'
+    '  "description": "one-sentence setup summary",\n'
+    '  "entry":  {"price": 0.00, "note": "rationale"},\n'
+    '  "stop":   {"price": 0.00, "note": "rationale"},\n'
+    '  "target": {"price": 0.00, "note": "rationale"},\n'
+    '  "confirmations": ["...", "..."],\n'
+    '  "cautions": ["..."],\n'
+    '  "meta": {\n'
+    '    "risk_reward":   "e.g. 2.5:1",\n'
+    '    "score":         "e.g. 7/10",\n'
+    '    "adx_trend":     "e.g. Strong (28.5)",\n'
+    '    "volume_signal": "e.g. Above avg"\n'
+    "  }\n"
+    "}\n"
+    "```"
+)
 
 
 # ═══════════════════════════════════════════════════════════════

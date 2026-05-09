@@ -41,4 +41,6 @@ export {
   useAiStore,
   type OllamaState,
   type ChatMessage,
+  type ResponseTimeSample,
 } from "./ai";
+export { useCrosshairStore } from "./crosshair";

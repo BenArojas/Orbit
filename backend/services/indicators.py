@@ -307,8 +307,33 @@ class IndicatorService:
         When a short EMA crosses above a long EMA = "golden cross" (very bullish).
 
         Displayed as a line directly on the price chart.
+
+        Note: pandas-ta returns None when len(df) < period (e.g. requesting
+        EMA-200 over 60 daily bars). We early-return an empty result so the
+        frontend just shows nothing for that overlay rather than the whole
+        analysis crashing.
         """
+        if len(df) < period:
+            log.info(
+                "Skipping ema_%d: only %d bars available (need %d)",
+                period, len(df), period,
+            )
+            return IndicatorResult(
+                name=f"ema_{period}",
+                type="overlay",
+                values=[],
+                params={"period": period},
+            )
+
         ema = ta.ema(df["close"], length=period)
+        if ema is None or ema.empty:
+            return IndicatorResult(
+                name=f"ema_{period}",
+                type="overlay",
+                values=[],
+                params={"period": period},
+            )
+
         return IndicatorResult(
             name=f"ema_{period}",
             type="overlay",

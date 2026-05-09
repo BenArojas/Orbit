@@ -35,8 +35,11 @@ from models import CandleData
 
 # ── Per-stage analysis timeouts (seconds) ────────────────────
 # Defined at module level so tests can patch them without touching internals.
-_NARRATIVE_TIMEOUT: float = 90.0    # Free-text analysis — most token-heavy call
-_EXTRACTION_TIMEOUT: float = 45.0   # Structured signal extraction via Ollama format
+#
+# One-shot flow: only narrative + (rarely) reformat. Structured-output stage
+# was removed — its per-token JSON-mode constraint was 5–10x slower than the
+# narrative on 20B+ models and dominated total wall time.
+_NARRATIVE_TIMEOUT: float = 120.0   # Free-text analysis with inline JSON block
 _REFORMAT_TIMEOUT: float = 45.0     # Last-resort free-text reformat attempt
 
 log = logging.getLogger("parallax.ai")
@@ -61,8 +64,8 @@ from services.prompt_builder import (
     build_system_prompt,
     get_budget_for_model,
     truncate_context,
-    SIGNAL_EXTRACTION_PROMPT,
-    SIGNAL_JSON_SCHEMA,
+    SIGNAL_EXTRACTION_PROMPT,       # noqa: F401 — kept for legacy callers/tests
+    SIGNAL_JSON_SCHEMA,             # noqa: F401 — kept for legacy callers/tests
 )
 
 
@@ -451,6 +454,119 @@ class AiService:
 
     # ── Analysis ────────────────────────────────────────────────
 
+    # ── Internal: build the prompt + return primed session ─────────────
+
+    def _prepare_analysis_session(
+        self,
+        symbol: str,
+        timeframe_data: dict[str, dict],
+        indicators_requested: list[str],
+        model: str,
+        session_id: Optional[str],
+        watchlist: Optional[str],
+        indicator_priority: Optional[list[str]],
+        context_mode: str,
+        context_bars: int,
+    ) -> ChatSession:
+        """
+        Prepare a ChatSession with system + user messages ready to send to
+        Ollama. Shared by both `analyze` and `analyze_stream` so the streaming
+        path stays in lockstep with the non-streaming one.
+        """
+        session = self.get_or_create_session(session_id)
+        session.symbol = symbol
+        session.clear()
+
+        context = build_multi_timeframe_context(
+            symbol, timeframe_data,
+            indicator_priority=indicator_priority,
+            context_mode=context_mode,
+            context_bars=context_bars,
+        )
+        budget = get_budget_for_model(model)
+        context = truncate_context(context, budget_tokens=budget)
+
+        system_prompt = build_system_prompt(
+            indicators=indicators_requested,
+            watchlist=watchlist,
+            indicator_priority=indicator_priority,
+        )
+
+        # The analysis user message now ends with SIGNAL_INLINE_JSON_INSTRUCTION,
+        # asking the model to emit a fenced ```json``` block as the LAST thing
+        # in its response. We parse that block locally — no second Ollama call.
+        user_message = build_analysis_user_message(
+            symbol=symbol,
+            context=context,
+            timeframes=list(timeframe_data.keys()),
+            indicators_requested=indicators_requested,
+            indicator_priority=indicator_priority,
+        )
+
+        session.add_system(system_prompt)
+        session.add_user(user_message)
+        return session
+
+    # ── Internal: parse + (one) reformat fallback ─────────────────────
+
+    async def _extract_signal(
+        self,
+        session: ChatSession,
+        narrative: str,
+        model: str,
+        symbol: str,
+    ) -> Optional[dict]:
+        """
+        Parse the trailing ```json``` block from the narrative.
+
+        On failure (model forgot the JSON, malformed, etc.), make ONE
+        reformat attempt asking only for the JSON block. If that times out
+        too, give up gracefully — the narrative is still useful to the user
+        even without a structured signal.
+        """
+        raw_signal = parse_signal_from_response(narrative)
+        if raw_signal:
+            return raw_signal
+
+        log.info(
+            "Inline JSON missing for %s — requesting one reformat attempt",
+            symbol,
+        )
+        session.add_user(
+            "Your previous response did not include the required JSON block. "
+            "Please reply with ONLY a fenced ```json ... ``` block containing "
+            "the signal (direction, confidence, description, entry, stop, "
+            "target, confirmations, cautions, meta). No other text."
+        )
+        try:
+            retry = await asyncio.wait_for(
+                self.chat(session.get_messages(), model=model),
+                timeout=_REFORMAT_TIMEOUT,
+            )
+        except asyncio.TimeoutError:
+            log.warning(
+                "Reformat call timed out for %s after %ss — signal will be null",
+                symbol, _REFORMAT_TIMEOUT,
+            )
+            return None
+        if retry:
+            session.add_assistant(retry)
+            return parse_signal_from_response(retry)
+        return None
+
+    # ── Internal: post-process raw signal into frontend shape ─────────
+
+    @staticmethod
+    def _finalize_signal(raw_signal: Optional[dict]) -> Optional[dict]:
+        """Strip reasoning_steps + convert to frontend ActionSignalCard shape."""
+        if not raw_signal:
+            return None
+        if "reasoning_steps" in raw_signal:
+            del raw_signal["reasoning_steps"]
+        return signal_to_frontend_format(raw_signal)
+
+    # ── Public: full (non-streaming) analyze ──────────────────────────
+
     async def analyze(
         self,
         symbol: str,
@@ -464,79 +580,33 @@ class AiService:
         context_bars: int = 10,
     ) -> dict:
         """
-        Run a full technical analysis for a stock.
+        Run a full technical analysis for a stock — one-shot flow.
 
-        Two-call approach:
-          Call 1 (narrative): Free-text analysis with reasoning. The model
-              reads the indicator data and produces a natural-language analysis
-              with entry/stop/target reasoning. No JSON required.
-          Call 2 (signal): Structured JSON via Ollama's format parameter.
-              The model has its own narrative in context and produces a
-              guaranteed-valid signal using the reasoning_steps-first pattern
-              (chain of thought before structured fields).
+        Single Ollama call. The user-message prompt ends with a
+        SIGNAL_INLINE_JSON_INSTRUCTION block instructing the model to append
+        a ```json``` block with the signal as the last thing in its response.
+        We parse that block locally with regex.
 
-        This approach is more reliable than asking for JSON in free text:
-          - Narrative quality improves (model isn't distracted by JSON syntax)
-          - Signal extraction is guaranteed valid JSON (schema-constrained)
-          - Small models work reliably (no regex fallback needed)
-          - The reasoning_steps field gives the model CoT space even in
-            the structured call
+        Fallback: if parsing fails, ONE reformat attempt asking only for the
+        JSON. If that also fails, return the narrative with signal=None —
+        the analysis text is still useful to the trader.
 
-        Fallback: if structured output fails (old Ollama version or model
-        doesn't support format), falls back to parsing JSON from the
-        narrative response using regex.
-
-        Args:
-            watchlist: optional name of the watchlist this ticker came from.
-                       When present, the system prompt gets watchlist-specific
-                       framing (e.g., "RS Leaders" → favor trend continuation).
+        This replaces the old three-stage flow (narrative → format=json →
+        reformat), which on 20B+ models routinely took 2+ minutes due to
+        the JSON-mode extraction stage timing out at 45s.
 
         Returns: {
             "session_id": str,
-            "signal": dict | None,  (frontend-formatted signal)
-            "message": str,         (full AI response text)
+            "signal": dict | None,
+            "message": str,
         }
         """
-        session = self.get_or_create_session(session_id)
-        session.symbol = symbol
-        session.clear()
-
-        # Build the context from all timeframes, then truncate if needed.
-        # If priority is set, indicators are reordered so prioritized ones
-        # appear first in the context (models attend more to earlier content).
-        context = build_multi_timeframe_context(
-            symbol, timeframe_data,
-            indicator_priority=indicator_priority,
-            context_mode=context_mode,
-            context_bars=context_bars,
-        )
-        # Per-model token budget — smaller models get aggressive truncation,
-        # beefier models get breathing room. See prompt_builder._MODEL_BUDGETS.
-        budget = get_budget_for_model(model)
-        context = truncate_context(context, budget_tokens=budget)
-
-        # Dynamic system prompt — tailored to indicators, priority, + watchlist
-        system_prompt = build_system_prompt(
-            indicators=indicators_requested,
-            watchlist=watchlist,
-            indicator_priority=indicator_priority,
+        session = self._prepare_analysis_session(
+            symbol, timeframe_data, indicators_requested, model,
+            session_id, watchlist, indicator_priority,
+            context_mode, context_bars,
         )
 
-        # Enriched user message with analysis structure and focus guidance
-        user_message = build_analysis_user_message(
-            symbol=symbol,
-            context=context,
-            timeframes=list(timeframe_data.keys()),
-            indicators_requested=indicators_requested,
-            indicator_priority=indicator_priority,
-        )
-
-        # Set up conversation
-        session.add_system(system_prompt)
-        session.add_user(user_message)
-
-        # ── Call 1: Narrative analysis (free text) ──
-        # Generous timeout — the narrative is the most token-heavy call.
         try:
             response_text = await asyncio.wait_for(
                 self.chat(session.get_messages(), model=model),
@@ -546,74 +616,74 @@ class AiService:
             raise AIAnalysisTimeoutError("narrative", _NARRATIVE_TIMEOUT)
         session.add_assistant(response_text)
 
-        # ── Call 2: Signal extraction (structured output) ──
-        raw_signal = None
-
-        try:
-            # Add the signal extraction prompt to the conversation
-            signal_messages = session.get_messages() + [
-                {"role": "user", "content": SIGNAL_EXTRACTION_PROMPT}
-            ]
-
-            raw_signal = await asyncio.wait_for(
-                self.chat_structured(
-                    signal_messages,
-                    model=model,
-                    json_schema=SIGNAL_JSON_SCHEMA,
-                ),
-                timeout=_EXTRACTION_TIMEOUT,
-            )
-            log.info("Structured signal extracted for %s via Ollama format", symbol)
-        except asyncio.TimeoutError:
-            log.warning(
-                "Structured output timed out for %s after %ss — falling back to regex parse",
-                symbol, _EXTRACTION_TIMEOUT,
-            )
-            raw_signal = parse_signal_from_response(response_text)
-        except (ValueError, ConnectionError, TimeoutError, RuntimeError) as e:
-            # Structured output failed — fall back to parsing from narrative
-            log.warning(
-                "Structured output failed for %s (%s) — falling back to regex parse",
-                symbol, e,
-            )
-            raw_signal = parse_signal_from_response(response_text)
-
-        if not raw_signal:
-            # Last resort: ask the model to produce JSON in free text
-            log.info("Regex parse also failed for %s — requesting reformat", symbol)
-            session.add_user(
-                "Please provide a trading signal as a JSON block wrapped in "
-                "```json ... ```. Include: direction, confidence, description, "
-                "entry (price + note), stop (price + note), target (price + note), "
-                "confirmations, cautions."
-            )
-            try:
-                retry_response = await asyncio.wait_for(
-                    self.chat(session.get_messages(), model=model),
-                    timeout=_REFORMAT_TIMEOUT,
-                )
-            except asyncio.TimeoutError:
-                log.warning(
-                    "Reformat call timed out for %s after %ss — signal will be null",
-                    symbol, _REFORMAT_TIMEOUT,
-                )
-                retry_response = ""
-            if retry_response:
-                session.add_assistant(retry_response)
-                raw_signal = parse_signal_from_response(retry_response)
-
-        # Strip reasoning_steps from the signal before sending to frontend
-        # (it was for the model's chain-of-thought, not for display)
-        if raw_signal and "reasoning_steps" in raw_signal:
-            del raw_signal["reasoning_steps"]
-
-        frontend_signal = signal_to_frontend_format(raw_signal) if raw_signal else None
+        raw_signal = await self._extract_signal(session, response_text, model, symbol)
+        frontend_signal = self._finalize_signal(raw_signal)
         session.signal = frontend_signal
 
         return {
             "session_id": session.session_id,
             "signal": frontend_signal,
-            "message": response_text,  # Always show the original narrative response
+            "message": response_text,
+        }
+
+    # ── Public: streaming analyze ─────────────────────────────────────
+
+    async def analyze_stream(
+        self,
+        symbol: str,
+        timeframe_data: dict[str, dict],
+        indicators_requested: list[str],
+        model: str,
+        session_id: Optional[str] = None,
+        watchlist: Optional[str] = None,
+        indicator_priority: Optional[list[str]] = None,
+        context_mode: str = "none",
+        context_bars: int = 10,
+    ) -> AsyncIterator[dict]:
+        """
+        Stream the analysis. Yields events as dicts:
+
+            {"type": "token",   "content": "..."}    # raw model tokens
+            {"type": "done",    "session_id": "...",
+                                "signal": {...} | None,
+                                "message": "<full narrative>"}
+
+        The frontend SSE adapter serialises each yielded event onto the wire.
+
+        Same prompt + parse contract as `analyze` — the model emits a fenced
+        JSON block at the end of its narrative. We accumulate tokens, then
+        parse the signal once the stream completes. If parsing fails, we
+        attempt one (non-streamed) reformat call before yielding `done`.
+        """
+        session = self._prepare_analysis_session(
+            symbol, timeframe_data, indicators_requested, model,
+            session_id, watchlist, indicator_priority,
+            context_mode, context_bars,
+        )
+
+        accumulated: list[str] = []
+        try:
+            async for token in self.chat_stream(session.get_messages(), model=model):
+                accumulated.append(token)
+                yield {"type": "token", "content": token}
+        except (ConnectionError, TimeoutError, RuntimeError) as e:
+            # chat_stream itself yields error tokens on httpx failures, but
+            # any unexpected error here is surfaced as a final done event so
+            # the client can render something meaningful.
+            log.warning("Stream error mid-analysis for %s: %s", symbol, e)
+
+        full_text = "".join(accumulated)
+        session.add_assistant(full_text)
+
+        raw_signal = await self._extract_signal(session, full_text, model, symbol)
+        frontend_signal = self._finalize_signal(raw_signal)
+        session.signal = frontend_signal
+
+        yield {
+            "type": "done",
+            "session_id": session.session_id,
+            "signal": frontend_signal,
+            "message": full_text,
         }
 
     async def follow_up(

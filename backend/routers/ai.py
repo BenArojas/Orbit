@@ -6,14 +6,15 @@ The user installs Ollama, pulls models, and chooses which model to use.
 We make this as smooth as possible with clear guidance and smart defaults.
 
 Endpoints:
-  POST /ai/analyze        — Run full technical analysis, returns signal + text
-  POST /ai/chat           — Send a follow-up question in an existing session
-  POST /ai/chat/stream    — Streaming follow-up via Server-Sent Events
-  GET  /ai/status         — Ollama lifecycle state (installed? running? model selected?)
-  GET  /ai/models         — List all locally available models with metadata
-  POST /ai/models/select  — Choose which model to use for analysis
-  GET  /ai/setup-guide    — Get install instructions + recommended models
-  POST /ai/refresh        — Re-detect Ollama and re-list models (after user installs/pulls)
+  POST /ai/analyze         — Run full technical analysis, returns signal + text
+  POST /ai/analyze/stream  — Stream the analysis narrative + final signal via SSE
+  POST /ai/chat            — Send a follow-up question in an existing session
+  POST /ai/chat/stream     — Streaming follow-up via Server-Sent Events
+  GET  /ai/status          — Ollama lifecycle state (installed? running? model selected?)
+  GET  /ai/models          — List all locally available models with metadata
+  POST /ai/models/select   — Choose which model to use for analysis
+  GET  /ai/setup-guide     — Get install instructions + recommended models
+  POST /ai/refresh         — Re-detect Ollama and re-list models (after user installs/pulls)
 
 Flow:
   1. Frontend polls GET /ai/status on mount
@@ -25,6 +26,7 @@ Flow:
   7. User asks follow-up → POST /ai/chat or /ai/chat/stream
 """
 
+import json
 import logging
 
 from fastapi import APIRouter, Depends
@@ -443,6 +445,101 @@ async def analyze(
         signal=signal,
         message=result["message"],
     )
+
+
+# ═══════════════════════════════════════════════════════════════
+#  POST /ai/analyze/stream
+# ═══════════════════════════════════════════════════════════════
+
+
+@router.post("/analyze/stream")
+async def analyze_stream(
+    request: AnalyzeRequest,
+    ibkr: IBKRService = Depends(get_ibkr),
+    ai: AiService = Depends(get_ai),
+    ollama: OllamaLifecycle = Depends(get_ollama),
+):
+    """
+    Stream a full AI technical analysis as Server-Sent Events.
+
+    Wire format — each chunk is a `data: <json>\\n\\n` SSE frame, where
+    the inner JSON is one of:
+
+      {"type": "token",  "content": "..."}        # streamed model token
+      {"type": "done",   "session_id": "...",
+                         "signal": {...} | null,  # frontend-formatted signal
+                         "message": "<full narrative>"}
+
+    The frontend renders `token` events live and treats `done` as the
+    terminal frame containing the parsed signal.
+
+    On readiness/model errors, a single `done` event with signal=null and
+    a human-readable `message` is emitted so the UI has something to show.
+    """
+    status = ollama.status()
+    model = ollama.selected_model
+    if not status["ready"] or not model:
+        async def err_stream():
+            payload = {
+                "type": "done",
+                "session_id": request.session_id or "",
+                "signal": None,
+                "message": (
+                    "AI is not ready. Please complete the AI setup and select "
+                    "a model first."
+                ),
+            }
+            yield f"data: {json.dumps(payload)}\n\n"
+        return StreamingResponse(err_stream(), media_type="text/event-stream")
+
+    resolved_indicators = _resolve_indicators(request.indicators)
+
+    # Indicator data is fetched eagerly, BEFORE the SSE stream opens, because:
+    #   - IBKR errors should fail fast (client gets a 4xx/5xx, not a stream)
+    #   - SSE is for streaming the model output, not the data prep
+    timeframe_data: dict[str, dict] = {}
+    for tf in request.timeframes:
+        log.info("[stream] Fetching %s data for conid %d...", tf, request.conid)
+        timeframe_data[tf] = await _fetch_timeframe_data(
+            conid=request.conid,
+            timeframe=tf,
+            indicators=resolved_indicators,
+            ibkr=ibkr,
+        )
+
+    log.info(
+        "[stream] Running AI analysis for %s (%d) with %s — tfs=%s",
+        request.symbol, request.conid, model, request.timeframes,
+    )
+
+    async def event_stream():
+        try:
+            async for event in ai.analyze_stream(
+                symbol=request.symbol,
+                timeframe_data=timeframe_data,
+                indicators_requested=request.indicators,
+                model=model,
+                session_id=request.session_id,
+                watchlist=request.watchlist,
+                indicator_priority=request.indicator_priority,
+                context_mode=request.context_mode,
+                context_bars=request.context_bars,
+            ):
+                yield f"data: {json.dumps(event)}\n\n"
+        except AIAnalysisTimeoutError as exc:
+            timeout_event = {
+                "type": "done",
+                "session_id": request.session_id or "",
+                "signal": None,
+                "message": (
+                    f"Analysis timed out while {exc.stage.replace('_', ' ')} "
+                    f"for {request.symbol} (>{exc.timeout_s:.0f}s). Try a "
+                    f"faster model or a shorter timeframe selection."
+                ),
+            }
+            yield f"data: {json.dumps(timeout_event)}\n\n"
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
 
 
 # ═══════════════════════════════════════════════════════════════

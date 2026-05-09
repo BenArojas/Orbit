@@ -233,7 +233,7 @@ export default function AiConfigPanel({ onRunAnalysis, chartIndicators }: AiConf
   const activeContextOption = CONTEXT_MODES.find((m) => m.value === contextMode);
 
   return (
-    <div className="flex flex-col gap-3 border-b border-[var(--border)] px-4 py-3">
+    <div className="flex shrink-0 flex-col gap-3 border-b border-[var(--border)] px-4 py-3">
       {/* Header */}
       <div className="flex items-center gap-1.5 text-xs font-semibold">
         <div className="h-2 w-2 rounded-full bg-[var(--clr-cyan)] shadow-[0_0_10px_var(--clr-cyan)] animate-glow" />

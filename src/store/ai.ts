@@ -36,6 +36,21 @@ export interface ChatMessage {
   timestamp: number;
 }
 
+/**
+ * One recorded analysis-completion sample. Kept in-memory for the session
+ * only — restarts wipe the history. The model field captures *which* model
+ * produced this run, so the rolling avg can be filtered to the user's
+ * currently-selected model rather than mixing samples across models.
+ */
+export interface ResponseTimeSample {
+  durationMs: number;
+  model: string | null;
+  at: number; // unix ms
+}
+
+/** Cap the in-memory ring buffer. ~50 samples is plenty for a rolling avg. */
+const RESPONSE_TIME_CAP = 50;
+
 interface AiState {
   /* ── Ollama status ── */
   ollamaState: OllamaState;
@@ -54,6 +69,9 @@ interface AiState {
   isStreaming: boolean;
   streamingContent: string;
 
+  /* ── Response-time tracking (in-memory, session-only) ── */
+  responseTimes: ResponseTimeSample[];
+
   /* ── Actions: Ollama ── */
   setOllamaStatus: (status: AiStatusResponse) => void;
   setAvailableModels: (models: OllamaModelResponse[]) => void;
@@ -69,6 +87,9 @@ interface AiState {
   setStreaming: (v: boolean) => void;
   setStreamingContent: (content: string) => void;
   appendStreamingContent: (chunk: string) => void;
+
+  /* ── Actions: Response-time tracking ── */
+  pushResponseTime: (sample: ResponseTimeSample) => void;
 }
 
 /* ── Store ── */
@@ -90,6 +111,9 @@ export const useAiStore = create<AiState>()((set) => ({
   isAnalyzing: false,
   isStreaming: false,
   streamingContent: "",
+
+  // Response-time samples — never persisted, never sent to backend
+  responseTimes: [],
 
   // ── Ollama actions ──
 
@@ -132,4 +156,17 @@ export const useAiStore = create<AiState>()((set) => ({
     set((state) => ({
       streamingContent: state.streamingContent + chunk,
     })),
+
+  // ── Response-time actions ──
+
+  pushResponseTime: (sample) =>
+    set((state) => {
+      const next = [...state.responseTimes, sample];
+      // Keep only the last RESPONSE_TIME_CAP samples (FIFO ring)
+      const trimmed =
+        next.length > RESPONSE_TIME_CAP
+          ? next.slice(next.length - RESPONSE_TIME_CAP)
+          : next;
+      return { responseTimes: trimmed };
+    }),
 }));

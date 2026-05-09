@@ -1,35 +1,44 @@
 /**
- * Tests for AiChatPanel — Cancel button behavior during analysis.
+ * Tests for AiChatPanel — analyze flow and Cancel button behavior.
  *
  * Covers:
  *   - Cancel button is not shown when isAnalyzing is false
- *   - Cancel button appears in the chat area when isAnalyzing is true
- *   - Clicking Cancel calls analyzeMutation.reset() and setAnalyzing(false)
- *   - Error message is shown (not stuck spinner) when analyzeMutation.onError fires
+ *   - 'Analyzing <symbol>…' shown when isAnalyzing is true
+ *   - ResponseTimeBadge wired in the header (renders nothing until samples,
+ *     so we just assert the panel doesn't crash with the new hook in place)
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { createElement } from "react";
+
+// jsdom doesn't implement scrollIntoView — the panel calls it on every
+// messages/streamingContent change. Stub once for the file.
+if (!Element.prototype.scrollIntoView) {
+  Element.prototype.scrollIntoView = function () { /* no-op */ };
+}
 
 // ── Mocks ─────────────────────────────────────────────────────
 
-const mockSetAnalyzing = vi.fn();
 const mockAnalyzing = { current: false };
+const mockStartAnalyze = vi.fn();
+const mockCancelAnalyze = vi.fn();
 
 vi.mock("@/store", () => ({
-  useAiStore: () => ({
-    sessionId: null,
-    messages: [],
-    signal: null,
-    isAnalyzing: mockAnalyzing.current,
-    setSessionId: vi.fn(),
-    addMessage: vi.fn(),
-    setSignal: vi.fn(),
-    setAnalyzing: mockSetAnalyzing,
-    clearChat: vi.fn(),
-  }),
+  useAiStore: Object.assign(
+    () => ({
+      sessionId: null,
+      messages: [],
+      signal: null,
+      isAnalyzing: mockAnalyzing.current,
+      responseTimes: [],
+    }),
+    {
+      // Allow useAiStore.getState() lookups in the hook (not used here, but
+      // keeps the import shape compatible with the real export).
+      getState: () => ({ streamingContent: "" }),
+    },
+  ),
 }));
 
 vi.mock("@/hooks/useAiStatus", () => ({
@@ -54,23 +63,14 @@ vi.mock("@/hooks/useAiStream", () => ({
   }),
 }));
 
-vi.mock("@/lib/api", () => ({
-  api: {
-    aiAnalyze: vi.fn().mockResolvedValue({
-      session_id: "sess_1",
-      signal: null,
-      message: "Test analysis",
-    }),
-  },
+vi.mock("@/hooks/useAiAnalyzeStream", () => ({
+  useAiAnalyzeStream: () => ({
+    startAnalyze: mockStartAnalyze,
+    cancelAnalyze: mockCancelAnalyze,
+    isAnalyzing: mockAnalyzing.current,
+    streamingContent: "",
+  }),
 }));
-
-// ── Helpers ───────────────────────────────────────────────────
-
-function makeWrapper() {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return ({ children }: { children: React.ReactNode }) =>
-    createElement(QueryClientProvider, { client }, children);
-}
 
 // ── Tests ─────────────────────────────────────────────────────
 
@@ -81,7 +81,6 @@ describe("AiChatPanel — Cancel button", () => {
   });
 
   it("Cancel button is NOT shown when isAnalyzing is false", async () => {
-    // Lazy import to get fresh module with mocks applied
     const { default: AiChatPanel } = await import("../AiChatPanel");
 
     render(
@@ -90,7 +89,6 @@ describe("AiChatPanel — Cancel button", () => {
         activeSymbol: "AAPL",
         fibonacci: null,
       }),
-      { wrapper: makeWrapper() },
     );
 
     expect(screen.queryByRole("button", { name: /cancel/i })).toBeNull();
@@ -98,21 +96,18 @@ describe("AiChatPanel — Cancel button", () => {
 
   it("'Analyzing AAPL…' text shown when isAnalyzing is true", async () => {
     mockAnalyzing.current = true;
-
-    // Re-import so mock sees the updated value
     vi.resetModules();
-    vi.mock("@/store", () => ({
-      useAiStore: () => ({
-        sessionId: null,
-        messages: [],
-        signal: null,
-        isAnalyzing: true,
-        setSessionId: vi.fn(),
-        addMessage: vi.fn(),
-        setSignal: vi.fn(),
-        setAnalyzing: mockSetAnalyzing,
-        clearChat: vi.fn(),
-      }),
+    vi.doMock("@/store", () => ({
+      useAiStore: Object.assign(
+        () => ({
+          sessionId: null,
+          messages: [],
+          signal: null,
+          isAnalyzing: true,
+          responseTimes: [],
+        }),
+        { getState: () => ({ streamingContent: "" }) },
+      ),
     }));
 
     const { default: AiChatPanel } = await import("../AiChatPanel");
@@ -123,7 +118,6 @@ describe("AiChatPanel — Cancel button", () => {
         activeSymbol: "AAPL",
         fibonacci: null,
       }),
-      { wrapper: makeWrapper() },
     );
 
     await waitFor(() => {

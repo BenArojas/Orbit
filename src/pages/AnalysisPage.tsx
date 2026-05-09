@@ -21,9 +21,9 @@
  *   - Chart rendering delegation to ChartContainer
  */
 
-import { useState, useMemo, useEffect, type KeyboardEvent } from "react";
+import { useState, useMemo, useEffect, useRef, type KeyboardEvent } from "react";
 import { useMutation } from "@tanstack/react-query";
-import { useChartStore, type Timeframe, type IndicatorId } from "@/store";
+import { useChartStore, useAiStore, type Timeframe, type IndicatorId } from "@/store";
 import { api } from "@/lib/api";
 import { ChartContainer, SubChartPanel, AtrBadge, SUB_CHART_BACKEND_NAMES, type SubChartType } from "@/components/charts";
 import { useChartData } from "@/hooks/useChartData";
@@ -44,8 +44,9 @@ const SUB_CHART_IDS: { id: IndicatorId; type: SubChartType }[] = [
   { id: "adx", type: "adx" },
 ];
 
-/** Height in px for each sub-chart panel */
-const SUB_CHART_HEIGHT = 100;
+/** Height in px for each sub-chart panel — kept in sync with PANEL_HEIGHT in
+ *  SubChartPanel.tsx so the wrapper reserves the right vertical space. */
+const SUB_CHART_HEIGHT = 120;
 
 // ── Component ────────────────────────────────────────────────
 
@@ -80,6 +81,18 @@ export default function AnalysisPage() {
   useEffect(() => {
     api.aiWarmup().catch(() => {/* non-fatal */});
   }, []);
+
+  // Reset the AI chat (signal + messages + sessionId) whenever the user
+  // switches to a different stock. We track the previous conid in a ref so
+  // we can skip the very first render (otherwise reload would wipe state).
+  const prevConidRef = useRef<number | null>(activeConid);
+  const clearAiChat = useAiStore((s) => s.clearChat);
+  useEffect(() => {
+    if (prevConidRef.current !== null && prevConidRef.current !== activeConid) {
+      clearAiChat();
+    }
+    prevConidRef.current = activeConid;
+  }, [activeConid, clearAiChat]);
 
   // Fetch cached instrument metadata for the header badge + watermark
   const { companyName } = useInstrument(activeConid);
