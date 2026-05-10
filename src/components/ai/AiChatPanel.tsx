@@ -256,6 +256,22 @@ export default function AiChatPanel({ activeConid, activeSymbol, fibonacci, char
                   </div>
                 )}
 
+                {/* Signal-extraction-failed notice. The backend returned
+                    a narrative successfully but couldn't parse the trailing
+                    JSON block (model omitted it OR the reformat fallback
+                    timed out). The full analysis is still useful, but the
+                    ActionSignalCard will be empty — explain why so the user
+                    isn't confused by the blank card. */}
+                {!isAnalyzing && !signal && messages.length > 0 && (
+                  <div className="rounded-md border border-[var(--clr-amber,#ff9f1c)] bg-[rgba(255,159,28,0.08)] px-3 py-2 text-[10px] leading-relaxed text-[var(--clr-amber,#ff9f1c)]">
+                    <span className="font-semibold">Signal couldn't be parsed.</span>
+                    {" "}The model returned an analysis but didn't produce a
+                    structured trade signal in the expected format. The full
+                    reasoning is below — you can still ask follow-up questions
+                    or re-run analysis.
+                  </div>
+                )}
+
                 {/* Loading state for analysis — with Cancel button */}
                 {isAnalyzing && (
                   <div className="flex items-center gap-2 rounded-lg bg-[var(--bg-0)] px-3 py-2 text-[11px] text-[var(--text-3)]">

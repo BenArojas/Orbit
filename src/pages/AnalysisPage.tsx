@@ -44,9 +44,10 @@ const SUB_CHART_IDS: { id: IndicatorId; type: SubChartType }[] = [
   { id: "adx", type: "adx" },
 ];
 
-/** Height in px for each sub-chart panel — kept in sync with PANEL_HEIGHT in
- *  SubChartPanel.tsx so the wrapper reserves the right vertical space. */
-const SUB_CHART_HEIGHT = 120;
+// Note: each SubChartPanel sets its own 120px height internally (see
+// PANEL_HEIGHT in SubChartPanel.tsx). The wrapper here uses flex-1 with
+// overflow-y-auto so 4–5 panels scroll within the bottom region instead of
+// pushing the main chart and toolbar off-screen.
 
 // ── Component ────────────────────────────────────────────────
 
@@ -143,9 +144,11 @@ export default function AnalysisPage() {
   return (
     <div className="grid h-full grid-cols-[1fr_340px]">
       {/* ── Left: Chart area ── */}
-      <div className="flex flex-col overflow-hidden">
-        {/* Toolbar */}
-        <div className="flex flex-wrap items-center gap-2.5 border-b border-border bg-[var(--bg-1)] px-3.5 py-2">
+      <div className="flex min-h-0 flex-col overflow-hidden">
+        {/* Toolbar — shrink-0 so it stays at its natural height when sub-panels
+            are added below; otherwise flex squeezes it and only the bottom row
+            of indicator/timeframe pills remains visible. */}
+        <div className="flex shrink-0 flex-wrap items-center gap-2.5 border-b border-border bg-[var(--bg-1)] px-3.5 py-2">
           {/* Symbol input — shows activeSymbol when blurred, raw input when focused */}
           <input
             type="text"
@@ -221,8 +224,11 @@ export default function AnalysisPage() {
           )}
         </div>
 
-        {/* Main chart */}
-        <div className="relative flex-1 bg-[var(--bg-0)]">
+        {/* Main chart — flex-[2] gives it twice the share of remaining space
+            vs the sub-panel column below. min-h-[200px] guarantees the candle
+            chart never shrinks to zero when 4–5 sub-panels are toggled on
+            (which previously caused the candles to "disappear"). */}
+        <div className="relative flex-[2] min-h-[200px] bg-[var(--bg-0)]">
           {/* Subtle radial glow background */}
           <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_60%_30%,rgba(0,212,255,0.02),transparent_50%)]" />
 
@@ -259,12 +265,14 @@ export default function AnalysisPage() {
           )}
         </div>
 
-        {/* Sub-chart panels — stacked vertically, one per active oscillator */}
+        {/* Sub-chart panels — stacked vertically, one per active oscillator.
+            The container takes flex-1 of the remaining (post-main-chart) space
+            with min-h-0 + overflow-y-auto, so when many panels are toggled on
+            (4–5) the area scrolls *internally* instead of pushing the toolbar
+            off-screen or collapsing the main chart.
+            Each SubChartPanel is shrink-0 with an explicit 120px height. */}
         {activeSubCharts.length > 0 && (
-          <div
-            className="flex flex-col border-t border-border"
-            style={{ height: activeSubCharts.length * SUB_CHART_HEIGHT }}
-          >
+          <div className="flex min-h-0 flex-1 flex-col overflow-y-auto border-t border-border">
             {activeSubCharts.map((type) => (
               <SubChartPanel
                 key={type}
