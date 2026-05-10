@@ -39,8 +39,11 @@ from models import CandleData
 # One-shot flow: only narrative + (rarely) reformat. Structured-output stage
 # was removed — its per-token JSON-mode constraint was 5–10x slower than the
 # narrative on 20B+ models and dominated total wall time.
-_NARRATIVE_TIMEOUT: float = 120.0   # Free-text analysis with inline JSON block
-_REFORMAT_TIMEOUT: float = 45.0     # Last-resort free-text reformat attempt
+_NARRATIVE_TIMEOUT: float = 180.0   # Free-text analysis with inline JSON block
+_REFORMAT_TIMEOUT: float = 90.0     # Last-resort free-text reformat attempt
+_OLLAMA_READ_TIMEOUT: float = 180.0
+_OLLAMA_CONNECT_TIMEOUT: float = 10.0
+_ANALYSIS_NUM_PREDICT: int = 4096
 
 log = logging.getLogger("parallax.ai")
 
@@ -103,6 +106,26 @@ def parse_signal_from_response(text: str) -> Optional[dict]:
             continue
 
     return None
+
+
+def strip_signal_json_from_response(text: str) -> str:
+    """
+    Remove the trailing fenced ```json``` signal block from a model response.
+
+    The analysis prompt intentionally asks the model to append machine-readable
+    JSON as the very last thing in the message so we can parse a structured
+    signal. That block is useful for the backend, but noisy in the user-facing
+    chat transcript.
+    """
+    json_match = re.search(r"\n*```json\s*\n.*?\n\s*```\s*$", text, re.DOTALL)
+    if not json_match:
+        return text
+
+    candidate = json_match.group(0)
+    if parse_signal_from_response(candidate) is None:
+        return text
+
+    return text[:json_match.start()].rstrip()
 
 
 def _coerce_confidence(value: int | str | None) -> int:
@@ -306,7 +329,7 @@ class AiService:
             "keep_alive": "20m",
             "options": {
                 "temperature": 0.3,     # Low temp for more consistent analysis
-                "num_predict": 2048,    # Max tokens to generate
+                "num_predict": _ANALYSIS_NUM_PREDICT,
             },
         }
         if think is not None:
@@ -354,7 +377,7 @@ class AiService:
             "keep_alive": "20m",
             "options": {
                 "temperature": 0.2,     # Even lower temp for structured output
-                "num_predict": 2048,
+                "num_predict": _ANALYSIS_NUM_PREDICT,
             },
         }
         if think is not None:
@@ -397,7 +420,7 @@ class AiService:
             "keep_alive": "20m",
             "options": {
                 "temperature": 0.3,
-                "num_predict": 2048,
+                "num_predict": _ANALYSIS_NUM_PREDICT,
             },
         }
         if think is not None:
@@ -408,7 +431,12 @@ class AiService:
                 "POST",
                 "/api/chat",
                 json=payload,
-                timeout=httpx.Timeout(120.0, connect=10.0),
+                timeout=httpx.Timeout(
+                    connect=_OLLAMA_CONNECT_TIMEOUT,
+                    read=_OLLAMA_READ_TIMEOUT,
+                    write=_OLLAMA_READ_TIMEOUT,
+                    pool=_OLLAMA_READ_TIMEOUT,
+                ),
             ) as response:
                 async for line in response.aiter_lines():
                     if not line.strip():
@@ -550,7 +578,6 @@ class AiService:
             )
             return None
         if retry:
-            session.add_assistant(retry)
             return parse_signal_from_response(retry)
         return None
 
@@ -614,7 +641,8 @@ class AiService:
             )
         except asyncio.TimeoutError:
             raise AIAnalysisTimeoutError("narrative", _NARRATIVE_TIMEOUT)
-        session.add_assistant(response_text)
+        clean_response_text = strip_signal_json_from_response(response_text)
+        session.add_assistant(clean_response_text)
 
         raw_signal = await self._extract_signal(session, response_text, model, symbol)
         frontend_signal = self._finalize_signal(raw_signal)
@@ -623,7 +651,7 @@ class AiService:
         return {
             "session_id": session.session_id,
             "signal": frontend_signal,
-            "message": response_text,
+            "message": clean_response_text,
         }
 
     # ── Public: streaming analyze ─────────────────────────────────────
@@ -673,7 +701,8 @@ class AiService:
             log.warning("Stream error mid-analysis for %s: %s", symbol, e)
 
         full_text = "".join(accumulated)
-        session.add_assistant(full_text)
+        clean_full_text = strip_signal_json_from_response(full_text)
+        session.add_assistant(clean_full_text)
 
         raw_signal = await self._extract_signal(session, full_text, model, symbol)
         frontend_signal = self._finalize_signal(raw_signal)
@@ -683,7 +712,7 @@ class AiService:
             "type": "done",
             "session_id": session.session_id,
             "signal": frontend_signal,
-            "message": full_text,
+            "message": clean_full_text,
         }
 
     async def follow_up(
@@ -707,7 +736,8 @@ class AiService:
 
         session.add_user(message)
         response_text = await self.chat(session.get_messages(), model=model)
-        session.add_assistant(response_text)
+        clean_response_text = strip_signal_json_from_response(response_text)
+        session.add_assistant(clean_response_text)
 
         # Check if the response contains an updated signal
         raw_signal = parse_signal_from_response(response_text)
@@ -717,7 +747,7 @@ class AiService:
         return {
             "session_id": session.session_id,
             "signal": session.signal,
-            "message": response_text,
+            "message": clean_response_text,
         }
 
     async def follow_up_stream(
@@ -742,7 +772,8 @@ class AiService:
             full_response += token
             yield token
 
-        session.add_assistant(full_response)
+        clean_full_response = strip_signal_json_from_response(full_response)
+        session.add_assistant(clean_full_response)
 
         # Check for signal update
         raw_signal = parse_signal_from_response(full_response)

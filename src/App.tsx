@@ -208,7 +208,12 @@ function AppShell() {
       <IbkrReconnectBanner addHandler={addHandler} />
 
       {/* ── Page content ── */}
-      <main className="flex-1 overflow-hidden">
+      {/* min-h-0 lets <main> shrink below its content's intrinsic height in
+          this flex column. Without it, a tall page (e.g. a long AI response
+          in the Analysis right sidebar) could push <main> past its flex-1
+          share and trigger window-level scroll — which then becomes the
+          target for any descendant scrollIntoView call. */}
+      <main className="min-h-0 flex-1 overflow-hidden">
         <ActivePage />
       </main>
 

@@ -86,7 +86,13 @@ function StreamingBubble({ content }: { content: string }) {
 
 export default function AiChatPanel({ activeConid, activeSymbol, fibonacci, chartIndicators }: AiChatPanelProps) {
   const [inputValue, setInputValue] = useState("");
-  const messagesEndRef = useRef<HTMLDivElement>(null);
+  // Ref the SCROLL CONTAINER, not a sentinel at the bottom. We previously
+  // used `scrollIntoView`, but when the scroll container's overflow isn't
+  // engaged (e.g. its height isn't strictly constrained), scrollIntoView
+  // walks up the DOM looking for a scrollable ancestor — and ends up
+  // scrolling the window itself. That manifested as the whole page
+  // dropping when a long AI response arrived.
+  const scrollRef = useRef<HTMLDivElement>(null);
 
   // Store state — note: setSessionId/addMessage/setSignal/clearChat are now
   // owned by the streaming analyze hook, but we still pull `messages` and
@@ -117,9 +123,13 @@ export default function AiChatPanel({ activeConid, activeSymbol, fibonacci, char
   // so the StreamingBubble keeps working without changes.
   const { startAnalyze, cancelAnalyze } = useAiAnalyzeStream();
 
-  // Auto-scroll to bottom when messages change
+  // Auto-scroll to bottom when messages change. Direct scrollTop assignment
+  // on the container ref — guaranteed to only scroll within this element,
+  // never bubbles up to ancestors or the window.
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    const el = scrollRef.current;
+    if (!el) return;
+    el.scrollTop = el.scrollHeight;
   }, [messages, streamingContent]);
 
   // ── Handlers ──
@@ -181,7 +191,7 @@ export default function AiChatPanel({ activeConid, activeSymbol, fibonacci, char
   const showChat = isReady || ollamaState === "running";
 
   return (
-    <div className="flex h-full min-h-0 flex-col border-l border-border bg-[var(--bg-1)]">
+    <div className="flex h-full min-h-0 flex-col overflow-hidden bg-[var(--bg-1)]">
       {/* ── Header ── */}
       <div className="flex shrink-0 items-center justify-between border-b border-[var(--border)] px-4 py-2">
         <div className="flex items-center gap-1.5 text-xs font-semibold">
@@ -214,132 +224,122 @@ export default function AiChatPanel({ activeConid, activeSymbol, fibonacci, char
 
       {/* ── Setup guide (when not ready) ── */}
       {showSetupGuide && (
-        <AiSetupGuide
-          ollamaState={ollamaState}
-          ollamaError={ollamaError}
-          onRefresh={refresh}
-          isRefreshing={isRefreshing}
-        />
+        <div className="min-h-0 flex-1 overflow-y-auto">
+          <AiSetupGuide
+            ollamaState={ollamaState}
+            ollamaError={ollamaError}
+            onRefresh={refresh}
+            isRefreshing={isRefreshing}
+          />
+        </div>
       )}
 
-      {/* ── Ready state: config + signal + chat ── */}
+      {/* ── Ready state: one scrollable panel body + pinned input ── */}
       {showChat && (
-        <>
-          {/* Config panel — defaults to whatever indicators are on the chart */}
-          <AiConfigPanel
-            onRunAnalysis={handleRunAnalysis}
-            chartIndicators={chartIndicators}
-          />
-
-          {/* Signal card */}
-          <ActionSignalCard signal={signal} />
-
-          {/* Fibonacci score card (below signal, above chat) */}
-          {fibonacci && (
-            <div className="px-3 pb-1">
-              <FibScoreCard fibonacci={fibonacci} />
-            </div>
-          )}
-
-          {/* Chat messages — flex-1 + min-h-0 so the scroll area can actually shrink
-              below its content height. Without min-h-0, flex items default to
-              min-height: auto and the scroll never engages. */}
-          <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-            <div className="min-h-0 flex-1 overflow-y-auto px-3 py-3">
-              <div className="flex flex-col gap-2.5">
-                {/* Initial prompt when no messages */}
-                {messages.length === 0 && !isAnalyzing && (
-                  <div className="rounded-lg bg-[var(--bg-0)] px-3 py-2 text-[11px] text-[var(--text-2)]">
-                    {activeSymbol
-                      ? `${activeSymbol} loaded. Hit "Run Analysis" or ask me anything.`
-                      : "Select a stock to begin."}
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+          <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto px-3 py-3">
+            <div className="flex flex-col gap-2.5">
+              <div className="-mx-3 -mt-3 mb-0">
+                <AiConfigPanel
+                  onRunAnalysis={handleRunAnalysis}
+                  chartIndicators={chartIndicators}
+                />
+                <ActionSignalCard signal={signal} />
+                {fibonacci && (
+                  <div className="px-3 pb-1">
+                    <FibScoreCard fibonacci={fibonacci} />
                   </div>
                 )}
-
-                {/* Signal-extraction-failed notice. The backend returned
-                    a narrative successfully but couldn't parse the trailing
-                    JSON block (model omitted it OR the reformat fallback
-                    timed out). The full analysis is still useful, but the
-                    ActionSignalCard will be empty — explain why so the user
-                    isn't confused by the blank card. */}
-                {!isAnalyzing && !signal && messages.length > 0 && (
-                  <div className="rounded-md border border-[var(--clr-amber,#ff9f1c)] bg-[rgba(255,159,28,0.08)] px-3 py-2 text-[10px] leading-relaxed text-[var(--clr-amber,#ff9f1c)]">
-                    <span className="font-semibold">Signal couldn't be parsed.</span>
-                    {" "}The model returned an analysis but didn't produce a
-                    structured trade signal in the expected format. The full
-                    reasoning is below — you can still ask follow-up questions
-                    or re-run analysis.
-                  </div>
-                )}
-
-                {/* Loading state for analysis — with Cancel button */}
-                {isAnalyzing && (
-                  <div className="flex items-center gap-2 rounded-lg bg-[var(--bg-0)] px-3 py-2 text-[11px] text-[var(--text-3)]">
-                    <div className="h-3 w-3 flex-shrink-0 animate-spin rounded-full border-2 border-[var(--clr-cyan)] border-t-transparent" />
-                    <span className="flex-1">Analyzing {activeSymbol}…</span>
-                    <button
-                      onClick={handleCancelAnalysis}
-                      className="rounded border border-[var(--clr-red)] px-1.5 py-0.5 text-[9px] font-medium text-[var(--clr-red)] transition-colors hover:bg-[rgba(255,68,102,0.1)]"
-                      title="Cancel analysis"
-                    >
-                      Cancel
-                    </button>
-                  </div>
-                )}
-
-                {/* Message history */}
-                {messages.map((msg) => (
-                  <ChatBubble key={msg.id} msg={msg} />
-                ))}
-
-                {/* Streaming response */}
-                {isStreaming && streamingContent && (
-                  <StreamingBubble content={streamingContent} />
-                )}
-
-                <div ref={messagesEndRef} />
               </div>
-            </div>
 
-            {/* Chat input — shrink-0 so it stays pinned at the bottom and the
-                messages area is the one that scrolls. */}
-            <div className="flex shrink-0 items-center gap-2 border-t border-[var(--border)] px-3 py-2">
-              <input
-                type="text"
-                value={inputValue}
-                onChange={(e) => setInputValue(e.target.value)}
-                onKeyDown={handleKeyDown}
-                placeholder={
-                  !sessionId
-                    ? "Run analysis first..."
-                    : isStreaming
-                      ? "Waiting for response..."
-                      : "Ask about the chart..."
-                }
-                disabled={!sessionId || isStreaming}
-                className="flex-1 rounded-md border border-[var(--border)] bg-[var(--bg-0)] px-3 py-1.5 text-xs text-foreground placeholder:text-[var(--text-3)] outline-none transition-all focus:border-[var(--clr-cyan)] disabled:opacity-50"
-              />
+              {/* Initial prompt when no messages */}
+              {messages.length === 0 && !isAnalyzing && (
+                <div className="rounded-lg bg-[var(--bg-0)] px-3 py-2 text-[11px] text-[var(--text-2)]">
+                  {activeSymbol
+                    ? `${activeSymbol} loaded. Hit "Run Analysis" or ask me anything.`
+                    : "Select a stock to begin."}
+                </div>
+              )}
 
-              {isStreaming ? (
-                <button
-                  onClick={cancelStream}
-                  className="flex h-7 w-7 items-center justify-center rounded-md border border-[var(--clr-red)] bg-transparent text-[var(--clr-red)] transition-colors hover:bg-[rgba(255,61,87,0.1)]"
-                  title="Stop generating"
-                >
-                  ■
-                </button>
-              ) : (
-                <button
-                  onClick={handleSendMessage}
-                  disabled={!inputValue.trim() || !sessionId}
-                  className="flex h-7 w-7 items-center justify-center rounded-md border border-[var(--border)] bg-[var(--bg-0)] text-[var(--text-3)] transition-colors hover:border-[var(--clr-cyan)] hover:text-[var(--clr-cyan)] disabled:opacity-30 disabled:cursor-not-allowed"
-                >
-                  →
-                </button>
+              {/* Signal-extraction-failed notice. The backend returned
+                  a narrative successfully but couldn't parse the trailing
+                  JSON block (model omitted it OR the reformat fallback
+                  timed out). The full analysis is still useful, but the
+                  ActionSignalCard will be empty — explain why so the user
+                  isn't confused by the blank card. */}
+              {!isAnalyzing && !signal && messages.length > 0 && (
+                <div className="rounded-md border border-[var(--clr-amber,#ff9f1c)] bg-[rgba(255,159,28,0.08)] px-3 py-2 text-[10px] leading-relaxed text-[var(--clr-amber,#ff9f1c)]">
+                  <span className="font-semibold">Signal couldn't be parsed.</span>
+                  {" "}The model returned an analysis but didn't produce a
+                  structured trade signal in the expected format. The full
+                  reasoning is below — you can still ask follow-up questions
+                  or re-run analysis.
+                </div>
+              )}
+
+              {/* Loading state for analysis — with Cancel button */}
+              {isAnalyzing && (
+                <div className="flex items-center gap-2 rounded-lg bg-[var(--bg-0)] px-3 py-2 text-[11px] text-[var(--text-3)]">
+                  <div className="h-3 w-3 flex-shrink-0 animate-spin rounded-full border-2 border-[var(--clr-cyan)] border-t-transparent" />
+                  <span className="flex-1">Analyzing {activeSymbol}…</span>
+                  <button
+                    onClick={handleCancelAnalysis}
+                    className="rounded border border-[var(--clr-red)] px-1.5 py-0.5 text-[9px] font-medium text-[var(--clr-red)] transition-colors hover:bg-[rgba(255,68,102,0.1)]"
+                    title="Cancel analysis"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              )}
+
+              {/* Message history */}
+              {messages.map((msg) => (
+                <ChatBubble key={msg.id} msg={msg} />
+              ))}
+
+              {/* Streaming response */}
+              {isStreaming && streamingContent && (
+                <StreamingBubble content={streamingContent} />
               )}
             </div>
           </div>
-        </>
+
+          <div className="flex shrink-0 items-center gap-2 border-t border-[var(--border)] px-3 py-2">
+            <input
+              type="text"
+              value={inputValue}
+              onChange={(e) => setInputValue(e.target.value)}
+              onKeyDown={handleKeyDown}
+              placeholder={
+                !sessionId
+                  ? "Run analysis first..."
+                  : isStreaming
+                    ? "Waiting for response..."
+                    : "Ask about the chart..."
+              }
+              disabled={!sessionId || isStreaming}
+              className="flex-1 rounded-md border border-[var(--border)] bg-[var(--bg-0)] px-3 py-1.5 text-xs text-foreground placeholder:text-[var(--text-3)] outline-none transition-all focus:border-[var(--clr-cyan)] disabled:opacity-50"
+            />
+
+            {isStreaming ? (
+              <button
+                onClick={cancelStream}
+                className="flex h-7 w-7 items-center justify-center rounded-md border border-[var(--clr-red)] bg-transparent text-[var(--clr-red)] transition-colors hover:bg-[rgba(255,61,87,0.1)]"
+                title="Stop generating"
+              >
+                ■
+              </button>
+            ) : (
+              <button
+                onClick={handleSendMessage}
+                disabled={!inputValue.trim() || !sessionId}
+                className="flex h-7 w-7 items-center justify-center rounded-md border border-[var(--border)] bg-[var(--bg-0)] text-[var(--text-3)] transition-colors hover:border-[var(--clr-cyan)] hover:text-[var(--clr-cyan)] disabled:opacity-30 disabled:cursor-not-allowed"
+              >
+                →
+              </button>
+            )}
+          </div>
+        </div>
       )}
     </div>
   );

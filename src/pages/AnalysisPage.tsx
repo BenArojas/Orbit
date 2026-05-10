@@ -142,7 +142,7 @@ export default function AnalysisPage() {
   };
 
   return (
-    <div className="grid h-full grid-cols-[1fr_340px]">
+    <div className="grid h-full min-h-0 grid-cols-[1fr_340px]">
       {/* ── Left: Chart area ── */}
       <div className="flex min-h-0 flex-col overflow-hidden">
         {/* Toolbar — shrink-0 so it stays at its natural height when sub-panels

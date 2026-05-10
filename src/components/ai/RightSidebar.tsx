@@ -49,7 +49,7 @@ export default function RightSidebar({
   const [activeTab, setActiveTab] = useState<Tab>("ai");
 
   return (
-    <div className="flex h-full flex-col border-l border-[var(--border)] bg-[var(--bg-1)]">
+    <div className="flex h-full min-h-0 flex-col overflow-hidden border-l border-[var(--border)] bg-[var(--bg-1)]">
       {/* ── Tab bar ── */}
       <div className="flex border-b border-[var(--border)]">
         {TABS.map((tab) => (
@@ -71,7 +71,7 @@ export default function RightSidebar({
       {/* ── Tab content ── */}
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
         {/* AI panel — always mounted so chat state is preserved when switching tabs */}
-        <div className={activeTab === "ai" ? "flex h-full flex-col overflow-hidden" : "hidden"}>
+        <div className={activeTab === "ai" ? "flex h-full min-h-0 flex-col overflow-hidden" : "hidden"}>
           <AiChatPanel
             activeConid={activeConid}
             activeSymbol={activeSymbol}
