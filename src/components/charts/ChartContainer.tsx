@@ -294,6 +294,16 @@ export default function ChartContainer({
       return;
     }
 
+    // Branch 1 / plan decision 1B: when the backend signals no active
+    // fib (current price is outside every detected swing's tolerance
+    // band), `fibonacci.levels` is a placeholder from a historical
+    // swing and MUST NOT be drawn on the chart. The Candidates panel
+    // in FibScoreCard still surfaces those swings for the user to
+    // study; here we just leave the chart clean.
+    if (fibonacci.no_active_fib) {
+      return;
+    }
+
     fibOverlayRef.current = addFibonacciOverlay(chart, fibonacci, candles);
   }, [fibonacci, activeIndicators, candles]);
 

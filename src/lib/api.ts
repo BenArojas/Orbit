@@ -255,6 +255,24 @@ export interface FibonacciLevel {
   golden_pocket: boolean;
 }
 
+/**
+ * Per-candidate status reflects whether the swing is currently tradeable.
+ *
+ *   - "active"     — current price is still inside the swing range
+ *                    (with INSIDE_TOLERANCE band on the backend, default 0.15).
+ *                    Only "active" candidates are eligible to become the
+ *                    primary (rendered) fib.
+ *   - "played_out" — price decisively moved past the 1.0 boundary. The
+ *                    swing reached its target side — useful context, not
+ *                    an entry candidate.
+ *   - "broken"     — price decisively moved past the 0 boundary. The
+ *                    swing was invalidated.
+ *
+ * See backend/services/indicators.py::INSIDE_TOLERANCE and
+ * docs/fibonacci-improvements-plan.md (decisions 1A/1B).
+ */
+export type FibonacciCandidateStatus = "active" | "played_out" | "broken";
+
 export interface FibonacciCandidate {
   swing_high: number;
   swing_low: number;
@@ -269,6 +287,7 @@ export interface FibonacciCandidate {
   recency: number;
   is_nested: boolean;
   parent_index: number | null;
+  status: FibonacciCandidateStatus;
 }
 
 export interface FibonacciConvergenceZone {
@@ -296,6 +315,17 @@ export interface FibonacciResult {
   parent_fib_id: string | null;
   reasoning: string;
   source: "auto" | "manual" | "locked";
+  /**
+   * True when no candidate is currently inside any detected swing (with
+   * the backend tolerance band). In this state `swing_high/swing_low/
+   * levels/extensions` are placeholders copied from the highest-scored
+   * historical candidate and MUST NOT be rendered as an authoritative
+   * fib on the chart. The Candidates list (`candidates`) is still
+   * populated so the user can pick a historical swing to study.
+   */
+  no_active_fib: boolean;
+  /** Human-readable reason when `no_active_fib` is true. */
+  no_active_fib_reason: string | null;
 }
 
 export interface IndicatorComputeResponse {

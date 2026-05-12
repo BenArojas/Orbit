@@ -376,6 +376,16 @@ class FibonacciCandidate(BaseModel):
     The top-scoring candidate becomes the active fib; lower-scoring
     candidates are returned for transparency (so the LLM and the user
     can see what else was in play).
+
+    `status` indicates whether the swing is currently tradeable:
+      - "active"     — current price is still inside the swing range
+                       (with INSIDE_TOLERANCE band). Eligible to become
+                       the primary fib.
+      - "played_out" — price has decisively moved beyond the 1.0
+                       boundary (target side). Useful historical context,
+                       not an entry candidate.
+      - "broken"     — price has decisively moved beyond the 0 boundary
+                       (invalidation side). The swing is invalidated.
     """
     swing_high: float
     swing_low: float
@@ -390,6 +400,7 @@ class FibonacciCandidate(BaseModel):
     recency: float                # 0-1 — 1=most recent, 0=oldest
     is_nested: bool = False       # True if entirely inside a higher-scoring candidate
     parent_index: Optional[int] = None  # Index of parent candidate if nested
+    status: Literal["active", "played_out", "broken"] = "active"
 
 
 class FibonacciResult(BaseModel):
@@ -423,6 +434,15 @@ class FibonacciResult(BaseModel):
     parent_fib_id: Optional[str] = None   # Future hook for locked-parent linking
     reasoning: str                  # Human-readable explanation for the LLM
     source: str = "auto"            # "auto", "manual", or "locked"
+
+    # When no candidate is currently inside any detected swing (with
+    # INSIDE_TOLERANCE band), `no_active_fib` is True. In that state the
+    # swing/levels fields carry placeholder values (typically copied from
+    # the highest-scored historical candidate) and MUST NOT be rendered as
+    # an authoritative fib on the chart. The Candidates panel still gets
+    # populated so the user can pick a historical swing to study.
+    no_active_fib: bool = False
+    no_active_fib_reason: Optional[str] = None
 
 
 class IndicatorComputeResponse(BaseModel):

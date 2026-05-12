@@ -57,6 +57,16 @@ PIVOT_WINDOW = 5
 # Maximum candidate swings to score + return
 MAX_CANDIDATES = 6
 
+# "Currently inside the swing" tolerance band, as a fraction of the
+# swing's price range. A swing remains "active" while price stays within
+# [swing_low - INSIDE_TOLERANCE*range, swing_high + INSIDE_TOLERANCE*range]
+# AND has not closed past either expanded boundary at any point after the
+# swing completed. A small tolerance prevents a single wick poke past the
+# 0 or 1.0 line from invalidating the swing.
+#
+# Locked in plan decision 1A (docs/fibonacci-improvements-plan.md).
+INSIDE_TOLERANCE = 0.15
+
 # Scoring weights (fixed for v1 — learning algorithm is v2 scope).
 # These must sum to 1.0.
 _WEIGHTS = {
@@ -673,7 +683,11 @@ class IndicatorService:
         if not scored:
             return None
 
-        # 4. Rank and trim
+        # 4. Rank and trim. We keep the full ranked list (active +
+        #    historical) because the Candidates panel surfaces all of
+        #    them — even played-out and broken swings — for the user to
+        #    study. The PRIMARY fib selection (step 5b below) filters to
+        #    "active" only.
         scored.sort(key=lambda c: c.score, reverse=True)
         scored = scored[:MAX_CANDIDATES]
 
@@ -700,12 +714,75 @@ class IndicatorService:
                     child.parent_index = j
                     break
 
-        top = scored[0]
+        # 5b. Primary selection — restrict to swings price is currently
+        #     inside (status == "active"). Played-out and broken swings
+        #     remain in `candidates` for context but never become primary.
+        #     Decision 1B in docs/fibonacci-improvements-plan.md.
+        active_candidates = [c for c in scored if c.status == "active"]
 
-        # 6. Timeframe clarity — clean if the top candidate leads the
-        #    next by a comfortable margin, choppy otherwise.
-        if len(scored) >= 2:
-            margin = top.score - scored[1].score
+        if not active_candidates:
+            # No alive swing: return a result flagged as such. The
+            # Candidates panel still gets the full ranked list. We pick
+            # the highest-scored historical as a placeholder so swing/
+            # levels fields are populated with sane (if not actionable)
+            # values — the frontend MUST check `no_active_fib` before
+            # treating the levels as authoritative.
+            log.info(
+                "No active fib candidates (all played out or broken) — "
+                "returning no_active_fib=True with %d historical candidates",
+                len(scored),
+            )
+            placeholder = scored[0]
+            placeholder_levels = self._build_levels(
+                swing_low=placeholder.swing_low,
+                swing_high=placeholder.swing_high,
+                direction=placeholder.direction,
+                ratios=FIB_RETRACEMENT_LEVELS,
+                kind="retracement",
+            )
+            placeholder_extensions = self._build_levels(
+                swing_low=placeholder.swing_low,
+                swing_high=placeholder.swing_high,
+                direction=placeholder.direction,
+                ratios=FIB_EXTENSION_LEVELS,
+                kind="extension",
+            )
+            return FibonacciResult(
+                tool_mode=tool_mode,
+                swing_high=placeholder.swing_high,
+                swing_low=placeholder.swing_low,
+                swing_high_time=placeholder.swing_high_time,
+                swing_low_time=placeholder.swing_low_time,
+                direction=placeholder.direction,
+                levels=placeholder_levels,
+                extensions=placeholder_extensions,
+                score=placeholder.score,
+                swing_clarity=placeholder.swing_clarity,
+                timeframe_clarity="choppy",
+                candidates=scored,
+                convergence_zones=[],
+                is_nested=placeholder.is_nested,
+                parent_fib_id=None,
+                reasoning=(
+                    "No entry-quality fib on this timeframe — current price "
+                    "is outside every detected swing range. The Candidates "
+                    "panel still lists the highest-scored historical swings "
+                    "for context."
+                ),
+                source="auto",
+                no_active_fib=True,
+                no_active_fib_reason=(
+                    "No swing has price currently inside its range "
+                    f"(±{INSIDE_TOLERANCE * 100:.0f}% tolerance)."
+                ),
+            )
+
+        top = active_candidates[0]
+
+        # 6. Timeframe clarity — clean if the top ACTIVE candidate leads
+        #    the next active by a comfortable margin, choppy otherwise.
+        if len(active_candidates) >= 2:
+            margin = top.score - active_candidates[1].score
             tf_clarity = "clean" if margin >= 15.0 else "choppy"
         else:
             tf_clarity = "clean"
@@ -746,6 +823,8 @@ class IndicatorService:
             parent_fib_id=None,
             reasoning=reasoning,
             source="auto",
+            no_active_fib=False,
+            no_active_fib_reason=None,
         )
 
     # ── Fib helpers ──────────────────────────────────────────
@@ -885,6 +964,47 @@ class IndicatorService:
         )
         score = round(composite * 100.0, 1)
 
+        # --- status: is this swing still tradeable? ---
+        # See INSIDE_TOLERANCE comment. We classify a swing by how price
+        # has behaved relative to the expanded boundaries since the swing
+        # completed. Tolerance lets a wick poke past 0 or 1.0 without
+        # killing the swing — only a decisive *close* past the expanded
+        # bound flips status off "active".
+        expanded_low = swing_low - price_range * INSIDE_TOLERANCE
+        expanded_high = swing_high + price_range * INSIDE_TOLERANCE
+
+        status: str = "active"
+        # Examine post-swing closes (after the later pivot). If any close
+        # is decisively past a boundary, the swing is either played out
+        # (price tagged target) or broken (price invalidated).
+        if len(post) > 0:
+            post_closes = post["close"].to_numpy()
+            if direction == "up":
+                # Up-swing: 1.0 sits at swing_low (drawn from high→low for
+                # retracement) but for entry framing here the "target"
+                # side is above swing_high. A close past expanded_high =
+                # played out; close past expanded_low = broken.
+                if (post_closes > expanded_high).any():
+                    status = "played_out"
+                elif (post_closes < expanded_low).any():
+                    status = "broken"
+            else:
+                # Down-swing: target side is below swing_low.
+                if (post_closes < expanded_low).any():
+                    status = "played_out"
+                elif (post_closes > expanded_high).any():
+                    status = "broken"
+
+        # Additionally check current price: if it sits outside the
+        # expanded band right now (even without a prior post-swing close
+        # past the band), demote status. This catches edge cases where
+        # `post` is empty or short.
+        if status == "active":
+            if current_price > expanded_high:
+                status = "played_out" if direction == "up" else "broken"
+            elif current_price < expanded_low:
+                status = "broken" if direction == "up" else "played_out"
+
         return FibonacciCandidate(
             swing_high=round(swing_high, 4),
             swing_low=round(swing_low, 4),
@@ -897,6 +1017,7 @@ class IndicatorService:
             rejection_intensity=round(rejection_intensity, 3),
             stretched_penalty=round(stretched_penalty, 3),
             recency=round(recency, 3),
+            status=status,
         )
 
     @staticmethod
@@ -953,20 +1074,41 @@ class IndicatorService:
         current_price: float,
         tf_clarity: str,
     ) -> str:
-        """Produce an LLM-friendly explanation of why this swing was chosen."""
+        """Produce an LLM-friendly explanation of why this swing was chosen.
+
+        `all_candidates` is the full ranked list including non-active
+        (played_out / broken) entries. The reasoning notes how many
+        non-active candidates were discarded so the LLM understands the
+        primary was selected from the active subset only.
+        """
         parts = [
             f"Active fib: {top.direction} swing from ${top.swing_low:.2f} → ${top.swing_high:.2f} "
-            f"(score {top.score:.1f}/100).",
+            f"(score {top.score:.1f}/100, status={top.status}).",
             f"Factors — clarity={top.swing_clarity:.2f}, multi_touch={top.multi_touch_count}, "
             f"rejection={top.rejection_intensity:.2f}, stretched={top.stretched_penalty:.2f}, "
             f"recency={top.recency:.2f}.",
             f"Timeframe clarity: {tf_clarity}.",
         ]
         if len(all_candidates) > 1:
-            parts.append(
-                f"Considered {len(all_candidates)} candidates; "
-                f"second-best scored {all_candidates[1].score:.1f}."
+            non_active = sum(1 for c in all_candidates if c.status != "active")
+            second_best_active = next(
+                (c for c in all_candidates[1:] if c.status == "active"),
+                None,
             )
+            if second_best_active is not None:
+                parts.append(
+                    f"Considered {len(all_candidates)} candidates; "
+                    f"second-best active scored {second_best_active.score:.1f}."
+                )
+            else:
+                parts.append(
+                    f"Considered {len(all_candidates)} candidates; "
+                    f"only one was alive (others played out or broken)."
+                )
+            if non_active:
+                parts.append(
+                    f"{non_active} candidate(s) discarded as played_out/broken."
+                )
         if top.is_nested:
             parts.append("This candidate is nested inside a higher-scoring parent fib.")
         return " ".join(parts)
