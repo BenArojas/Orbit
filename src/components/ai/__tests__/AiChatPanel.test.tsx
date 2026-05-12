@@ -125,3 +125,103 @@ describe("AiChatPanel — Cancel button", () => {
     });
   });
 });
+
+// ── Panel ordering (Branch 2 — plan decision 7) ─────────────
+
+describe("AiChatPanel — section order", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockAnalyzing.current = false;
+  });
+
+  it("renders FibScoreCard AFTER messages (Fib section at the bottom)", async () => {
+    // Provide a fibonacci result + a message so both elements exist.
+    vi.resetModules();
+    vi.doMock("@/store", () => ({
+      useAiStore: Object.assign(
+        () => ({
+          sessionId: "sess-1",
+          messages: [
+            { id: "m1", role: "assistant", content: "Test analysis narrative." },
+          ],
+          signal: null,
+          isAnalyzing: false,
+          responseTimes: [],
+        }),
+        { getState: () => ({ streamingContent: "" }) },
+      ),
+    }));
+
+    const { default: AiChatPanel } = await import("../AiChatPanel");
+
+    const fibonacci = {
+      tool_mode: "retracement" as const,
+      swing_high: 130,
+      swing_low: 100,
+      swing_high_time: 1_700_000_000,
+      swing_low_time: 1_699_900_000,
+      direction: "up" as const,
+      levels: [],
+      extensions: [],
+      score: 78,
+      swing_clarity: 0.82,
+      timeframe_clarity: "clean" as const,
+      candidates: [],
+      convergence_zones: [],
+      is_nested: false,
+      parent_fib_id: null,
+      reasoning: "Active fib.",
+      source: "auto" as const,
+      no_active_fib: false,
+      no_active_fib_reason: null,
+    };
+
+    render(
+      createElement(AiChatPanel, {
+        activeConid: 265598,
+        activeSymbol: "AAPL",
+        fibonacci,
+      }),
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("fib-section")).toBeTruthy();
+    });
+
+    const fibSection = screen.getByTestId("fib-section");
+    const messageBubble = screen.getByText(/Test analysis narrative/);
+
+    // DOCUMENT_POSITION_FOLLOWING means fibSection comes AFTER messageBubble
+    // in document order. (Node.compareDocumentPosition flag = 4.)
+    const relation = messageBubble.compareDocumentPosition(fibSection);
+    expect(relation & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("does NOT render Fib section when fibonacci prop is null", async () => {
+    vi.resetModules();
+    vi.doMock("@/store", () => ({
+      useAiStore: Object.assign(
+        () => ({
+          sessionId: null,
+          messages: [],
+          signal: null,
+          isAnalyzing: false,
+          responseTimes: [],
+        }),
+        { getState: () => ({ streamingContent: "" }) },
+      ),
+    }));
+
+    const { default: AiChatPanel } = await import("../AiChatPanel");
+
+    render(
+      createElement(AiChatPanel, {
+        activeConid: 265598,
+        activeSymbol: "AAPL",
+        fibonacci: null,
+      }),
+    );
+
+    expect(screen.queryByTestId("fib-section")).toBeNull();
+  });
+});

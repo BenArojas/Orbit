@@ -168,9 +168,19 @@ interface AiConfigPanelProps {
    *  When the trader toggles indicators on the chart, the AI panel
    *  mirrors their selection so the analysis covers what they're looking at. */
   chartIndicators?: Set<IndicatorId>;
+  /**
+   * True while an analysis is currently streaming. When true the
+   * Run Analysis button is disabled (the user cancels from the
+   * loading row, not from here — decision 7A in the plan).
+   */
+  isAnalyzing?: boolean;
 }
 
-export default function AiConfigPanel({ onRunAnalysis, chartIndicators }: AiConfigPanelProps) {
+export default function AiConfigPanel({
+  onRunAnalysis,
+  chartIndicators,
+  isAnalyzing = false,
+}: AiConfigPanelProps) {
   const [selectedTf, setSelectedTf] = useState<Set<AiTimeframe>>(
     () => new Set(DEFAULT_TIMEFRAMES)
   );
@@ -342,13 +352,24 @@ export default function AiConfigPanel({ onRunAnalysis, chartIndicators }: AiConf
         )}
       </div>
 
-      {/* Run button */}
+      {/* Run button.
+          The ▶ glyph + label live in a single text node so screen readers
+          read the button as "▶ Run Analysis" and test queries against
+          the full label work cleanly. */}
       <button
         onClick={handleRun}
-        disabled={selectedTf.size === 0 || selectedInd.size === 0}
-        className="flex items-center justify-center gap-1.5 rounded-md border border-[var(--clr-cyan)] bg-[var(--glow-cyan)] px-3 py-2 text-xs font-semibold text-[var(--clr-cyan)] transition-all hover:shadow-[0_0_16px_var(--glow-cyan)] disabled:opacity-30 disabled:cursor-not-allowed"
+        disabled={
+          selectedTf.size === 0 || selectedInd.size === 0 || isAnalyzing
+        }
+        data-testid="run-analysis-button"
+        title={
+          isAnalyzing
+            ? "Analysis in progress — cancel below"
+            : undefined
+        }
+        className="flex items-center justify-center gap-1.5 rounded-md border border-[var(--clr-cyan)] bg-[var(--glow-cyan)] px-3 py-2 text-xs font-semibold text-[var(--clr-cyan)] transition-all hover:shadow-[0_0_16px_var(--glow-cyan)] disabled:opacity-40 disabled:cursor-not-allowed"
       >
-        <span>▶</span> Run Analysis
+        ▶ Run Analysis
       </button>
     </div>
   );

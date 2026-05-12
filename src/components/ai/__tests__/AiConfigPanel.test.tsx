@@ -21,6 +21,12 @@ import { describe, it, expect, vi } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import AiConfigPanel from "../AiConfigPanel";
 
+// The Run button is disabled when zero indicators are selected. Most of
+// the run-flow tests don't care which indicators are selected — they
+// just need the button enabled. Seed with one chart indicator so the
+// button is clickable.
+const SEEDED_INDICATORS = new Set(["rsi"] as const);
+
 // ── Tests ─────────────────────────────────────────────────────
 
 describe("AiConfigPanel", () => {
@@ -46,9 +52,9 @@ describe("AiConfigPanel", () => {
 
   it("calls onRunAnalysis with timeframes, indicators, contextMode, contextBars", () => {
     const onRun = vi.fn();
-    render(<AiConfigPanel onRunAnalysis={onRun} />);
+    render(<AiConfigPanel onRunAnalysis={onRun} chartIndicators={SEEDED_INDICATORS} />);
 
-    fireEvent.click(screen.getByText("▶ Run Analysis").closest("button")!);
+    fireEvent.click(screen.getByTestId("run-analysis-button"));
 
     expect(onRun).toHaveBeenCalledTimes(1);
     const [config] = onRun.mock.calls[0];
@@ -65,17 +71,17 @@ describe("AiConfigPanel", () => {
     fireEvent.click(screen.getByText("4H"));
     fireEvent.click(screen.getByText("D"));
 
-    const runBtn = screen.getByText("▶ Run Analysis").closest("button")!;
+    const runBtn = screen.getByTestId("run-analysis-button");
     expect(runBtn).toBeDisabled();
   });
 
   it("toggling a chip removes it from the next onRunAnalysis call", () => {
     const onRun = vi.fn();
-    render(<AiConfigPanel onRunAnalysis={onRun} />);
+    render(<AiConfigPanel onRunAnalysis={onRun} chartIndicators={SEEDED_INDICATORS} />);
 
     fireEvent.click(screen.getByText("4H")); // deselect
 
-    fireEvent.click(screen.getByText("▶ Run Analysis").closest("button")!);
+    fireEvent.click(screen.getByTestId("run-analysis-button"));
     const [config] = onRun.mock.calls[0];
     expect(config.timeframes).not.toContain("4H");
   });
@@ -85,7 +91,7 @@ describe("AiConfigPanel", () => {
     const onRun = vi.fn();
     render(<AiConfigPanel onRunAnalysis={onRun} chartIndicators={chartIndicators} />);
 
-    fireEvent.click(screen.getByText("▶ Run Analysis").closest("button")!);
+    fireEvent.click(screen.getByTestId("run-analysis-button"));
     const [config] = onRun.mock.calls[0];
     expect(config.indicators).toContain("RSI");
     expect(config.indicators).toContain("MACD");
@@ -95,7 +101,9 @@ describe("AiConfigPanel", () => {
 
   it("renders all four context mode chips", () => {
     render(<AiConfigPanel />);
-    expect(screen.getByText("None")).toBeTruthy();
+    // "None" appears both as a chip and inside the help tooltip text —
+    // matching by element role narrows to the chip button.
+    expect(screen.getByRole("button", { name: "None" })).toBeTruthy();
     expect(screen.getByText("Price Summary")).toBeTruthy();
     expect(screen.getByText("OHLCV History")).toBeTruthy();
     expect(screen.getByText("Patterns")).toBeTruthy();
@@ -143,10 +151,10 @@ describe("AiConfigPanel", () => {
 
   it("onRunAnalysis receives the selected contextMode", () => {
     const onRun = vi.fn();
-    render(<AiConfigPanel onRunAnalysis={onRun} />);
+    render(<AiConfigPanel onRunAnalysis={onRun} chartIndicators={SEEDED_INDICATORS} />);
 
     fireEvent.click(screen.getByText("Price Summary"));
-    fireEvent.click(screen.getByText("▶ Run Analysis").closest("button")!);
+    fireEvent.click(screen.getByTestId("run-analysis-button"));
 
     const [config] = onRun.mock.calls[0];
     expect(config.contextMode).toBe("summary");
@@ -154,10 +162,10 @@ describe("AiConfigPanel", () => {
 
   it("onRunAnalysis receives the default bar count for the selected mode", () => {
     const onRun = vi.fn();
-    render(<AiConfigPanel onRunAnalysis={onRun} />);
+    render(<AiConfigPanel onRunAnalysis={onRun} chartIndicators={SEEDED_INDICATORS} />);
 
     fireEvent.click(screen.getByText("OHLCV History")); // default = 15 bars
-    fireEvent.click(screen.getByText("▶ Run Analysis").closest("button")!);
+    fireEvent.click(screen.getByTestId("run-analysis-button"));
 
     const [config] = onRun.mock.calls[0];
     expect(config.contextMode).toBe("ohlcv");
@@ -173,5 +181,34 @@ describe("AiConfigPanel", () => {
   it("time impact note is NOT shown when mode is None", () => {
     render(<AiConfigPanel />);
     expect(screen.queryByText(/response time/i)).toBeNull();
+  });
+
+  // ── isAnalyzing prop (Branch 2 — plan decision 7A) ──────────
+
+  it("disables the Run button while isAnalyzing is true", () => {
+    render(<AiConfigPanel isAnalyzing={true} />);
+    const runBtn = screen.getByTestId("run-analysis-button");
+    expect(runBtn).toBeDisabled();
+  });
+
+  it("does NOT call onRunAnalysis when button is clicked while isAnalyzing", () => {
+    const onRun = vi.fn();
+    render(<AiConfigPanel onRunAnalysis={onRun} isAnalyzing={true} />);
+    const runBtn = screen.getByTestId("run-analysis-button");
+    fireEvent.click(runBtn);
+    expect(onRun).not.toHaveBeenCalled();
+  });
+
+  it("shows the 'Analysis in progress' tooltip while isAnalyzing is true", () => {
+    render(<AiConfigPanel isAnalyzing={true} />);
+    const runBtn = screen.getByTestId("run-analysis-button");
+    expect(runBtn.getAttribute("title")).toMatch(/cancel below/i);
+  });
+
+  it("Run button is enabled (default) when isAnalyzing is false", () => {
+    render(<AiConfigPanel isAnalyzing={false} chartIndicators={SEEDED_INDICATORS} />);
+    const runBtn = screen.getByTestId("run-analysis-button");
+    expect(runBtn).not.toBeDisabled();
+    expect(runBtn.getAttribute("title")).toBeNull();
   });
 });

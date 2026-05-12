@@ -239,17 +239,19 @@ export default function AiChatPanel({ activeConid, activeSymbol, fibonacci, char
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
           <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto px-3 py-3">
             <div className="flex flex-col gap-2.5">
+              {/* Config panel — top of the scroll container.
+                  Branch 2: FibScoreCard moved out of this top group; it
+                  now lives at the bottom (after the streaming bubble) so
+                  the AI Analysis topic plays out start-to-finish before
+                  Fib details appear. Plan reference: decision 7 in
+                  docs/fibonacci-improvements-plan.md. */}
               <div className="-mx-3 -mt-3 mb-0">
                 <AiConfigPanel
                   onRunAnalysis={handleRunAnalysis}
                   chartIndicators={chartIndicators}
+                  isAnalyzing={isAnalyzing}
                 />
                 <ActionSignalCard signal={signal} />
-                {fibonacci && (
-                  <div className="px-3 pb-1">
-                    <FibScoreCard fibonacci={fibonacci} />
-                  </div>
-                )}
               </div>
 
               {/* Initial prompt when no messages */}
@@ -277,7 +279,11 @@ export default function AiChatPanel({ activeConid, activeSymbol, fibonacci, char
                 </div>
               )}
 
-              {/* Loading state for analysis — with Cancel button */}
+              {/* Loading state for analysis — with Cancel button.
+                  Per decision 7A: this is the ONLY cancel control while
+                  a run is in flight. The Run button above is disabled
+                  (not duplicated with a sibling cancel) to keep visual
+                  noise low. */}
               {isAnalyzing && (
                 <div className="flex items-center gap-2 rounded-lg bg-[var(--bg-0)] px-3 py-2 text-[11px] text-[var(--text-3)]">
                   <div className="h-3 w-3 flex-shrink-0 animate-spin rounded-full border-2 border-[var(--clr-cyan)] border-t-transparent" />
@@ -300,6 +306,19 @@ export default function AiChatPanel({ activeConid, activeSymbol, fibonacci, char
               {/* Streaming response */}
               {isStreaming && streamingContent && (
                 <StreamingBubble content={streamingContent} />
+              )}
+
+              {/* Fib stack — appears at the BOTTOM of the scroll
+                  container so the AI analysis topic (config → signal →
+                  narrative) finishes before the Fib topic begins.
+                  Plan decision 7: each topic plays out start-to-finish. */}
+              {fibonacci && (
+                <div
+                  data-testid="fib-section"
+                  className="rounded-md"
+                >
+                  <FibScoreCard fibonacci={fibonacci} />
+                </div>
               )}
             </div>
           </div>
