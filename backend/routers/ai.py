@@ -54,7 +54,7 @@ from exceptions import AIAnalysisTimeoutError
 from services.ai import AiService, _coerce_confidence
 from services.db import DatabaseService
 from services.ibkr import IBKRService
-from services.indicators import IndicatorService
+from services.indicators import IndicatorService, get_active_fib_weights
 from services.ollama import OllamaLifecycle
 
 log = logging.getLogger("parallax.routers.ai")
@@ -119,10 +119,15 @@ async def _fetch_timeframe_data(
     timeframe: str,
     indicators: list[str],
     ibkr: IBKRService,
+    fib_weights: dict[str, float] | None = None,
 ) -> dict:
     """
     Fetch candle data from IBKR and compute indicators for one timeframe.
     Returns {"candles": [...], "indicators": [...], "fibonacci": ...}
+
+    `fib_weights` is preloaded once per analyze request (Branch 3) so
+    every per-TF compute uses the same user-edited weights without
+    re-hitting the DB.
     """
     ibkr_period, ibkr_bar = AI_TIMEFRAME_MAP.get(timeframe, ("3m", "1d"))
 
@@ -148,6 +153,7 @@ async def _fetch_timeframe_data(
     indicator_results, fibonacci = _indicator_service.compute(
         candles=candles,
         indicators=indicators,
+        weights=fib_weights,
     )
 
     return {
@@ -366,6 +372,7 @@ async def analyze(
     ibkr: IBKRService = Depends(get_ibkr),
     ai: AiService = Depends(get_ai),
     ollama: OllamaLifecycle = Depends(get_ollama),
+    db: DatabaseService = Depends(get_db),
 ):
     """
     Run a full AI technical analysis on a stock.
@@ -394,6 +401,10 @@ async def analyze(
     # Resolve frontend display names → backend indicator names
     resolved_indicators = _resolve_indicators(request.indicators)
 
+    # Branch 3: preload user-edited fib scoring weights once per
+    # analyze request so every TF compute uses the same values.
+    fib_weights = await get_active_fib_weights(db)
+
     # Fetch indicator data for each timeframe
     timeframe_data: dict[str, dict] = {}
     for tf in request.timeframes:
@@ -403,6 +414,7 @@ async def analyze(
             timeframe=tf,
             indicators=resolved_indicators,
             ibkr=ibkr,
+            fib_weights=fib_weights,
         )
         timeframe_data[tf] = tf_data
 
@@ -458,6 +470,7 @@ async def analyze_stream(
     ibkr: IBKRService = Depends(get_ibkr),
     ai: AiService = Depends(get_ai),
     ollama: OllamaLifecycle = Depends(get_ollama),
+    db: DatabaseService = Depends(get_db),
 ):
     """
     Stream a full AI technical analysis as Server-Sent Events.
@@ -494,6 +507,9 @@ async def analyze_stream(
 
     resolved_indicators = _resolve_indicators(request.indicators)
 
+    # Branch 3: preload user-edited fib scoring weights once per stream.
+    fib_weights = await get_active_fib_weights(db)
+
     # Indicator data is fetched eagerly, BEFORE the SSE stream opens, because:
     #   - IBKR errors should fail fast (client gets a 4xx/5xx, not a stream)
     #   - SSE is for streaming the model output, not the data prep
@@ -505,6 +521,7 @@ async def analyze_stream(
             timeframe=tf,
             indicators=resolved_indicators,
             ibkr=ibkr,
+            fib_weights=fib_weights,
         )
 
     log.info(

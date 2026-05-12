@@ -791,6 +791,67 @@ class DatabaseService:
 
         return await self._run_write(_delete)
 
+    # ── Fibonacci Config (Branch 3) ─────────────────────────────
+    #
+    # User-editable fib scoring weights live in the generic `settings`
+    # table under key="fib_weights" as a JSON blob. We keep the
+    # JSON-serialization concern inside these helpers so callers can
+    # work with plain dicts.
+
+    _FIB_WEIGHTS_SETTING_KEY = "fib_weights"
+
+    async def get_fib_weights(
+        self, defaults: dict[str, float]
+    ) -> dict[str, float]:
+        """
+        Return the persisted Fibonacci scoring weights, or `defaults` if
+        no row has been stored yet (or the stored JSON is corrupt).
+
+        On any parse error this falls back to defaults rather than
+        raising — the scorer must never blow up because settings are
+        malformed; the user can re-save valid weights to recover.
+        """
+        import json as _json
+
+        raw = await self.get_setting(self._FIB_WEIGHTS_SETTING_KEY)
+        if raw is None:
+            return dict(defaults)
+        try:
+            data = _json.loads(raw)
+        except (ValueError, TypeError):
+            log.warning(
+                "fib_weights setting is corrupt JSON — falling back to defaults"
+            )
+            return dict(defaults)
+        if not isinstance(data, dict):
+            log.warning(
+                "fib_weights setting is not a JSON object — falling back to defaults"
+            )
+            return dict(defaults)
+        # Coerce values to float, drop unknown keys, keep defaults for
+        # any missing factor name so the result is always complete.
+        out: dict[str, float] = dict(defaults)
+        for k, v in data.items():
+            if k not in defaults:
+                continue
+            try:
+                out[k] = float(v)
+            except (TypeError, ValueError):
+                continue
+        return out
+
+    async def set_fib_weights(self, weights: dict[str, float]) -> None:
+        """
+        Persist the Fibonacci scoring weights as JSON.
+
+        This is a low-level write — validation (range, sum, factor
+        names) happens in the router/service layer before reaching here.
+        """
+        import json as _json
+
+        payload = _json.dumps(weights, sort_keys=True)
+        await self.set_setting(self._FIB_WEIGHTS_SETTING_KEY, payload)
+
     # ── Watchlist Config Operations (Phase 6.8) ─────────────────
 
     async def get_all_watchlist_configs(self) -> list[dict]:

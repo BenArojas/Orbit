@@ -11,9 +11,12 @@
  */
 
 import { useQuery, keepPreviousData } from "@tanstack/react-query";
-import { useEffect, useState, useCallback, useRef } from "react";
-import { api, type IndicatorComputeResponse } from "@/lib/api";
+import { useEffect, useMemo, useState, useCallback, useRef } from "react";
+import { api, type FibonacciResult, type IndicatorComputeResponse } from "@/lib/api";
 import type { Timeframe, IndicatorId } from "@/store/chart";
+import { useChartStore } from "@/store/chart";
+import { fibonacciResultFromCandidate } from "@/lib/fib";
+import { useFibConfig } from "./useFibConfig";
 import { useWebSocket, type WsMessage } from "./useWebSocket";
 import { useIbkrReady } from "@/context/GatewayContext";
 
@@ -138,13 +141,60 @@ export function useChartData(
     setLiveTick(null);
   }, [conid, timeframe]);
 
+  // ── Fib override resolution (Branch 3) ─────────────────────
+  //
+  // When the user clicks a candidate in the Candidates panel the
+  // store's `displayedFibOverride` is set. We synthesize a
+  // FibonacciResult from that candidate using the canonical ratio
+  // arrays from /fibonacci/config so the chart can re-paint without
+  // hitting the backend. When no override is set, we pass through the
+  // server's auto-detected fib unchanged.
+
+  const displayedFibOverride = useChartStore((s) => s.displayedFibOverride);
+  const { config: fibConfig } = useFibConfig();
+
+  const fibonacci: FibonacciResult | null = useMemo(() => {
+    const autoFib = query.data?.fibonacci ?? null;
+    if (!displayedFibOverride) return autoFib;
+    if (!fibConfig) {
+      // Config still loading — fall through to auto result. Override
+      // will apply on the next render once the config arrives.
+      return autoFib;
+    }
+    return fibonacciResultFromCandidate(
+      displayedFibOverride,
+      fibConfig.ratios,
+      fibConfig.extension_ratios,
+    );
+  }, [query.data?.fibonacci, displayedFibOverride, fibConfig]);
+
+  /**
+   * Indicates which fib is being rendered:
+   *   "auto"     — the server's auto-detected primary.
+   *   "override" — a candidate the user picked from the panel.
+   *   "none"     — fib indicator is off, no fib available, or fib was
+   *                explicitly cleared by the user.
+   */
+  const fibSource: "auto" | "override" | "none" = !fibonacci
+    ? "none"
+    : displayedFibOverride
+      ? "override"
+      : "auto";
+
   return {
     /** OHLCV candle data */
     candles: query.data?.candles ?? [],
     /** Computed indicator results */
     indicators: query.data?.indicators ?? [],
-    /** Fibonacci retracement result */
-    fibonacci: query.data?.fibonacci ?? null,
+    /**
+     * Fibonacci result to render. When the user has clicked a
+     * candidate from the Candidates panel, this is the synthesized
+     * result for THAT candidate. Otherwise it's the server's
+     * auto-detection.
+     */
+    fibonacci,
+    /** Where the rendered fib came from. */
+    fibSource,
     /** Live tick from WebSocket (updates last candle) */
     liveTick,
     /** WebSocket connection status */

@@ -14,15 +14,16 @@ import logging
 from fastapi import APIRouter, Depends
 
 from constants.ibkr_history import TIMEFRAME_SPEC, IBKR_BAR_LIMIT
-from deps import get_ibkr
+from deps import get_db, get_ibkr
 from exceptions import IBKRBarLimitExceededError
 from models import (
     CandleData,
     IndicatorComputeResponse,
     IndicatorRequest,
 )
+from services.db import DatabaseService
 from services.ibkr import IBKRService
-from services.indicators import IndicatorService
+from services.indicators import IndicatorService, get_active_fib_weights
 
 log = logging.getLogger("parallax.routers.indicators")
 
@@ -39,6 +40,7 @@ _indicator_service = IndicatorService()
 async def compute_indicators(
     request: IndicatorRequest,
     ibkr: IBKRService = Depends(get_ibkr),
+    db: DatabaseService = Depends(get_db),
 ):
     """
     Compute technical indicators for a given stock.
@@ -129,10 +131,15 @@ async def compute_indicators(
             fibonacci=None,
         )
 
-    # Step 5: Compute the requested indicators
+    # Step 5: Compute the requested indicators.
+    # Branch 3: preload user-edited fib scoring weights from DB so the
+    # composite score reflects whatever the user last saved. Cached for
+    # 60s so repeated chart loads don't hammer the settings table.
+    fib_weights = await get_active_fib_weights(db)
     indicator_results, fibonacci = _indicator_service.compute(
         candles=candles,
         indicators=request.indicators,
+        weights=fib_weights,
     )
 
     # Step 6: Return everything

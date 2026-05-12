@@ -1,23 +1,59 @@
 /**
- * Tests for FibScoreCard — Branch 1 of the fibonacci-improvements-plan.
+ * Tests for FibScoreCard.
  *
- * Covers:
+ * Branch 1 coverage (preserved):
  *   - no_active_fib=true renders the info card + reason; no score badge.
  *   - Candidates list is still rendered when no_active_fib=true.
  *   - status chip color/label is correct for each FibonacciCandidateStatus.
  *   - Normal-state rendering preserved.
+ *
+ * Branch 3 coverage (new):
+ *   - Score factors section renders one row per canonical factor.
+ *   - "Edit weights" toggles the inline number inputs.
+ *   - Saving calls api.updateFibConfig with the edited weights.
+ *   - Clicking a candidate row calls setDisplayedFib on the chart store.
+ *   - "Clear chart fib" calls clearChartFib on the chart store.
+ *   - FibScoreBreakdown expands to show the formula with live numbers.
  */
 
-import { describe, it, expect } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
-import { createElement } from "react";
+import { describe, it, expect, vi, beforeEach } from "vitest";
+import { render, screen, fireEvent, within, act } from "@testing-library/react";
+import { createElement, type ReactNode } from "react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 import FibScoreCard from "../FibScoreCard";
+import { useChartStore } from "@/store/chart";
 import type {
   FibonacciResult,
   FibonacciCandidate,
   FibonacciCandidateStatus,
 } from "@/lib/api";
+
+// ── Mock the API layer ───────────────────────────────────────
+
+const DEFAULT_WEIGHTS = {
+  swing_clarity: 0.25,
+  multi_touch: 0.25,
+  rejection_intensity: 0.20,
+  stretched_penalty: 0.15,
+  recency: 0.15,
+};
+
+const mockGetFibConfig: ReturnType<typeof vi.fn> = vi.fn();
+const mockUpdateFibConfig: ReturnType<typeof vi.fn> = vi.fn();
+
+vi.mock("@/lib/api", async (importOriginal) => {
+  const mod = await importOriginal<typeof import("@/lib/api")>();
+  return {
+    ...mod,
+    api: {
+      ...mod.api,
+      getFibConfig: () => mockGetFibConfig(),
+      updateFibConfig: (req: { weights: Record<string, number> }) =>
+        mockUpdateFibConfig(req),
+    },
+  };
+});
 
 // ── Helpers ──────────────────────────────────────────────────
 
@@ -68,7 +104,35 @@ function makeResult(overrides: Partial<FibonacciResult> = {}): FibonacciResult {
   };
 }
 
-// ── Tests ────────────────────────────────────────────────────
+function withQueryClient(children: ReactNode): ReactNode {
+  const qc = new QueryClient({
+    defaultOptions: {
+      queries: { retry: false },
+      mutations: { retry: false },
+    },
+  });
+  return createElement(QueryClientProvider, { client: qc }, children);
+}
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  // Default: getFibConfig resolves with defaults; updateFibConfig
+  // echoes the request back.
+  mockGetFibConfig.mockResolvedValue({
+    ratios: [0, 0.382, 0.5, 0.618, 0.65, 0.716, 1.0],
+    extension_ratios: [1.272, 1.618, 2.0],
+    weights: DEFAULT_WEIGHTS,
+  });
+  mockUpdateFibConfig.mockImplementation(async (req) => ({
+    ratios: [0, 0.382, 0.5, 0.618, 0.65, 0.716, 1.0],
+    extension_ratios: [1.272, 1.618, 2.0],
+    weights: req.weights as typeof DEFAULT_WEIGHTS,
+  }));
+  // Reset chart store between tests.
+  useChartStore.getState().clearChart();
+});
+
+// ── Branch 1: no_active_fib state ────────────────────────────
 
 describe("FibScoreCard — no_active_fib state", () => {
   it("renders the no-active info card with reason when no_active_fib=true", () => {
@@ -79,14 +143,13 @@ describe("FibScoreCard — no_active_fib state", () => {
       candidates: [makeCandidate({ status: "played_out" })],
     });
 
-    render(createElement(FibScoreCard, { fibonacci: result }));
+    render(withQueryClient(createElement(FibScoreCard, { fibonacci: result })));
 
     expect(screen.getByTestId("fib-no-active-card")).toBeTruthy();
     expect(screen.getByText(/No active fib/i)).toBeTruthy();
     expect(
       screen.getByText(/No swing has price currently inside its range/),
     ).toBeTruthy();
-    // The standard score card should NOT render.
     expect(screen.queryByTestId("fib-score-card")).toBeNull();
   });
 
@@ -100,11 +163,9 @@ describe("FibScoreCard — no_active_fib state", () => {
       ],
     });
 
-    render(createElement(FibScoreCard, { fibonacci: result }));
+    render(withQueryClient(createElement(FibScoreCard, { fibonacci: result })));
 
-    // Expand the candidates section.
-    const toggle = screen.getByText(/historical candidates/);
-    fireEvent.click(toggle);
+    fireEvent.click(screen.getByTestId("fib-candidates-toggle"));
 
     expect(screen.getByTestId("fib-candidate-row-0")).toBeTruthy();
     expect(screen.getByTestId("fib-candidate-row-1")).toBeTruthy();
@@ -117,13 +178,15 @@ describe("FibScoreCard — no_active_fib state", () => {
       candidates: [],
     });
 
-    render(createElement(FibScoreCard, { fibonacci: result }));
+    render(withQueryClient(createElement(FibScoreCard, { fibonacci: result })));
 
     expect(
       screen.getByText(/outside every detected swing's tolerance band/i),
     ).toBeTruthy();
   });
 });
+
+// ── Branch 1: candidate status chips ─────────────────────────
 
 describe("FibScoreCard — candidate status chips", () => {
   const cases: Array<{ status: FibonacciCandidateStatus; label: RegExp }> = [
@@ -136,48 +199,163 @@ describe("FibScoreCard — candidate status chips", () => {
     it(`renders the correct chip label for status=${status}`, () => {
       const result = makeResult({
         candidates: [
-          makeCandidate(),                    // primary candidate (active)
-          makeCandidate({ status }),          // the one we're asserting on
+          makeCandidate(),
+          makeCandidate({ status }),
         ],
       });
 
-      render(createElement(FibScoreCard, { fibonacci: result }));
+      render(withQueryClient(createElement(FibScoreCard, { fibonacci: result })));
 
-      // Expand candidates.
-      fireEvent.click(screen.getByText(/candidates/));
+      fireEvent.click(screen.getByTestId("fib-candidates-toggle"));
 
       const row = screen.getByTestId("fib-candidate-row-1");
       expect(row.getAttribute("data-status")).toBe(status);
-      // The chip label should be visible inside the row.
       expect(row.textContent?.toLowerCase()).toMatch(label);
     });
   }
 });
 
-describe("FibScoreCard — normal state preserved", () => {
-  it("renders the score badge and swing range when no_active_fib=false", () => {
-    const result = makeResult({
-      no_active_fib: false,
-      score: 78,
-    });
+// ── Branch 1 normal state preserved ──────────────────────────
 
-    render(createElement(FibScoreCard, { fibonacci: result }));
+describe("FibScoreCard — normal state", () => {
+  it("renders the score badge and swing range when no_active_fib=false", () => {
+    const result = makeResult({ score: 78, no_active_fib: false });
+    render(withQueryClient(createElement(FibScoreCard, { fibonacci: result })));
 
     expect(screen.getByTestId("fib-score-card")).toBeTruthy();
     expect(screen.getByText("78")).toBeTruthy();
-    // The price range is split across multiple text nodes — match against
-    // the card's combined text content instead of a single node.
     const card = screen.getByTestId("fib-score-card");
     expect(card.textContent).toContain("$100.00");
     expect(card.textContent).toContain("$130.00");
-    // No-active card should NOT render.
     expect(screen.queryByTestId("fib-no-active-card")).toBeNull();
   });
 
   it("returns null when fibonacci is null", () => {
     const { container } = render(
-      createElement(FibScoreCard, { fibonacci: null }),
+      withQueryClient(createElement(FibScoreCard, { fibonacci: null })),
     );
     expect(container.firstChild).toBeNull();
+  });
+});
+
+// ── Branch 3: Score factors + editable weights ───────────────
+
+describe("FibScoreCard — score factors", () => {
+  it("renders one row per canonical factor once fibConfig loads", async () => {
+    render(withQueryClient(createElement(FibScoreCard, { fibonacci: makeResult() })));
+    // Wait for the query to resolve.
+    await screen.findByTestId("fib-criterion-row-swing_clarity");
+    for (const f of [
+      "swing_clarity",
+      "multi_touch",
+      "rejection_intensity",
+      "stretched_penalty",
+      "recency",
+    ]) {
+      expect(screen.getByTestId(`fib-criterion-row-${f}`)).toBeTruthy();
+    }
+  });
+
+  it("clicking 'Edit weights' reveals editable inputs", async () => {
+    render(withQueryClient(createElement(FibScoreCard, { fibonacci: makeResult() })));
+    await screen.findByTestId("fib-edit-weights-button");
+
+    // Before clicking, inputs should NOT exist.
+    expect(screen.queryByTestId("fib-weight-input-swing_clarity")).toBeNull();
+
+    fireEvent.click(screen.getByTestId("fib-edit-weights-button"));
+
+    expect(screen.getByTestId("fib-weight-input-swing_clarity")).toBeTruthy();
+    expect(screen.getByTestId("fib-save-weights-button")).toBeTruthy();
+  });
+
+  it("editing a weight and clicking Save calls updateFibConfig with the new value", async () => {
+    render(withQueryClient(createElement(FibScoreCard, { fibonacci: makeResult() })));
+    await screen.findByTestId("fib-edit-weights-button");
+
+    fireEvent.click(screen.getByTestId("fib-edit-weights-button"));
+
+    const input = screen.getByTestId(
+      "fib-weight-input-swing_clarity",
+    ) as HTMLInputElement;
+
+    // Wrap each interaction in act() so React's controlled-input
+    // state updates flush before we measure / dispatch the next event.
+    // Without act(), the blur-driven setDraftWeights call hasn't been
+    // committed by the time the save click runs, so saveWeights reads
+    // a null draftWeights and the mutation never fires.
+    await act(async () => {
+      fireEvent.change(input, { target: { value: "0.40" } });
+    });
+    await act(async () => {
+      fireEvent.blur(input);
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("fib-save-weights-button"));
+    });
+
+    expect(mockUpdateFibConfig).toHaveBeenCalledTimes(1);
+    const [arg] = mockUpdateFibConfig.mock.calls[0];
+    expect(arg.weights.swing_clarity).toBeCloseTo(0.4, 6);
+  });
+});
+
+// ── Branch 3: Candidate click ───────────────────────────────
+
+describe("FibScoreCard — candidate click → setDisplayedFib", () => {
+  it("clicking a candidate row calls setDisplayedFib with that candidate", async () => {
+    const candidate = makeCandidate({ score: 65 });
+    const result = makeResult({
+      candidates: [makeCandidate({ score: 80 }), candidate],
+    });
+    render(withQueryClient(createElement(FibScoreCard, { fibonacci: result })));
+    await screen.findByTestId("fib-edit-weights-button");
+
+    // Open candidates section.
+    fireEvent.click(screen.getByTestId("fib-candidates-toggle"));
+    fireEvent.click(screen.getByTestId("fib-candidate-row-1"));
+
+    const override = useChartStore.getState().displayedFibOverride;
+    expect(override).not.toBeNull();
+    expect(override?.score).toBe(65);
+  });
+});
+
+// ── Branch 3: Clear chart fib ───────────────────────────────
+
+describe("FibScoreCard — clear chart fib", () => {
+  it("clicking 'Clear' sets fibCleared=true in the store", async () => {
+    render(withQueryClient(createElement(FibScoreCard, { fibonacci: makeResult() })));
+    await screen.findByTestId("fib-clear-chart-button");
+
+    fireEvent.click(screen.getByTestId("fib-clear-chart-button"));
+
+    expect(useChartStore.getState().fibCleared).toBe(true);
+  });
+
+  it("Clear button is hidden once fibCleared is already true", async () => {
+    useChartStore.getState().clearChartFib();
+    render(withQueryClient(createElement(FibScoreCard, { fibonacci: makeResult() })));
+    // Score factors load asynchronously — wait for them, then check.
+    await screen.findByTestId("fib-edit-weights-button");
+    expect(screen.queryByTestId("fib-clear-chart-button")).toBeNull();
+  });
+});
+
+// ── Branch 3: Score breakdown ───────────────────────────────
+
+describe("FibScoreCard — score breakdown", () => {
+  it("toggling 'How is this score calculated?' reveals the formula body", async () => {
+    render(withQueryClient(createElement(FibScoreCard, { fibonacci: makeResult() })));
+    const breakdown = await screen.findByTestId("fib-score-breakdown");
+
+    // Body hidden by default.
+    expect(within(breakdown).queryByTestId("fib-score-breakdown-body")).toBeNull();
+
+    fireEvent.click(within(breakdown).getByRole("button"));
+
+    expect(within(breakdown).getByTestId("fib-score-breakdown-body")).toBeTruthy();
+    // The body should contain the formula's RHS — the score itself.
+    expect(within(breakdown).getByTestId("fib-score-breakdown-body").textContent).toContain("75.0");
   });
 });

@@ -13,6 +13,7 @@ import pytest
 
 from models import CandleData, FibonacciResult
 from services.indicators import (
+    DEFAULT_FIB_WEIGHTS,
     FIB_EXTENSION_LEVELS,
     FIB_RETRACEMENT_LEVELS,
     GOLDEN_POCKET_LEVELS,
@@ -459,3 +460,169 @@ class TestPrimaryRangeSelection:
         )
         # And the no-active-reason should be set.
         assert fib.no_active_fib_reason is not None
+
+
+# ── Fibonacci config endpoints (Branch 3 — plan decision 3A) ─
+
+
+class TestFibConfig:
+    """
+    Validates the GET/PUT /fibonacci/config endpoints and the
+    weight-validation rules in routers/fibonacci.py.
+
+    These tests use FastAPI's TestClient with a fresh in-memory
+    DatabaseService so we exercise the full request → DB write →
+    cache invalidation → re-read path.
+    """
+
+    @staticmethod
+    def _client_and_db():
+        """
+        Build a FastAPI app that wires the fibonacci router to a
+        fresh DatabaseService backed by an in-memory SQLite database.
+        """
+        import asyncio
+        from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+
+        from deps import get_db as _get_db_dep
+        from routers.fibonacci import router as fib_router
+        from services.db import DatabaseService
+
+        db = DatabaseService(db_path=":memory:")
+        # DatabaseService.connect() is async; run it eagerly so the
+        # schema exists before any request hits the test client.
+        asyncio.get_event_loop().run_until_complete(db.connect())
+
+        app = FastAPI()
+        app.include_router(fib_router)
+
+        def _override_get_db():
+            return db
+
+        app.dependency_overrides[_get_db_dep] = _override_get_db
+        return TestClient(app), db
+
+    def test_get_config_returns_defaults_on_fresh_db(self):
+        client, _db = self._client_and_db()
+        resp = client.get("/fibonacci/config")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["weights"] == DEFAULT_FIB_WEIGHTS
+        assert body["ratios"] == list(FIB_RETRACEMENT_LEVELS)
+        assert body["extension_ratios"] == list(FIB_EXTENSION_LEVELS)
+
+    def test_put_config_persists_weights(self):
+        client, _db = self._client_and_db()
+        custom = {
+            "swing_clarity":       0.40,
+            "multi_touch":         0.20,
+            "rejection_intensity": 0.15,
+            "stretched_penalty":   0.15,
+            "recency":             0.10,
+        }
+        resp = client.put("/fibonacci/config", json={"weights": custom})
+        assert resp.status_code == 200
+        body = resp.json()
+        # Sum == 1.0 already, so normalized values should match.
+        for k, v in custom.items():
+            assert body["weights"][k] == pytest.approx(v, abs=1e-3)
+
+        # Re-fetch and confirm persistence.
+        again = client.get("/fibonacci/config").json()
+        for k, v in custom.items():
+            assert again["weights"][k] == pytest.approx(v, abs=1e-3)
+
+    def test_put_config_rejects_weights_outside_0_to_1(self):
+        client, _db = self._client_and_db()
+        bad = dict(DEFAULT_FIB_WEIGHTS)
+        bad["swing_clarity"] = 1.5  # > 1
+        resp = client.put("/fibonacci/config", json={"weights": bad})
+        assert resp.status_code == 400
+        assert "between 0 and 1" in resp.json()["detail"]
+
+    def test_put_config_auto_normalizes_close_to_one(self):
+        client, _db = self._client_and_db()
+        # Sum = 1.03 → within tolerance, normalized down to 1.0.
+        offish = {
+            "swing_clarity":       0.27,
+            "multi_touch":         0.27,
+            "rejection_intensity": 0.20,
+            "stretched_penalty":   0.15,
+            "recency":             0.14,
+        }
+        resp = client.put("/fibonacci/config", json={"weights": offish})
+        assert resp.status_code == 200
+        body = resp.json()
+        total = sum(body["weights"].values())
+        assert total == pytest.approx(1.0, abs=1e-3)
+
+    def test_put_config_rejects_sum_outside_tolerance(self):
+        client, _db = self._client_and_db()
+        # Sum = 0.5 — way outside [0.95, 1.05].
+        too_small = {
+            "swing_clarity":       0.10,
+            "multi_touch":         0.10,
+            "rejection_intensity": 0.10,
+            "stretched_penalty":   0.10,
+            "recency":             0.10,
+        }
+        resp = client.put("/fibonacci/config", json={"weights": too_small})
+        assert resp.status_code == 400
+        assert "Sum of weights" in resp.json()["detail"]
+
+    def test_put_config_rejects_unknown_factor_names(self):
+        client, _db = self._client_and_db()
+        bad = dict(DEFAULT_FIB_WEIGHTS)
+        bad["bogus_factor"] = 0.1
+        resp = client.put("/fibonacci/config", json={"weights": bad})
+        assert resp.status_code == 400
+        assert "Unknown factor name" in resp.json()["detail"]
+
+    def test_put_config_rejects_missing_factor(self):
+        client, _db = self._client_and_db()
+        partial = dict(DEFAULT_FIB_WEIGHTS)
+        del partial["recency"]
+        resp = client.put("/fibonacci/config", json={"weights": partial})
+        assert resp.status_code == 400
+        assert "Missing factor name" in resp.json()["detail"]
+
+    def test_scoring_uses_passed_weights(self):
+        """
+        Pass two different weight sets directly to IndicatorService.compute()
+        and verify the resulting top-candidate score actually changes.
+        Avoids any DB / cache concerns — pure scorer behavior.
+        """
+        svc = IndicatorService()
+        candles = clean_uptrend_swing(bars=60, base=100.0, amplitude=30.0)
+
+        # All weight on recency — newer swings dominate.
+        all_recency = {
+            "swing_clarity":       0.0,
+            "multi_touch":         0.0,
+            "rejection_intensity": 0.0,
+            "stretched_penalty":   0.0,
+            "recency":             1.0,
+        }
+        # All weight on clarity — clean V-shapes dominate.
+        all_clarity = {
+            "swing_clarity":       1.0,
+            "multi_touch":         0.0,
+            "rejection_intensity": 0.0,
+            "stretched_penalty":   0.0,
+            "recency":             0.0,
+        }
+
+        _, fib_a = svc.compute(candles, indicators=["fibonacci"], weights=all_recency)
+        _, fib_b = svc.compute(candles, indicators=["fibonacci"], weights=all_clarity)
+        assert fib_a is not None and fib_b is not None
+        # The candidates' raw factor values are the same; only the
+        # composite scores should differ. We assert that AT LEAST one
+        # candidate in the list got a different score under the two
+        # weight regimes.
+        scores_a = sorted(c.score for c in fib_a.candidates)
+        scores_b = sorted(c.score for c in fib_b.candidates)
+        assert scores_a != scores_b, (
+            "Scoring should change when weight vector changes — the "
+            "user-edited weights path is not wired through correctly."
+        )

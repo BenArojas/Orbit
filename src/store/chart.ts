@@ -11,6 +11,8 @@
 
 import { create } from "zustand";
 
+import type { FibonacciCandidate } from "@/lib/api";
+
 export type Timeframe = "1m" | "5m" | "15m" | "1h" | "4h" | "1D" | "1W" | "1M";
 
 /** Matches the 14 indicators from PROJECT_PLAN.md */
@@ -58,6 +60,21 @@ interface ChartState {
   /** First click captured (swing point A); null until user clicks */
   fibDrawPointA: FibDrawPoint | null;
 
+  /**
+   * Candidate the user clicked in the Candidates panel to render
+   * on the chart in place of the auto-detected primary. null when
+   * the chart should show the auto result. Branch 3, plan decision 4.
+   */
+  displayedFibOverride: FibonacciCandidate | null;
+
+  /**
+   * When true, the chart overlay is suppressed even if a fib is
+   * available — used by the "Clear chart fib" button. Resets on
+   * timeframe change, conid change, or when the user picks a new
+   * candidate. Branch 3, plan decision 4B.
+   */
+  fibCleared: boolean;
+
   /** Actions */
   setActiveConid: (conid: number) => void;
   setActiveSymbol: (symbol: string) => void;
@@ -68,6 +85,12 @@ interface ChartState {
   enterFibDrawMode: (mode: FibDrawMode) => void;
   setFibDrawPointA: (pt: FibDrawPoint) => void;
   exitFibDrawMode: () => void;
+  /** Render this candidate's fib instead of the auto primary. */
+  setDisplayedFib: (candidate: FibonacciCandidate) => void;
+  /** Reset to auto primary (clears the override). */
+  clearDisplayedFib: () => void;
+  /** Hide the fib overlay without untoggling the indicator pill. */
+  clearChartFib: () => void;
 }
 
 /**
@@ -86,12 +109,18 @@ export const useChartStore = create<ChartState>()((set) => ({
   activeIndicators: new Set<IndicatorId>(DEFAULT_INDICATORS),
   fibDrawMode: null,
   fibDrawPointA: null,
+  displayedFibOverride: null,
+  fibCleared: false,
 
   setActiveConid: (conid) => set({ activeConid: conid }),
 
   setActiveSymbol: (symbol) => set({ activeSymbol: symbol }),
 
-  setTimeframe: (tf) => set({ timeframe: tf }),
+  setTimeframe: (tf) =>
+    // Switching timeframe re-fetches data; clear fib state so the
+    // override doesn't persist across timeframes the user didn't ask
+    // for it on.
+    set({ timeframe: tf, displayedFibOverride: null, fibCleared: false }),
 
   toggleIndicator: (id) =>
     set((state) => {
@@ -115,6 +144,8 @@ export const useChartStore = create<ChartState>()((set) => ({
       activeIndicators: new Set<IndicatorId>(DEFAULT_INDICATORS),
       fibDrawMode: null,
       fibDrawPointA: null,
+      displayedFibOverride: null,
+      fibCleared: false,
     }),
 
   enterFibDrawMode: (mode) =>
@@ -125,4 +156,15 @@ export const useChartStore = create<ChartState>()((set) => ({
 
   exitFibDrawMode: () =>
     set({ fibDrawMode: null, fibDrawPointA: null }),
+
+  setDisplayedFib: (candidate) =>
+    // Picking a candidate implies the user wants to see it — un-clear
+    // any prior dismissal.
+    set({ displayedFibOverride: candidate, fibCleared: false }),
+
+  clearDisplayedFib: () =>
+    set({ displayedFibOverride: null }),
+
+  clearChartFib: () =>
+    set({ fibCleared: true, displayedFibOverride: null }),
 }));

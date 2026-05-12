@@ -72,6 +72,31 @@ vi.mock("@/hooks/useAiAnalyzeStream", () => ({
   }),
 }));
 
+// Branch 3: FibScoreCard now reads fib config via useFibConfig (a
+// TanStack Query hook). Mock it so AiChatPanel tests don't need a
+// QueryClientProvider wrapper.
+vi.mock("@/hooks/useFibConfig", () => ({
+  useFibConfig: () => ({
+    config: {
+      ratios: [0, 0.382, 0.5, 0.618, 0.65, 0.716, 1.0],
+      extension_ratios: [1.272, 1.618, 2.0],
+      weights: {
+        swing_clarity: 0.25,
+        multi_touch: 0.25,
+        rejection_intensity: 0.20,
+        stretched_penalty: 0.15,
+        recency: 0.15,
+      },
+    },
+    isLoading: false,
+    error: null,
+    updateConfig: vi.fn(),
+    updateConfigAsync: vi.fn(),
+    isUpdating: false,
+    updateError: null,
+  }),
+}));
+
 // ── Tests ─────────────────────────────────────────────────────
 
 describe("AiChatPanel — Cancel button", () => {

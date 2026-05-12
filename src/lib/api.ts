@@ -339,6 +339,39 @@ export interface IndicatorComputeResponse {
   fibonacci: FibonacciResult | null;
 }
 
+// ── Fibonacci Config (Branch 3) ─────────────────────────
+
+/**
+ * Server's canonical Fibonacci configuration.
+ *
+ *   - `ratios` is Ofek's retracement set (0, 0.382, 0.5, 0.618, 0.65,
+ *     0.716, 1.0).
+ *   - `extension_ratios` is the extension set (1.272 .. 4.618).
+ *   - `weights` is the active scoring-weight vector. Defaults are
+ *     served until the user PUTs an override.
+ *
+ * Frontend uses this as the single source of truth for ratios — the
+ * client-side `buildLevelsFromCandidate` helper imports the ratio
+ * arrays from here instead of duplicating them as a constant.
+ */
+export interface FibConfig {
+  ratios: number[];
+  extension_ratios: number[];
+  weights: Record<FibFactorName, number>;
+}
+
+/** Canonical fib scoring factor names. Mirrors backend DEFAULT_FIB_WEIGHTS keys. */
+export type FibFactorName =
+  | "swing_clarity"
+  | "multi_touch"
+  | "rejection_intensity"
+  | "stretched_penalty"
+  | "recency";
+
+export interface UpdateFibConfigRequest {
+  weights: Record<FibFactorName, number>;
+}
+
 // ── Locked Fibonacci Drawings (Phase 4 — task 4.4) ──────
 
 export interface LockFibonacciRequest {
@@ -1034,6 +1067,14 @@ export const api = {
 
   getLockedFibs: (conid: number) =>
     request<LockedFibonacciResponse[]>("GET", `/fibonacci/locks/${conid}`),
+
+  // Fibonacci Config (Branch 3) — canonical ratios + user-editable
+  // scoring weights. Frontend caches once per session.
+  getFibConfig: () =>
+    request<FibConfig>("GET", "/fibonacci/config"),
+
+  updateFibConfig: (req: UpdateFibConfigRequest) =>
+    request<FibConfig>("PUT", "/fibonacci/config", req),
 
   // Pulse Config (Phase 8.9+) — user-configurable Market Pulse tickers
   getPulseConfig: () =>

@@ -67,15 +67,81 @@ MAX_CANDIDATES = 6
 # Locked in plan decision 1A (docs/fibonacci-improvements-plan.md).
 INSIDE_TOLERANCE = 0.15
 
-# Scoring weights (fixed for v1 — learning algorithm is v2 scope).
-# These must sum to 1.0.
-_WEIGHTS = {
+# Scoring weights — DEFAULTS.
+#
+# Until Branch 3 these were the only weights used. As of Branch 3 the
+# router/db layer can override them with user-edited values persisted
+# in the `settings` table. The defaults remain the fallback when:
+#   - no user override has been saved yet
+#   - the stored JSON is corrupt
+#   - the DB is unreachable
+#
+# Future v2 learning algorithm will adjust these per-conid in a
+# separate table (parallax-v2-roadmap).
+#
+# These must sum to 1.0. `_validate_and_normalize_weights` in
+# routers/fibonacci.py enforces that for user submissions.
+DEFAULT_FIB_WEIGHTS: dict[str, float] = {
     "swing_clarity":       0.25,
     "multi_touch":         0.25,
     "rejection_intensity": 0.20,
     "stretched_penalty":   0.15,
     "recency":             0.15,
 }
+
+# Back-compat alias for code paths that haven't been migrated yet.
+_WEIGHTS = DEFAULT_FIB_WEIGHTS
+
+
+# ── User-editable weights cache (Branch 3) ───────────────────
+#
+# The scoring pass runs synchronously per-candidate, but DB reads are
+# async. Rather than threading a DB handle through every helper, the
+# router populates a small process-local cache; the cache TTL is short
+# (60s) so manually-edited weights propagate quickly to the next fib
+# computation. `invalidate_fib_weights_cache()` is called from the PUT
+# /fibonacci/config endpoint to force an immediate refresh.
+
+import time as _time
+
+_FIB_WEIGHTS_CACHE_TTL_SECONDS = 60.0
+_fib_weights_cache: dict[str, float] | None = None
+_fib_weights_cache_expires_at: float = 0.0
+
+
+def invalidate_fib_weights_cache() -> None:
+    """Force the next `get_active_fib_weights()` call to re-read from DB."""
+    global _fib_weights_cache, _fib_weights_cache_expires_at
+    _fib_weights_cache = None
+    _fib_weights_cache_expires_at = 0.0
+
+
+async def get_active_fib_weights(db) -> dict[str, float]:
+    """
+    Return the currently-active scoring weights, reading from `db` at
+    most once per TTL window. Falls back to DEFAULT_FIB_WEIGHTS if `db`
+    is None or the read raises.
+
+    `db` is a DatabaseService — typed loosely to avoid an import cycle
+    with the router layer.
+    """
+    global _fib_weights_cache, _fib_weights_cache_expires_at
+    now = _time.monotonic()
+    if (
+        _fib_weights_cache is not None
+        and now < _fib_weights_cache_expires_at
+    ):
+        return _fib_weights_cache
+    if db is None:
+        return dict(DEFAULT_FIB_WEIGHTS)
+    try:
+        weights = await db.get_fib_weights(DEFAULT_FIB_WEIGHTS)
+    except Exception as exc:  # noqa: BLE001 — DB read can fail many ways; safe fallback only
+        log.warning("Failed to read fib weights from DB, using defaults: %s", exc)
+        return dict(DEFAULT_FIB_WEIGHTS)
+    _fib_weights_cache = weights
+    _fib_weights_cache_expires_at = now + _FIB_WEIGHTS_CACHE_TTL_SECONDS
+    return weights
 
 
 class IndicatorService:
@@ -118,6 +184,7 @@ class IndicatorService:
         self,
         candles: list[CandleData],
         indicators: list[str],
+        weights: dict[str, float] | None = None,
     ) -> tuple[list[IndicatorResult], FibonacciResult | None]:
         """
         Main entry point — compute requested indicators from candle data.
@@ -164,7 +231,9 @@ class IndicatorService:
             name_lower = name.lower()
 
             if name_lower == "fibonacci":
-                fibonacci = self._compute_fibonacci(df)
+                # Use user-edited weights when supplied; otherwise fall
+                # back to module defaults. Branch 3.
+                fibonacci = self._compute_fibonacci(df, weights=weights)
                 continue
 
             compute_fn = indicator_map.get(name_lower)
@@ -620,6 +689,7 @@ class IndicatorService:
         self,
         df: pd.DataFrame,
         tool_mode: str = "retracement",
+        weights: dict[str, float] | None = None,
     ) -> FibonacciResult | None:
         """
         Auto-detect the best swing on this timeframe and return a full
@@ -631,7 +701,11 @@ class IndicatorService:
                        (primary target tool). Both level sets are computed
                        regardless — tool_mode just flags which is the
                        primary rendering intent.
+            weights:   Scoring weights override. When None, falls back to
+                       DEFAULT_FIB_WEIGHTS. The router preloads
+                       user-edited weights from DB and passes them in.
         """
+        active_weights = weights if weights is not None else DEFAULT_FIB_WEIGHTS
         if len(df) < (PIVOT_WINDOW * 2 + 5):
             log.warning(
                 "Not enough data for Fibonacci analysis (%d candles, need %d)",
@@ -676,6 +750,7 @@ class IndicatorService:
                 hi_idx=rc["hi_idx"],
                 direction=rc["direction"],
                 current_price=current_price,
+                weights=active_weights,
             )
             if cand is not None:
                 scored.append(cand)
@@ -865,13 +940,19 @@ class IndicatorService:
         hi_idx: int,
         direction: str,
         current_price: float,
+        weights: dict[str, float] | None = None,
     ) -> FibonacciCandidate | None:
         """
         Score a single swing candidate using fib-internal factors only.
 
         Returns a FibonacciCandidate with the composite score (0-100)
         and each individual factor exposed for the LLM to cite.
+
+        `weights` overrides DEFAULT_FIB_WEIGHTS — used by Branch 3 so
+        user-edited scoring weights take effect without restarting the
+        backend.
         """
+        active_weights = weights if weights is not None else DEFAULT_FIB_WEIGHTS
         swing_high = float(df["high"].iloc[hi_idx])
         swing_low = float(df["low"].iloc[lo_idx])
         price_range = swing_high - swing_low
@@ -956,11 +1037,11 @@ class IndicatorService:
         recency = later_idx / max(1, total_bars - 1)
 
         composite = (
-            _WEIGHTS["swing_clarity"]       * swing_clarity
-            + _WEIGHTS["multi_touch"]       * min(1.0, multi_touch_count / 3.0)
-            + _WEIGHTS["rejection_intensity"] * rejection_intensity
-            + _WEIGHTS["stretched_penalty"] * stretched_penalty
-            + _WEIGHTS["recency"]           * recency
+            active_weights["swing_clarity"]       * swing_clarity
+            + active_weights["multi_touch"]       * min(1.0, multi_touch_count / 3.0)
+            + active_weights["rejection_intensity"] * rejection_intensity
+            + active_weights["stretched_penalty"] * stretched_penalty
+            + active_weights["recency"]           * recency
         )
         score = round(composite * 100.0, 1)
 

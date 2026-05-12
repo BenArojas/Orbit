@@ -31,6 +31,7 @@ import {
 import { useEffect, useId, useRef } from "react";
 import type { CandleData, IndicatorResult, FibonacciResult } from "@/lib/api";
 import type { IndicatorId } from "@/store/chart";
+import { useChartStore } from "@/store/chart";
 import { useCrosshairStore } from "@/store";
 import {
   addIndicatorOverlays,
@@ -82,6 +83,9 @@ export default function ChartContainer({
   const volumeSeriesRef = useRef<ISeriesApi<"Histogram"> | null>(null);
   const overlayStateRef = useRef<OverlayState>({});
   const fibOverlayRef = useRef<FibOverlayState>([]);
+
+  // Branch 3 / plan decision 4B: user-driven "Clear chart fib" flag.
+  const fibCleared = useChartStore((s) => s.fibCleared);
 
   // ── Create chart instance ──────────────────────────────────
 
@@ -304,8 +308,16 @@ export default function ChartContainer({
       return;
     }
 
+    // Branch 3 / plan decision 4B: user clicked "Clear chart fib".
+    // Keep the indicator pill on + Candidates panel visible, but skip
+    // rendering. Resets on conid/timeframe change or when the user
+    // picks a candidate.
+    if (fibCleared) {
+      return;
+    }
+
     fibOverlayRef.current = addFibonacciOverlay(chart, fibonacci, candles);
-  }, [fibonacci, activeIndicators, candles]);
+  }, [fibonacci, activeIndicators, candles, fibCleared]);
 
   // ── Crosshair sync — broadcast our own moves, mirror others' ──
   //

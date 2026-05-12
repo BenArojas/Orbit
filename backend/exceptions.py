@@ -92,6 +92,23 @@ class SymbolNotFoundError(DataError):
         super().__init__(f"Symbol not found: {symbol}")
 
 
+class InvalidFibWeightsError(DataError):
+    """
+    Raised when a Fibonacci scoring-weights payload fails validation.
+
+    Validation rules (see services.indicators):
+      - Every weight must satisfy 0 ≤ w ≤ 1.
+      - The sum of weights must be within [0.95, 1.05] (auto-normalized
+        to exactly 1.0 on save when inside this band; rejected otherwise).
+      - Factor names must match the canonical set produced by the
+        scorer (swing_clarity, multi_touch, rejection_intensity,
+        stretched_penalty, recency). Unknown names are rejected.
+    """
+
+    def __init__(self, message: str = "Invalid Fibonacci scoring weights"):
+        super().__init__(message)
+
+
 # ── AI Errors ────────────────────────────────────────────────
 
 

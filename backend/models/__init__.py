@@ -462,6 +462,50 @@ class IndicatorComputeResponse(BaseModel):
 
 
 # ═══════════════════════════════════════════════════════════════
+#  Fibonacci Config — user-editable scoring weights (Branch 3)
+# ═══════════════════════════════════════════════════════════════
+#
+# The Fibonacci scoring algorithm combines five weighted factors. v1
+# shipped with hardcoded defaults. Branch 3 makes the weights
+# user-editable so traders can emphasize the factors that matter most
+# for their style. Weights are stored in the existing `settings` table
+# under key="fib_weights" as a JSON blob — no new table is needed.
+#
+# A future v2 learning algorithm (parallax-v2-roadmap) will adjust
+# these weights automatically based on subsequent price action. Until
+# then they are purely user-controlled.
+
+
+class FibConfig(BaseModel):
+    """
+    Full Fibonacci tool configuration exposed to the frontend.
+
+    The frontend fetches this once on app mount (cached with
+    staleTime: Infinity) and uses it for: rendering glossary tooltips,
+    plugging weights into the score-breakdown explainer, and computing
+    candidate-override level prices on the client without a round-trip.
+    """
+    ratios: list[float]              # Retracement ratios: [0, 0.382, 0.5, 0.618, 0.65, 0.716, 1.0]
+    extension_ratios: list[float]    # Extension ratios: [1.272 ... 4.618]
+    weights: dict[str, float]        # Factor name → weight. Sum is normalized to 1.0.
+
+
+class UpdateFibConfigRequest(BaseModel):
+    """
+    PUT /fibonacci/config body — currently only the weights are
+    user-editable. Ratios are fixed (Ofek's methodology) and not exposed
+    to user editing.
+
+    Validation happens server-side (in the router/db layer):
+      - Each weight must be 0 ≤ w ≤ 1.
+      - Sum must be within [0.95, 1.05] and is normalized to exactly 1.0.
+      - Factor names must match the canonical set.
+    Violations raise InvalidFibWeightsError → HTTP 400.
+    """
+    weights: dict[str, float]
+
+
+# ═══════════════════════════════════════════════════════════════
 #  Fibonacci Locked Drawings (Phase 4 — task 4.4)
 # ═══════════════════════════════════════════════════════════════
 
