@@ -1,21 +1,24 @@
 /**
  * Fibonacci overlay for Lightweight Charts v5.
  *
- * Renders retracement levels as horizontal lines on the main price chart,
- * with a shaded golden pocket band (0.618→0.716). Extension levels are
- * rendered in a secondary color when tool_mode === "extension".
+ * Renders retracement + extension levels as horizontal lines on the
+ * main price chart. Branch 4 adds support for multiple stacked fibs
+ * (primary + locked) — each gets a color slot from FIB_COLOR_PALETTE
+ * and an opacity multiplier so the primary stays visually dominant.
  *
  * Architecture:
- *   - Pure functions — no React. Called imperatively from ChartContainer's
- *     useEffect just like indicatorOverlays.ts.
+ *   - Pure functions — no React. Called imperatively from
+ *     ChartContainer's useEffect just like indicatorOverlays.ts.
  *   - Returns an array of ISeriesApi references so ChartContainer can
- *     clean them up when the fib data changes or the component unmounts.
+ *     clean them up when the fib data changes or the component
+ *     unmounts.
  *
  * References:
  *   Ofek's spec: .auto-memory/project_fibonacci_spec.md
+ *   Plan: docs/fibonacci-improvements-plan.md (Branches 1, 3, 4)
  *   Levels: 0, 0.382, 0.5, 0.618, 0.65, 0.716, 1.0 (retracement)
  *           1.272 → 4.618 (extension)
- *   Golden pocket: 0.618 / 0.65 / 0.716 → shaded band
+ *   Golden pocket: 0.618 / 0.65 / 0.716 → visually band-like
  */
 
 import {
@@ -26,65 +29,88 @@ import {
   type Time,
 } from "lightweight-charts";
 
-import type { FibonacciResult, FibonacciLevel } from "@/lib/api";
-
-// ── Color palette ────────────────────────────────────────────
-
-const FIB_COLORS = {
-  /** Normal retracement level */
-  retracement: "rgba(0, 212, 255, 0.55)",         // cyan, semi-transparent
-  /** Golden pocket levels (0.618/0.65/0.716) */
-  goldenPocket: "rgba(255, 200, 0, 0.70)",         // warm gold
-  /** Golden pocket shaded band — rendered with area fill between 0.618 and 0.716 */
-  goldenPocketFill: "rgba(255, 200, 0, 0.08)",
-  /** Extension levels */
-  extension: "rgba(136, 68, 255, 0.55)",            // purple
-  /** Swing markers (0 and 1.0 lines) */
-  swingBound: "rgba(255, 255, 255, 0.25)",          // dim white
-} as const;
+import type { FibonacciLevel } from "@/lib/api";
+import {
+  FIB_COLOR_PALETTE,
+  type ActiveFib,
+  type FibPaletteEntry,
+} from "@/store/chart";
 
 // ── Types ────────────────────────────────────────────────────
 
 export type FibOverlayState = ISeriesApi<"Line">[];
 
+// ── Opacity multipliers ──────────────────────────────────────
+//
+// Primary stays at full opacity; locked fibs render dimmer so the
+// primary remains salient (plan decision 8C). Multiplying with the
+// palette's baked-in alpha gives us simple visual hierarchy without
+// a second palette set.
+
+const PRIMARY_OPACITY = 1.0;
+const LOCKED_OPACITY = 0.55;
+
 // ── Public API ───────────────────────────────────────────────
 
 /**
- * Add Fibonacci overlay lines to the chart.
+ * Add overlays for an ordered list of fibs.
  *
- * Returns the series references so the caller can remove them later
- * via `removeFibonacciOverlay`.
+ * Each ActiveFib is rendered using FIB_COLOR_PALETTE[fib.colorIndex],
+ * with the primary at full opacity and locked entries dimmed. Level
+ * labels include a per-fib suffix — "(P)" for the primary, "(L1)",
+ * "(L2)" etc. for locked fibs in stack order — so traders can tell at
+ * a glance which line belongs to which fib.
  */
-export function addFibonacciOverlay(
+export function addFibonacciOverlays(
   chart: IChartApi,
-  fib: FibonacciResult,
+  fibs: ActiveFib[],
   candles: { time: number }[],
 ): FibOverlayState {
-  if (!candles.length) return [];
+  if (!candles.length || fibs.length === 0) return [];
 
   const firstTime = candles[0].time as Time;
   const lastTime = candles[candles.length - 1].time as Time;
   const series: FibOverlayState = [];
 
-  // ── Retracement levels ──────────────────────────────────
-  for (const level of fib.levels) {
-    const s = addLevelLine(chart, level, firstTime, lastTime, "retracement");
-    if (s) series.push(s);
-  }
+  // Track how many locked fibs we've already painted so the label
+  // suffix ("L1", "L2", ...) reflects display order, not the lockId.
+  let lockedSeen = 0;
 
-  // ── Golden pocket fill band (0.618 → 0.716) ────────────
-  // Lightweight Charts v5 doesn't natively support area-between-two-lines,
-  // so we approximate with two semi-transparent lines that visually create
-  // a banded region. The real fill is achieved via a LineSeries with a
-  // "lineVisible: false" + "topColor" area style trick. However LW Charts
-  // Area is only available via AreaSeries and isn't horizontally bounded.
-  // For v1 we keep the 3 GP lines extra-thick + bright which creates the
-  // visual band effect traders are used to.
+  for (const fib of fibs) {
+    const palette =
+      FIB_COLOR_PALETTE[fib.colorIndex] ?? FIB_COLOR_PALETTE[0];
+    const isPrimary = fib.id === "primary";
+    const labelSuffix = isPrimary
+      ? "(P)"
+      : `(L${++lockedSeen})`;
+    const opacity = isPrimary ? PRIMARY_OPACITY : LOCKED_OPACITY;
 
-  // ── Extension levels ────────────────────────────────────
-  for (const level of fib.extensions) {
-    const s = addLevelLine(chart, level, firstTime, lastTime, "extension");
-    if (s) series.push(s);
+    for (const level of fib.result.levels) {
+      const s = addLevelLine(
+        chart,
+        level,
+        firstTime,
+        lastTime,
+        "retracement",
+        palette,
+        opacity,
+        labelSuffix,
+      );
+      if (s) series.push(s);
+    }
+    for (const level of fib.result.extensions) {
+      const s = addLevelLine(
+        chart,
+        level,
+        firstTime,
+        lastTime,
+        "extension",
+        palette,
+        opacity,
+        labelSuffix,
+      );
+      if (s) series.push(s);
+    }
   }
 
   return series;
@@ -114,6 +140,9 @@ function addLevelLine(
   firstTime: Time,
   lastTime: Time,
   kind: "retracement" | "extension",
+  palette: FibPaletteEntry,
+  opacity: number,
+  labelSuffix: string,
 ): ISeriesApi<"Line"> | null {
   const isBoundary = level.level === 0 || level.level === 1.0;
   const isGP = level.golden_pocket;
@@ -123,21 +152,25 @@ function addLevelLine(
   let lineStyle: number; // 0=solid, 2=dashed, 3=dotted
 
   if (isBoundary) {
-    color = FIB_COLORS.swingBound;
+    color = palette.swingBound;
     lineWidth = 1;
     lineStyle = 3; // dotted
   } else if (isGP) {
-    color = FIB_COLORS.goldenPocket;
+    color = palette.goldenPocket;
     lineWidth = 2;
     lineStyle = 0; // solid — GP band should stand out
   } else if (kind === "extension") {
-    color = FIB_COLORS.extension;
+    color = palette.extension;
     lineWidth = 1;
     lineStyle = 2; // dashed
   } else {
-    color = FIB_COLORS.retracement;
+    color = palette.retracement;
     lineWidth = 1;
     lineStyle = 2; // dashed
+  }
+
+  if (opacity !== 1.0) {
+    color = applyOpacity(color, opacity);
   }
 
   const data: LineData<Time>[] = [
@@ -152,9 +185,23 @@ function addLevelLine(
     priceLineVisible: false,
     lastValueVisible: false,
     crosshairMarkerVisible: false,
-    // Title shows the level label on the price scale
-    title: level.label,
+    // Title shows the level label + per-fib suffix on the price scale.
+    title: labelSuffix ? `${level.label} ${labelSuffix}` : level.label,
   });
   series.setData(data);
   return series;
+}
+
+/**
+ * Scale the alpha channel of an `rgba(...)` color string by `factor`.
+ * Falls back to the original string for unrecognized formats.
+ */
+function applyOpacity(color: string, factor: number): string {
+  const match = /^rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*(?:,\s*([\d.]+)\s*)?\)$/i.exec(
+    color,
+  );
+  if (!match) return color;
+  const [, r, g, b, a = "1"] = match;
+  const newAlpha = Math.max(0, Math.min(1, parseFloat(a) * factor));
+  return `rgba(${r}, ${g}, ${b}, ${newAlpha.toFixed(3)})`;
 }

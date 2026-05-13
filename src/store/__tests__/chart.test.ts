@@ -10,8 +10,13 @@
 
 import { describe, it, expect, beforeEach } from "vitest";
 
-import { useChartStore } from "../chart";
-import type { FibonacciCandidate } from "@/lib/api";
+import {
+  FIB_COLOR_PALETTE,
+  FIB_STACK_HARD_CAP,
+  FIB_STACK_SOFT_CAP,
+  useChartStore,
+} from "../chart";
+import type { FibonacciCandidate, FibonacciResult } from "@/lib/api";
 
 // ── Helpers ──────────────────────────────────────────────────
 
@@ -33,6 +38,31 @@ function makeCandidate(
     is_nested: false,
     parent_index: null,
     status: "active",
+    ...overrides,
+  };
+}
+
+function makeResult(overrides: Partial<FibonacciResult> = {}): FibonacciResult {
+  return {
+    tool_mode: "retracement",
+    swing_high: 130,
+    swing_low: 100,
+    swing_high_time: 1_700_000_000,
+    swing_low_time: 1_699_900_000,
+    direction: "up",
+    levels: [],
+    extensions: [],
+    score: 75,
+    swing_clarity: 0.82,
+    timeframe_clarity: "clean",
+    candidates: [],
+    convergence_zones: [],
+    is_nested: false,
+    parent_fib_id: null,
+    reasoning: "",
+    source: "auto",
+    no_active_fib: false,
+    no_active_fib_reason: null,
     ...overrides,
   };
 }
@@ -111,5 +141,128 @@ describe("chart store — clearChart resets fib state", () => {
     expect(state.displayedFibOverride).toBeNull();
     expect(state.fibCleared).toBe(false);
     expect(state.activeConid).toBeNull();
+  });
+});
+
+// ── Branch 4: activeFibs stack ──────────────────────────────
+
+describe("chart store — activeFibs (Branch 4)", () => {
+  it("starts empty", () => {
+    expect(useChartStore.getState().activeFibs).toEqual([]);
+  });
+
+  it("setPrimaryFib pushes a primary entry at index 0 with colorIndex=0", () => {
+    useChartStore.getState().setPrimaryFib(makeResult({ score: 80 }));
+    const fibs = useChartStore.getState().activeFibs;
+    expect(fibs).toHaveLength(1);
+    expect(fibs[0].id).toBe("primary");
+    expect(fibs[0].source).toBe("auto");
+    expect(fibs[0].colorIndex).toBe(0);
+    expect(fibs[0].result.score).toBe(80);
+  });
+
+  it("setPrimaryFib replaces any existing primary (no duplicates)", () => {
+    useChartStore.getState().setPrimaryFib(makeResult({ score: 50 }));
+    useChartStore.getState().setPrimaryFib(makeResult({ score: 70 }));
+    const fibs = useChartStore.getState().activeFibs;
+    expect(fibs).toHaveLength(1);
+    expect(fibs[0].result.score).toBe(70);
+  });
+
+  it("setPrimaryFib(null) removes the primary but keeps locked entries", () => {
+    useChartStore.getState().setPrimaryFib(makeResult());
+    useChartStore.getState().addLockedFib(101, makeResult());
+    useChartStore.getState().setPrimaryFib(null);
+    const fibs = useChartStore.getState().activeFibs;
+    expect(fibs).toHaveLength(1);
+    expect(fibs[0].id).toBe("lock-101");
+  });
+
+  it("addLockedFib appends a locked entry with a non-zero colorIndex", () => {
+    useChartStore.getState().setPrimaryFib(makeResult());
+    const ok = useChartStore.getState().addLockedFib(42, makeResult());
+    expect(ok).toBe(true);
+    const fibs = useChartStore.getState().activeFibs;
+    expect(fibs).toHaveLength(2);
+    expect(fibs[1].id).toBe("lock-42");
+    expect(fibs[1].source).toBe("locked");
+    expect(fibs[1].lockId).toBe(42);
+    expect(fibs[1].colorIndex).toBeGreaterThan(0);
+    expect(fibs[1].colorIndex).toBeLessThan(FIB_COLOR_PALETTE.length);
+  });
+
+  it("addLockedFib dedupes by lockId (no-op when already in list)", () => {
+    useChartStore.getState().addLockedFib(7, makeResult());
+    useChartStore.getState().addLockedFib(7, makeResult({ score: 99 }));
+    const fibs = useChartStore.getState().activeFibs;
+    expect(fibs).toHaveLength(1);
+    expect(fibs[0].lockId).toBe(7);
+  });
+
+  it("addLockedFib refuses to add past FIB_STACK_HARD_CAP and returns false", () => {
+    for (let i = 0; i < FIB_STACK_HARD_CAP; i += 1) {
+      useChartStore.getState().addLockedFib(1000 + i, makeResult());
+    }
+    expect(useChartStore.getState().activeFibs).toHaveLength(FIB_STACK_HARD_CAP);
+    const result = useChartStore.getState().addLockedFib(9999, makeResult());
+    expect(result).toBe(false);
+    expect(useChartStore.getState().activeFibs).toHaveLength(FIB_STACK_HARD_CAP);
+  });
+
+  it("assigns distinct colorIndex values across multiple locks (under HARD_CAP)", () => {
+    for (let i = 0; i < FIB_STACK_HARD_CAP - 1; i += 1) {
+      useChartStore.getState().addLockedFib(2000 + i, makeResult());
+    }
+    const fibs = useChartStore.getState().activeFibs;
+    const indices = fibs.map((f) => f.colorIndex);
+    const unique = new Set(indices);
+    expect(unique.size).toBe(indices.length);
+  });
+
+  it("removeActiveFib drops the matching entry", () => {
+    useChartStore.getState().setPrimaryFib(makeResult());
+    useChartStore.getState().addLockedFib(11, makeResult());
+    useChartStore.getState().addLockedFib(12, makeResult());
+
+    useChartStore.getState().removeActiveFib("lock-11");
+    const fibs = useChartStore.getState().activeFibs;
+    expect(fibs.map((f) => f.id)).toEqual(["primary", "lock-12"]);
+  });
+
+  it("clearAllActiveFibs wipes the list", () => {
+    useChartStore.getState().setPrimaryFib(makeResult());
+    useChartStore.getState().addLockedFib(33, makeResult());
+    useChartStore.getState().clearAllActiveFibs();
+    expect(useChartStore.getState().activeFibs).toEqual([]);
+  });
+
+  it("clearChartFib removes the primary but keeps locked fibs", () => {
+    useChartStore.getState().setPrimaryFib(makeResult());
+    useChartStore.getState().addLockedFib(55, makeResult());
+    useChartStore.getState().clearChartFib();
+    const fibs = useChartStore.getState().activeFibs;
+    expect(fibs.map((f) => f.id)).toEqual(["lock-55"]);
+    expect(useChartStore.getState().fibCleared).toBe(true);
+  });
+
+  it("setTimeframe clears the entire stack (locked fibs re-fetched per TF context)", () => {
+    useChartStore.getState().setPrimaryFib(makeResult());
+    useChartStore.getState().addLockedFib(66, makeResult());
+    useChartStore.getState().setTimeframe("4h");
+    expect(useChartStore.getState().activeFibs).toEqual([]);
+  });
+
+  it("clearChart wipes activeFibs along with everything else", () => {
+    useChartStore.getState().setPrimaryFib(makeResult());
+    useChartStore.getState().addLockedFib(77, makeResult());
+    useChartStore.getState().clearChart();
+    expect(useChartStore.getState().activeFibs).toEqual([]);
+  });
+
+  // Reminder constants — locked here so a future PR that fiddles with
+  // the caps trips a test and forces an explicit decision.
+  it("FIB_STACK_SOFT_CAP=5 and FIB_STACK_HARD_CAP=8 (plan decision 8B)", () => {
+    expect(FIB_STACK_SOFT_CAP).toBe(5);
+    expect(FIB_STACK_HARD_CAP).toBe(8);
   });
 });

@@ -181,6 +181,21 @@ export function useChartData(
       ? "override"
       : "auto";
 
+  // Branch 4: publish the computed primary fib into the store so the
+  // chart overlay and FibStackPanel can read the whole stack
+  // (primary + locked) from one place. When the indicator is off or
+  // the backend signals no_active_fib, we publish null so the stack
+  // doesn't carry a stale entry.
+  const setPrimaryFib = useChartStore((s) => s.setPrimaryFib);
+
+  useEffect(() => {
+    if (!fibonacci || fibonacci.no_active_fib) {
+      setPrimaryFib(null);
+      return;
+    }
+    setPrimaryFib(fibonacci, fibSource === "override" ? "manual" : "auto");
+  }, [fibonacci, fibSource, setPrimaryFib]);
+
   return {
     /** OHLCV candle data */
     candles: query.data?.candles ?? [],

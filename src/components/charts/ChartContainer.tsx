@@ -40,7 +40,11 @@ import {
   removeVolumeOverlay,
   type OverlayState,
 } from "./indicatorOverlays";
-import { addFibonacciOverlay, removeFibonacciOverlay, type FibOverlayState } from "./FibonacciOverlay";
+import {
+  addFibonacciOverlays,
+  removeFibonacciOverlay,
+  type FibOverlayState,
+} from "./FibonacciOverlay";
 import FibDrawMode from "./FibDrawMode";
 import { readChartTheme } from "./chartTheme";
 import type { Timeframe } from "@/store/chart";
@@ -70,7 +74,10 @@ export interface ChartContainerProps {
 export default function ChartContainer({
   candles,
   indicators,
-  fibonacci,
+  // Branch 4: kept in the interface for backward compat but the
+  // overlay now sources fib state from the chart store (activeFibs)
+  // so callers' fib payload is no longer used here.
+  fibonacci: _fibonacci,
   activeIndicators,
   liveTick,
   conid = null,
@@ -86,6 +93,11 @@ export default function ChartContainer({
 
   // Branch 3 / plan decision 4B: user-driven "Clear chart fib" flag.
   const fibCleared = useChartStore((s) => s.fibCleared);
+  // Branch 4: the overlay now reads the ordered list of fibs
+  // (primary + locked) directly from the store. The `fibonacci` prop
+  // is kept for backward compatibility with callers that haven't
+  // migrated yet but is otherwise unused for rendering.
+  const activeFibs = useChartStore((s) => s.activeFibs);
 
   // ── Create chart instance ──────────────────────────────────
 
@@ -294,30 +306,33 @@ export default function ChartContainer({
     removeFibonacciOverlay(chart, fibOverlayRef.current);
     fibOverlayRef.current = [];
 
-    if (!activeIndicators.has("fibonacci") || !fibonacci || candles.length === 0) {
+    if (!activeIndicators.has("fibonacci") || candles.length === 0) {
       return;
     }
 
-    // Branch 1 / plan decision 1B: when the backend signals no active
-    // fib (current price is outside every detected swing's tolerance
-    // band), `fibonacci.levels` is a placeholder from a historical
-    // swing and MUST NOT be drawn on the chart. The Candidates panel
-    // in FibScoreCard still surfaces those swings for the user to
-    // study; here we just leave the chart clean.
-    if (fibonacci.no_active_fib) {
-      return;
-    }
+    // Branch 4: the chart renders WHATEVER is in `activeFibs` —
+    // primary (auto or override) plus any locked fibs. The store
+    // owns the merge; this effect just iterates. Locked fibs persist
+    // even when the primary is cleared (decision 4B), so we always
+    // attempt rendering whenever the indicator is on.
+    let fibsToDraw = activeFibs;
 
-    // Branch 3 / plan decision 4B: user clicked "Clear chart fib".
-    // Keep the indicator pill on + Candidates panel visible, but skip
-    // rendering. Resets on conid/timeframe change or when the user
-    // picks a candidate.
+    // Branch 3 / plan decision 4B: "Clear chart fib" drops the
+    // primary. We still render any locked fibs because they're
+    // independent.
     if (fibCleared) {
-      return;
+      fibsToDraw = fibsToDraw.filter((f) => f.source === "locked");
     }
 
-    fibOverlayRef.current = addFibonacciOverlay(chart, fibonacci, candles);
-  }, [fibonacci, activeIndicators, candles, fibCleared]);
+    // Branch 1: no_active_fib placeholders must not paint either —
+    // belt-and-braces in case setPrimaryFib was called with a
+    // no-active result by accident.
+    fibsToDraw = fibsToDraw.filter((f) => !f.result.no_active_fib);
+
+    if (fibsToDraw.length === 0) return;
+
+    fibOverlayRef.current = addFibonacciOverlays(chart, fibsToDraw, candles);
+  }, [activeFibs, activeIndicators, candles, fibCleared]);
 
   // ── Crosshair sync — broadcast our own moves, mirror others' ──
   //

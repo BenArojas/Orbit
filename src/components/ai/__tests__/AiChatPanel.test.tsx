@@ -97,6 +97,15 @@ vi.mock("@/hooks/useFibConfig", () => ({
   }),
 }));
 
+// Branch 4: FibStackPanel uses useLockedFibs (TanStack Query) for
+// lock CRUD. AiChatPanel tests don't exercise that surface, so we
+// neuter the hooks rather than spinning up a QueryClient.
+vi.mock("@/hooks/useLockedFibs", () => ({
+  useLockedFibs: () => ({ data: [], isLoading: false, error: null }),
+  useLockFib: () => ({ mutate: vi.fn(), isPending: false }),
+  useUnlockFib: () => ({ mutate: vi.fn(), isPending: false }),
+}));
+
 // ── Tests ─────────────────────────────────────────────────────
 
 describe("AiChatPanel — Cancel button", () => {

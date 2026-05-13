@@ -11,7 +11,7 @@
 
 import { create } from "zustand";
 
-import type { FibonacciCandidate } from "@/lib/api";
+import type { FibonacciCandidate, FibonacciResult } from "@/lib/api";
 
 export type Timeframe = "1m" | "5m" | "15m" | "1h" | "4h" | "1D" | "1W" | "1M";
 
@@ -40,6 +40,136 @@ export interface FibDrawPoint {
   time: number;  // Unix seconds
   price: number;
 }
+
+// ── Active fibs (Branch 4) ───────────────────────────────────
+//
+// The chart can render multiple fibs at once: an auto-detected primary
+// (or user-picked override) plus any number of user-locked fibs. The
+// store owns the ordered list; the overlay layer renders them; the
+// FibStackPanel surfaces them as cards. Locked fibs persist
+// per-conid in SQLite and show on all timeframes (per Ofek's spec).
+
+/**
+ * One fib being rendered on the chart. The primary (auto or override)
+ * lives at index 0 of `activeFibs`; locked fibs follow in lock order.
+ *
+ *   - `id` is "primary" for index 0 and "lock-{lockId}" for locked entries.
+ *   - `lockId` is the SQLite primary key for locked fibs (null otherwise).
+ *   - `colorIndex` is the position in FIB_COLOR_PALETTE.
+ *
+ * Plan: docs/fibonacci-improvements-plan.md, Branch 4 / item 8.
+ */
+export interface ActiveFib {
+  id: string;
+  source: "auto" | "manual" | "locked";
+  lockId: number | null;
+  result: FibonacciResult;
+  colorIndex: number;
+}
+
+/**
+ * Color palette for stacked fibs. Index 0 is reserved for the
+ * primary — the current `FibonacciOverlay` palette (gold GP / cyan
+ * retracement / purple extension). Each subsequent slot is a muted
+ * palette so the primary stays salient.
+ *
+ * Each entry exposes the three roles the overlay needs to know about.
+ * Hex / rgba literals — alpha will be modulated at render time
+ * (locked fibs render at ~0.45× opacity per plan decision 8C).
+ */
+export interface FibPaletteEntry {
+  /** Color for the golden-pocket levels (0.618 / 0.65 / 0.716). */
+  goldenPocket: string;
+  /** Color for non-GP retracement levels. */
+  retracement: string;
+  /** Color for extension levels. */
+  extension: string;
+  /** Color for swing boundary lines (0 and 1.0). */
+  swingBound: string;
+  /** Human-readable name used in the legend. */
+  name: string;
+}
+
+export const FIB_COLOR_PALETTE: readonly FibPaletteEntry[] = [
+  // 0 — primary (matches existing FibonacciOverlay defaults).
+  {
+    goldenPocket: "rgba(255, 200, 0, 0.70)",
+    retracement:  "rgba(0, 212, 255, 0.55)",
+    extension:    "rgba(136, 68, 255, 0.55)",
+    swingBound:   "rgba(255, 255, 255, 0.25)",
+    name: "Primary",
+  },
+  // 1 — teal
+  {
+    goldenPocket: "rgba(64, 224, 208, 0.55)",
+    retracement:  "rgba(64, 224, 208, 0.40)",
+    extension:    "rgba(64, 224, 208, 0.30)",
+    swingBound:   "rgba(64, 224, 208, 0.25)",
+    name: "Teal",
+  },
+  // 2 — salmon
+  {
+    goldenPocket: "rgba(250, 128, 114, 0.55)",
+    retracement:  "rgba(250, 128, 114, 0.40)",
+    extension:    "rgba(250, 128, 114, 0.30)",
+    swingBound:   "rgba(250, 128, 114, 0.25)",
+    name: "Salmon",
+  },
+  // 3 — lavender
+  {
+    goldenPocket: "rgba(181, 126, 220, 0.55)",
+    retracement:  "rgba(181, 126, 220, 0.40)",
+    extension:    "rgba(181, 126, 220, 0.30)",
+    swingBound:   "rgba(181, 126, 220, 0.25)",
+    name: "Lavender",
+  },
+  // 4 — sage
+  {
+    goldenPocket: "rgba(143, 188, 143, 0.55)",
+    retracement:  "rgba(143, 188, 143, 0.40)",
+    extension:    "rgba(143, 188, 143, 0.30)",
+    swingBound:   "rgba(143, 188, 143, 0.25)",
+    name: "Sage",
+  },
+  // 5 — amber
+  {
+    goldenPocket: "rgba(255, 159, 28, 0.55)",
+    retracement:  "rgba(255, 159, 28, 0.40)",
+    extension:    "rgba(255, 159, 28, 0.30)",
+    swingBound:   "rgba(255, 159, 28, 0.25)",
+    name: "Amber",
+  },
+  // 6 — rose
+  {
+    goldenPocket: "rgba(255, 102, 153, 0.55)",
+    retracement:  "rgba(255, 102, 153, 0.40)",
+    extension:    "rgba(255, 102, 153, 0.30)",
+    swingBound:   "rgba(255, 102, 153, 0.25)",
+    name: "Rose",
+  },
+  // 7 — sky
+  {
+    goldenPocket: "rgba(135, 206, 235, 0.55)",
+    retracement:  "rgba(135, 206, 235, 0.40)",
+    extension:    "rgba(135, 206, 235, 0.30)",
+    swingBound:   "rgba(135, 206, 235, 0.25)",
+    name: "Sky",
+  },
+];
+
+/**
+ * Visual reminder threshold — when activeFibs reaches this size, the
+ * FibStackPanel surfaces a yellow warning. The chart still functions
+ * but the user is told things are getting cluttered.
+ * Plan decision 8B.
+ */
+export const FIB_STACK_SOFT_CAP = 5;
+
+/**
+ * Hard cap — addLockedFib refuses to add beyond this count.
+ * Plan decision 8B.
+ */
+export const FIB_STACK_HARD_CAP = 8;
 
 interface ChartState {
   /** Currently viewed instrument (null = nothing selected) */
@@ -75,6 +205,17 @@ interface ChartState {
    */
   fibCleared: boolean;
 
+  /**
+   * Ordered list of fibs currently rendered on the chart.
+   *   - index 0 is the primary (auto or override).
+   *   - index 1+ are locked fibs in lock order.
+   *
+   * Branch 4 / plan item 8. The list is conid-scoped (cleared on
+   * conid change via clearChart) but persists across timeframe
+   * switches — locked fibs show on all TFs per Ofek's spec.
+   */
+  activeFibs: ActiveFib[];
+
   /** Actions */
   setActiveConid: (conid: number) => void;
   setActiveSymbol: (symbol: string) => void;
@@ -91,6 +232,25 @@ interface ChartState {
   clearDisplayedFib: () => void;
   /** Hide the fib overlay without untoggling the indicator pill. */
   clearChartFib: () => void;
+  /**
+   * Replace activeFibs[0] with `result`, or remove it when `result` is
+   * null. Used by useChartData to publish the auto / override primary
+   * into the store so the overlay layer can read everything from one
+   * place. Branch 4.
+   */
+  setPrimaryFib: (
+    result: FibonacciResult | null,
+    source?: "auto" | "manual",
+  ) => void;
+  /**
+   * Append a locked fib to activeFibs, dedup'd by lockId. Returns
+   * true on success, false when the hard cap is hit. Branch 4.
+   */
+  addLockedFib: (lockId: number, result: FibonacciResult) => boolean;
+  /** Remove an active fib by its id ("primary" or "lock-<id>"). */
+  removeActiveFib: (id: string) => void;
+  /** Wipe the entire stack. Called on conid change via clearChart. */
+  clearAllActiveFibs: () => void;
 }
 
 /**
@@ -102,7 +262,7 @@ interface ChartState {
  */
 const DEFAULT_INDICATORS: IndicatorId[] = [];
 
-export const useChartStore = create<ChartState>()((set) => ({
+export const useChartStore = create<ChartState>()((set, get) => ({
   activeConid: null,
   activeSymbol: "",
   timeframe: "1D",
@@ -111,6 +271,7 @@ export const useChartStore = create<ChartState>()((set) => ({
   fibDrawPointA: null,
   displayedFibOverride: null,
   fibCleared: false,
+  activeFibs: [],
 
   setActiveConid: (conid) => set({ activeConid: conid }),
 
@@ -119,8 +280,15 @@ export const useChartStore = create<ChartState>()((set) => ({
   setTimeframe: (tf) =>
     // Switching timeframe re-fetches data; clear fib state so the
     // override doesn't persist across timeframes the user didn't ask
-    // for it on.
-    set({ timeframe: tf, displayedFibOverride: null, fibCleared: false }),
+    // for it on. activeFibs is also cleared — useLockedFibs will
+    // repopulate locked entries from cache once the new TF settles
+    // (locked fibs are per-conid, not per-TF).
+    set({
+      timeframe: tf,
+      displayedFibOverride: null,
+      fibCleared: false,
+      activeFibs: [],
+    }),
 
   toggleIndicator: (id) =>
     set((state) => {
@@ -146,6 +314,7 @@ export const useChartStore = create<ChartState>()((set) => ({
       fibDrawPointA: null,
       displayedFibOverride: null,
       fibCleared: false,
+      activeFibs: [],
     }),
 
   enterFibDrawMode: (mode) =>
@@ -166,5 +335,73 @@ export const useChartStore = create<ChartState>()((set) => ({
     set({ displayedFibOverride: null }),
 
   clearChartFib: () =>
-    set({ fibCleared: true, displayedFibOverride: null }),
+    // "Clear fib": remove the primary from the stack, drop any
+    // override, mark cleared so the overlay layer skips. Locked
+    // fibs stay — they're independent of the primary.
+    set((state) => ({
+      fibCleared: true,
+      displayedFibOverride: null,
+      activeFibs: state.activeFibs.filter((f) => f.source === "locked"),
+    })),
+
+  // ── Branch 4 — active fib stack ──────────────────────────
+
+  setPrimaryFib: (result, source = "auto") =>
+    set((state) => {
+      // Remove any existing primary (whatever its source flag was).
+      const withoutPrimary = state.activeFibs.filter(
+        (f) => f.id !== "primary",
+      );
+      if (result === null) {
+        return { activeFibs: withoutPrimary };
+      }
+      const primary: ActiveFib = {
+        id: "primary",
+        source,
+        lockId: null,
+        result,
+        colorIndex: 0,
+      };
+      return { activeFibs: [primary, ...withoutPrimary] };
+    }),
+
+  addLockedFib: (lockId, result) => {
+    const state = get();
+    // Dedup by lockId so re-fetches don't multiply the list.
+    if (state.activeFibs.some((f) => f.lockId === lockId)) {
+      return true;
+    }
+    if (state.activeFibs.length >= FIB_STACK_HARD_CAP) {
+      // Hard cap reached — refuse the addition. Caller surfaces a
+      // toast / warning. (Plan decision 8B.)
+      return false;
+    }
+    // Pick the lowest unused palette index in [1..palette.length-1].
+    // Falls back to wrapping around when the palette is exhausted
+    // (shouldn't happen with HARD_CAP=8 and palette=8 entries).
+    const usedIndices = new Set(state.activeFibs.map((f) => f.colorIndex));
+    let colorIndex = 1;
+    while (colorIndex < FIB_COLOR_PALETTE.length && usedIndices.has(colorIndex)) {
+      colorIndex += 1;
+    }
+    if (colorIndex >= FIB_COLOR_PALETTE.length) {
+      colorIndex = 1; // wrap — visual collision is acceptable past 8 fibs.
+    }
+    const locked: ActiveFib = {
+      id: `lock-${lockId}`,
+      source: "locked",
+      lockId,
+      result,
+      colorIndex,
+    };
+    set({ activeFibs: [...state.activeFibs, locked] });
+    return true;
+  },
+
+  removeActiveFib: (id) =>
+    set((state) => ({
+      activeFibs: state.activeFibs.filter((f) => f.id !== id),
+    })),
+
+  clearAllActiveFibs: () => set({ activeFibs: [] }),
 }));

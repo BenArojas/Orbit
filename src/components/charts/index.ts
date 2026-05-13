@@ -14,7 +14,7 @@ export {
 } from "./indicatorOverlays";
 export type { OverlayState } from "./indicatorOverlays";
 export {
-  addFibonacciOverlay,
+  addFibonacciOverlays,
   removeFibonacciOverlay,
 } from "./FibonacciOverlay";
 export type { FibOverlayState } from "./FibonacciOverlay";

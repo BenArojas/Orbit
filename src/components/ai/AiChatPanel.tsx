@@ -29,7 +29,7 @@ import ActionSignalCard from "./ActionSignalCard";
 import AiSetupGuide from "./AiSetupGuide";
 import AiModelSelector from "./AiModelSelector";
 import ResponseTimeBadge from "./ResponseTimeBadge";
-import FibScoreCard from "./FibScoreCard";
+import FibStackPanel from "./fib/FibStackPanel";
 import type { FibonacciResult } from "@/lib/api";
 
 /* ── Types ── */
@@ -311,13 +311,17 @@ export default function AiChatPanel({ activeConid, activeSymbol, fibonacci, char
               {/* Fib stack — appears at the BOTTOM of the scroll
                   container so the AI analysis topic (config → signal →
                   narrative) finishes before the Fib topic begins.
-                  Plan decision 7: each topic plays out start-to-finish. */}
+                  Plan decision 7: each topic plays out start-to-finish.
+                  Branch 4: FibStackPanel renders the multi-fib stack
+                  (primary + locked) and sources state from the chart
+                  store directly — the `fibonacci` prop on AiChatPanel
+                  is now vestigial, kept for backward compat. */}
               {fibonacci && (
                 <div
                   data-testid="fib-section"
                   className="rounded-md"
                 >
-                  <FibScoreCard fibonacci={fibonacci} />
+                  <FibStackPanel />
                 </div>
               )}
             </div>
