@@ -22,8 +22,9 @@
 
 import { useCallback, useRef } from "react";
 import { useAiStore } from "@/store";
+import { useChartStore } from "@/store/chart";
 import { API_BASE } from "@/config/endpoints";
-import type { AiContextMode } from "@/lib/api";
+import type { AiContextMode, FibonacciSnapshot } from "@/lib/api";
 
 /* ── Types ── */
 
@@ -57,6 +58,23 @@ type SseEvent = SseTokenEvent | SseDoneEvent;
 
 function msgId(): string {
   return `msg_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function buildFibSnapshots(): FibonacciSnapshot[] {
+  return useChartStore
+    .getState()
+    .activeFibs
+    .map((fib, index) => ({
+      source: fib.source,
+      swing_high: fib.result.swing_high,
+      swing_low: fib.result.swing_low,
+      swing_high_time: fib.result.swing_high_time,
+      swing_low_time: fib.result.swing_low_time,
+      direction: fib.result.direction,
+      score: fib.result.score,
+      is_primary: index === 0,
+      timeframe: null,
+    }));
 }
 
 /**
@@ -111,10 +129,15 @@ export function useAiAnalyzeStream() {
       const startedAt = performance.now();
 
       try {
+        const payload = {
+          ...req,
+          fibs: buildFibSnapshots(),
+        };
+
         const resp = await fetch(`${API_BASE}/ai/analyze/stream`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(req),
+          body: JSON.stringify(payload),
           signal: controller.signal,
         });
 

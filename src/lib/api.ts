@@ -537,6 +537,21 @@ export interface AnalyzeRequest {
   context_mode?: AiContextMode;
   /** Number of bars to include when context_mode != "none" (5–30). */
   context_bars?: number;
+  /** Active fibs currently rendered on the chart. */
+  fibs?: FibonacciSnapshot[];
+}
+
+export interface FibonacciSnapshot {
+  source: "auto" | "manual" | "locked";
+  swing_high: number;
+  swing_low: number;
+  swing_high_time: number;
+  swing_low_time: number;
+  direction: "up" | "down";
+  score?: number;
+  is_primary: boolean;
+  timeframe: string | null;
+  note?: string;
 }
 
 export interface ChatRequest {

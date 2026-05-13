@@ -41,6 +41,7 @@ from models import (
     ChatRequest,
     ChatResponse,
     CandleData,
+    FibonacciSnapshot,
     ModelSelectRequest,
     OllamaModelResponse,
     RecommendedModel,
@@ -120,6 +121,7 @@ async def _fetch_timeframe_data(
     indicators: list[str],
     ibkr: IBKRService,
     fib_weights: dict[str, float] | None = None,
+    fib_snapshots: list[FibonacciSnapshot] | None = None,
 ) -> dict:
     """
     Fetch candle data from IBKR and compute indicators for one timeframe.
@@ -128,6 +130,11 @@ async def _fetch_timeframe_data(
     `fib_weights` is preloaded once per analyze request (Branch 3) so
     every per-TF compute uses the same user-edited weights without
     re-hitting the DB.
+
+    When frontend-provided fib snapshots are relevant for this timeframe,
+    they override backend auto-detection for prompt construction. We
+    still compute the other indicators from candles so the analysis keeps
+    full chart context.
     """
     ibkr_period, ibkr_bar = AI_TIMEFRAME_MAP.get(timeframe, ("3m", "1d"))
 
@@ -148,18 +155,27 @@ async def _fetch_timeframe_data(
         ))
 
     if not candles:
-        return {"candles": [], "indicators": [], "fibonacci": None}
+        return {"candles": [], "indicators": [], "fibonacci": None, "fibs": []}
+
+    tf_snapshots = [
+        snap for snap in (fib_snapshots or [])
+        if snap.timeframe is None or snap.timeframe == timeframe
+    ]
+    compute_indicators = indicators
+    if tf_snapshots:
+        compute_indicators = [name for name in indicators if name != "fibonacci"]
 
     indicator_results, fibonacci = _indicator_service.compute(
         candles=candles,
-        indicators=indicators,
+        indicators=compute_indicators,
         weights=fib_weights,
     )
 
     return {
         "candles": candles,
         "indicators": indicator_results,
-        "fibonacci": fibonacci,
+        "fibonacci": None if tf_snapshots else fibonacci,
+        "fibs": tf_snapshots,
     }
 
 
@@ -415,6 +431,7 @@ async def analyze(
             indicators=resolved_indicators,
             ibkr=ibkr,
             fib_weights=fib_weights,
+            fib_snapshots=request.fibs,
         )
         timeframe_data[tf] = tf_data
 
@@ -522,6 +539,7 @@ async def analyze_stream(
             indicators=resolved_indicators,
             ibkr=ibkr,
             fib_weights=fib_weights,
+            fib_snapshots=request.fibs,
         )
 
     log.info(

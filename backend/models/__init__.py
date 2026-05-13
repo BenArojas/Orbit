@@ -445,6 +445,26 @@ class FibonacciResult(BaseModel):
     no_active_fib_reason: Optional[str] = None
 
 
+class FibonacciSnapshot(BaseModel):
+    """
+    Snapshot of one fib currently active on the user's chart.
+
+    This is the lightweight contract the frontend sends to the AI
+    endpoint so the prompt can reflect the exact fibs the trader chose
+    to keep visible, without leaking candidate-panel history.
+    """
+    source: Literal["auto", "manual", "locked"]
+    swing_high: float
+    swing_low: float
+    swing_high_time: int
+    swing_low_time: int
+    direction: Literal["up", "down"]
+    score: Optional[float] = None
+    is_primary: bool = False
+    timeframe: Optional[str] = None
+    note: Optional[str] = None
+
+
 class IndicatorComputeResponse(BaseModel):
     """
     Full response from POST /indicators/compute.
@@ -677,6 +697,13 @@ class AnalyzeRequest(BaseModel):
         ge=5,
         le=30,
         description="Number of bars to include when context_mode != 'none' (5–30).",
+    )
+    fibs: list[FibonacciSnapshot] = Field(
+        default_factory=list,
+        description=(
+            "User's active fibs on the chart. When non-empty, these override "
+            "server-side auto-detection for AI prompting."
+        ),
     )
 
 

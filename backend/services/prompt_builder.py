@@ -30,7 +30,12 @@ import datetime
 import logging
 from typing import Optional
 
-from models import CandleData, IndicatorResult, FibonacciResult
+from models import CandleData, IndicatorResult, FibonacciResult, FibonacciSnapshot
+from services.indicators import (
+    FIB_EXTENSION_LEVELS,
+    FIB_RETRACEMENT_LEVELS,
+    IndicatorService,
+)
 
 log = logging.getLogger("parallax.prompt")
 
@@ -285,6 +290,74 @@ def _format_fibonacci(
     # Reasoning is short — include it verbatim so the LLM can cite it
     if fibonacci.reasoning:
         lines.append(f"  Reasoning: {fibonacci.reasoning}")
+
+    return lines
+
+
+def _format_fibs(
+    snapshots: list[FibonacciSnapshot],
+    last: CandleData,
+) -> list[str]:
+    """
+    Format frontend-provided active fib snapshots for the LLM prompt.
+
+    The frontend sends only the fibs currently visible on the chart, so
+    this formatter intentionally ignores candidate-panel history and
+    renders only the active stack in display order.
+    """
+    if not snapshots:
+        return []
+
+    lines: list[str] = [""]
+    locked_count = 0
+
+    for snap in snapshots:
+        if snap.is_primary:
+            header = f"Primary fib ({snap.direction.upper()} swing):"
+        else:
+            locked_count += 1
+            header = f"Locked fib #{locked_count} ({snap.direction.upper()} swing):"
+
+        lines.append(header)
+
+        summary = (
+            f"  Source: {snap.source.upper()}  "
+            f"Swing: ${snap.swing_low:.2f} → ${snap.swing_high:.2f}"
+        )
+        if snap.score is not None:
+            summary += f"  Score: {snap.score:.1f}/100"
+        lines.append(summary)
+
+        retracement_levels = IndicatorService._build_levels(
+            swing_low=snap.swing_low,
+            swing_high=snap.swing_high,
+            direction=snap.direction,
+            ratios=FIB_RETRACEMENT_LEVELS,
+            kind="retracement",
+        )
+        lines.append("  Retracement:")
+        for level in retracement_levels:
+            proximity = abs(last.close - level.price) / last.close * 100 if last.close > 0.01 else 0
+            marker = " ← NEAR" if proximity < 1.0 else ""
+            gp_tag = " [GP]" if level.golden_pocket else ""
+            lines.append(f"    {level.label}: ${level.price:.2f}{gp_tag}{marker}")
+
+        extension_levels = IndicatorService._build_levels(
+            swing_low=snap.swing_low,
+            swing_high=snap.swing_high,
+            direction=snap.direction,
+            ratios=FIB_EXTENSION_LEVELS,
+            kind="extension",
+        )
+        key_ratios = {1.272, 1.414, 1.5, 1.618, 2.0}
+        key_exts = [e for e in extension_levels if e.level in key_ratios]
+        if key_exts:
+            lines.append("  Extension targets:")
+            for level in key_exts:
+                lines.append(f"    {level.label}: ${level.price:.2f}")
+
+        if snap.note:
+            lines.append(f"  Note: {snap.note}")
 
     return lines
 
@@ -612,6 +685,7 @@ def build_indicator_context(
     candles: list[CandleData],
     indicators: list[IndicatorResult],
     fibonacci: Optional[FibonacciResult] = None,
+    fibs: Optional[list[FibonacciSnapshot]] = None,
     indicator_priority: Optional[list[str]] = None,
     context_mode: str = "none",
     context_bars: int = 10,
@@ -667,7 +741,9 @@ def build_indicator_context(
 
     # Fibonacci (separate data path) — if prioritized, it already got
     # emphasis from being mentioned in the system prompt priority section
-    if fibonacci:
+    if fibs:
+        lines.extend(_format_fibs(fibs, last))
+    elif fibonacci:
         lines.extend(_format_fibonacci(fibonacci, last))
 
     # ── Optional chart context block ─────────────────────────
@@ -710,6 +786,7 @@ def build_multi_timeframe_context(
             candles=data.get("candles", []),
             indicators=data.get("indicators", []),
             fibonacci=data.get("fibonacci"),
+            fibs=data.get("fibs"),
             indicator_priority=indicator_priority,
             context_mode=context_mode,
             context_bars=context_bars,
