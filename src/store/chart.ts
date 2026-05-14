@@ -73,9 +73,16 @@ export interface ActiveFib {
  * retracement / purple extension). Each subsequent slot is a muted
  * palette so the primary stays salient.
  *
- * Each entry exposes the three roles the overlay needs to know about.
+ * Each entry exposes the colors the overlay needs to know about.
  * Hex / rgba literals — alpha will be modulated at render time
- * (locked fibs render at ~0.45× opacity per plan decision 8C).
+ * (locked fibs render at ~0.55× opacity per plan decision 8C).
+ *
+ * Branch 6 (plan decision 2A) keeps the per-fib color theming for
+ * GP / non-GP retracement / extension but moves the SWING BOUNDARY
+ * lines (0 and 1.0) to a shared bright magenta so they always pop
+ * against bull-green / bear-red candles, regardless of which fib
+ * they belong to. The per-fib disambiguation is carried by the
+ * "(P)" / "(L1)" / "(L2)" suffix on the price scale instead.
  */
 export interface FibPaletteEntry {
   /** Color for the golden-pocket levels (0.618 / 0.65 / 0.716). */
@@ -84,75 +91,76 @@ export interface FibPaletteEntry {
   retracement: string;
   /** Color for extension levels. */
   extension: string;
-  /** Color for swing boundary lines (0 and 1.0). */
-  swingBound: string;
   /** Human-readable name used in the legend. */
   name: string;
 }
 
+/**
+ * Shared color for swing boundary lines (the 0 and 1.0 retracement
+ * levels). Used across all fibs. Magenta — high contrast against the
+ * bull-green / bear-red candle palette, no risk of being mistaken for
+ * a price-direction signal. (Plan decision 2A.)
+ */
+export const FIB_BOUNDARY_COLOR = "rgba(255, 60, 220, 0.85)";
+
 export const FIB_COLOR_PALETTE: readonly FibPaletteEntry[] = [
-  // 0 — primary (matches existing FibonacciOverlay defaults).
+  // 0 — primary. Opacity bumped (0.55/0.70 → 0.85) per Branch 6:
+  // non-GP retracement lines now match GP weight + font, so they need
+  // a similar visual presence too.
   {
-    goldenPocket: "rgba(255, 200, 0, 0.70)",
-    retracement:  "rgba(0, 212, 255, 0.55)",
+    goldenPocket: "rgba(255, 200, 0, 0.85)",
+    retracement:  "rgba(0, 212, 255, 0.85)",
     extension:    "rgba(136, 68, 255, 0.55)",
-    swingBound:   "rgba(255, 255, 255, 0.25)",
     name: "Primary",
   },
-  // 1 — teal
+  // 1 — teal. Bumped from 0.55/0.40 → 0.75/0.65 so locked retracement
+  // lines stay legible after the 0.55× locked-opacity scaling.
   {
-    goldenPocket: "rgba(64, 224, 208, 0.55)",
-    retracement:  "rgba(64, 224, 208, 0.40)",
-    extension:    "rgba(64, 224, 208, 0.30)",
-    swingBound:   "rgba(64, 224, 208, 0.25)",
+    goldenPocket: "rgba(64, 224, 208, 0.75)",
+    retracement:  "rgba(64, 224, 208, 0.65)",
+    extension:    "rgba(64, 224, 208, 0.45)",
     name: "Teal",
   },
   // 2 — salmon
   {
-    goldenPocket: "rgba(250, 128, 114, 0.55)",
-    retracement:  "rgba(250, 128, 114, 0.40)",
-    extension:    "rgba(250, 128, 114, 0.30)",
-    swingBound:   "rgba(250, 128, 114, 0.25)",
+    goldenPocket: "rgba(250, 128, 114, 0.75)",
+    retracement:  "rgba(250, 128, 114, 0.65)",
+    extension:    "rgba(250, 128, 114, 0.45)",
     name: "Salmon",
   },
   // 3 — lavender
   {
-    goldenPocket: "rgba(181, 126, 220, 0.55)",
-    retracement:  "rgba(181, 126, 220, 0.40)",
-    extension:    "rgba(181, 126, 220, 0.30)",
-    swingBound:   "rgba(181, 126, 220, 0.25)",
+    goldenPocket: "rgba(181, 126, 220, 0.75)",
+    retracement:  "rgba(181, 126, 220, 0.65)",
+    extension:    "rgba(181, 126, 220, 0.45)",
     name: "Lavender",
   },
   // 4 — sage
   {
-    goldenPocket: "rgba(143, 188, 143, 0.55)",
-    retracement:  "rgba(143, 188, 143, 0.40)",
-    extension:    "rgba(143, 188, 143, 0.30)",
-    swingBound:   "rgba(143, 188, 143, 0.25)",
+    goldenPocket: "rgba(143, 188, 143, 0.75)",
+    retracement:  "rgba(143, 188, 143, 0.65)",
+    extension:    "rgba(143, 188, 143, 0.45)",
     name: "Sage",
   },
   // 5 — amber
   {
-    goldenPocket: "rgba(255, 159, 28, 0.55)",
-    retracement:  "rgba(255, 159, 28, 0.40)",
-    extension:    "rgba(255, 159, 28, 0.30)",
-    swingBound:   "rgba(255, 159, 28, 0.25)",
+    goldenPocket: "rgba(255, 159, 28, 0.75)",
+    retracement:  "rgba(255, 159, 28, 0.65)",
+    extension:    "rgba(255, 159, 28, 0.45)",
     name: "Amber",
   },
   // 6 — rose
   {
-    goldenPocket: "rgba(255, 102, 153, 0.55)",
-    retracement:  "rgba(255, 102, 153, 0.40)",
-    extension:    "rgba(255, 102, 153, 0.30)",
-    swingBound:   "rgba(255, 102, 153, 0.25)",
+    goldenPocket: "rgba(255, 102, 153, 0.75)",
+    retracement:  "rgba(255, 102, 153, 0.65)",
+    extension:    "rgba(255, 102, 153, 0.45)",
     name: "Rose",
   },
   // 7 — sky
   {
-    goldenPocket: "rgba(135, 206, 235, 0.55)",
-    retracement:  "rgba(135, 206, 235, 0.40)",
-    extension:    "rgba(135, 206, 235, 0.30)",
-    swingBound:   "rgba(135, 206, 235, 0.25)",
+    goldenPocket: "rgba(135, 206, 235, 0.75)",
+    retracement:  "rgba(135, 206, 235, 0.65)",
+    extension:    "rgba(135, 206, 235, 0.45)",
     name: "Sky",
   },
 ];

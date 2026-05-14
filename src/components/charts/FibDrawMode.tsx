@@ -26,13 +26,48 @@ import {
   type Time,
 } from "lightweight-charts";
 
-import { useChartStore, type FibDrawPoint } from "@/store/chart";
+import {
+  FIB_BOUNDARY_COLOR,
+  FIB_COLOR_PALETTE,
+  useChartStore,
+  type FibDrawPoint,
+} from "@/store/chart";
 import { useLockFib } from "@/hooks/useLockedFibs";
 
 // ── Constants ────────────────────────────────────────────────
 
 const GHOST_LEVELS = [0, 0.382, 0.5, 0.618, 0.65, 0.716, 1.0];
-const GHOST_COLOR = "rgba(255, 200, 0, 0.30)";
+
+/** Levels that fall inside the golden pocket. */
+const GHOST_GP_LEVELS = new Set([0.618, 0.65, 0.716]);
+
+// Branch 6 (plan decision 2A): the ghost preview now uses the same
+// color rules as the locked overlay. Pulled from the PRIMARY palette
+// slot so what the user sees during draw matches what they'll see
+// once the fib is locked. Slightly more transparent than the final
+// render (×0.85) to keep "this is a preview" feel without going so
+// faint that the line disappears.
+const GHOST_PREVIEW_OPACITY = 0.85;
+
+function ghostColor(ratio: number): string {
+  if (ratio === 0 || ratio === 1.0) return FIB_BOUNDARY_COLOR;
+  const primary = FIB_COLOR_PALETTE[0];
+  return GHOST_GP_LEVELS.has(ratio)
+    ? primary.goldenPocket
+    : primary.retracement;
+}
+
+/** Scale the alpha channel of an `rgba(...)` color by `factor`. */
+function applyAlpha(color: string, factor: number): string {
+  const match =
+    /^rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*(?:,\s*([\d.]+)\s*)?\)$/i.exec(
+      color,
+    );
+  if (!match) return color;
+  const [, r, g, b, a = "1"] = match;
+  const newAlpha = Math.max(0, Math.min(1, parseFloat(a) * factor));
+  return `rgba(${r}, ${g}, ${b}, ${newAlpha.toFixed(3)})`;
+}
 
 // ── Props ────────────────────────────────────────────────────
 
@@ -85,13 +120,18 @@ export default function FibDrawMode({
   const ensureGhostSeries = useCallback(() => {
     if (!chart || ghostSeriesRef.current.length === GHOST_LEVELS.length) return;
 
-    // Create series once — they'll be reused via setData on each move
+    // Create series once — they'll be reused via setData on each move.
+    // Each ghost line gets the same color treatment the final overlay
+    // will: magenta for the 0 / 1.0 boundaries, gold for GP rows,
+    // cyan for non-GP retracement rows. Solid weight-2 across the
+    // board so the ghost preview reads as a real fib, not a tooltip.
     clearGhost();
     for (let i = 0; i < GHOST_LEVELS.length; i++) {
+      const ratio = GHOST_LEVELS[i];
       const series = chart.addSeries(LineSeries, {
-        color: GHOST_COLOR,
-        lineWidth: 1,
-        lineStyle: 2, // dashed
+        color: applyAlpha(ghostColor(ratio), GHOST_PREVIEW_OPACITY),
+        lineWidth: 2,
+        lineStyle: 0, // solid — matches the post-lock styling
         priceLineVisible: false,
         lastValueVisible: false,
         crosshairMarkerVisible: false,

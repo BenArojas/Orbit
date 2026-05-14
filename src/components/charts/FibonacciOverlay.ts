@@ -31,6 +31,7 @@ import {
 
 import type { FibonacciLevel } from "@/lib/api";
 import {
+  FIB_BOUNDARY_COLOR,
   FIB_COLOR_PALETTE,
   type ActiveFib,
   type FibPaletteEntry,
@@ -151,22 +152,34 @@ function addLevelLine(
   let lineWidth: number;
   let lineStyle: number; // 0=solid, 2=dashed, 3=dotted
 
+  // Branch 6 (plan decision 2A):
+  //   - Boundary lines (0 and 1.0) are bright magenta across every
+  //     fib, weight 2, solid. High contrast against the candle
+  //     palette.
+  //   - GP and non-GP retracement lines share the same weight (2) and
+  //     style (solid). Only their COLOR differentiates them (gold vs
+  //     cyan for the primary). This matches the user's request that
+  //     "all levels between 0 and 1 should match the golden pocket
+  //     line weight/font".
+  //   - Extension lines keep the lighter dashed treatment so target
+  //     levels read as projections rather than entries.
   if (isBoundary) {
-    color = palette.swingBound;
-    lineWidth = 1;
-    lineStyle = 3; // dotted
+    color = FIB_BOUNDARY_COLOR;
+    lineWidth = 2;
+    lineStyle = 0; // solid
   } else if (isGP) {
     color = palette.goldenPocket;
     lineWidth = 2;
-    lineStyle = 0; // solid — GP band should stand out
+    lineStyle = 0;
   } else if (kind === "extension") {
     color = palette.extension;
     lineWidth = 1;
     lineStyle = 2; // dashed
   } else {
+    // Non-GP retracement: weight + style now match GP.
     color = palette.retracement;
-    lineWidth = 1;
-    lineStyle = 2; // dashed
+    lineWidth = 2;
+    lineStyle = 0;
   }
 
   if (opacity !== 1.0) {
