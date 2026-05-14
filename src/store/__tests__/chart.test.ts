@@ -266,3 +266,83 @@ describe("chart store — activeFibs (Branch 4)", () => {
     expect(FIB_STACK_HARD_CAP).toBe(8);
   });
 });
+
+// ── Branch 7: setActiveConid full-reset behavior ────────────
+
+describe("chart store — setActiveConid resets chart state (Branch 7)", () => {
+  it("changing conid resets activeIndicators back to defaults (empty)", () => {
+    useChartStore.getState().setActiveConid(265598);
+    useChartStore.getState().toggleIndicator("rsi");
+    useChartStore.getState().toggleIndicator("ema21");
+    expect(useChartStore.getState().activeIndicators.size).toBe(2);
+
+    useChartStore.getState().setActiveConid(8314);
+    expect(useChartStore.getState().activeIndicators.size).toBe(0);
+  });
+
+  it("changing conid resets timeframe to 1D (plan decision 10A)", () => {
+    useChartStore.getState().setActiveConid(265598);
+    useChartStore.getState().setTimeframe("4h");
+    expect(useChartStore.getState().timeframe).toBe("4h");
+
+    useChartStore.getState().setActiveConid(8314);
+    expect(useChartStore.getState().timeframe).toBe("1D");
+  });
+
+  it("changing conid clears fibDrawMode and fibDrawPointA", () => {
+    useChartStore.getState().setActiveConid(265598);
+    useChartStore.getState().enterFibDrawMode("retracement");
+    useChartStore.getState().setFibDrawPointA({ time: 1, price: 100 });
+    expect(useChartStore.getState().fibDrawMode).toBe("retracement");
+
+    useChartStore.getState().setActiveConid(8314);
+    expect(useChartStore.getState().fibDrawMode).toBeNull();
+    expect(useChartStore.getState().fibDrawPointA).toBeNull();
+  });
+
+  it("changing conid clears displayedFibOverride, fibCleared, activeFibs", () => {
+    useChartStore.getState().setActiveConid(265598);
+    useChartStore.getState().setDisplayedFib(makeCandidate());
+    useChartStore.getState().setPrimaryFib(makeResult());
+    useChartStore.getState().addLockedFib(7, makeResult());
+    useChartStore.getState().clearChartFib();
+    expect(useChartStore.getState().fibCleared).toBe(true);
+    expect(useChartStore.getState().activeFibs.length).toBeGreaterThan(0);
+
+    useChartStore.getState().setActiveConid(8314);
+    expect(useChartStore.getState().displayedFibOverride).toBeNull();
+    expect(useChartStore.getState().fibCleared).toBe(false);
+    expect(useChartStore.getState().activeFibs).toEqual([]);
+  });
+
+  it("same conid is idempotent — no state changes (plan decision 10B note)", () => {
+    useChartStore.getState().setActiveConid(265598);
+    useChartStore.getState().toggleIndicator("rsi");
+    useChartStore.getState().setTimeframe("4h");
+    useChartStore.getState().setPrimaryFib(makeResult());
+
+    // Snapshot the things that should NOT change on a same-conid set.
+    const before = useChartStore.getState();
+    const beforeSnapshot = {
+      timeframe: before.timeframe,
+      indicators: new Set(before.activeIndicators),
+      activeFibs: before.activeFibs,
+    };
+
+    useChartStore.getState().setActiveConid(265598);
+
+    const after = useChartStore.getState();
+    expect(after.timeframe).toBe(beforeSnapshot.timeframe);
+    expect(after.activeIndicators).toEqual(beforeSnapshot.indicators);
+    expect(after.activeFibs).toBe(beforeSnapshot.activeFibs); // reference equality — no recreation
+  });
+
+  it("does not overwrite activeSymbol — the resolver owns that field", () => {
+    useChartStore.getState().setActiveSymbol("AAPL");
+    useChartStore.getState().setActiveConid(265598);
+    // Setting conid alone must not clear the symbol the resolver
+    // wrote a moment earlier (they're set in close succession by the
+    // resolveConidMutation onSuccess).
+    expect(useChartStore.getState().activeSymbol).toBe("AAPL");
+  });
+});

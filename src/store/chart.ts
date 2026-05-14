@@ -281,7 +281,35 @@ export const useChartStore = create<ChartState>()((set, get) => ({
   fibCleared: false,
   activeFibs: [],
 
-  setActiveConid: (conid) => set({ activeConid: conid }),
+  // Branch 7 / plan decisions 10A + 10B:
+  // Switching to a new instrument resets the whole chart so the
+  // trader gets a clean slate. Indicators chosen for AAPL rarely
+  // make sense for, say, ES futures; carrying over fib state,
+  // draw mode, or candidate overrides is even more surprising.
+  // The AI chat is cleared by an effect in AnalysisPage.tsx (it
+  // owns the cross-store coordination so this slice stays self-
+  // contained). Locked fibs are conid-scoped on the server — the
+  // useLockedFibs query refetches and repopulates `activeFibs`
+  // for the new conid asynchronously.
+  //
+  // Same-conid sets are idempotent (no-op) so callers can safely
+  // re-issue the same value without nuking state. activeSymbol
+  // is intentionally NOT touched — the symbol resolver writes it
+  // independently and shouldn't race with this reset.
+  setActiveConid: (conid) =>
+    set((state) => {
+      if (state.activeConid === conid) return {};
+      return {
+        activeConid: conid,
+        timeframe: "1D",
+        activeIndicators: new Set<IndicatorId>(DEFAULT_INDICATORS),
+        fibDrawMode: null,
+        fibDrawPointA: null,
+        displayedFibOverride: null,
+        fibCleared: false,
+        activeFibs: [],
+      };
+    }),
 
   setActiveSymbol: (symbol) => set({ activeSymbol: symbol }),
 
