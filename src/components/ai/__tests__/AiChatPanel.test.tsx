@@ -259,3 +259,186 @@ describe("AiChatPanel — section order", () => {
     expect(screen.queryByTestId("fib-section")).toBeNull();
   });
 });
+
+// ── Copy button on assistant bubbles (Branch 8 — plan item 6) ─
+
+describe("AiChatPanel — assistant bubble Copy button", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockAnalyzing.current = false;
+  });
+
+  it("renders a copy button on assistant bubbles only, not user bubbles", async () => {
+    vi.resetModules();
+    vi.doMock("@/store", () => ({
+      useAiStore: Object.assign(
+        () => ({
+          sessionId: "s",
+          messages: [
+            { id: "user-1", role: "user", content: "Hi" },
+            { id: "asst-1", role: "assistant", content: "Hello" },
+          ],
+          signal: null,
+          isAnalyzing: false,
+          responseTimes: [],
+        }),
+        { getState: () => ({ streamingContent: "" }) },
+      ),
+    }));
+
+    const { default: AiChatPanel } = await import("../AiChatPanel");
+    render(
+      createElement(AiChatPanel, {
+        activeConid: 265598,
+        activeSymbol: "AAPL",
+        fibonacci: null,
+      }),
+    );
+
+    expect(screen.getByTestId("copy-msg-asst-1")).toBeTruthy();
+    expect(screen.queryByTestId("copy-msg-user-1")).toBeNull();
+  });
+
+  it("clicking copy writes the message content to the clipboard and flips data-copied to true", async () => {
+    const writeText = vi.fn(() => Promise.resolve());
+    // jsdom doesn't ship navigator.clipboard — install a stub.
+    Object.defineProperty(globalThis.navigator, "clipboard", {
+      value: { writeText },
+      writable: true,
+      configurable: true,
+    });
+
+    vi.resetModules();
+    vi.doMock("@/store", () => ({
+      useAiStore: Object.assign(
+        () => ({
+          sessionId: "s",
+          messages: [
+            { id: "asst-2", role: "assistant", content: "Analysis text." },
+          ],
+          signal: null,
+          isAnalyzing: false,
+          responseTimes: [],
+        }),
+        { getState: () => ({ streamingContent: "" }) },
+      ),
+    }));
+
+    const { default: AiChatPanel } = await import("../AiChatPanel");
+    const { fireEvent, act } = await import("@testing-library/react");
+    render(
+      createElement(AiChatPanel, {
+        activeConid: 265598,
+        activeSymbol: "AAPL",
+        fibonacci: null,
+      }),
+    );
+
+    const btn = screen.getByTestId("copy-msg-asst-2");
+    // Pre-click state.
+    expect(btn.getAttribute("data-copied")).toBe("false");
+
+    await act(async () => {
+      fireEvent.click(btn);
+    });
+
+    expect(writeText).toHaveBeenCalledTimes(1);
+    expect(writeText).toHaveBeenCalledWith("Analysis text.");
+    expect(screen.getByTestId("copy-msg-asst-2").getAttribute("data-copied")).toBe("true");
+  });
+
+  it("data-copied resets to false after the confirmation timeout", async () => {
+    const writeText = vi.fn(() => Promise.resolve());
+    Object.defineProperty(globalThis.navigator, "clipboard", {
+      value: { writeText },
+      writable: true,
+      configurable: true,
+    });
+
+    vi.useFakeTimers();
+    vi.resetModules();
+    vi.doMock("@/store", () => ({
+      useAiStore: Object.assign(
+        () => ({
+          sessionId: "s",
+          messages: [
+            { id: "asst-3", role: "assistant", content: "abc" },
+          ],
+          signal: null,
+          isAnalyzing: false,
+          responseTimes: [],
+        }),
+        { getState: () => ({ streamingContent: "" }) },
+      ),
+    }));
+
+    try {
+      const { default: AiChatPanel } = await import("../AiChatPanel");
+      const { fireEvent, act } = await import("@testing-library/react");
+      render(
+        createElement(AiChatPanel, {
+          activeConid: 265598,
+          activeSymbol: "AAPL",
+          fibonacci: null,
+        }),
+      );
+
+      const btn = screen.getByTestId("copy-msg-asst-3");
+      await act(async () => {
+        fireEvent.click(btn);
+      });
+      expect(btn.getAttribute("data-copied")).toBe("true");
+
+      // Advance past the 1500 ms confirmation window.
+      await act(async () => {
+        vi.advanceTimersByTime(1600);
+      });
+      expect(screen.getByTestId("copy-msg-asst-3").getAttribute("data-copied")).toBe("false");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not crash if navigator.clipboard is unavailable (falls back silently)", async () => {
+    // Remove the clipboard so writeText throws.
+    Object.defineProperty(globalThis.navigator, "clipboard", {
+      value: undefined,
+      writable: true,
+      configurable: true,
+    });
+
+    vi.resetModules();
+    vi.doMock("@/store", () => ({
+      useAiStore: Object.assign(
+        () => ({
+          sessionId: "s",
+          messages: [
+            { id: "asst-4", role: "assistant", content: "no clipboard" },
+          ],
+          signal: null,
+          isAnalyzing: false,
+          responseTimes: [],
+        }),
+        { getState: () => ({ streamingContent: "" }) },
+      ),
+    }));
+
+    const { default: AiChatPanel } = await import("../AiChatPanel");
+    const { fireEvent, act } = await import("@testing-library/react");
+    render(
+      createElement(AiChatPanel, {
+        activeConid: 265598,
+        activeSymbol: "AAPL",
+        fibonacci: null,
+      }),
+    );
+
+    const btn = screen.getByTestId("copy-msg-asst-4");
+    await act(async () => {
+      fireEvent.click(btn);
+    });
+    // Even without a working clipboard, the UI confirms (the user
+    // gets visual feedback) — graceful degradation, not a crash.
+    expect(btn.getAttribute("data-copied")).toBe("true");
+  });
+});

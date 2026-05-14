@@ -18,6 +18,8 @@
  */
 
 import { useState, useRef, useEffect, useCallback, type KeyboardEvent } from "react";
+import { Check, Copy } from "lucide-react";
+
 import { useAiStore, type ChatMessage } from "@/store";
 import type { IndicatorId } from "@/store/chart";
 import { useAiStatus } from "@/hooks/useAiStatus";
@@ -47,13 +49,54 @@ interface AiChatPanelProps {
 
 /* ── Message bubble sub-component ── */
 
+/**
+ * Branch 8: Assistant bubbles get a hover-revealed copy button in the
+ * top-right corner. One click copies the message content to the
+ * clipboard; the icon swaps to a checkmark for ~1.5 s to confirm.
+ * User bubbles do NOT get the button — the user already has their own
+ * text, copying it back to themselves is noise.
+ */
+const COPY_CONFIRM_MS = 1500;
+
 function ChatBubble({ msg }: { msg: ChatMessage }) {
   const isUser = msg.role === "user";
+  const [copied, setCopied] = useState(false);
+  const copyTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Clear the pending checkmark-reset on unmount so we don't call
+  // setState on a torn-down component (e.g. when the user switches
+  // tickers while the confirmation is still showing).
+  useEffect(() => {
+    return () => {
+      if (copyTimeoutRef.current) {
+        clearTimeout(copyTimeoutRef.current);
+      }
+    };
+  }, []);
+
+  const handleCopy = useCallback(async () => {
+    // navigator.clipboard.writeText is a Promise — but the visual
+    // confirmation flips immediately so the user gets feedback even
+    // on slow paths.  Any failure (permissions, headless env) is
+    // swallowed silently; the user can copy manually as a fallback.
+    try {
+      await navigator.clipboard?.writeText(msg.content);
+    } catch {
+      /* clipboard unavailable — fall through */
+    }
+    setCopied(true);
+    if (copyTimeoutRef.current) clearTimeout(copyTimeoutRef.current);
+    copyTimeoutRef.current = setTimeout(() => {
+      setCopied(false);
+      copyTimeoutRef.current = null;
+    }, COPY_CONFIRM_MS);
+  }, [msg.content]);
 
   return (
     <div className={`flex ${isUser ? "justify-end" : "justify-start"}`}>
       <div
-        className="max-w-[85%] rounded-lg px-3 py-2 text-[11px] leading-relaxed"
+        // `group` enables the hover-only reveal on the copy button.
+        className="group relative max-w-[85%] rounded-lg px-3 py-2 pr-7 text-[11px] leading-relaxed"
         style={{
           background: isUser ? "var(--bg-4)" : "var(--bg-0)",
           color: "var(--text-2)",
@@ -62,6 +105,31 @@ function ChatBubble({ msg }: { msg: ChatMessage }) {
         }}
       >
         <div className="whitespace-pre-wrap break-words">{msg.content}</div>
+
+        {/* Copy button — assistant bubbles only. Hidden by default,
+            revealed on bubble hover. After click, the icon swaps to
+            Check and stays for COPY_CONFIRM_MS. */}
+        {!isUser && (
+          <button
+            type="button"
+            onClick={handleCopy}
+            data-testid={`copy-msg-${msg.id}`}
+            data-copied={copied ? "true" : "false"}
+            aria-label={copied ? "Copied" : "Copy message to clipboard"}
+            title={copied ? "Copied!" : "Copy"}
+            className={`absolute right-1 top-1 flex h-5 w-5 items-center justify-center rounded text-[var(--text-3)] transition-all hover:text-[var(--clr-cyan)] hover:bg-[rgba(0,212,255,0.08)] ${
+              copied
+                ? "opacity-100 text-[var(--clr-green)]"
+                : "opacity-0 group-hover:opacity-100 focus:opacity-100"
+            }`}
+          >
+            {copied ? (
+              <Check size={11} strokeWidth={2.5} />
+            ) : (
+              <Copy size={11} strokeWidth={2} />
+            )}
+          </button>
+        )}
       </div>
     </div>
   );
