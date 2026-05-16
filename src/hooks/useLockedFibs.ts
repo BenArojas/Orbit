@@ -91,29 +91,30 @@ export { GOLDEN_POCKET_RATIOS };
 // ── Helper: render locked fibs as ActiveFibs in the store ────
 //
 // Mounted alongside the GET query so the store always reflects the
-// latest server snapshot. Dedupes via the store action's lockId check.
+// latest server snapshot. Bug-2 fix: this is now a FULL sync (replace
+// the locked portion with whatever the server returned) rather than
+// an append-only merge. The previous loop-and-addLockedFib pattern
+// couldn't propagate removals, which made the unlock UX broken — see
+// the comment on the chart store's replaceLockedFibs action for the
+// full failure mode.
 function useMergeLockedFibsIntoStore(
   lockedFibs: LockedFibonacciResponse[] | undefined,
 ): void {
-  const addLockedFib = useChartStore((s) => s.addLockedFib);
-  const activeFibs = useChartStore((s) => s.activeFibs);
+  const replaceLockedFibs = useChartStore((s) => s.replaceLockedFibs);
   const { config: fibConfig } = useFibConfig();
 
   useEffect(() => {
     if (!lockedFibs || !fibConfig) return;
-    // Any locked entry currently in the store that's no longer in the
-    // server response should be dropped (e.g., the user deleted it
-    // server-side from another tab). For v1 we accept that this won't
-    // run mid-app since we only mutate locks from this client.
-    for (const lock of lockedFibs) {
-      const result = lockedFibToResult(
+    const entries = lockedFibs.map((lock) => ({
+      lockId: lock.id,
+      result: lockedFibToResult(
         lock,
         fibConfig.ratios,
         fibConfig.extension_ratios,
-      );
-      addLockedFib(lock.id, result);
-    }
-  }, [lockedFibs, fibConfig, addLockedFib, activeFibs.length]);
+      ),
+    }));
+    replaceLockedFibs(entries);
+  }, [lockedFibs, fibConfig, replaceLockedFibs]);
 }
 
 // Re-exported alias to placate unused-import linters when consumers
@@ -150,13 +151,38 @@ export function useLockedFibs(conid: number | null) {
 
 /**
  * Lock a fib drawing.
- * Invalidates the locked-fibs query for the instrument on success.
+ *
+ * On success:
+ *   - Optimistically merge the new lock into the TanStack Query cache
+ *     so the FibStackPanel reflects it without waiting for a GET
+ *     refetch (the merge effect then picks it up via replaceLockedFibs).
+ *   - Clear `displayedFibOverride` so the primary "snaps back" to the
+ *     auto-detected fib. Without this, locking a candidate-pick would
+ *     leave the primary as the synthesized override result (with an
+ *     empty candidates list) — the UX gap users hit as "lock removed
+ *     my candidates panel."
+ *   - Invalidate the lockedFibs query so the next render picks up
+ *     any server-side changes we haven't anticipated.
  */
 export function useLockFib() {
   const qc = useQueryClient();
+  const clearDisplayedFib = useChartStore((s) => s.clearDisplayedFib);
   return useMutation({
     mutationFn: (req: LockFibonacciRequest) => api.lockFibonacci(req),
-    onSuccess: (_data, req) => {
+    onSuccess: (data, req) => {
+      // Optimistic cache write — append the just-locked fib so the
+      // merge effect sees it without a round-trip.
+      qc.setQueryData<LockedFibonacciResponse[]>(
+        lockedFibsKey(req.conid),
+        (prev) => {
+          if (!prev) return [data];
+          // Dedupe by id in case the server returned the same lock id
+          // we already have (idempotent POST).
+          if (prev.some((l) => l.id === data.id)) return prev;
+          return [...prev, data];
+        },
+      );
+      clearDisplayedFib();
       qc.invalidateQueries({ queryKey: lockedFibsKey(req.conid) });
     },
   });
@@ -165,6 +191,11 @@ export function useLockFib() {
 /**
  * Unlock (remove) a locked fib drawing.
  * Requires the lock id AND the conid so we can invalidate the right query.
+ *
+ * Bug-2 fix: writes the optimistic removal directly into the query
+ * cache BEFORE invalidation. Without this, the merge effect would
+ * re-add the just-removed lock from the still-stale cache before the
+ * refetch could complete.
  */
 export function useUnlockFib() {
   const qc = useQueryClient();
@@ -173,11 +204,18 @@ export function useUnlockFib() {
     mutationFn: ({ id }: { id: number; conid: number }) =>
       api.unlockFibonacci(id),
     onSuccess: (_data, { conid, id }) => {
-      qc.invalidateQueries({ queryKey: lockedFibsKey(conid) });
-      // Branch 4: optimistically drop the lock from the active stack
-      // so the chart updates immediately rather than waiting for the
-      // GET refetch.
+      // 1. Optimistic cache write — drop the lock from the cached
+      //    list FIRST so any synchronous re-renders that read it
+      //    see the right state.
+      qc.setQueryData<LockedFibonacciResponse[]>(
+        lockedFibsKey(conid),
+        (prev) => prev?.filter((l) => l.id !== id) ?? [],
+      );
+      // 2. Optimistic store update — drop from activeFibs so the
+      //    chart re-paints immediately.
       removeActiveFib(`lock-${id}`);
+      // 3. Invalidate — schedule a confirming refetch.
+      qc.invalidateQueries({ queryKey: lockedFibsKey(conid) });
     },
   });
 }

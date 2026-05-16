@@ -167,9 +167,27 @@ describe("fibonacciResultFromCandidate", () => {
     expect(result.extensions.length).toBe(EXT_RATIOS.length);
   });
 
-  it("does not carry over the candidates list (user already picked)", () => {
+  it("defaults to an empty candidates list when none provided", () => {
     const result = fibonacciResultFromCandidate(makeCandidate(), RATIOS, EXT_RATIOS);
     expect(result.candidates).toEqual([]);
+  });
+
+  it("carries the supplied originalCandidates list through (Bug-2 fix)", () => {
+    // Caller — useChartData — passes the AUTO fib's candidates so the
+    // Candidates panel stays visible after the user picks one.
+    const auto = [
+      makeCandidate({ score: 88 }),
+      makeCandidate({ score: 72, swing_low: 105 }),
+      makeCandidate({ score: 51, swing_low: 110 }),
+    ];
+    const result = fibonacciResultFromCandidate(
+      auto[1],
+      RATIOS,
+      EXT_RATIOS,
+      auto,
+    );
+    expect(result.candidates).toBe(auto);
+    expect(result.candidates).toHaveLength(3);
   });
 
   it("propagates the candidate's score and clarity", () => {

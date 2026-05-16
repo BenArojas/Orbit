@@ -255,6 +255,18 @@ interface ChartState {
    * true on success, false when the hard cap is hit. Branch 4.
    */
   addLockedFib: (lockId: number, result: FibonacciResult) => boolean;
+  /**
+   * Replace the entire LOCKED portion of activeFibs with the given
+   * entries. The primary (index 0, id === "primary") is preserved
+   * regardless. Each entry's colorIndex is preserved if the caller
+   * supplies one; otherwise it gets a fresh allocation from the
+   * palette. Used by useMergeLockedFibsIntoStore to do a full sync
+   * against the server's lock list instead of append-only updates.
+   * Branch — Bug 2 fix.
+   */
+  replaceLockedFibs: (
+    entries: { lockId: number; result: FibonacciResult }[],
+  ) => void;
   /** Remove an active fib by its id ("primary" or "lock-<id>"). */
   removeActiveFib: (id: string) => void;
   /** Wipe the entire stack. Called on conid change via clearChart. */
@@ -433,6 +445,41 @@ export const useChartStore = create<ChartState>()((set, get) => ({
     set({ activeFibs: [...state.activeFibs, locked] });
     return true;
   },
+
+  // Bug-2 fix. The previous append-only `addLockedFib` flow couldn't
+  // remove locked fibs that disappeared from the server's response.
+  // That broke the unlock UX: deleting a fib optimistically cleared
+  // it from the store, but the very next render of the merge effect
+  // saw it again in the still-stale TanStack Query cache and
+  // re-added it. The full-replace flow below is the canonical sync
+  // of "what the server has" → "what we render".
+  replaceLockedFibs: (entries) =>
+    set((state) => {
+      const primary = state.activeFibs.find((f) => f.id === "primary");
+      // Re-allocate color indices so we keep the palette gap-free
+      // when locks are added / removed in any order. Each entry gets
+      // the next unused slot starting from 1.
+      const built: ActiveFib[] = [];
+      let nextColorIndex = 1;
+      for (const { lockId, result } of entries) {
+        const colorIndex = Math.max(
+          1,
+          nextColorIndex < FIB_COLOR_PALETTE.length
+            ? nextColorIndex
+            : 1, // wrap; visual collision acceptable past palette size
+        );
+        nextColorIndex += 1;
+        built.push({
+          id: `lock-${lockId}`,
+          source: "locked",
+          lockId,
+          result,
+          colorIndex,
+        });
+      }
+      const next = primary ? [primary, ...built] : built;
+      return { activeFibs: next };
+    }),
 
   removeActiveFib: (id) =>
     set((state) => ({

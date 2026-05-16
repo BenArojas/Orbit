@@ -227,3 +227,94 @@ describe("FibStackPanel — no-active-fib primary suppresses Lock", () => {
     expect(btn).toBeDisabled();
   });
 });
+
+// ── Bug 2 fixes ──────────────────────────────────────────────
+
+describe("FibStackPanel — Bug 2 fixes", () => {
+  it("locking clears displayedFibOverride so the primary returns to auto", async () => {
+    useChartStore.getState().setPrimaryFib(
+      makeResult({ swing_high: 200, swing_low: 150, direction: "up" }),
+    );
+    // Simulate the user having previously picked a candidate.
+    useChartStore.getState().setDisplayedFib({
+      swing_high: 180,
+      swing_low: 160,
+      swing_high_time: 1,
+      swing_low_time: 0,
+      direction: "up",
+      score: 50,
+      swing_clarity: 0.5,
+      multi_touch_count: 0,
+      rejection_intensity: 0,
+      stretched_penalty: 0,
+      recency: 1,
+      is_nested: false,
+      parent_index: null,
+      status: "active",
+    });
+    expect(useChartStore.getState().displayedFibOverride).not.toBeNull();
+
+    render(withQueryClient(createElement(FibStackPanel)));
+    const btn = await screen.findByTestId("fib-lock-primary-button");
+    await act(async () => {
+      fireEvent.click(btn);
+    });
+
+    // Wait a microtask for onSuccess to fire.
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    // The override should now be cleared — primary "snaps back" to auto.
+    expect(useChartStore.getState().displayedFibOverride).toBeNull();
+  });
+
+  it("unlocking removes the lock from activeFibs and does NOT re-add it on the next render", async () => {
+    // Server starts with two locks. User clicks delete on lock-7;
+    // optimistic cache write removes it; the server-side mock removes
+    // it too (so the invalidation-driven refetch agrees). The store
+    // should end up with just lock-8 — lock-7 gone for good.
+    const mkLock = (id: number, high: number): LockedFibonacciResponse => ({
+      id,
+      conid: 265598,
+      timeframe: "1D",
+      tool_type: "retracement",
+      swing_high_price: high,
+      swing_high_time: 1_700_000_000,
+      swing_low_price: 100,
+      swing_low_time: 1_699_900_000,
+      direction: "up",
+      user_note: null,
+      locked_at: new Date().toISOString(),
+    });
+    // "Server state" the mocks share. Real backend deletes on
+    // DELETE /fibonacci/lock/{id}; we mimic that here.
+    const serverState: LockedFibonacciResponse[] = [mkLock(7, 130), mkLock(8, 140)];
+    mockGetLockedFibs.mockImplementation(async () => [...serverState]);
+    mockUnlockFib.mockImplementation(async (id: number) => {
+      const idx = serverState.findIndex((l) => l.id === id);
+      if (idx !== -1) serverState.splice(idx, 1);
+      return { deleted: true, id };
+    });
+
+    useChartStore.getState().setPrimaryFib(makeResult());
+
+    render(withQueryClient(createElement(FibStackPanel)));
+
+    // Wait for the GET to resolve and the merge effect to populate.
+    const deleteBtn = await screen.findByTestId("fib-locked-delete-7");
+    await act(async () => {
+      fireEvent.click(deleteBtn);
+    });
+    await act(async () => {
+      // Two flushes: one for the optimistic update, one for the
+      // invalidation-driven refetch (which now agrees with the cache).
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const fibs = useChartStore.getState().activeFibs;
+    expect(fibs.find((f) => f.id === "lock-7")).toBeUndefined();
+    expect(fibs.find((f) => f.id === "lock-8")).toBeDefined();
+  });
+});

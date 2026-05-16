@@ -236,6 +236,65 @@ describe("chart store — activeFibs (Branch 4)", () => {
     expect(useChartStore.getState().activeFibs).toEqual([]);
   });
 
+  // ── Bug 2 / Phase A — replaceLockedFibs ──────────────────
+
+  it("replaceLockedFibs preserves the primary and replaces locked entries", () => {
+    useChartStore.getState().setPrimaryFib(makeResult({ score: 91 }));
+    useChartStore.getState().addLockedFib(1, makeResult());
+    useChartStore.getState().addLockedFib(2, makeResult());
+    useChartStore.getState().addLockedFib(3, makeResult());
+    expect(useChartStore.getState().activeFibs.length).toBe(4);
+
+    // Server now reports only locks 2 and 5 (lock 1 was deleted, lock
+    // 3 was never confirmed, lock 5 is new). Full sync.
+    useChartStore.getState().replaceLockedFibs([
+      { lockId: 2, result: makeResult() },
+      { lockId: 5, result: makeResult() },
+    ]);
+
+    const fibs = useChartStore.getState().activeFibs;
+    expect(fibs.map((f) => f.id)).toEqual(["primary", "lock-2", "lock-5"]);
+    // Primary score preserved.
+    expect(fibs[0].result.score).toBe(91);
+  });
+
+  it("replaceLockedFibs with empty array drops all locked but keeps primary", () => {
+    useChartStore.getState().setPrimaryFib(makeResult());
+    useChartStore.getState().addLockedFib(1, makeResult());
+    useChartStore.getState().addLockedFib(2, makeResult());
+
+    useChartStore.getState().replaceLockedFibs([]);
+
+    const fibs = useChartStore.getState().activeFibs;
+    expect(fibs.map((f) => f.id)).toEqual(["primary"]);
+  });
+
+  it("replaceLockedFibs assigns non-zero colorIndex values to each entry", () => {
+    useChartStore.getState().setPrimaryFib(makeResult());
+
+    useChartStore.getState().replaceLockedFibs([
+      { lockId: 10, result: makeResult() },
+      { lockId: 20, result: makeResult() },
+      { lockId: 30, result: makeResult() },
+    ]);
+
+    const fibs = useChartStore.getState().activeFibs;
+    expect(fibs[0].colorIndex).toBe(0); // primary
+    for (const locked of fibs.slice(1)) {
+      expect(locked.colorIndex).toBeGreaterThan(0);
+      expect(locked.colorIndex).toBeLessThan(FIB_COLOR_PALETTE.length);
+    }
+  });
+
+  it("replaceLockedFibs works when no primary is set", () => {
+    useChartStore.getState().replaceLockedFibs([
+      { lockId: 100, result: makeResult() },
+      { lockId: 200, result: makeResult() },
+    ]);
+    const fibs = useChartStore.getState().activeFibs;
+    expect(fibs.map((f) => f.id)).toEqual(["lock-100", "lock-200"]);
+  });
+
   it("clearChartFib removes the primary but keeps locked fibs", () => {
     useChartStore.getState().setPrimaryFib(makeResult());
     useChartStore.getState().addLockedFib(55, makeResult());

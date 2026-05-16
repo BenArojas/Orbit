@@ -67,13 +67,21 @@ export function buildLevelsFromCandidate(
  * in the Candidates panel. Most fields are copied straight from the
  * candidate; placeholder values are used for the result-only fields
  * the backend would normally populate (timeframe_clarity, reasoning,
- * candidates, convergence_zones). The chart overlay only needs the
- * level prices to render correctly.
+ * convergence_zones). The chart overlay only needs the level prices
+ * to render correctly.
+ *
+ * `originalCandidates` (Bug-2 fix) carries the auto fib's candidates
+ * list through into the synthesized result. Without it, picking a
+ * candidate emptied the Candidates panel because the new primary
+ * carried `candidates: []` — the user lost their ability to pick a
+ * different candidate after the first click. Callers pass the auto
+ * fib's candidates verbatim so the panel stays populated.
  */
 export function fibonacciResultFromCandidate(
   candidate: FibonacciCandidate,
   ratios: number[],
   extensionRatios: number[],
+  originalCandidates: FibonacciCandidate[] = [],
 ): FibonacciResult {
   const { levels, extensions } = buildLevelsFromCandidate(
     candidate,
@@ -93,7 +101,7 @@ export function fibonacciResultFromCandidate(
     score: candidate.score,
     swing_clarity: candidate.swing_clarity,
     timeframe_clarity: "clean",   // candidate-derived result: no margin info
-    candidates: [],                // user already picked from the panel — empty list
+    candidates: originalCandidates,
     convergence_zones: [],
     is_nested: candidate.is_nested,
     parent_fib_id: null,

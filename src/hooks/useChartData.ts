@@ -161,10 +161,15 @@ export function useChartData(
       // will apply on the next render once the config arrives.
       return autoFib;
     }
+    // Bug-2 fix: pass through the auto fib's candidates list so the
+    // Candidates panel stays populated after the user picks one. The
+    // user can then pick a different candidate without having to
+    // un-set the override first.
     return fibonacciResultFromCandidate(
       displayedFibOverride,
       fibConfig.ratios,
       fibConfig.extension_ratios,
+      autoFib?.candidates ?? [],
     );
   }, [query.data?.fibonacci, displayedFibOverride, fibConfig]);
 
