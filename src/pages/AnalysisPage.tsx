@@ -93,17 +93,9 @@ export default function AnalysisPage() {
   // we can skip the very first render (otherwise reload would wipe state).
   const prevConidRef = useRef<number | null>(activeConid);
   const clearAiChat = useAiStore((s) => s.clearChat);
-  // Bug-3 fix: "has the chart ever loaded data for the current conid?"
-  // Once we've seen candles arrive, we keep ChartContainer mounted
-  // even if a subsequent indicator-toggle re-fetch briefly empties
-  // the candles array. Without this, every indicator toggle was
-  // tearing down + recreating the chart instance, which the user
-  // experienced as candles disappearing on screen.
-  const [hasEverLoaded, setHasEverLoaded] = useState(false);
   useEffect(() => {
     if (prevConidRef.current !== null && prevConidRef.current !== activeConid) {
       clearAiChat();
-      setHasEverLoaded(false);
     }
     prevConidRef.current = activeConid;
   }, [activeConid, clearAiChat]);
@@ -165,15 +157,6 @@ export default function AnalysisPage() {
     isFetching,
     error,
   } = useChartData(activeConid, timeframe, activeIndicators);
-
-  // Flip the "we've loaded once" flag as soon as candles arrive for
-  // the current conid. The chart stays mounted thereafter even if
-  // subsequent re-fetches briefly empty the candles array.
-  useEffect(() => {
-    if (!hasEverLoaded && candles.length > 0) {
-      setHasEverLoaded(true);
-    }
-  }, [candles.length, hasEverLoaded]);
 
   // Bug 1: surface `no_active_fib` to the user.
   //
@@ -348,14 +331,7 @@ export default function AnalysisPage() {
           {/* Subtle radial glow background */}
           <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_60%_30%,rgba(0,212,255,0.02),transparent_50%)]" />
 
-          {/* Bug-3 fix: ChartContainer stays mounted as long as we've
-              successfully loaded candles at least once for the current
-              conid. Subsequent indicator-toggle refetches that
-              momentarily empty `candles` no longer tear down the chart
-              instance. (ChartContainer's internal candles useEffect
-              guards on `candles.length === 0 → return`, so passing an
-              empty array doesn't blank the visible series.) */}
-          {activeConid && (candles.length > 0 || hasEverLoaded) ? (
+          {activeConid && candles.length > 0 ? (
             <ChartContainer
               candles={candles}
               indicators={indicators}
