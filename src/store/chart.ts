@@ -199,6 +199,9 @@ interface ChartState {
   /** First click captured (swing point A); null until user clicks */
   fibDrawPointA: FibDrawPoint | null;
 
+  /** Second click captured (swing point B); null until user clicks the second point */
+  fibDrawPointB: FibDrawPoint | null;
+
   /**
    * Candidate the user clicked in the Candidates panel to render
    * on the chart in place of the auto-detected primary. null when
@@ -234,6 +237,7 @@ interface ChartState {
   clearChart: () => void;
   enterFibDrawMode: (mode: FibDrawMode) => void;
   setFibDrawPointA: (pt: FibDrawPoint) => void;
+  setFibDrawPointB: (pt: FibDrawPoint | null) => void;
   exitFibDrawMode: () => void;
   /** Render this candidate's fib instead of the auto primary. */
   setDisplayedFib: (candidate: FibonacciCandidate) => void;
@@ -290,6 +294,7 @@ export const useChartStore = create<ChartState>()((set, get) => ({
   activeIndicators: new Set<IndicatorId>(DEFAULT_INDICATORS),
   fibDrawMode: null,
   fibDrawPointA: null,
+  fibDrawPointB: null,
   displayedFibOverride: null,
   fibCleared: false,
   activeFibs: [],
@@ -322,6 +327,7 @@ export const useChartStore = create<ChartState>()((set, get) => ({
         activeIndicators: new Set<IndicatorId>(DEFAULT_INDICATORS),
         fibDrawMode: null,
         fibDrawPointA: null,
+        fibDrawPointB: null,
         displayedFibOverride: null,
         fibCleared: false,
         activeFibs: [],
@@ -365,19 +371,23 @@ export const useChartStore = create<ChartState>()((set, get) => ({
       activeIndicators: new Set<IndicatorId>(DEFAULT_INDICATORS),
       fibDrawMode: null,
       fibDrawPointA: null,
+      fibDrawPointB: null,
       displayedFibOverride: null,
       fibCleared: false,
       activeFibs: [],
     }),
 
   enterFibDrawMode: (mode) =>
-    set({ fibDrawMode: mode, fibDrawPointA: null }),
+    set({ fibDrawMode: mode, fibDrawPointA: null, fibDrawPointB: null }),
 
   setFibDrawPointA: (pt) =>
     set({ fibDrawPointA: pt }),
 
+  setFibDrawPointB: (pt) =>
+    set({ fibDrawPointB: pt }),
+
   exitFibDrawMode: () =>
-    set({ fibDrawMode: null, fibDrawPointA: null }),
+    set({ fibDrawMode: null, fibDrawPointA: null, fibDrawPointB: null }),
 
   setDisplayedFib: (candidate) =>
     // Picking a candidate implies the user wants to see it — un-clear
