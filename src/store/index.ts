@@ -44,3 +44,4 @@ export {
   type ResponseTimeSample,
 } from "./ai";
 export { useCrosshairStore } from "./crosshair";
+export { useDrawingsStore, type DrawingToolId } from "./drawings";

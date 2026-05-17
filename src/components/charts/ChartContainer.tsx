@@ -46,6 +46,7 @@ import {
   type FibOverlayState,
 } from "./FibonacciOverlay";
 import FibDrawMode from "./FibDrawMode";
+import DrawingsLayer from "./DrawingsLayer";
 import { readChartTheme } from "./chartTheme";
 import type { Timeframe } from "@/store/chart";
 
@@ -409,6 +410,13 @@ export default function ChartContainer({
         candles={candles}
         conid={conid}
         timeframe={timeframe}
+      />
+
+      <DrawingsLayer
+        chart={chartRef.current}
+        series={candleSeriesRef.current}
+        containerRef={containerRef}
+        conid={conid}
       />
     </div>
   );

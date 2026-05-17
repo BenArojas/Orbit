@@ -12,6 +12,7 @@
 import { create } from "zustand";
 
 import type { FibonacciCandidate, FibonacciResult } from "@/lib/api";
+import { useDrawingsStore } from "@/store/drawings";
 
 export type Timeframe = "1m" | "5m" | "15m" | "1h" | "4h" | "1D" | "1W" | "1M";
 
@@ -311,6 +312,10 @@ export const useChartStore = create<ChartState>()((set, get) => ({
   setActiveConid: (conid) =>
     set((state) => {
       if (state.activeConid === conid) return {};
+      // Also clear ephemeral drawing tool state on instrument change.
+      // The drawings themselves are conid-scoped on the server; the GET
+      // query for the new conid will repopulate via DrawingsLayer.
+      useDrawingsStore.getState().resetDrawingsForConidChange();
       return {
         activeConid: conid,
         timeframe: "1D",
