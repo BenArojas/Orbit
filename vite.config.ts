@@ -11,10 +11,17 @@ export default defineConfig(async () => ({
     tailwindcss(),
   ],
   resolve: {
-    alias: {
-      "@": path.resolve(__dirname, "./src"),
-      "@vendor": path.resolve(__dirname, "./vendor"),
-    },
+    alias: [
+      {
+        find: "@vendor/lightweight-charts-drawing",
+        replacement: path.resolve(
+          __dirname,
+          "./vendor/lightweight-charts-drawing/src/index.ts",
+        ),
+      },
+      { find: "@", replacement: path.resolve(__dirname, "./src") },
+      { find: "@vendor", replacement: path.resolve(__dirname, "./vendor") },
+    ],
   },
   clearScreen: false,
   server: {

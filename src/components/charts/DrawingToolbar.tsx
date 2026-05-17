@@ -57,23 +57,25 @@ function ToolButton({
 }: ToolButtonProps) {
   return (
     <Tooltip>
-      <TooltipTrigger asChild>
-        <button
-          onClick={onClick}
-          disabled={disabled}
-          aria-label={label}
-          className={cn(
-            "flex h-8 w-8 items-center justify-center rounded transition-all",
-            isActive
-              ? "border border-[var(--clr-cyan)] bg-[rgba(0,212,255,0.12)] text-[var(--clr-cyan)] shadow-[0_0_8px_var(--glow-cyan)]"
-              : "text-[var(--text-3)] hover:bg-[var(--bg-2)] hover:text-[var(--text-1)]",
-            disabled && "cursor-not-allowed opacity-30",
-            className,
-          )}
-        >
-          {children}
-        </button>
-      </TooltipTrigger>
+      <TooltipTrigger
+        render={
+          <button
+            onClick={onClick}
+            disabled={disabled}
+            aria-label={label}
+            className={cn(
+              "flex h-8 w-8 items-center justify-center rounded transition-all",
+              isActive
+                ? "border border-[var(--clr-cyan)] bg-[rgba(0,212,255,0.12)] text-[var(--clr-cyan)] shadow-[0_0_8px_var(--glow-cyan)]"
+                : "text-[var(--text-3)] hover:bg-[var(--bg-2)] hover:text-[var(--text-1)]",
+              disabled && "cursor-not-allowed opacity-30",
+              className,
+            )}
+          >
+            {children}
+          </button>
+        }
+      />
       <TooltipContent side="right" sideOffset={6}>
         {label}
         {shortcut && (
