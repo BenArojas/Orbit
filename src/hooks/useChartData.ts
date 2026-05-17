@@ -221,6 +221,8 @@ export function useChartData(
     wsStatus,
     /** TanStack Query loading state */
     isLoading: query.isLoading,
+    /** True while a fetch (initial or background) is in flight */
+    isFetching: query.isFetching,
     /** TanStack Query error */
     error: query.error,
     /** Refetch chart data manually */

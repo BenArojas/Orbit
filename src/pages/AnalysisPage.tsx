@@ -26,6 +26,7 @@ import { useMutation } from "@tanstack/react-query";
 import { useChartStore, useAiStore, type Timeframe, type IndicatorId } from "@/store";
 import { useDrawingsStore } from "@/store/drawings";
 import { api } from "@/lib/api";
+import { toast } from "sonner";
 import { ChartContainer, SubChartPanel, AtrBadge, DrawingToolbar, SUB_CHART_BACKEND_NAMES, type SubChartType } from "@/components/charts";
 import { useChartData } from "@/hooks/useChartData";
 import { useInstrument } from "@/hooks/useInstrument";
@@ -65,6 +66,7 @@ export default function AnalysisPage() {
     fibDrawMode,
     enterFibDrawMode,
     exitFibDrawMode,
+    toggleIndicator,
   } = useChartStore();
 
   const [symbolInput, setSymbolInput] = useState(activeSymbol || "");
@@ -151,6 +153,7 @@ export default function AnalysisPage() {
     fibonacci,
     liveTick,
     isLoading,
+    isFetching,
     error,
   } = useChartData(activeConid, timeframe, activeIndicators);
 
@@ -162,6 +165,52 @@ export default function AnalysisPage() {
       setHasEverLoaded(true);
     }
   }, [candles.length, hasEverLoaded]);
+
+  // Bug 1: surface `no_active_fib` to the user.
+  //
+  // When the backend reports there's no currently-active fib for this
+  // (conid, timeframe), the indicator pill stays toggled on but nothing
+  // renders on the chart. The user has no idea why. We toast once and
+  // auto-untoggle the pill so the UI matches reality.
+  //
+  // The ref guard keys on `${conid}|${timeframe}` so we don't re-fire
+  // on background refetches — only on a fresh "no active" result for a
+  // new symbol/timeframe combination (or after a deliberate re-toggle,
+  // since re-toggling triggers a refetch with the indicator in the key).
+  const noActiveFibKeyRef = useRef<string | null>(null);
+  useEffect(() => {
+    // Don't fire while a fresh fetch is in flight — stale keepPreviousData
+    // can still have no_active_fib: true from a previous result, which would
+    // cause a re-toggle cascade before the new response arrives.
+    if (isFetching) return;
+    if (!activeIndicators.has("fibonacci")) {
+      noActiveFibKeyRef.current = null;
+      return;
+    }
+    if (!fibonacci?.no_active_fib) return;
+
+    const key = `${activeConid}|${timeframe}`;
+    if (noActiveFibKeyRef.current === key) return;
+    noActiveFibKeyRef.current = key;
+
+    const historicalCount = fibonacci.candidates?.length ?? 0;
+    const symbolLabel = activeSymbol || "this symbol";
+    toast.info(`No active Fibonacci setup for ${symbolLabel} on ${timeframe}`, {
+      description:
+        historicalCount > 0
+          ? `${historicalCount} historical candidate${historicalCount === 1 ? "" : "s"} — none currently in play`
+          : "No setups found",
+    });
+    toggleIndicator("fibonacci");
+  }, [
+    fibonacci,
+    activeIndicators,
+    activeConid,
+    activeSymbol,
+    timeframe,
+    toggleIndicator,
+    isFetching,
+  ]);
 
   // ── Active sub-chart panels (oscillators/line/value indicators) ──
 
