@@ -2,10 +2,14 @@
  * useChartData — Fetches candle + indicator data and handles live updates.
  *
  * Combines:
- *   1. TanStack Query — fetches historical candles + all active indicators
- *      in one POST /indicators/compute call
- *   2. WebSocket — subscribes to live price updates for the active conid
- *      and surfaces the latest tick for ChartContainer to update the last candle
+ *   1. candlesQuery — fetches historical OHLCV candles via POST /indicators/compute
+ *      with an empty indicator list. Key: ["candles", conid, timeframe]. Stable
+ *      across indicator toggles so the chart never blanks during rapid toggling.
+ *   2. indicatorsQuery — fetches computed indicator results via POST /indicators/compute
+ *      with the active indicator set. Key: ["indicators", conid, timeframe, indicatorKey].
+ *      Refetches when indicators change without disturbing the candle series.
+ *   3. WebSocket — subscribes to live price updates for the active conid
+ *      and surfaces the latest tick for ChartContainer to update the last candle.
  *
  * Returns everything the AnalysisPage needs to render the chart and indicators.
  */

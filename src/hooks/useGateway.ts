@@ -40,6 +40,7 @@ import { api, GatewayStatusResponse, GatewayState } from "@/lib/api";
 const IBKR_QUERY_PREFIXES: ReadonlyArray<string> = [
   "quote",
   "candles",
+  "indicators",
   "chart-data",
   "contract-info",
   "conid",
