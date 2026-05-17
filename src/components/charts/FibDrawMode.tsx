@@ -11,7 +11,9 @@
  *
  * Implementation notes:
  *   - Uses Lightweight Charts v5 subscribeClick / subscribeCrosshairMove
- *   - Ghost preview renders temporary LineSeries that update on mousemove
+ *   - Ghost preview renders temporary PriceLines that update on mousemove.
+ *     PriceLines use applyOptions({ price }) which does NOT fire crosshair
+ *     move events — avoids the infinite recursion that setData() caused.
  *   - This component is a "behavior" component (no visible DOM of its own,
  *     apart from a tiny status pill) — it imperatively controls the chart
  *     via the chartRef passed as prop.
@@ -19,11 +21,10 @@
 
 import { useEffect, useRef, useCallback } from "react";
 import {
-  LineSeries,
   type IChartApi,
   type ISeriesApi,
-  type LineData,
   type Time,
+  type IPriceLine,
 } from "lightweight-charts";
 
 import {
@@ -76,8 +77,8 @@ interface FibDrawModeProps {
   chart: IChartApi | null;
   /** The candle series ref — needed to convert pixel→price via coordinateToPrice */
   candleSeries: ISeriesApi<"Candlestick"> | null;
-  /** Candle data — we need time range for ghost line endpoints */
-  candles: { time: number }[];
+  /** Candle data — we only use the length for the guard in drawGhost */
+  candles: unknown[];
   /** Current conid for locking */
   conid: number | null;
   /** Current timeframe string */
@@ -95,58 +96,57 @@ export default function FibDrawMode({
 }: FibDrawModeProps) {
   const fibDrawMode = useChartStore((s) => s.fibDrawMode);
   const fibDrawPointA = useChartStore((s) => s.fibDrawPointA);
+  const fibDrawPointB = useChartStore((s) => s.fibDrawPointB);
   const setFibDrawPointA = useChartStore((s) => s.setFibDrawPointA);
+  const setFibDrawPointB = useChartStore((s) => s.setFibDrawPointB);
   const exitFibDrawMode = useChartStore((s) => s.exitFibDrawMode);
 
   const lockFib = useLockFib();
-  const ghostSeriesRef = useRef<ISeriesApi<"Line">[]>([]);
+  const ghostLinesRef = useRef<IPriceLine[]>([]);
 
   // ── Cleanup ghost lines ──────────────────────────────────
 
   const clearGhost = useCallback(() => {
-    if (!chart) return;
-    for (const s of ghostSeriesRef.current) {
+    if (!candleSeries) return;
+    for (const line of ghostLinesRef.current) {
       try {
-        chart.removeSeries(s);
+        candleSeries.removePriceLine(line);
       } catch {
         /* already removed */
       }
     }
-    ghostSeriesRef.current = [];
-  }, [chart]);
+    ghostLinesRef.current = [];
+  }, [candleSeries]);
 
-  // ── Ensure ghost series exist (one per level, reused across moves) ──
+  // ── Ensure ghost price lines exist (one per level, reused across moves) ──
 
-  const ensureGhostSeries = useCallback(() => {
-    if (!chart || ghostSeriesRef.current.length === GHOST_LEVELS.length) return;
+  const ensureGhostLines = useCallback(() => {
+    if (!candleSeries || ghostLinesRef.current.length === GHOST_LEVELS.length) return;
 
-    // Create series once — they'll be reused via setData on each move.
-    // Each ghost line gets the same color treatment the final overlay
-    // will: magenta for the 0 / 1.0 boundaries, gold for GP rows,
-    // cyan for non-GP retracement rows. Solid weight-2 across the
-    // board so the ghost preview reads as a real fib, not a tooltip.
+    // Create price lines once — they'll be reused via applyOptions on each move.
+    // Using PriceLines instead of LineSeries avoids the setData → crosshair
+    // re-fire → infinite recursion that crashed the chart in v5.
     clearGhost();
     for (let i = 0; i < GHOST_LEVELS.length; i++) {
       const ratio = GHOST_LEVELS[i];
-      const series = chart.addSeries(LineSeries, {
+      const line = candleSeries.createPriceLine({
+        price: 0,
         color: applyAlpha(ghostColor(ratio), GHOST_PREVIEW_OPACITY),
         lineWidth: 2,
-        lineStyle: 0, // solid — matches the post-lock styling
-        priceLineVisible: false,
-        lastValueVisible: false,
-        crosshairMarkerVisible: false,
+        lineStyle: 0,
+        axisLabelVisible: false,
       });
-      ghostSeriesRef.current.push(series);
+      ghostLinesRef.current.push(line);
     }
-  }, [chart, clearGhost]);
+  }, [candleSeries, clearGhost]);
 
-  // ── Draw ghost preview at cursor price (reuses existing series) ──
+  // ── Draw ghost preview at cursor price (reuses existing price lines) ──
 
   const drawGhost = useCallback(
     (pointA: FibDrawPoint, cursorPrice: number) => {
-      if (!chart || candles.length === 0) return;
+      if (candles.length === 0) return;
 
-      ensureGhostSeries();
+      ensureGhostLines();
 
       const swingLow = Math.min(pointA.price, cursorPrice);
       const swingHigh = Math.max(pointA.price, cursorPrice);
@@ -154,28 +154,28 @@ export default function FibDrawMode({
       if (range <= 0) return;
 
       const direction = cursorPrice > pointA.price ? "up" : "down";
-      const firstTime = candles[0].time as Time;
-      const lastTime = candles[candles.length - 1].time as Time;
 
       for (let i = 0; i < GHOST_LEVELS.length; i++) {
         const ratio = GHOST_LEVELS[i];
-        const price = direction === "up"
-          ? swingHigh - range * ratio
-          : swingLow + range * ratio;
+        const price =
+          direction === "up"
+            ? swingHigh - range * ratio
+            : swingLow + range * ratio;
 
-        const data: LineData<Time>[] = [
-          { time: firstTime, value: price },
-          { time: lastTime, value: price },
-        ];
-
-        // Reuse the pre-created series — just update data
-        ghostSeriesRef.current[i]?.setData(data);
+        // applyOptions({ price }) does NOT trigger crosshair move events —
+        // safe to call inside subscribeCrosshairMove without recursion.
+        ghostLinesRef.current[i]?.applyOptions({ price });
       }
     },
-    [chart, candles, ensureGhostSeries],
+    [candles.length, ensureGhostLines],
   );
 
-  // ── Chart click handler ──────────────────────────────────
+  // ── Chart click handler — capture only ──────────────────────
+  //
+  // Sole job: write pointA or pointB to the store. The lock mutation
+  // is in a separate effect below. This keeps the dep array tiny and
+  // stable — lockFib is not a dep, eliminating the constant re-
+  // subscribe churn that caused the second click to be dropped.
 
   useEffect(() => {
     if (!chart || !candleSeries || !fibDrawMode) return;
@@ -183,7 +183,6 @@ export default function FibDrawMode({
     const handleClick = (param: { time?: Time; point?: { x: number; y: number } }) => {
       if (!param.time || !param.point) return;
 
-      // Convert pixel Y → price using the candlestick series price scale
       const price = candleSeries.coordinateToPrice(param.point.y);
       if (price === null || price === undefined) return;
 
@@ -191,31 +190,9 @@ export default function FibDrawMode({
       const clickPoint: FibDrawPoint = { time, price };
 
       if (!fibDrawPointA) {
-        // First click — capture point A
         setFibDrawPointA(clickPoint);
       } else {
-        // Second click — finalize the fib and lock it
-        const swingLow = Math.min(fibDrawPointA.price, clickPoint.price);
-        const swingHigh = Math.max(fibDrawPointA.price, clickPoint.price);
-        const direction = clickPoint.price > fibDrawPointA.price ? "up" : "down";
-
-        if (conid && swingHigh > swingLow) {
-          lockFib.mutate({
-            conid,
-            timeframe,
-            tool_type: fibDrawMode,
-            swing_high_price: swingHigh,
-            swing_high_time:
-              direction === "up" ? clickPoint.time : fibDrawPointA.time,
-            swing_low_price: swingLow,
-            swing_low_time:
-              direction === "up" ? fibDrawPointA.time : clickPoint.time,
-            direction,
-          });
-        }
-
-        clearGhost();
-        exitFibDrawMode();
+        setFibDrawPointB(clickPoint);
       }
     };
 
@@ -229,11 +206,49 @@ export default function FibDrawMode({
     fibDrawMode,
     fibDrawPointA,
     setFibDrawPointA,
-    exitFibDrawMode,
+    setFibDrawPointB,
+  ]);
+
+  // ── Lock effect — fires when both points are captured ────────
+  //
+  // Watches pointA + pointB. When both are set, computes swing
+  // high/low/direction and fires the lock mutation. Separating this
+  // from the click handler keeps lockFib out of the click effect's
+  // deps, fixing the re-subscribe storm.
+
+  useEffect(() => {
+    if (!fibDrawPointA || !fibDrawPointB || !fibDrawMode) return;
+
+    const swingLow = Math.min(fibDrawPointA.price, fibDrawPointB.price);
+    const swingHigh = Math.max(fibDrawPointA.price, fibDrawPointB.price);
+    const direction = fibDrawPointB.price > fibDrawPointA.price ? "up" : "down";
+
+    if (conid && swingHigh > swingLow) {
+      lockFib.mutate({
+        conid,
+        timeframe,
+        tool_type: fibDrawMode,
+        swing_high_price: swingHigh,
+        swing_high_time:
+          direction === "up" ? fibDrawPointB.time : fibDrawPointA.time,
+        swing_low_price: swingLow,
+        swing_low_time:
+          direction === "up" ? fibDrawPointA.time : fibDrawPointB.time,
+        direction,
+      });
+    }
+
+    clearGhost();
+    exitFibDrawMode();
+  }, [
+    fibDrawPointA,
+    fibDrawPointB,
+    fibDrawMode,
     conid,
     timeframe,
     lockFib,
     clearGhost,
+    exitFibDrawMode,
   ]);
 
   // ── Crosshair move → ghost preview ───────────────────────
