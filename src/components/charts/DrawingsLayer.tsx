@@ -2,27 +2,27 @@
  * DrawingsLayer — Bridges the DrawingManager (vendored library) with our
  * store, hooks, and server-persisted drawings.
  *
- * This is a "behavior" component: it renders no DOM of its own.
- * It mounts inside ChartContainer and owns the full drawing lifecycle:
+ * This is a "behavior" component that renders minimal DOM: a context menu
+ * overlay when a drawing is right-clicked, and a "SNAP" indicator when
+ * Shift is held in draw mode.
  *
+ * Responsibilities:
  *   1. Attaches a DrawingManager to the chart on mount.
- *   2. Syncs server drawings (from useDrawings) into the manager —
- *      adds entries the manager doesn't have, removes ones that vanished.
- *   3. When activeTool is set in the store: captures chart clicks, collects
- *      anchors, fires useCreateDrawing on completion, then clears the tool.
- *   4. Listens for manager events (drawing:selected / drawing:deselected)
- *      and writes them back to the drawings store.
- *   5. Reflects selectedDrawingId changes from the store into the manager.
- *   6. Handles drawingsHidden toggle by patching each drawing's visibility.
+ *   2. Syncs server drawings (from useDrawings) into the manager.
+ *   3. Captures multi-click anchor sequences in draw mode; fires
+ *      useCreateDrawing on completion.
+ *   4. Shift-to-snap: when Shift is held at click time, snaps the anchor
+ *      to the nearest OHLC value on the closest candle.
+ *   5. Bridges manager selection events → drawings store.
+ *   6. Bridges store selectedDrawingId → manager.selectDrawing.
+ *   7. Delete key: removes the selected drawing.
+ *   8. Right-click context menu: delete, change color, width, style.
+ *   9. drawingsHidden toggle: patches each drawing's visibility.
  *
- * Cross-TF anchor behaviour: no special treatment needed.
- * The library anchors use { time, price }; LW Charts maps time → x-coord
- * per the active timeframe automatically. Verified in dev (see plan).
- *
- * Plan: docs/drawing-tools-plan.md, Branch 2.
+ * Plan: docs/drawing-tools-plan.md, Branch 3.
  */
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
 import type { IChartApi, ISeriesApi, MouseEventParams, Time } from "lightweight-charts";
 
 import {
@@ -40,11 +40,22 @@ import {
 } from "@/lib/drawings";
 import type { IDrawing, DrawingStyle, Anchor } from "@/lib/drawings";
 
-import type { Drawing, DrawingAnchor, DrawingStylePayload, DrawingKind } from "@/lib/api";
+import type {
+  Drawing,
+  DrawingAnchor,
+  DrawingStylePayload,
+  DrawingKind,
+  CandleData,
+} from "@/lib/api";
 import { useDrawingsStore } from "@/store/drawings";
-import { useDrawings, useCreateDrawing, useDeleteDrawing } from "@/hooks/useDrawings";
+import {
+  useDrawings,
+  useCreateDrawing,
+  useUpdateDrawing,
+  useDeleteDrawing,
+} from "@/hooks/useDrawings";
 
-// ── Anchor count per tool ─────────────────────────────────────
+// ── Constants ─────────────────────────────────────────────────
 
 const ANCHOR_COUNTS: Record<DrawingKind, number> = {
   horizontal_line: 1,
@@ -59,7 +70,19 @@ const ANCHOR_COUNTS: Record<DrawingKind, number> = {
   bars_pattern: 3,
 };
 
-// ── Coordinate conversion helpers ─────────────────────────────
+/** Preset color swatches shown in the right-click color picker. */
+const COLOR_PRESETS = [
+  "#2962FF",
+  "#00D4FF",
+  "#FF4466",
+  "#00FF88",
+  "#FFB800",
+  "#884DFF",
+  "#FF8C00",
+  "#FFFFFF",
+] as const;
+
+// ── Helpers ───────────────────────────────────────────────────
 
 function toVendorStyle(s?: DrawingStylePayload | null): Partial<DrawingStyle> {
   if (!s) return {};
@@ -73,8 +96,6 @@ function toVendorStyle(s?: DrawingStylePayload | null): Partial<DrawingStyle> {
 function toVendorAnchor(a: DrawingAnchor): Anchor {
   return { time: a.time as Time, price: a.price };
 }
-
-// ── Drawing factory ───────────────────────────────────────────
 
 function makeDrawingInstance(d: Drawing): IDrawing | null {
   const id = String(d.id);
@@ -96,6 +117,170 @@ function makeDrawingInstance(d: Drawing): IDrawing | null {
   }
 }
 
+/**
+ * Snap the given price to the nearest OHLC value on the nearest candle.
+ * Returns the original anchor unchanged if candles is empty.
+ */
+function snapToNearestOhlc(
+  anchor: Anchor,
+  candles: CandleData[],
+): Anchor {
+  if (candles.length === 0) return anchor;
+
+  const clickTime = anchor.time as number;
+
+  // Find closest candle by timestamp.
+  let nearest = candles[0];
+  let minDiff = Math.abs(nearest.time - clickTime);
+  for (const c of candles) {
+    const diff = Math.abs(c.time - clickTime);
+    if (diff < minDiff) {
+      minDiff = diff;
+      nearest = c;
+    }
+  }
+
+  // Snap price to closest OHLC value on that candle.
+  const candidates = [nearest.open, nearest.high, nearest.low, nearest.close];
+  let snappedPrice = candidates[0];
+  let minPriceDiff = Math.abs(snappedPrice - anchor.price);
+  for (const p of candidates) {
+    const d = Math.abs(p - anchor.price);
+    if (d < minPriceDiff) {
+      minPriceDiff = d;
+      snappedPrice = p;
+    }
+  }
+
+  return { time: nearest.time as Time, price: snappedPrice };
+}
+
+// ── Context menu component ────────────────────────────────────
+
+interface ContextMenuProps {
+  x: number;
+  y: number;
+  drawingId: number;
+  conid: number;
+  onClose: () => void;
+}
+
+function DrawingContextMenu({ x, y, drawingId, conid, onClose }: ContextMenuProps) {
+  const deleteDrawing = useDeleteDrawing(conid);
+  const updateDrawing = useUpdateDrawing(conid);
+  const setSelectedDrawingId = useDrawingsStore((s) => s.setSelectedDrawingId);
+
+  const [sub, setSub] = useState<"color" | "width" | "style" | null>(null);
+
+  const handleDelete = () => {
+    deleteDrawing.mutate(drawingId);
+    setSelectedDrawingId(null);
+    onClose();
+  };
+
+  const handleColor = (color: string) => {
+    updateDrawing.mutate({ id: drawingId, req: { style: { line_color: color } } });
+    onClose();
+  };
+
+  const handleWidth = (w: number) => {
+    updateDrawing.mutate({ id: drawingId, req: { style: { line_width: w } } });
+    onClose();
+  };
+
+  const handleLineStyle = (ls: "solid" | "dashed" | "dotted") => {
+    updateDrawing.mutate({ id: drawingId, req: { style: { line_style: ls } } });
+    onClose();
+  };
+
+  // Close on click outside.
+  useEffect(() => {
+    const close = (e: MouseEvent) => {
+      const el = document.getElementById("drawing-context-menu");
+      if (el && !el.contains(e.target as Node)) onClose();
+    };
+    document.addEventListener("mousedown", close);
+    return () => document.removeEventListener("mousedown", close);
+  }, [onClose]);
+
+  return (
+    <div
+      id="drawing-context-menu"
+      data-testid="drawing-context-menu"
+      className="absolute z-50 min-w-[140px] overflow-hidden rounded-md border border-border bg-[var(--bg-2)] py-1 text-[11px] shadow-lg"
+      style={{ left: x, top: y }}
+      onContextMenu={(e) => e.preventDefault()}
+    >
+      {sub === null ? (
+        <>
+          <button
+            className="flex w-full items-center px-3 py-1.5 text-left text-[var(--clr-red)] hover:bg-[var(--bg-3)]"
+            onClick={handleDelete}
+            data-testid="ctx-delete"
+          >
+            Delete
+          </button>
+          <div className="my-0.5 h-px bg-border" />
+          <button
+            className="flex w-full items-center justify-between px-3 py-1.5 text-left text-[var(--text-2)] hover:bg-[var(--bg-3)]"
+            onClick={() => setSub("color")}
+          >
+            Change color <span className="opacity-50">›</span>
+          </button>
+          <button
+            className="flex w-full items-center justify-between px-3 py-1.5 text-left text-[var(--text-2)] hover:bg-[var(--bg-3)]"
+            onClick={() => setSub("width")}
+          >
+            Change width <span className="opacity-50">›</span>
+          </button>
+          <button
+            className="flex w-full items-center justify-between px-3 py-1.5 text-left text-[var(--text-2)] hover:bg-[var(--bg-3)]"
+            onClick={() => setSub("style")}
+          >
+            Change style <span className="opacity-50">›</span>
+          </button>
+        </>
+      ) : sub === "color" ? (
+        <div className="flex flex-wrap gap-1 p-2">
+          {COLOR_PRESETS.map((c) => (
+            <button
+              key={c}
+              aria-label={c}
+              className="h-5 w-5 rounded-sm border border-transparent hover:border-white/40"
+              style={{ background: c }}
+              onClick={() => handleColor(c)}
+            />
+          ))}
+        </div>
+      ) : sub === "width" ? (
+        <>
+          {([1, 2, 3, 4] as const).map((w) => (
+            <button
+              key={w}
+              className="flex w-full items-center px-3 py-1.5 text-left text-[var(--text-2)] hover:bg-[var(--bg-3)]"
+              onClick={() => handleWidth(w)}
+            >
+              {w}px
+            </button>
+          ))}
+        </>
+      ) : (
+        <>
+          {(["solid", "dashed", "dotted"] as const).map((ls) => (
+            <button
+              key={ls}
+              className="flex w-full items-center px-3 py-1.5 capitalize text-left text-[var(--text-2)] hover:bg-[var(--bg-3)]"
+              onClick={() => handleLineStyle(ls)}
+            >
+              {ls}
+            </button>
+          ))}
+        </>
+      )}
+    </div>
+  );
+}
+
 // ── Props ─────────────────────────────────────────────────────
 
 export interface DrawingsLayerProps {
@@ -103,6 +288,8 @@ export interface DrawingsLayerProps {
   series: ISeriesApi<"Candlestick"> | null;
   containerRef: React.RefObject<HTMLDivElement | null>;
   conid: number | null;
+  /** Candle data — used for Shift-to-snap anchor snapping. */
+  candles?: CandleData[];
 }
 
 // ── Component ─────────────────────────────────────────────────
@@ -112,9 +299,9 @@ export default function DrawingsLayer({
   series,
   containerRef,
   conid,
+  candles = [],
 }: DrawingsLayerProps) {
   const managerRef = useRef<DrawingManager | null>(null);
-  // Anchors collected during the current multi-click drawing sequence.
   const pendingAnchorsRef = useRef<Anchor[]>([]);
 
   const activeTool        = useDrawingsStore((s) => s.activeTool);
@@ -127,7 +314,15 @@ export default function DrawingsLayer({
   const createDrawing = useCreateDrawing(conid ?? 0);
   const deleteDrawing = useDeleteDrawing(conid ?? 0);
 
-  // ── 1. Mount — create and attach the manager ───────────────
+  // Shift-to-snap tracking.
+  const shiftHeldRef = useRef(false);
+  const [shiftHeld, setShiftHeld] = useState(false);
+
+  // Right-click context menu state.
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
+  const closeContextMenu = useCallback(() => setContextMenu(null), []);
+
+  // ── 1. Mount — attach DrawingManager ──────────────────────
 
   useEffect(() => {
     if (!chart || !series || !containerRef.current) return;
@@ -162,14 +357,10 @@ export default function DrawingsLayer({
     const serverIds = new Set(drawingsData.map((d) => String(d.id)));
     const managerIds = new Set(manager.getAllDrawings().map((d) => d.id));
 
-    // Remove drawings that are no longer on the server.
     for (const id of managerIds) {
-      if (!serverIds.has(id)) {
-        manager.removeDrawing(id);
-      }
+      if (!serverIds.has(id)) manager.removeDrawing(id);
     }
 
-    // Add new drawings from the server.
     for (const drawing of drawingsData) {
       const id = String(drawing.id);
       if (!managerIds.has(id)) {
@@ -182,13 +373,12 @@ export default function DrawingsLayer({
     }
   }, [drawingsData, drawingsHidden]);
 
-  // ── 3. Active tool — capture chart clicks for anchor placement ─
+  // ── 3. Active tool — capture chart clicks ──────────────────
 
   useEffect(() => {
     const manager = managerRef.current;
     if (!manager || !chart || !series) return;
 
-    // Reset pending anchors whenever the tool changes.
     pendingAnchorsRef.current = [];
 
     if (!activeTool) {
@@ -196,37 +386,39 @@ export default function DrawingsLayer({
       return;
     }
 
-    // Signal the manager so it can show a custom cursor if it supports it.
     manager.setActiveTool(activeTool);
-
     const needed = ANCHOR_COUNTS[activeTool];
 
     const handleClick = (params: MouseEventParams) => {
       if (!params.point || !params.time) return;
 
-      // Convert the pixel y-coordinate to a price using the candle series.
       const price = series.coordinateToPrice(params.point.y);
       if (price == null) return;
 
-      const anchor: Anchor = { time: params.time as Time, price };
+      let anchor: Anchor = { time: params.time as Time, price };
+
+      // Shift-to-snap: snap to nearest OHLC value.
+      if (shiftHeldRef.current && candles.length > 0) {
+        anchor = snapToNearestOhlc(anchor, candles);
+      }
+
       pendingAnchorsRef.current.push(anchor);
 
       if (pendingAnchorsRef.current.length >= needed) {
-        const collectedAnchors = pendingAnchorsRef.current.slice();
+        const collected = pendingAnchorsRef.current.slice();
         pendingAnchorsRef.current = [];
 
         createDrawing.mutate(
           {
             conid: conid!,
             kind: activeTool,
-            anchors: collectedAnchors.map<DrawingAnchor>((a) => ({
+            anchors: collected.map<DrawingAnchor>((a) => ({
               time: a.time as number,
               price: a.price,
             })),
           },
           {
             onSuccess: () => {
-              // Exit draw mode — the invalidated query will re-sync the manager.
               setActiveTool(null);
               manager.setActiveTool(null);
             },
@@ -237,16 +429,10 @@ export default function DrawingsLayer({
 
     chart.subscribeClick(handleClick);
     return () => {
-      try {
-        chart.unsubscribeClick(handleClick);
-      } catch {
-        /* chart already removed */
-      }
+      try { chart.unsubscribeClick(handleClick); } catch { /* chart gone */ }
     };
-    // createDrawing and deleteDrawing are stable mutation objects; omitting
-    // from deps to avoid re-subscribing on every render cycle.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeTool, chart, series, conid, setActiveTool]);
+  }, [activeTool, chart, series, conid, setActiveTool, candles]);
 
   // ── 4. Reflect external selection changes into the manager ─
 
@@ -270,7 +456,30 @@ export default function DrawingsLayer({
     }
   }, [drawingsHidden]);
 
-  // ── 6. Delete key handler ───────────────────────────────────
+  // ── 6. Shift key tracking ───────────────────────────────────
+
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Shift") {
+        shiftHeldRef.current = true;
+        setShiftHeld(true);
+      }
+    };
+    const onKeyUp = (e: KeyboardEvent) => {
+      if (e.key === "Shift") {
+        shiftHeldRef.current = false;
+        setShiftHeld(false);
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("keyup", onKeyUp);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("keyup", onKeyUp);
+    };
+  }, []);
+
+  // ── 7. Delete key handler ───────────────────────────────────
 
   useEffect(() => {
     const container = containerRef.current;
@@ -281,6 +490,7 @@ export default function DrawingsLayer({
         e.stopPropagation();
         deleteDrawing.mutate(selectedDrawingId);
         setSelectedDrawingId(null);
+        setContextMenu(null);
       }
     };
 
@@ -289,5 +499,54 @@ export default function DrawingsLayer({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [containerRef, selectedDrawingId, setSelectedDrawingId]);
 
-  return null;
+  // ── 8. Right-click context menu ────────────────────────────
+
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    const handleContextMenu = (e: MouseEvent) => {
+      if (selectedDrawingId == null) return;
+      e.preventDefault();
+      const rect = container.getBoundingClientRect();
+      setContextMenu({
+        x: e.clientX - rect.left,
+        y: e.clientY - rect.top,
+      });
+    };
+
+    container.addEventListener("contextmenu", handleContextMenu);
+    return () => container.removeEventListener("contextmenu", handleContextMenu);
+  }, [containerRef, selectedDrawingId]);
+
+  // ── Render ─────────────────────────────────────────────────
+
+  const showSnap = shiftHeld && activeTool != null;
+
+  if (!contextMenu && !showSnap) return null;
+
+  return (
+    <>
+      {/* SNAP indicator — shown when Shift is held in draw mode */}
+      {showSnap && (
+        <div
+          data-testid="snap-indicator"
+          className="pointer-events-none absolute left-2 top-2 z-40 rounded bg-[var(--clr-cyan)] px-1.5 py-0.5 font-mono text-[9px] font-bold text-black"
+        >
+          SNAP
+        </div>
+      )}
+
+      {/* Right-click context menu */}
+      {contextMenu && selectedDrawingId != null && conid != null && (
+        <DrawingContextMenu
+          x={contextMenu.x}
+          y={contextMenu.y}
+          drawingId={selectedDrawingId}
+          conid={conid}
+          onClose={closeContextMenu}
+        />
+      )}
+    </>
+  );
 }

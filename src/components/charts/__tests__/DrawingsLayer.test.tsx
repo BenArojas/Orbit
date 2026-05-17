@@ -1,5 +1,10 @@
 /**
- * Tests for DrawingsLayer — Branch 2.
+ * Tests for DrawingsLayer — Branch 2 + Branch 3.
+ *
+ * Branch 3 additions:
+ *   - Delete key fires useDeleteDrawing when a drawing is selected
+ *   - Right-click shows context menu only when a drawing is selected
+ *   - Shift-to-snap snaps price to nearest OHLC value at click time
  *
  * DrawingManager (the vendored class) is fully stubbed. We verify:
  *   - attach() called on mount when chart + series are ready
@@ -317,5 +322,162 @@ describe("DrawingsLayer", () => {
     });
 
     expect(stubDrawing.updateOptions).toHaveBeenCalledWith({ visible: false });
+  });
+
+  // ── Branch 3: Delete key ──────────────────────────────────
+
+  it("Delete key fires useDeleteDrawing when a drawing is selected", async () => {
+    useDrawingsStore.setState({ selectedDrawingId: 7 });
+    const { containerRef } = renderLayer();
+
+    await act(async () => {
+      containerRef.current!.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "Delete", bubbles: true }),
+      );
+    });
+
+    expect(mockDeleteMutate).toHaveBeenCalledWith(7);
+    expect(useDrawingsStore.getState().selectedDrawingId).toBeNull();
+  });
+
+  it("Backspace key also fires useDeleteDrawing", async () => {
+    useDrawingsStore.setState({ selectedDrawingId: 9 });
+    const { containerRef } = renderLayer();
+
+    await act(async () => {
+      containerRef.current!.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "Backspace", bubbles: true }),
+      );
+    });
+
+    expect(mockDeleteMutate).toHaveBeenCalledWith(9);
+  });
+
+  it("Delete key is a no-op when no drawing is selected", async () => {
+    const { containerRef } = renderLayer();
+
+    await act(async () => {
+      containerRef.current!.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "Delete", bubbles: true }),
+      );
+    });
+
+    expect(mockDeleteMutate).not.toHaveBeenCalled();
+  });
+
+  // ── Branch 3: Right-click context menu ────────────────────
+
+  it("right-click shows context menu when a drawing is selected", async () => {
+    useDrawingsStore.setState({ selectedDrawingId: 3 });
+    const { containerRef, result } = renderLayer();
+
+    await act(async () => {
+      containerRef.current!.dispatchEvent(
+        new MouseEvent("contextmenu", { bubbles: true, clientX: 80, clientY: 60 }),
+      );
+    });
+
+    expect(result.baseElement.querySelector("[data-testid='drawing-context-menu']")).toBeTruthy();
+  });
+
+  it("right-click does NOT show context menu when no drawing is selected", async () => {
+    const { containerRef, result } = renderLayer();
+
+    await act(async () => {
+      containerRef.current!.dispatchEvent(
+        new MouseEvent("contextmenu", { bubbles: true, clientX: 80, clientY: 60 }),
+      );
+    });
+
+    expect(result.baseElement.querySelector("[data-testid='drawing-context-menu']")).toBeNull();
+  });
+
+  // ── Branch 3: Shift-to-snap ───────────────────────────────
+
+  it("snaps anchor to nearest OHLC when Shift is held at click time", async () => {
+    const chart = makeChartStub();
+    // Price reported by series = 175.34; candle close = 175.3 → should snap to 175.3
+    const series = makeSeriesStub(175.34);
+    const containerRef = createRef<HTMLDivElement>();
+    // @ts-expect-error
+    containerRef.current = document.createElement("div");
+
+    const qc = new QueryClient();
+    const candles = [
+      { time: 1_700_000_000, open: 174.0, high: 176.5, low: 173.5, close: 175.3, volume: 1000 },
+    ];
+
+    render(
+      createElement(
+        QueryClientProvider,
+        { client: qc },
+        createElement(DrawingsLayer, {
+          chart: chart as unknown as Parameters<typeof DrawingsLayer>[0]["chart"],
+          series: series as unknown as Parameters<typeof DrawingsLayer>[0]["series"],
+          containerRef,
+          conid: 100,
+          candles,
+        }),
+      ),
+    );
+
+    await act(async () => {
+      useDrawingsStore.getState().setActiveTool("horizontal_line");
+    });
+
+    // Simulate Shift held.
+    await act(async () => {
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "Shift" }));
+    });
+
+    // Click — one anchor needed for horizontal line.
+    await act(async () => {
+      chart._fireClick({ point: { x: 50, y: 100 }, time: 1_700_000_000 });
+    });
+
+    expect(mockCreateMutate).toHaveBeenCalledOnce();
+    const [req] = mockCreateMutate.mock.calls[0] as [{ anchors: { price: number }[] }];
+    // Should snap to candle close (175.3), not raw price (175.34)
+    expect(req.anchors[0].price).toBeCloseTo(175.3, 1);
+  });
+
+  it("does NOT snap when Shift is not held", async () => {
+    const chart = makeChartStub();
+    const series = makeSeriesStub(175.34);
+    const containerRef = createRef<HTMLDivElement>();
+    // @ts-expect-error
+    containerRef.current = document.createElement("div");
+
+    const qc = new QueryClient();
+    const candles = [
+      { time: 1_700_000_000, open: 174.0, high: 176.5, low: 173.5, close: 175.3, volume: 1000 },
+    ];
+
+    render(
+      createElement(
+        QueryClientProvider,
+        { client: qc },
+        createElement(DrawingsLayer, {
+          chart: chart as unknown as Parameters<typeof DrawingsLayer>[0]["chart"],
+          series: series as unknown as Parameters<typeof DrawingsLayer>[0]["series"],
+          containerRef,
+          conid: 100,
+          candles,
+        }),
+      ),
+    );
+
+    await act(async () => {
+      useDrawingsStore.getState().setActiveTool("horizontal_line");
+    });
+
+    await act(async () => {
+      chart._fireClick({ point: { x: 50, y: 100 }, time: 1_700_000_000 });
+    });
+
+    expect(mockCreateMutate).toHaveBeenCalledOnce();
+    const [req] = mockCreateMutate.mock.calls[0] as [{ anchors: { price: number }[] }];
+    // No snap — raw price from series stub
+    expect(req.anchors[0].price).toBeCloseTo(175.34, 2);
   });
 });

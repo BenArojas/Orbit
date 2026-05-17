@@ -49,7 +49,10 @@ vi.mock("@/components/ai", () => ({
 vi.mock("@/components/charts", () => ({
   ChartContainer: () => <div data-testid="chart-container" />,
   SubChartPanel: () => <div data-testid="sub-chart-panel" />,
+  DrawingToolbar: () => <div data-testid="drawing-toolbar" />,
+  AtrBadge: () => null,
   SUB_CHART_BACKEND_NAMES: { rsi: "rsi", macd: "macd", stochastic: "stoch", obv: "obv", adx: "adx" },
+  SHORTCUT_MAP: {},
 }));
 
 // ── Helpers ───────────────────────────────────────────────────

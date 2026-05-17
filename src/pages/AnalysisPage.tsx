@@ -21,15 +21,17 @@
  *   - Chart rendering delegation to ChartContainer
  */
 
-import { useState, useMemo, useEffect, useRef, type KeyboardEvent } from "react";
+import { useState, useMemo, useEffect, useRef, useCallback, type KeyboardEvent } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { useChartStore, useAiStore, type Timeframe, type IndicatorId } from "@/store";
+import { useDrawingsStore } from "@/store/drawings";
 import { api } from "@/lib/api";
-import { ChartContainer, SubChartPanel, AtrBadge, SUB_CHART_BACKEND_NAMES, type SubChartType } from "@/components/charts";
+import { ChartContainer, SubChartPanel, AtrBadge, DrawingToolbar, SUB_CHART_BACKEND_NAMES, type SubChartType } from "@/components/charts";
 import { useChartData } from "@/hooks/useChartData";
 import { useInstrument } from "@/hooks/useInstrument";
 import { IndicatorToolbar } from "@/components/indicators";
 import { RightSidebar } from "@/components/ai";
+import { SHORTCUT_MAP } from "@/components/charts/drawingsRegistry";
 
 // ── Constants ────────────────────────────────────────────────
 
@@ -103,6 +105,42 @@ export default function AnalysisPage() {
     prevConidRef.current = activeConid;
   }, [activeConid, clearAiChat]);
 
+  // ── Drawing tool keyboard shortcuts ──────────────────────────
+  //
+  // H/T/R/S/V/X  — toggle the matching core tool
+  // ESC          — exit any active drawing tool
+  // Shortcuts are suppressed when the user is typing in the symbol input.
+
+  const setDrawingTool = useDrawingsStore((s) => s.setActiveTool);
+  const activeDrawingTool = useDrawingsStore((s) => s.activeTool);
+
+  const handleDrawingShortcut = useCallback(
+    (e: globalThis.KeyboardEvent) => {
+      // Don't steal keypresses from input elements.
+      if (
+        e.target instanceof HTMLInputElement ||
+        e.target instanceof HTMLTextAreaElement
+      ) {
+        return;
+      }
+      if (e.key === "Escape") {
+        setDrawingTool(null);
+        return;
+      }
+      const toolId = SHORTCUT_MAP[e.key.toUpperCase()];
+      if (toolId) {
+        // Toggle: pressing the same key again exits the tool.
+        setDrawingTool(activeDrawingTool === toolId ? null : toolId);
+      }
+    },
+    [setDrawingTool, activeDrawingTool],
+  );
+
+  useEffect(() => {
+    window.addEventListener("keydown", handleDrawingShortcut);
+    return () => window.removeEventListener("keydown", handleDrawingShortcut);
+  }, [handleDrawingShortcut]);
+
   // Fetch cached instrument metadata for the header badge + watermark
   const { companyName } = useInstrument(activeConid);
 
@@ -159,8 +197,11 @@ export default function AnalysisPage() {
   };
 
   return (
-    <div className="grid h-full min-h-0 grid-cols-[1fr_340px]">
-      {/* ── Left: Chart area ── */}
+    <div className="grid h-full min-h-0 grid-cols-[32px_1fr_340px]">
+      {/* ── Drawing toolbar — left vertical rail ── */}
+      <DrawingToolbar conid={activeConid} />
+
+      {/* ── Center: Chart area ── */}
       <div className="flex min-h-0 flex-col overflow-hidden">
         {/* Toolbar — shrink-0 so it stays at its natural height when sub-panels
             are added below; otherwise flex squeezes it and only the bottom row

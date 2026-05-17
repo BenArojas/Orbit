@@ -12,6 +12,7 @@
  */
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { toast } from "sonner";
 
 import { api } from "@/lib/api";
 import type {
@@ -19,6 +20,8 @@ import type {
   CreateDrawingRequest,
   UpdateDrawingRequest,
 } from "@/lib/api";
+
+const DRAWING_SOFT_CAP = 50;
 
 // ── Query key factory ────────────────────────────────────────
 
@@ -55,6 +58,14 @@ export function useCreateDrawing(conid: number) {
   return useMutation({
     mutationFn: (req: CreateDrawingRequest) => api.createDrawing(req),
     onSuccess: () => {
+      // Soft-cap warning: check before invalidation so the cached count
+      // still reflects what was there before this new drawing.
+      const prev = qc.getQueryData<Drawing[]>(drawingsKey(conid)) ?? [];
+      if (prev.length + 1 >= DRAWING_SOFT_CAP) {
+        toast.warning(
+          "50+ drawings on this chart — readability may suffer. Consider hiding old ones.",
+        );
+      }
       qc.invalidateQueries({ queryKey: drawingsKey(conid) });
     },
   });

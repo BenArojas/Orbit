@@ -417,6 +417,7 @@ export default function ChartContainer({
         series={candleSeriesRef.current}
         containerRef={containerRef}
         conid={conid}
+        candles={candles}
       />
     </div>
   );
