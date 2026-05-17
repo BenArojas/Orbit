@@ -72,9 +72,22 @@ export function useChartData(
 
   const ibkrReady = useIbkrReady();
 
-  const query = useQuery<IndicatorComputeResponse>({
-    // timeframe is in the key — switching TF invalidates the cache correctly
-    queryKey: ["chart-data", conid, timeframe, indicatorKey],
+  const candlesQuery = useQuery<IndicatorComputeResponse>({
+    queryKey: ["candles", conid, timeframe],
+    queryFn: () =>
+      api.computeIndicators({
+        conid: conid!,
+        timeframe,
+        indicators: [],
+      }),
+    enabled: ibkrReady && conid != null,
+    staleTime: 60_000,
+    gcTime: 5 * 60_000,
+    placeholderData: keepPreviousData,
+  });
+
+  const indicatorsQuery = useQuery<IndicatorComputeResponse>({
+    queryKey: ["indicators", conid, timeframe, indicatorKey],
     queryFn: () =>
       api.computeIndicators({
         conid: conid!,
@@ -82,11 +95,8 @@ export function useChartData(
         indicators: indicatorIdsToBackendNames(activeIndicators),
       }),
     enabled: ibkrReady && conid != null,
-    staleTime: 60_000, // 1 min — chart data doesn't need to be as fresh
+    staleTime: 60_000,
     gcTime: 5 * 60_000,
-    // Keep the previous candles/indicators on screen while the new query
-    // fetches (e.g. when the user toggles an indicator).  Without this,
-    // data goes to undefined → candles = [] → ChartContainer unmounts.
     placeholderData: keepPreviousData,
   });
 
@@ -154,7 +164,7 @@ export function useChartData(
   const { config: fibConfig } = useFibConfig();
 
   const fibonacci: FibonacciResult | null = useMemo(() => {
-    const autoFib = query.data?.fibonacci ?? null;
+    const autoFib = indicatorsQuery.data?.fibonacci ?? null;
     if (!displayedFibOverride) return autoFib;
     if (!fibConfig) {
       // Config still loading — fall through to auto result. Override
@@ -171,7 +181,7 @@ export function useChartData(
       fibConfig.extension_ratios,
       autoFib?.candidates ?? [],
     );
-  }, [query.data?.fibonacci, displayedFibOverride, fibConfig]);
+  }, [indicatorsQuery.data?.fibonacci, displayedFibOverride, fibConfig]);
 
   /**
    * Indicates which fib is being rendered:
@@ -203,9 +213,9 @@ export function useChartData(
 
   return {
     /** OHLCV candle data */
-    candles: query.data?.candles ?? [],
+    candles: candlesQuery.data?.candles ?? [],
     /** Computed indicator results */
-    indicators: query.data?.indicators ?? [],
+    indicators: indicatorsQuery.data?.indicators ?? [],
     /**
      * Fibonacci result to render. When the user has clicked a
      * candidate from the Candidates panel, this is the synthesized
@@ -220,12 +230,12 @@ export function useChartData(
     /** WebSocket connection status */
     wsStatus,
     /** TanStack Query loading state */
-    isLoading: query.isLoading,
+    isLoading: candlesQuery.isLoading,
     /** True while a fetch (initial or background) is in flight */
-    isFetching: query.isFetching,
+    isFetching: candlesQuery.isFetching,
     /** TanStack Query error */
-    error: query.error,
+    error: candlesQuery.error,
     /** Refetch chart data manually */
-    refetch: query.refetch,
+    refetch: candlesQuery.refetch,
   };
 }
