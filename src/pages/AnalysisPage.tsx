@@ -22,6 +22,7 @@
  */
 
 import { useState, useMemo, useEffect, useRef, useCallback, type KeyboardEvent } from "react";
+import { Maximize2 } from "lucide-react";
 import { useMutation } from "@tanstack/react-query";
 import { useChartStore, useAiStore, type Timeframe, type IndicatorId } from "@/store";
 import { useDrawingsStore } from "@/store/drawings";
@@ -68,6 +69,7 @@ export default function AnalysisPage() {
     enterFibDrawMode,
     exitFibDrawMode,
     toggleIndicator,
+    requestResetZoom,
   } = useChartStore();
 
   const [symbolInput, setSymbolInput] = useState(activeSymbol || "");
@@ -288,6 +290,15 @@ export default function AnalysisPage() {
 
           {/* Indicator pills (task 4.6 — Ofek's IndicatorToolbar) */}
           <IndicatorToolbar />
+
+          {/* Reset zoom — re-fits the price axis and time scale to all loaded data */}
+          <button
+            onClick={requestResetZoom}
+            title="Reset zoom"
+            className="flex items-center justify-center rounded border border-border p-1.5 text-[var(--text-3)] transition-all hover:border-[var(--clr-cyan)] hover:text-[var(--clr-cyan)]"
+          >
+            <Maximize2 size={12} />
+          </button>
 
           {/* ATR value badge — shown inline when ATR is toggled on */}
           {activeIndicators.has("atr") && (
