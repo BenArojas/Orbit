@@ -228,6 +228,13 @@ interface ChartState {
    */
   activeFibs: ActiveFib[];
 
+  /**
+   * Incremented by requestResetZoom(). ChartContainer watches this and calls
+   * priceScale("right").applyOptions({ autoScale: true }) + timeScale().fitContent()
+   * when it changes.
+   */
+  resetZoomRequestId: number;
+
   /** Actions */
   setActiveConid: (conid: number) => void;
   setActiveSymbol: (symbol: string) => void;
@@ -276,6 +283,7 @@ interface ChartState {
   removeActiveFib: (id: string) => void;
   /** Wipe the entire stack. Called on conid change via clearChart. */
   clearAllActiveFibs: () => void;
+  requestResetZoom: () => void;
 }
 
 /**
@@ -298,6 +306,7 @@ export const useChartStore = create<ChartState>()((set, get) => ({
   displayedFibOverride: null,
   fibCleared: false,
   activeFibs: [],
+  resetZoomRequestId: 0,
 
   // Branch 7 / plan decisions 10A + 10B:
   // Switching to a new instrument resets the whole chart so the
@@ -502,4 +511,6 @@ export const useChartStore = create<ChartState>()((set, get) => ({
     })),
 
   clearAllActiveFibs: () => set({ activeFibs: [] }),
+
+  requestResetZoom: () => set((s) => ({ resetZoomRequestId: s.resetZoomRequestId + 1 })),
 }));
