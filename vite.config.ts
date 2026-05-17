@@ -13,6 +13,7 @@ export default defineConfig(async () => ({
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),
+      "@vendor": path.resolve(__dirname, "./vendor"),
     },
   },
   clearScreen: false,

@@ -400,6 +400,61 @@ export interface LockedFibonacciResponse {
   locked_at: string;
 }
 
+// ── Chart Drawings (drawing-tools-plan.md Branch 1) ─────
+
+/** Drawing kind strings — mirrors backend _VALID_KINDS set. */
+export type DrawingKind =
+  | "horizontal_line"
+  | "trend_line"
+  | "ray"
+  | "rectangle"
+  | "vertical_line"
+  | "text"
+  | "long_position"
+  | "short_position"
+  | "forecast"
+  | "bars_pattern";
+
+/** A single anchor point — position in time + price space. */
+export interface DrawingAnchor {
+  time: number;   // Unix seconds
+  price: number;
+}
+
+/** Visual style for a drawing (all fields optional). */
+export interface DrawingStylePayload {
+  line_color?: string;    // Hex e.g. "#2962FF"
+  line_width?: number;    // 1..4
+  line_style?: "solid" | "dashed" | "dotted";
+  fill_color?: string;
+  text?: string;
+}
+
+/** A persisted drawing returned from the server. */
+export interface Drawing {
+  id: number;
+  conid: number;
+  kind: DrawingKind;
+  anchors: DrawingAnchor[];
+  style?: DrawingStylePayload | null;
+  created_at: string;
+  updated_at?: string | null;
+}
+
+/** POST /drawings request body. */
+export interface CreateDrawingRequest {
+  conid: number;
+  kind: DrawingKind;
+  anchors: DrawingAnchor[];
+  style?: DrawingStylePayload;
+}
+
+/** PUT /drawings/{id} request body — partial update. */
+export interface UpdateDrawingRequest {
+  anchors?: DrawingAnchor[];
+  style?: DrawingStylePayload;
+}
+
 // ── Sectors (Phase 3 — tasks 3.3, 3.4) ──────────────────
 
 export interface SectorPerformance {
@@ -1161,4 +1216,17 @@ export const api = {
   // Preserves the JRE, Gateway binaries, and conf.yaml.
   gatewayFactoryReset: () =>
     request<GatewayStatusResponse>("POST", "/gateway/factory-reset"),
+
+  // Chart Drawings (drawing-tools-plan.md Branch 1)
+  createDrawing: (req: CreateDrawingRequest) =>
+    request<Drawing>("POST", "/drawings", req),
+
+  updateDrawing: (id: number, req: UpdateDrawingRequest) =>
+    request<Drawing>("PUT", `/drawings/${id}`, req),
+
+  deleteDrawing: (id: number) =>
+    request<{ deleted: boolean; id: number }>("DELETE", `/drawings/${id}`),
+
+  getDrawings: (conid: number) =>
+    request<Drawing[]>("GET", `/drawings/${conid}`),
 } as const;

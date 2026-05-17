@@ -1068,3 +1068,61 @@ class ContractInfoResponse(BaseModel):
     perf_1m: Optional[float] = None    # 1-month % return
     perf_3m: Optional[float] = None    # 3-month % return
     perf_ytd: Optional[float] = None   # Year-to-date % return
+
+
+# ═══════════════════════════════════════════════════════════════
+#  Chart Drawings  (Branch 1 of drawing-tools-plan.md)
+# ═══════════════════════════════════════════════════════════════
+
+
+class DrawingAnchor(BaseModel):
+    """A single anchor point for a chart drawing — position in time + price space."""
+    time: int    # Unix seconds (same coordinate system as LW Charts)
+    price: float
+
+
+class DrawingStyle(BaseModel):
+    """
+    Visual styling for a drawing. All fields are optional — the frontend
+    applies defaults from the vendored library when fields are absent.
+    """
+    line_color: Optional[str] = None           # Hex color e.g. "#2962FF"
+    line_width: Optional[int] = None           # 1..4 px
+    line_style: Optional[Literal["solid", "dashed", "dotted"]] = None
+    fill_color: Optional[str] = None           # Rectangles, position tools
+    text: Optional[str] = None                 # Text annotations + trade labels
+
+
+class CreateDrawingRequest(BaseModel):
+    """
+    POST /drawings — persist a new drawing for an instrument.
+
+    `kind` mirrors the upstream class name lowercased + underscored:
+      horizontal_line, trend_line, ray, rectangle, vertical_line,
+      text, long_position, short_position, forecast, bars_pattern
+    """
+    conid: int
+    kind: str
+    anchors: list[DrawingAnchor]
+    style: Optional[DrawingStyle] = None
+
+
+class UpdateDrawingRequest(BaseModel):
+    """
+    PUT /drawings/{id} — partial update.
+    Only the fields present in the request body are written; the others
+    remain unchanged. (Both can be absent — a no-op update is valid.)
+    """
+    anchors: Optional[list[DrawingAnchor]] = None
+    style: Optional[DrawingStyle] = None
+
+
+class DrawingResponse(BaseModel):
+    """Response shape returned by all /drawings endpoints."""
+    id: int
+    conid: int
+    kind: str
+    anchors: list[DrawingAnchor]
+    style: Optional[DrawingStyle] = None
+    created_at: str
+    updated_at: Optional[str] = None

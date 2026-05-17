@@ -355,6 +355,9 @@ app.include_router(health_router)
 from routers.instruments import router as instruments_router
 app.include_router(instruments_router)
 
+from routers.drawings import router as drawings_router
+app.include_router(drawings_router)
+
 
 # ── Health endpoint ──────────────────────────────────────────
 

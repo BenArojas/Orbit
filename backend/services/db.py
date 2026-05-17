@@ -380,6 +380,25 @@ class DatabaseService:
                 sec_type    TEXT NOT NULL DEFAULT '',
                 updated_at  TEXT DEFAULT (datetime('now'))
             );
+
+            -- ─── Chart Drawings (drawing-tools-plan.md Branch 1) ───────
+            -- Stores user drawing tools per instrument.
+            -- anchors_json: JSON list of {time (Unix s), price} objects.
+            -- style_json:   JSON dict matching DrawingStyle model (nullable).
+            -- kind:         Matches the upstream class name lowercased+underscored
+            --               e.g. "horizontal_line", "trend_line", "ray" etc.
+            CREATE TABLE IF NOT EXISTS chart_drawings (
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                conid        INTEGER NOT NULL,
+                kind         TEXT NOT NULL,
+                anchors_json TEXT NOT NULL,
+                style_json   TEXT,
+                created_at   TEXT NOT NULL DEFAULT (datetime('now')),
+                updated_at   TEXT
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_chart_drawings_conid
+                ON chart_drawings(conid);
         """)
         self._conn.commit()
         log.info("Database tables verified/created.")
@@ -1124,6 +1143,106 @@ class DatabaseService:
             self._fetchone,
             "SELECT * FROM locked_fibonacci_drawings WHERE id = ?",
             (lock_id,),
+        )
+
+    # ── Chart Drawing Operations (drawing-tools-plan.md Branch 1) ────
+
+    async def save_drawing(
+        self,
+        conid: int,
+        kind: str,
+        anchors_json: str,
+        style_json: str | None = None,
+    ) -> int:
+        """
+        Insert a new drawing and return its auto-assigned id.
+
+        anchors_json / style_json must already be serialised to JSON strings
+        by the router before calling this method.
+        """
+        import json as _json  # local import — avoid top-level shadowing
+
+        def _insert() -> int:
+            assert self._conn is not None
+            cursor = self._conn.execute(
+                """INSERT INTO chart_drawings (conid, kind, anchors_json, style_json)
+                   VALUES (?, ?, ?, ?)""",
+                (conid, kind, anchors_json, style_json),
+            )
+            self._conn.commit()
+            assert cursor.lastrowid is not None
+            return cursor.lastrowid
+
+        return await self._run_write(_insert)
+
+    async def update_drawing(
+        self,
+        drawing_id: int,
+        anchors_json: str | None = None,
+        style_json: str | None = None,
+    ) -> bool:
+        """
+        Partial update — only the fields supplied are written.
+        Returns True if a row was updated, False if the id was not found.
+        """
+        from datetime import datetime as _dt
+
+        def _update() -> bool:
+            assert self._conn is not None
+            fields: list[str] = ["updated_at = ?"]
+            params: list[object] = [_dt.utcnow().strftime("%Y-%m-%d %H:%M:%S")]
+
+            if anchors_json is not None:
+                fields.append("anchors_json = ?")
+                params.append(anchors_json)
+            if style_json is not None:
+                fields.append("style_json = ?")
+                params.append(style_json)
+
+            params.append(drawing_id)
+            cursor = self._conn.execute(
+                f"UPDATE chart_drawings SET {', '.join(fields)} WHERE id = ?",
+                params,
+            )
+            self._conn.commit()
+            return cursor.rowcount > 0
+
+        return await self._run_write(_update)
+
+    async def delete_drawing(self, drawing_id: int) -> bool:
+        """
+        Delete a drawing by id.
+        Returns True if the row existed and was deleted; False otherwise.
+        """
+        def _delete() -> bool:
+            assert self._conn is not None
+            cursor = self._conn.execute(
+                "DELETE FROM chart_drawings WHERE id = ?", (drawing_id,)
+            )
+            self._conn.commit()
+            return cursor.rowcount > 0
+
+        return await self._run_write(_delete)
+
+    async def get_drawing(self, drawing_id: int) -> dict | None:
+        """Return a single drawing row by id, or None if not found."""
+        return await asyncio.to_thread(
+            self._fetchone,
+            "SELECT * FROM chart_drawings WHERE id = ?",
+            (drawing_id,),
+        )
+
+    async def list_drawings(self, conid: int) -> list[dict]:
+        """
+        Return all drawings for an instrument, ordered oldest-first so the
+        frontend renders them in insertion order (predictable z-order on load).
+        """
+        return await asyncio.to_thread(
+            self._fetchall,
+            """SELECT * FROM chart_drawings
+               WHERE conid = ?
+               ORDER BY created_at ASC""",
+            (conid,),
         )
 
     # ── Pulse Config Operations (Phase 8.9+) ─────────────────

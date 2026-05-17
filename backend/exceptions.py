@@ -202,3 +202,27 @@ class ScannerFilterError(ScreenerError):
 
     def __init__(self, message: str = "Invalid screener filter"):
         super().__init__(message)
+
+
+# ── Drawing Errors ──────────────────────────────────────────
+
+
+class DrawingError(DataError):
+    """Base for chart drawing persistence errors."""
+
+
+class InvalidDrawingError(DrawingError):
+    """
+    Raised when a drawing payload fails validation.
+
+    Validation rules:
+      - anchors must be non-empty.
+      - Each anchor's time must be a positive integer (Unix seconds).
+      - Each anchor's price must be a finite positive float.
+      - line_width, if present, must be in [1, 4].
+      - line_style, if present, must be "solid", "dashed", or "dotted".
+      - line_color / fill_color, if present, must be a valid hex color.
+    """
+
+    def __init__(self, message: str = "Invalid drawing payload"):
+        super().__init__(message)
