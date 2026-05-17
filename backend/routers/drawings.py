@@ -178,8 +178,9 @@ async def update_drawing(
 
     style_json_str: str | None = None
     if req.style is not None:
-        style_dict = req.style.model_dump(exclude_none=True)
-        style_json_str = json.dumps(style_dict)
+        existing_style: dict = json.loads(existing["style_json"]) if existing.get("style_json") else {}
+        updates = req.style.model_dump(exclude_none=True)
+        style_json_str = json.dumps({**existing_style, **updates})
 
     await db.update_drawing(
         drawing_id=drawing_id,

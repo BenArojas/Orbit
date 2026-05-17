@@ -54,6 +54,7 @@ import {
   useUpdateDrawing,
   useDeleteDrawing,
 } from "@/hooks/useDrawings";
+import { CORE_TOOLS, PROJECTION_TOOLS } from "./drawingsRegistry";
 
 // ── Constants ─────────────────────────────────────────────────
 
@@ -69,6 +70,11 @@ const ANCHOR_COUNTS: Record<DrawingKind, number> = {
   forecast: 2,
   bars_pattern: 3,
 };
+
+/** Human-readable label per drawing kind — derived from the registry. */
+const TOOL_LABELS: Record<DrawingKind, string> = Object.fromEntries(
+  [...CORE_TOOLS, ...PROJECTION_TOOLS].map((t) => [t.id, t.label]),
+) as Record<DrawingKind, string>;
 
 /** Preset color swatches shown in the right-click color picker. */
 const COLOR_PRESETS = [
@@ -322,6 +328,18 @@ export default function DrawingsLayer({
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
   const closeContextMenu = useCallback(() => setContextMenu(null), []);
 
+  // Draw-mode state: how many anchors placed so far for the current drawing.
+  const [pendingCount, setPendingCount] = useState(0);
+
+  // Fingerprint map: drawing id → JSON of last-synced anchors+style.
+  // Used by the sync effect to detect which drawings actually changed.
+  const prevDataRef = useRef<Map<string, string>>(new Map());
+
+  // Always-current ref for drawingsHidden so the async onSuccess callback
+  // can read the live value without a stale closure.
+  const drawingsHiddenRef = useRef(drawingsHidden);
+  drawingsHiddenRef.current = drawingsHidden;
+
   // ── 1. Mount — attach DrawingManager ──────────────────────
 
   useEffect(() => {
@@ -349,6 +367,10 @@ export default function DrawingsLayer({
   }, [chart, series, containerRef, setSelectedDrawingId]);
 
   // ── 2. Sync server drawings into the manager ───────────────
+  //
+  // Uses a fingerprint map to detect which drawings actually changed so
+  // we only remove+re-add those — avoids unnecessary flicker on unrelated
+  // query refetches (e.g. after another mutation).
 
   useEffect(() => {
     const manager = managerRef.current;
@@ -357,18 +379,29 @@ export default function DrawingsLayer({
     const serverIds = new Set(drawingsData.map((d) => String(d.id)));
     const managerIds = new Set(manager.getAllDrawings().map((d) => d.id));
 
+    // Remove drawings no longer on the server.
     for (const id of managerIds) {
-      if (!serverIds.has(id)) manager.removeDrawing(id);
+      if (!serverIds.has(id)) {
+        manager.removeDrawing(id);
+        prevDataRef.current.delete(id);
+      }
     }
 
+    // Add new drawings; re-add drawings whose anchors/style changed.
     for (const drawing of drawingsData) {
       const id = String(drawing.id);
-      if (!managerIds.has(id)) {
-        const instance = makeDrawingInstance(drawing);
-        if (instance) {
-          instance.updateOptions({ visible: !drawingsHidden });
-          manager.addDrawing(instance);
-        }
+      const fp = JSON.stringify({ a: drawing.anchors, s: drawing.style });
+      const isNew = !managerIds.has(id);
+      const changed = !isNew && prevDataRef.current.get(id) !== fp;
+
+      if (!isNew && !changed) continue;
+      if (changed) manager.removeDrawing(id);
+
+      const instance = makeDrawingInstance(drawing);
+      if (instance) {
+        instance.updateOptions({ visible: !drawingsHidden });
+        manager.addDrawing(instance);
+        prevDataRef.current.set(id, fp);
       }
     }
   }, [drawingsData, drawingsHidden]);
@@ -380,6 +413,7 @@ export default function DrawingsLayer({
     if (!manager || !chart || !series) return;
 
     pendingAnchorsRef.current = [];
+    setPendingCount(0);
 
     if (!activeTool) {
       manager.setActiveTool(null);
@@ -403,10 +437,12 @@ export default function DrawingsLayer({
       }
 
       pendingAnchorsRef.current.push(anchor);
+      setPendingCount(pendingAnchorsRef.current.length);
 
       if (pendingAnchorsRef.current.length >= needed) {
         const collected = pendingAnchorsRef.current.slice();
         pendingAnchorsRef.current = [];
+        setPendingCount(0);
 
         createDrawing.mutate(
           {
@@ -418,9 +454,22 @@ export default function DrawingsLayer({
             })),
           },
           {
-            onSuccess: () => {
+            onSuccess: (created) => {
               setActiveTool(null);
               manager.setActiveTool(null);
+              // Pre-add the just-created drawing so the upcoming query
+              // invalidation/refetch doesn't cause a visible flash where
+              // the drawing disappears between manager.setActiveTool(null)
+              // and the sync effect re-adding it from server data.
+              const instance = makeDrawingInstance(created);
+              if (instance) {
+                instance.updateOptions({ visible: !drawingsHiddenRef.current });
+                manager.addDrawing(instance);
+                prevDataRef.current.set(
+                  String(created.id),
+                  JSON.stringify({ a: created.anchors, s: created.style }),
+                );
+              }
             },
           },
         );
@@ -479,25 +528,34 @@ export default function DrawingsLayer({
     };
   }, []);
 
-  // ── 7. Delete key handler ───────────────────────────────────
+  // ── 6b. Crosshair cursor when a drawing tool is active ────────
 
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
+    container.style.cursor = activeTool ? "crosshair" : "";
+    return () => { container.style.cursor = ""; };
+  }, [activeTool, containerRef]);
 
+  // ── 7. Delete key handler ───────────────────────────────────
+  //
+  // Listens on window (not the chart container div) because the container
+  // div is not focusable by default and would never receive keydown events.
+
+  useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
       if ((e.key === "Delete" || e.key === "Backspace") && selectedDrawingId != null) {
-        e.stopPropagation();
+        e.preventDefault();
         deleteDrawing.mutate(selectedDrawingId);
         setSelectedDrawingId(null);
         setContextMenu(null);
       }
     };
 
-    container.addEventListener("keydown", handleKeyDown);
-    return () => container.removeEventListener("keydown", handleKeyDown);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [containerRef, selectedDrawingId, setSelectedDrawingId]);
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [selectedDrawingId, setSelectedDrawingId, deleteDrawing]);
 
   // ── 8. Right-click context menu ────────────────────────────
 
@@ -523,17 +581,41 @@ export default function DrawingsLayer({
 
   const showSnap = shiftHeld && activeTool != null;
 
-  if (!contextMenu && !showSnap) return null;
+  if (!contextMenu && !activeTool) return null;
 
   return (
     <>
-      {/* SNAP indicator — shown when Shift is held in draw mode */}
-      {showSnap && (
+      {/* Draw-mode banner — visible whenever a tool is active.
+          Shows the tool name, how many anchors still needed, and SNAP badge. */}
+      {activeTool && (
         <div
-          data-testid="snap-indicator"
-          className="pointer-events-none absolute left-2 top-2 z-40 rounded bg-[var(--clr-cyan)] px-1.5 py-0.5 font-mono text-[9px] font-bold text-black"
+          data-testid="draw-mode-banner"
+          className="pointer-events-none absolute inset-x-0 top-0 z-40 flex justify-center py-1.5"
         >
-          SNAP
+          <div className="flex items-center gap-2 rounded-md border border-[var(--clr-cyan)]/30 bg-[var(--bg-1)]/90 px-3 py-1 shadow-[0_0_12px_var(--glow-cyan)] backdrop-blur-sm">
+            <span className="font-mono text-[10px] font-semibold text-[var(--clr-cyan)]">
+              {TOOL_LABELS[activeTool]}
+            </span>
+            <span className="h-3 w-px bg-[var(--border)]" />
+            <span className="font-mono text-[10px] text-[var(--text-2)]">
+              {pendingCount > 0
+                ? `anchor ${pendingCount} / ${ANCHOR_COUNTS[activeTool]} placed`
+                : ANCHOR_COUNTS[activeTool] === 1
+                  ? "click once to place"
+                  : `click ${ANCHOR_COUNTS[activeTool]}× to place`}
+            </span>
+            {showSnap && (
+              <>
+                <span className="h-3 w-px bg-[var(--border)]" />
+                <span
+                  data-testid="snap-indicator"
+                  className="font-mono text-[9px] font-bold text-[var(--clr-cyan)]"
+                >
+                  SNAP
+                </span>
+              </>
+            )}
+          </div>
         </div>
       )}
 
