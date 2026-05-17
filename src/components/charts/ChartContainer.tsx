@@ -91,6 +91,7 @@ export default function ChartContainer({
   const volumeSeriesRef = useRef<ISeriesApi<"Histogram"> | null>(null);
   const overlayStateRef = useRef<OverlayState>({});
   const fibOverlayRef = useRef<FibOverlayState>([]);
+  const prevConidRef = useRef<number | null>(null);
 
   // Branch 3 / plan decision 4B: user-driven "Clear chart fib" flag.
   const fibCleared = useChartStore((s) => s.fibCleared);
@@ -99,6 +100,7 @@ export default function ChartContainer({
   // is kept for backward compatibility with callers that haven't
   // migrated yet but is otherwise unused for rendering.
   const activeFibs = useChartStore((s) => s.activeFibs);
+  const resetZoomRequestId = useChartStore((s) => s.resetZoomRequestId);
 
   // ── Create chart instance ──────────────────────────────────
 
@@ -214,7 +216,8 @@ export default function ChartContainer({
 
   useEffect(() => {
     const candleSeries = candleSeriesRef.current;
-    if (!candleSeries || candles.length === 0) return;
+    const chart = chartRef.current;
+    if (!candleSeries || !chart || candles.length === 0) return;
 
     const candleData: CandlestickData<Time>[] = candles.map((c) => ({
       time: c.time as Time,
@@ -225,8 +228,27 @@ export default function ChartContainer({
     }));
 
     candleSeries.setData(candleData);
-    chartRef.current?.timeScale().fitContent();
-  }, [candles]);
+
+    if (conid !== prevConidRef.current) {
+      // New symbol — re-enable autoscale so the price axis fits the new range.
+      chart.priceScale("right").applyOptions({ autoScale: true });
+      chart.timeScale().fitContent();
+    } else {
+      // Same symbol (timeframe/indicator change) — don't refit, preserve zoom.
+      chart.timeScale().fitContent();
+    }
+
+    prevConidRef.current = conid;
+  }, [candles, conid]);
+
+  // ── Reset zoom (store-driven) ──────────────────────────────
+
+  useEffect(() => {
+    const chart = chartRef.current;
+    if (!chart || resetZoomRequestId === 0) return;
+    chart.priceScale("right").applyOptions({ autoScale: true });
+    chart.timeScale().fitContent();
+  }, [resetZoomRequestId]);
 
   // ── Volume overlay — controlled by indicator toggle ────────
 
