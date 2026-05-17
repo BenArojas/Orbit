@@ -16,7 +16,7 @@
  * Plan: docs/drawing-tools-plan.md, Branches 3–4.
  */
 
-import { Eye, EyeOff, Trash2 } from "lucide-react";
+import { Eye, EyeOff, MousePointerClick, Trash2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useDrawingsStore } from "@/store/drawings";
 import { useDeleteDrawing } from "@/hooks/useDrawings";
@@ -112,68 +112,87 @@ export default function DrawingToolbar({ conid }: DrawingToolbarProps) {
   return (
     <TooltipProvider delay={300}>
       <div
-        className="flex w-8 shrink-0 flex-col items-center gap-1 border-r border-border bg-[var(--bg-1)] py-2"
+        className={cn(
+          "flex h-full w-8 shrink-0 flex-col items-center border-r bg-[var(--bg-1)] transition-all duration-200",
+          activeTool
+            ? "border-[var(--clr-cyan)]/40 shadow-[inset_-2px_0_10px_rgba(0,212,255,0.08)]"
+            : "border-border",
+        )}
         data-testid="drawing-toolbar"
       >
-        {/* ── Core tools ── */}
-        {CORE_TOOLS.map((tool) => (
+        {/* ── Drawing tools — vertically centered in the available space ── */}
+        <div className="flex flex-1 flex-col items-center justify-center gap-1 py-2">
+          {/* Mode indicator dot — glows cyan when a tool is active */}
+          {activeTool ? (
+            <div className="mb-1 flex h-3 w-3 items-center justify-center">
+              <span className="h-1.5 w-1.5 rounded-full bg-[var(--clr-cyan)] shadow-[0_0_6px_var(--glow-cyan)]" />
+            </div>
+          ) : (
+            <div className="mb-1 flex h-3 w-3 items-center justify-center">
+              <MousePointerClick size={10} className="text-[var(--text-3)]" />
+            </div>
+          )}
+
+          {/* ── Core tools ── */}
+          {CORE_TOOLS.map((tool) => (
+            <ToolButton
+              key={tool.id}
+              label={tool.label}
+              shortcut={tool.shortcut}
+              isActive={activeTool === tool.id}
+              onClick={() => handleToolClick(tool.id)}
+            >
+              <tool.Icon
+                size={14}
+                className={tool.iconClass}
+                data-testid={`tool-icon-${tool.id}`}
+              />
+            </ToolButton>
+          ))}
+
+          {/* ── Projection tools section ── */}
+          <div className="my-0.5 h-px w-6 bg-[var(--border)]" />
+          <span className="select-none font-mono text-[7px] uppercase tracking-widest text-[var(--text-3)]">
+            Proj
+          </span>
+          {PROJECTION_TOOLS.map((tool) => (
+            <ToolButton
+              key={tool.id}
+              label={tool.label}
+              shortcut={tool.shortcut}
+              isActive={activeTool === tool.id}
+              onClick={() => handleToolClick(tool.id)}
+            >
+              <tool.Icon
+                size={14}
+                data-testid={`tool-icon-${tool.id}`}
+              />
+            </ToolButton>
+          ))}
+        </div>
+
+        {/* ── Utility buttons pinned to bottom ── */}
+        <div className="flex flex-col items-center gap-1 border-t border-border pb-2 pt-2">
+          {/* ── Hide / show all drawings ── */}
           <ToolButton
-            key={tool.id}
-            label={tool.label}
-            shortcut={tool.shortcut}
-            isActive={activeTool === tool.id}
-            onClick={() => handleToolClick(tool.id)}
+            label={drawingsHidden ? "Show all drawings" : "Hide all drawings"}
+            isActive={drawingsHidden}
+            onClick={toggleDrawingsHidden}
           >
-            <tool.Icon
-              size={14}
-              className={tool.iconClass}
-              data-testid={`tool-icon-${tool.id}`}
-            />
+            {drawingsHidden ? <EyeOff size={14} /> : <Eye size={14} />}
           </ToolButton>
-        ))}
 
-        {/* ── Projection tools section ── */}
-        <div className="my-0.5 h-px w-6 bg-[var(--border)]" />
-        <span className="select-none font-mono text-[7px] uppercase tracking-widest text-[var(--text-3)]">
-          Proj
-        </span>
-        {PROJECTION_TOOLS.map((tool) => (
+          {/* ── Delete selected ── */}
           <ToolButton
-            key={tool.id}
-            label={tool.label}
-            shortcut={tool.shortcut}
-            isActive={activeTool === tool.id}
-            onClick={() => handleToolClick(tool.id)}
+            label="Delete selected drawing"
+            shortcut="Del"
+            disabled={selectedDrawingId == null}
+            onClick={handleDeleteSelected}
+            className={selectedDrawingId != null ? "hover:text-[var(--clr-red)]" : ""}
           >
-            <tool.Icon
-              size={14}
-              data-testid={`tool-icon-${tool.id}`}
-            />
+            <Trash2 size={14} />
           </ToolButton>
-        ))}
-
-        {/* ── Divider ── */}
-        <div className="my-1 h-px w-6 bg-[var(--border)]" />
-
-        {/* ── Hide / show all drawings ── */}
-        <ToolButton
-          label={drawingsHidden ? "Show all drawings" : "Hide all drawings"}
-          isActive={drawingsHidden}
-          onClick={toggleDrawingsHidden}
-        >
-          {drawingsHidden ? <EyeOff size={14} /> : <Eye size={14} />}
-        </ToolButton>
-
-        {/* ── Delete selected ── */}
-        <ToolButton
-          label="Delete selected drawing"
-          shortcut="Del"
-          disabled={selectedDrawingId == null}
-          onClick={handleDeleteSelected}
-          className={selectedDrawingId != null ? "hover:text-[var(--clr-red)]" : ""}
-        >
-          <Trash2 size={14} />
-        </ToolButton>
+        </div>
       </div>
     </TooltipProvider>
   );

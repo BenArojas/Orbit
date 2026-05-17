@@ -89,7 +89,7 @@ export function useUpdateDrawing(conid: number) {
             ? {
                 ...d,
                 anchors: req.anchors ?? d.anchors,
-                style: req.style ?? d.style,
+                style: req.style != null ? { ...d.style, ...req.style } : d.style,
               }
             : d,
         ) ?? [],
