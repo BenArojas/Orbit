@@ -1,13 +1,15 @@
 /**
- * Tests for DrawingToolbar — Branch 3.
+ * Tests for DrawingToolbar — Branches 3 & 4.
  *
  * Covers:
  *   - Renders one button per CORE_TOOLS entry
+ *   - Renders one button per PROJECTION_TOOLS entry (Branch 4)
  *   - Clicking a tool sets activeTool in the drawings store
  *   - Second click on the active tool clears it (toggle behavior)
  *   - "Hide all" button toggles drawingsHidden
  *   - "Delete selected" is disabled when nothing is selected
  *   - "Delete selected" fires deleteDrawing and clears selectedDrawingId
+ *   - Clicking "Long Position" sets activeTool to "long_position" (Branch 4)
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -17,7 +19,7 @@ import { createElement } from "react";
 
 import DrawingToolbar from "../DrawingToolbar";
 import { useDrawingsStore } from "@/store/drawings";
-import { CORE_TOOLS } from "../drawingsRegistry";
+import { CORE_TOOLS, PROJECTION_TOOLS } from "../drawingsRegistry";
 
 // ── Mocks ─────────────────────────────────────────────────────
 
@@ -118,5 +120,44 @@ describe("DrawingToolbar", () => {
     fireEvent.click(btn);
     expect(mockDeleteMutate).toHaveBeenCalledWith(42);
     expect(useDrawingsStore.getState().selectedDrawingId).toBeNull();
+  });
+
+  // ── Branch 4: Projection tools ────────────────────────────
+
+  it("renders one button per PROJECTION_TOOLS entry", () => {
+    renderToolbar();
+    const toolbar = screen.getByTestId("drawing-toolbar");
+    for (const tool of PROJECTION_TOOLS) {
+      expect(toolbar.querySelector(`[aria-label="${tool.label}"]`)).toBeTruthy();
+    }
+  });
+
+  it("clicking 'Long Position' sets activeTool to 'long_position'", () => {
+    renderToolbar();
+    const btn = screen.getByRole("button", { name: "Long Position" });
+    fireEvent.click(btn);
+    expect(useDrawingsStore.getState().activeTool).toBe("long_position");
+  });
+
+  it("clicking 'Short Position' sets activeTool to 'short_position'", () => {
+    renderToolbar();
+    const btn = screen.getByRole("button", { name: "Short Position" });
+    fireEvent.click(btn);
+    expect(useDrawingsStore.getState().activeTool).toBe("short_position");
+  });
+
+  it("clicking 'Forecast' sets activeTool to 'forecast'", () => {
+    renderToolbar();
+    const btn = screen.getByRole("button", { name: "Forecast" });
+    fireEvent.click(btn);
+    expect(useDrawingsStore.getState().activeTool).toBe("forecast");
+  });
+
+  it("clicking active projection tool again clears it", () => {
+    useDrawingsStore.setState({ activeTool: "long_position" });
+    renderToolbar();
+    const btn = screen.getByRole("button", { name: "Long Position" });
+    fireEvent.click(btn);
+    expect(useDrawingsStore.getState().activeTool).toBeNull();
   });
 });

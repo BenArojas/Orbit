@@ -1,10 +1,15 @@
 /**
- * Tests for DrawingsLayer — Branch 2 + Branch 3.
+ * Tests for DrawingsLayer — Branches 2, 3 & 4.
  *
  * Branch 3 additions:
  *   - Delete key fires useDeleteDrawing when a drawing is selected
  *   - Right-click shows context menu only when a drawing is selected
  *   - Shift-to-snap snaps price to nearest OHLC value at click time
+ *
+ * Branch 4 additions:
+ *   - 3-click sequence for long_position / short_position / bars_pattern
+ *     fires useCreateDrawing with 3 anchors after the third click
+ *   - 2-click sequence for forecast fires after the second click
  *
  * DrawingManager (the vendored class) is fully stubbed. We verify:
  *   - attach() called on mount when chart + series are ready
@@ -439,6 +444,135 @@ describe("DrawingsLayer", () => {
     const [req] = mockCreateMutate.mock.calls[0] as [{ anchors: { price: number }[] }];
     // Should snap to candle close (175.3), not raw price (175.34)
     expect(req.anchors[0].price).toBeCloseTo(175.3, 1);
+  });
+
+  // ── Branch 4: Projection tool click sequences ─────────────
+
+  it("3-click sequence for long_position fires mutate with 3 anchors", async () => {
+    const chart = makeChartStub();
+    const series = makeSeriesStub(200.0);
+    const containerRef = createRef<HTMLDivElement>();
+    // @ts-expect-error
+    containerRef.current = document.createElement("div");
+
+    const qc = new QueryClient();
+    render(
+      createElement(
+        QueryClientProvider,
+        { client: qc },
+        createElement(DrawingsLayer, {
+          chart: chart as unknown as Parameters<typeof DrawingsLayer>[0]["chart"],
+          series: series as unknown as Parameters<typeof DrawingsLayer>[0]["series"],
+          containerRef,
+          conid: 100,
+        }),
+      ),
+    );
+
+    await act(async () => {
+      useDrawingsStore.getState().setActiveTool("long_position");
+    });
+
+    // Clicks 1 and 2 — must NOT fire yet.
+    await act(async () => {
+      chart._fireClick({ point: { x: 10, y: 100 }, time: 1_700_000_000 });
+    });
+    await act(async () => {
+      chart._fireClick({ point: { x: 20, y: 120 }, time: 1_700_003_600 });
+    });
+    expect(mockCreateMutate).not.toHaveBeenCalled();
+
+    // Click 3 — fires now.
+    await act(async () => {
+      chart._fireClick({ point: { x: 30, y: 80 }, time: 1_700_007_200 });
+    });
+    expect(mockCreateMutate).toHaveBeenCalledOnce();
+    const [req] = mockCreateMutate.mock.calls[0] as [{ kind: string; anchors: unknown[] }];
+    expect(req.kind).toBe("long_position");
+    expect(req.anchors).toHaveLength(3);
+  });
+
+  it("2-click sequence for forecast fires mutate with 2 anchors", async () => {
+    const chart = makeChartStub();
+    const series = makeSeriesStub(150.0);
+    const containerRef = createRef<HTMLDivElement>();
+    // @ts-expect-error
+    containerRef.current = document.createElement("div");
+
+    const qc = new QueryClient();
+    render(
+      createElement(
+        QueryClientProvider,
+        { client: qc },
+        createElement(DrawingsLayer, {
+          chart: chart as unknown as Parameters<typeof DrawingsLayer>[0]["chart"],
+          series: series as unknown as Parameters<typeof DrawingsLayer>[0]["series"],
+          containerRef,
+          conid: 100,
+        }),
+      ),
+    );
+
+    await act(async () => {
+      useDrawingsStore.getState().setActiveTool("forecast");
+    });
+
+    // First click — must NOT fire yet.
+    await act(async () => {
+      chart._fireClick({ point: { x: 50, y: 100 }, time: 1_700_000_000 });
+    });
+    expect(mockCreateMutate).not.toHaveBeenCalled();
+
+    // Second click — fires now.
+    await act(async () => {
+      chart._fireClick({ point: { x: 150, y: 200 }, time: 1_700_086_400 });
+    });
+    expect(mockCreateMutate).toHaveBeenCalledOnce();
+    const [req] = mockCreateMutate.mock.calls[0] as [{ kind: string; anchors: unknown[] }];
+    expect(req.kind).toBe("forecast");
+    expect(req.anchors).toHaveLength(2);
+  });
+
+  it("3-click sequence for bars_pattern fires mutate with 3 anchors", async () => {
+    const chart = makeChartStub();
+    const series = makeSeriesStub(180.0);
+    const containerRef = createRef<HTMLDivElement>();
+    // @ts-expect-error
+    containerRef.current = document.createElement("div");
+
+    const qc = new QueryClient();
+    render(
+      createElement(
+        QueryClientProvider,
+        { client: qc },
+        createElement(DrawingsLayer, {
+          chart: chart as unknown as Parameters<typeof DrawingsLayer>[0]["chart"],
+          series: series as unknown as Parameters<typeof DrawingsLayer>[0]["series"],
+          containerRef,
+          conid: 100,
+        }),
+      ),
+    );
+
+    await act(async () => {
+      useDrawingsStore.getState().setActiveTool("bars_pattern");
+    });
+
+    await act(async () => {
+      chart._fireClick({ point: { x: 10, y: 100 }, time: 1_700_000_000 });
+    });
+    await act(async () => {
+      chart._fireClick({ point: { x: 20, y: 100 }, time: 1_700_086_400 });
+    });
+    expect(mockCreateMutate).not.toHaveBeenCalled();
+
+    await act(async () => {
+      chart._fireClick({ point: { x: 30, y: 100 }, time: 1_700_172_800 });
+    });
+    expect(mockCreateMutate).toHaveBeenCalledOnce();
+    const [req] = mockCreateMutate.mock.calls[0] as [{ kind: string; anchors: unknown[] }];
+    expect(req.kind).toBe("bars_pattern");
+    expect(req.anchors).toHaveLength(3);
   });
 
   it("does NOT snap when Shift is not held", async () => {

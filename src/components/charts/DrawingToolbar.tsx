@@ -3,6 +3,8 @@
  *
  * Layout (top → bottom):
  *   - 6 core drawing-tool buttons (one per CORE_TOOLS entry)
+ *   - Divider + "Projection" label
+ *   - 4 projection-tool buttons (one per PROJECTION_TOOLS entry)
  *   - Divider
  *   - "Hide all" toggle (Eye / EyeOff)
  *   - "Delete selected" button (disabled when nothing is selected)
@@ -11,14 +13,14 @@
  * a different button switches tools. The active button glows with
  * var(--clr-cyan). Tooltips appear to the right of each button.
  *
- * Plan: docs/drawing-tools-plan.md, Branch 3.
+ * Plan: docs/drawing-tools-plan.md, Branches 3–4.
  */
 
 import { Eye, EyeOff, Trash2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useDrawingsStore } from "@/store/drawings";
 import { useDeleteDrawing } from "@/hooks/useDrawings";
-import { CORE_TOOLS } from "./drawingsRegistry";
+import { CORE_TOOLS, PROJECTION_TOOLS } from "./drawingsRegistry";
 import {
   Tooltip,
   TooltipContent,
@@ -123,6 +125,26 @@ export default function DrawingToolbar({ conid }: DrawingToolbarProps) {
             <tool.Icon
               size={14}
               className={tool.iconClass}
+              data-testid={`tool-icon-${tool.id}`}
+            />
+          </ToolButton>
+        ))}
+
+        {/* ── Projection tools section ── */}
+        <div className="my-0.5 h-px w-6 bg-[var(--border)]" />
+        <span className="select-none font-mono text-[7px] uppercase tracking-widest text-[var(--text-3)]">
+          Proj
+        </span>
+        {PROJECTION_TOOLS.map((tool) => (
+          <ToolButton
+            key={tool.id}
+            label={tool.label}
+            shortcut={tool.shortcut}
+            isActive={activeTool === tool.id}
+            onClick={() => handleToolClick(tool.id)}
+          >
+            <tool.Icon
+              size={14}
               data-testid={`tool-icon-${tool.id}`}
             />
           </ToolButton>

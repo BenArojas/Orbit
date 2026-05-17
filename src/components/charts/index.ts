@@ -23,5 +23,5 @@ export { default as SubChartPanel, SUB_CHART_BACKEND_NAMES } from "./SubChartPan
 export type { SubChartType, SubChartPanelProps } from "./SubChartPanel";
 export { default as DrawingToolbar } from "./DrawingToolbar";
 export { default as DrawingsLayer } from "./DrawingsLayer";
-export { CORE_TOOLS, SHORTCUT_MAP } from "./drawingsRegistry";
+export { CORE_TOOLS, PROJECTION_TOOLS, SHORTCUT_MAP } from "./drawingsRegistry";
 export type { DrawingToolEntry } from "./drawingsRegistry";

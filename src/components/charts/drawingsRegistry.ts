@@ -1,30 +1,30 @@
 /**
- * Drawing tools registry — core v1 tools (6 of 10 total).
+ * Drawing tools registry — all 10 v1 tools.
  *
- * The remaining 4 projection tools (LongPosition, ShortPosition, Forecast,
- * BarsPattern) are registered in Branch 4 as PROJECTION_TOOLS.
+ * CORE_TOOLS (6): line / shape tools registered in Branch 3.
+ * PROJECTION_TOOLS (4): trade-idea tools registered in Branch 4.
  *
  * Each entry declares:
  *   id            — DrawingToolId used in the Zustand store
  *   label         — human-readable name shown in tooltips
  *   Icon          — lucide-react icon component
- *   shortcut      — single-key shortcut wired up in AnalysisPage
+ *   shortcut      — optional single-key shortcut wired up in AnalysisPage
  *   upstreamClass — class name in the vendored library (documentation)
  *   anchorCount   — number of chart clicks needed to commit the drawing
  *
- * Plan: docs/drawing-tools-plan.md, Branch 3.
+ * Plan: docs/drawing-tools-plan.md, Branches 3–4.
  */
 
 import type { LucideIcon } from "lucide-react";
-import { Minus, MoveUpRight, Square, TrendingUp, Type } from "lucide-react";
+import { ArrowDownRight, ArrowUpRight, Copy, LineChart, Minus, MoveUpRight, Square, TrendingUp, Type } from "lucide-react";
 import type { DrawingToolId } from "@/store/drawings";
 
 export interface DrawingToolEntry {
   id: NonNullable<DrawingToolId>;
   label: string;
   Icon: LucideIcon;
-  /** Single-key keyboard shortcut (no modifier). */
-  shortcut: string;
+  /** Single-key keyboard shortcut (no modifier). Optional — not all tools have one. */
+  shortcut?: string;
   /** Upstream class name in the vendored library — for documentation only. */
   upstreamClass: string;
   /** Number of chart-click anchors required before the drawing is committed. */
@@ -85,6 +85,39 @@ export const CORE_TOOLS: DrawingToolEntry[] = [
   },
 ];
 
+/** Trade-idea projection tools — registered in Branch 4. */
+export const PROJECTION_TOOLS: DrawingToolEntry[] = [
+  {
+    id: "long_position",
+    label: "Long Position",
+    Icon: ArrowUpRight,
+    shortcut: "L",
+    upstreamClass: "LongPosition",
+    anchorCount: 3,
+  },
+  {
+    id: "short_position",
+    label: "Short Position",
+    Icon: ArrowDownRight,
+    upstreamClass: "ShortPosition",
+    anchorCount: 3,
+  },
+  {
+    id: "forecast",
+    label: "Forecast",
+    Icon: LineChart,
+    upstreamClass: "Forecast",
+    anchorCount: 2,
+  },
+  {
+    id: "bars_pattern",
+    label: "Bars Pattern",
+    Icon: Copy,
+    upstreamClass: "BarsPattern",
+    anchorCount: 3,
+  },
+];
+
 /** Map from shortcut key (uppercase) to tool id — used by AnalysisPage. */
 export const SHORTCUT_MAP: Readonly<Record<string, NonNullable<DrawingToolId>>> = {
   H: "horizontal_line",
@@ -93,4 +126,5 @@ export const SHORTCUT_MAP: Readonly<Record<string, NonNullable<DrawingToolId>>> 
   S: "rectangle",
   V: "vertical_line",
   X: "text",
+  L: "long_position",
 };
