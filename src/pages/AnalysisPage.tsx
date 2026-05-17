@@ -30,6 +30,7 @@ import { toast } from "sonner";
 import { ChartContainer, SubChartPanel, AtrBadge, DrawingToolbar, SUB_CHART_BACKEND_NAMES, type SubChartType } from "@/components/charts";
 import { useChartData } from "@/hooks/useChartData";
 import { useInstrument } from "@/hooks/useInstrument";
+import { useLockedFibs } from "@/hooks/useLockedFibs";
 import { IndicatorToolbar } from "@/components/indicators";
 import { RightSidebar } from "@/components/ai";
 import { SHORTCUT_MAP } from "@/components/charts/drawingsRegistry";
@@ -145,6 +146,14 @@ export default function AnalysisPage() {
 
   // Fetch cached instrument metadata for the header badge + watermark
   const { companyName } = useInstrument(activeConid);
+
+  // Mount the locked-fibs query at the page level so its merge side effect
+  // (server locks → activeFibs in the chart store) always runs as long as the
+  // page is open. Previously this hook was only mounted inside FibStackPanel,
+  // which itself only renders when an auto-detected fib exists — so newly
+  // locked fibs never reached the chart unless the user happened to already
+  // have the indicator on with an active auto fib.
+  useLockedFibs(activeConid);
 
   // Fetch chart data (candles + indicators + live tick)
   const {
