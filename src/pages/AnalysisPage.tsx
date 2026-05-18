@@ -22,7 +22,7 @@
  */
 
 import { useState, useMemo, useEffect, useRef, useCallback, type KeyboardEvent } from "react";
-import { Maximize2 } from "lucide-react";
+import { Maximize2, ChevronLeft } from "lucide-react";
 import { useMutation } from "@tanstack/react-query";
 import { useChartStore, useAiStore, type Timeframe, type IndicatorId } from "@/store";
 import { useDrawingsStore } from "@/store/drawings";
@@ -70,6 +70,8 @@ export default function AnalysisPage() {
     exitFibDrawMode,
     toggleIndicator,
     requestResetZoom,
+    rightPanelCollapsed,
+    toggleRightPanel,
   } = useChartStore();
 
   const [symbolInput, setSymbolInput] = useState(activeSymbol || "");
@@ -124,13 +126,17 @@ export default function AnalysisPage() {
         setDrawingTool(null);
         return;
       }
+      if (e.key === "\\") {
+        toggleRightPanel();
+        return;
+      }
       const toolId = SHORTCUT_MAP[e.key.toUpperCase()];
       if (toolId) {
         // Toggle: pressing the same key again exits the tool.
         setDrawingTool(activeDrawingTool === toolId ? null : toolId);
       }
     },
-    [setDrawingTool, activeDrawingTool],
+    [setDrawingTool, activeDrawingTool, toggleRightPanel],
   );
 
   useEffect(() => {
@@ -240,7 +246,7 @@ export default function AnalysisPage() {
   };
 
   return (
-    <div className="grid h-full min-h-0 grid-cols-[32px_1fr_340px]">
+    <div className={`grid h-full min-h-0 ${rightPanelCollapsed ? "grid-cols-[32px_1fr_32px]" : "grid-cols-[32px_1fr_340px]"}`}>
       {/* ── Drawing toolbar — left vertical rail ── */}
       <DrawingToolbar conid={activeConid} />
 
@@ -397,12 +403,25 @@ export default function AnalysisPage() {
       </div>
 
       {/* ── Right: tabbed sidebar (AI / Watchlists / Triggers) ── */}
-      <RightSidebar
-        activeConid={activeConid}
-        activeSymbol={activeSymbol}
-        fibonacci={fibonacci}
-        chartIndicators={activeIndicators}
-      />
+      {rightPanelCollapsed ? (
+        <div className="flex flex-col items-center border-l border-[var(--border)] bg-[var(--bg-1)] pt-2">
+          <button
+            onClick={toggleRightPanel}
+            title="Expand panel (\)"
+            className="flex h-7 w-7 items-center justify-center rounded text-[var(--text-3)] transition-colors hover:text-[var(--clr-cyan)]"
+          >
+            <ChevronLeft size={14} />
+          </button>
+        </div>
+      ) : (
+        <RightSidebar
+          activeConid={activeConid}
+          activeSymbol={activeSymbol}
+          fibonacci={fibonacci}
+          chartIndicators={activeIndicators}
+          onCollapse={toggleRightPanel}
+        />
+      )}
     </div>
   );
 }

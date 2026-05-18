@@ -11,6 +11,7 @@
  */
 
 import { useState } from "react";
+import { ChevronRight } from "lucide-react";
 import type { IndicatorId } from "@/store/chart";
 import type { FibonacciResult } from "@/lib/api";
 import AiChatPanel from "./AiChatPanel";
@@ -36,6 +37,8 @@ interface RightSidebarProps {
   fibonacci?: FibonacciResult | null;
   /** Currently active indicators on the chart */
   chartIndicators?: Set<IndicatorId>;
+  /** Called when the user clicks the collapse chevron. */
+  onCollapse?: () => void;
 }
 
 /* ── Component ── */
@@ -45,6 +48,7 @@ export default function RightSidebar({
   activeSymbol,
   fibonacci,
   chartIndicators,
+  onCollapse,
 }: RightSidebarProps) {
   const [activeTab, setActiveTab] = useState<Tab>("ai");
 
@@ -66,6 +70,15 @@ export default function RightSidebar({
             {tab.label}
           </button>
         ))}
+        {onCollapse && (
+          <button
+            onClick={onCollapse}
+            title="Collapse panel (\)"
+            className="ml-auto px-2 text-[var(--text-3)] transition-colors hover:text-[var(--clr-cyan)]"
+          >
+            <ChevronRight size={12} />
+          </button>
+        )}
       </div>
 
       {/* ── Tab content ── */}
