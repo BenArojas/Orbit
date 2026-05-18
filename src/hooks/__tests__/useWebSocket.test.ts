@@ -30,6 +30,7 @@ class MockWebSocket {
   }
   close() {
     this.readyState = 3;
+    // Note: real browser WebSocket fires onclose asynchronously; this mock fires it synchronously.
     this.onclose?.();
   }
   open() {
@@ -124,5 +125,16 @@ describe("useWebSocket subscription refcounting", () => {
     // 123 and 456 each subscribed exactly once on reconnect — refcount of 2 for 123 should NOT cause 2 messages.
     expect(subMsgs.filter((s) => s.includes('"conid":123'))).toHaveLength(1);
     expect(subMsgs.filter((s) => s.includes('"conid":456'))).toHaveLength(1);
+  });
+
+  it("ignores unsubscribe when conid was never subscribed", () => {
+    const { result } = renderHook(() => useWebSocket());
+    const sock = MockWebSocket.instances[0];
+    act(() => sock.open());
+
+    act(() => { result.current.unsubscribe(999); });
+
+    const unsubMsgs = sock.sent.filter((s) => s.includes('"action":"unsubscribe"'));
+    expect(unsubMsgs).toHaveLength(0);
   });
 });
