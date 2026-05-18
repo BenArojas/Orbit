@@ -14,11 +14,16 @@ const mockAddSeries = vi.fn(() => ({
 const mockPriceScale = vi.fn(() => ({ applyOptions: mockApplyOptions }));
 const mockSubscribeCrosshairMove = vi.fn();
 const mockUnsubscribeCrosshairMove = vi.fn();
+const mockSubscribeClick = vi.fn();
+const mockUnsubscribeClick = vi.fn();
 const mockTimeScale = vi.fn(() => ({
   applyOptions: vi.fn(),
   fitContent: vi.fn(),
   getVisibleRange: () => null,
   setVisibleRange: vi.fn(),
+  timeToCoordinate: vi.fn(() => null),
+  subscribeVisibleTimeRangeChange: vi.fn(),
+  unsubscribeVisibleTimeRangeChange: vi.fn(),
 }));
 const mockChart = {
   addSeries: mockAddSeries,
@@ -26,6 +31,8 @@ const mockChart = {
   applyOptions: vi.fn(),
   subscribeCrosshairMove: mockSubscribeCrosshairMove,
   unsubscribeCrosshairMove: mockUnsubscribeCrosshairMove,
+  subscribeClick: mockSubscribeClick,
+  unsubscribeClick: mockUnsubscribeClick,
   timeScale: mockTimeScale,
   remove: mockRemove,
   setCrosshairPosition: vi.fn(),
@@ -185,5 +192,22 @@ describe("CompareChart — layout change", () => {
     );
     // After layout change, setData should have been called again on the new series
     expect(mockSetData.mock.calls.length).toBeGreaterThan(initialSetDataCount);
+  });
+});
+
+describe("CompareChart — marker click subscription", () => {
+  it("subscribes to chart click events", () => {
+    render(
+      <CompareChart
+        layout="overlay"
+        stockCandles={CANDLES}
+        refCandles={REF_CANDLES}
+        stockSymbol="AAPL"
+        refSymbol="SPY"
+        stockLiveTick={null}
+        refLiveTick={null}
+      />,
+    );
+    expect(mockSubscribeClick).toHaveBeenCalled();
   });
 });

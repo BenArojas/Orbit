@@ -13,7 +13,7 @@
  */
 
 import { useEffect, useState, type KeyboardEvent } from "react";
-import { Plus, X } from "lucide-react";
+import { MapPin, Plus, X, Eraser } from "lucide-react";
 import { useMutation } from "@tanstack/react-query";
 import { toast } from "sonner";
 
@@ -29,6 +29,10 @@ export default function CompareModeHeader() {
   const setReferenceSymbol = useCompareStore((s) => s.setReferenceSymbol);
   const addPane = useCompareStore((s) => s.addPane);
   const exit = useCompareStore((s) => s.exit);
+  const markerMode = useCompareStore((s) => s.markerMode);
+  const markers = useCompareStore((s) => s.markers);
+  const toggleMarkerMode = useCompareStore((s) => s.toggleMarkerMode);
+  const clearMarkers = useCompareStore((s) => s.clearMarkers);
 
   const [refInput, setRefInput] = useState(reference.symbol);
   const [inputFocused, setInputFocused] = useState(false);
@@ -101,6 +105,28 @@ export default function CompareModeHeader() {
       />
 
       <div className="ml-auto flex items-center gap-2">
+        <button
+          onClick={toggleMarkerMode}
+          aria-label={markerMode ? "Exit marker mode" : "Enter marker mode"}
+          title={markerMode ? "Click a pane to drop/remove markers · click again to exit" : "Marker mode: click a pane to drop a divergence marker"}
+          className={`flex items-center gap-1 rounded border px-2 py-0.5 text-[11px] transition-all ${
+            markerMode
+              ? "border-[var(--clr-cyan)] bg-[rgba(0,212,255,0.1)] text-[var(--clr-cyan)]"
+              : "border-[var(--border)] text-[var(--text-2)] hover:border-[var(--clr-cyan)] hover:text-[var(--clr-cyan)]"
+          }`}
+        >
+          <MapPin size={12} /> Marker
+        </button>
+        {markers.length > 0 && (
+          <button
+            onClick={clearMarkers}
+            aria-label="Clear all markers"
+            title={`Clear ${markers.length} marker${markers.length === 1 ? "" : "s"}`}
+            className="flex items-center gap-1 rounded border border-[var(--border)] px-2 py-0.5 text-[11px] text-[var(--text-3)] transition-all hover:border-[var(--clr-red)] hover:text-[var(--clr-red)]"
+          >
+            <Eraser size={12} /> Clear
+          </button>
+        )}
         <button
           onClick={addPane}
           disabled={atPaneCap}

@@ -75,4 +75,23 @@ describe("CompareModeHeader", () => {
     fireEvent.click(screen.getByRole("button", { name: /exit/i }));
     expect(useCompareStore.getState().active).toBe(false);
   });
+
+  it("Marker button toggles markerMode", () => {
+    render(<CompareModeHeader />, { wrapper: makeWrapper() });
+    fireEvent.click(screen.getByRole("button", { name: /enter marker mode/i }));
+    expect(useCompareStore.getState().markerMode).toBe(true);
+  });
+
+  it("Clear button only renders when markers exist", () => {
+    render(<CompareModeHeader />, { wrapper: makeWrapper() });
+    expect(screen.queryByRole("button", { name: /clear all markers/i })).not.toBeInTheDocument();
+  });
+
+  it("Clear button removes all markers when clicked", () => {
+    useCompareStore.getState().addMarker(1700000000);
+    useCompareStore.getState().addMarker(1700000300);
+    render(<CompareModeHeader />, { wrapper: makeWrapper() });
+    fireEvent.click(screen.getByRole("button", { name: /clear all markers/i }));
+    expect(useCompareStore.getState().markers).toEqual([]);
+  });
 });

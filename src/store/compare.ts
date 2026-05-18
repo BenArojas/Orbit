@@ -27,10 +27,17 @@ export interface CompareReference {
   conid: number | null;
 }
 
+export interface CompareMarker {
+  id: string;
+  time: number; // unix seconds, same as candle.time
+}
+
 interface CompareState {
   active: boolean;
   reference: CompareReference;
   panes: ComparePane[];
+  markerMode: boolean;
+  markers: CompareMarker[];
 
   enter: (initialTimeframe: Timeframe) => void;
   exit: () => void;
@@ -41,6 +48,10 @@ interface CompareState {
   removePane: (id: string) => void;
   setPaneLayout: (id: string, layout: Layout) => void;
   setPaneTimeframe: (id: string, tf: Timeframe) => void;
+  toggleMarkerMode: () => void;
+  addMarker: (time: number) => void;
+  removeMarker: (id: string) => void;
+  clearMarkers: () => void;
 
   /** Test-only reset. Not part of the runtime API. */
   __resetForTests: () => void;
@@ -58,6 +69,8 @@ const initialState = {
   active: false,
   reference: { ...DEFAULT_REFERENCE },
   panes: [] as ComparePane[],
+  markerMode: false,
+  markers: [] as CompareMarker[],
 };
 
 export const useCompareStore = create<CompareState>()(
@@ -83,7 +96,7 @@ export const useCompareStore = create<CompareState>()(
           };
         }),
 
-      exit: () => set({ active: false }),
+      exit: () => set({ active: false, markerMode: false }),
 
       setReference: (symbol, conid) =>
         set({ reference: { symbol, conid } }),
@@ -125,8 +138,18 @@ export const useCompareStore = create<CompareState>()(
           panes: state.panes.map((p) => (p.id === id ? { ...p, timeframe: tf } : p)),
         })),
 
+      toggleMarkerMode: () => set((s) => ({ markerMode: !s.markerMode })),
+
+      addMarker: (time) =>
+        set((s) => ({ markers: [...s.markers, { id: crypto.randomUUID(), time }] })),
+
+      removeMarker: (id) =>
+        set((s) => ({ markers: s.markers.filter((m) => m.id !== id) })),
+
+      clearMarkers: () => set({ markers: [] }),
+
       __resetForTests: () =>
-        set({ ...initialState, reference: { ...DEFAULT_REFERENCE } }),
+        set({ ...initialState, reference: { ...DEFAULT_REFERENCE }, markers: [], markerMode: false }),
     }),
     {
       name: "parallax-compare-store",
@@ -135,8 +158,10 @@ export const useCompareStore = create<CompareState>()(
         // Persist the user's preferences but NOT the live `active` flag
         // (compare mode shouldn't auto-resume on reload) and NOT the
         // resolved conid (IBKR can re-issue them — always re-resolve).
+        // markerMode is transient UI state — not persisted.
         reference: { symbol: state.reference.symbol, conid: null },
         panes: state.panes,
+        markers: state.markers,
       }),
     },
   ),
