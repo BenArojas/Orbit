@@ -234,6 +234,12 @@ interface ChartState {
    * when it changes.
    */
   resetZoomRequestId: number;
+  requestResetZoom: () => void;
+
+  /** True when the right sidebar is collapsed to a 32px icon rail. In-memory only — resets on reload. */
+  rightPanelCollapsed: boolean;
+  /** Toggle the right panel between expanded (340px) and collapsed (32px rail). */
+  toggleRightPanel: () => void;
 
   /** Actions */
   setActiveConid: (conid: number) => void;
@@ -307,6 +313,7 @@ export const useChartStore = create<ChartState>()((set, get) => ({
   fibCleared: false,
   activeFibs: [],
   resetZoomRequestId: 0,
+  rightPanelCollapsed: false,
 
   // Branch 7 / plan decisions 10A + 10B:
   // Switching to a new instrument resets the whole chart so the
@@ -513,4 +520,6 @@ export const useChartStore = create<ChartState>()((set, get) => ({
   clearAllActiveFibs: () => set({ activeFibs: [] }),
 
   requestResetZoom: () => set((s) => ({ resetZoomRequestId: s.resetZoomRequestId + 1 })),
+
+  toggleRightPanel: () => set((s) => ({ rightPanelCollapsed: !s.rightPanelCollapsed })),
 }));
