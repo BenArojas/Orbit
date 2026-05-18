@@ -333,12 +333,12 @@ describe("DrawingsLayer", () => {
 
   it("Delete key fires useDeleteDrawing when a drawing is selected", async () => {
     useDrawingsStore.setState({ selectedDrawingId: 7 });
-    const { containerRef } = renderLayer();
+    renderLayer();
 
+    // The production handler listens on window (not the container) because
+    // the container div isn't focusable. Dispatch on window directly.
     await act(async () => {
-      containerRef.current!.dispatchEvent(
-        new KeyboardEvent("keydown", { key: "Delete", bubbles: true }),
-      );
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "Delete" }));
     });
 
     expect(mockDeleteMutate).toHaveBeenCalledWith(7);
@@ -347,12 +347,10 @@ describe("DrawingsLayer", () => {
 
   it("Backspace key also fires useDeleteDrawing", async () => {
     useDrawingsStore.setState({ selectedDrawingId: 9 });
-    const { containerRef } = renderLayer();
+    renderLayer();
 
     await act(async () => {
-      containerRef.current!.dispatchEvent(
-        new KeyboardEvent("keydown", { key: "Backspace", bubbles: true }),
-      );
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "Backspace" }));
     });
 
     expect(mockDeleteMutate).toHaveBeenCalledWith(9);

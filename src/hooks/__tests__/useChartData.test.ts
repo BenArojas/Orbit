@@ -103,20 +103,24 @@ describe("useChartData", () => {
     const client = makeClient();
     const indicators = new Set<never>();
 
-    // Fetch for 1D
+    // After Spec B's split, useChartData runs TWO independent queries
+    // (candles + indicators) — both call api.computeIndicators, so we
+    // expect 2 calls per timeframe and 4 total after a TF switch.
     const { rerender } = renderHook(
       ({ tf }: { tf: "1D" | "1W" }) => useChartData(265598, tf, indicators),
       { wrapper: wrapper(client), initialProps: { tf: "1D" } },
     );
-    await waitFor(() => expect(mockComputeIndicators).toHaveBeenCalledTimes(1));
-
-    // Switch to 1W — should trigger a NEW fetch (different queryKey)
-    rerender({ tf: "1W" });
     await waitFor(() => expect(mockComputeIndicators).toHaveBeenCalledTimes(2));
 
+    rerender({ tf: "1W" });
+    await waitFor(() => expect(mockComputeIndicators).toHaveBeenCalledTimes(4));
+
     const calls = mockComputeIndicators.mock.calls;
+    // First two calls are for "1D", last two for "1W".
     expect(calls[0][0].timeframe).toBe("1D");
-    expect(calls[1][0].timeframe).toBe("1W");
+    expect(calls[1][0].timeframe).toBe("1D");
+    expect(calls[2][0].timeframe).toBe("1W");
+    expect(calls[3][0].timeframe).toBe("1W");
   });
 
   it("does not fetch when conid is null", () => {

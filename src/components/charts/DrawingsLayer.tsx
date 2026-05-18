@@ -58,6 +58,11 @@ import { CORE_TOOLS, PROJECTION_TOOLS } from "./drawingsRegistry";
 
 // ── Constants ─────────────────────────────────────────────────
 
+// Stable default for the optional candles prop. Defaulting inline with `= []`
+// creates a new array reference on every render, which retriggers the
+// draw-mode effect and wipes pendingAnchorsRef between clicks.
+const EMPTY_CANDLES: readonly CandleData[] = [];
+
 const ANCHOR_COUNTS: Record<DrawingKind, number> = {
   horizontal_line: 1,
   trend_line: 2,
@@ -305,7 +310,7 @@ export default function DrawingsLayer({
   series,
   containerRef,
   conid,
-  candles = [],
+  candles = EMPTY_CANDLES as CandleData[],
 }: DrawingsLayerProps) {
   const managerRef = useRef<DrawingManager | null>(null);
   const pendingAnchorsRef = useRef<Anchor[]>([]);
@@ -388,13 +393,22 @@ export default function DrawingsLayer({
     }
 
     // Add new drawings; re-add drawings whose anchors/style changed.
+    // When the manager already has the drawing but prevDataRef has no
+    // fingerprint (e.g. re-mount, hot reload, or pre-populated test
+    // state), assume the drawing is unchanged and just record a baseline
+    // fingerprint — re-adding would cause a needless visual flash.
     for (const drawing of drawingsData) {
       const id = String(drawing.id);
       const fp = JSON.stringify({ a: drawing.anchors, s: drawing.style });
       const isNew = !managerIds.has(id);
-      const changed = !isNew && prevDataRef.current.get(id) !== fp;
+      const hasFingerprint = prevDataRef.current.has(id);
+      const changed = !isNew && hasFingerprint && prevDataRef.current.get(id) !== fp;
 
-      if (!isNew && !changed) continue;
+      if (!isNew && !changed) {
+        // Record fingerprint for future change detection.
+        if (!hasFingerprint) prevDataRef.current.set(id, fp);
+        continue;
+      }
       if (changed) manager.removeDrawing(id);
 
       const instance = makeDrawingInstance(drawing);

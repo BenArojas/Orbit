@@ -119,9 +119,9 @@ describe("AnalysisPage symbol input sync", () => {
   });
 });
 
-// ── Bug 3 fix ────────────────────────────────────────────────
+// ── Spec B (post-split-query) ────────────────────────────────
 
-describe("AnalysisPage — chart stays mounted across indicator-toggle refetches (Bug 3)", () => {
+describe("AnalysisPage — chart stays mounted across indicator toggles (Spec B)", () => {
   beforeEach(() => {
     resetChartDataMock();
     useChartStore.setState({
@@ -138,7 +138,7 @@ describe("AnalysisPage — chart stays mounted across indicator-toggle refetches
     return { time, open: 100, high: 101, low: 99, close: 100, volume: 1_000_000 };
   }
 
-  it("does NOT unmount ChartContainer when candles briefly empty during a refetch", () => {
+  it("keeps ChartContainer mounted when an indicator-only update arrives (candles stable across toggles)", () => {
     // Initial render with data — chart appears.
     chartDataMock.candles = [makeCandle(1), makeCandle(2), makeCandle(3)];
     const { rerender } = render(
@@ -150,11 +150,11 @@ describe("AnalysisPage — chart stays mounted across indicator-toggle refetches
     );
     expect(screen.getByTestId("chart-container")).toBeInTheDocument();
 
-    // Simulate an indicator toggle that briefly empties the candles
-    // (queryKey changed; placeholderData not yet flowing through).
+    // Simulate an indicator toggle. Post-Spec-B the candles and indicators
+    // are on independent TanStack Queries, so candles stay populated
+    // while the indicator query refetches. ChartContainer never blanks.
     act(() => {
-      chartDataMock.candles = [];
-      chartDataMock.isLoading = true;
+      chartDataMock.indicators = [{ name: "rsi", type: "oscillator", values: [], params: {} }];
     });
     rerender(
       <QueryClientProvider
@@ -163,17 +163,15 @@ describe("AnalysisPage — chart stays mounted across indicator-toggle refetches
         <AnalysisPage />
       </QueryClientProvider>,
     );
-
-    // Pre-fix: this would render the loading placeholder instead of
-    // ChartContainer. Post-fix: ChartContainer stays because we've
-    // already loaded once for this conid.
     expect(screen.getByTestId("chart-container")).toBeInTheDocument();
     expect(screen.queryByText(/Loading chart data/)).toBeNull();
 
-    // Refetch settles with fresh data — chart still mounted.
+    // Toggle again — chart still mounted.
     act(() => {
-      chartDataMock.candles = [makeCandle(4), makeCandle(5)];
-      chartDataMock.isLoading = false;
+      chartDataMock.indicators = [
+        { name: "rsi", type: "oscillator", values: [], params: {} },
+        { name: "macd", type: "histogram", values: [], params: {} },
+      ];
     });
     rerender(
       <QueryClientProvider
