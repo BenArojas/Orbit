@@ -61,6 +61,19 @@ describe("compare store — reference", () => {
     expect(r.symbol).toBe("QQQ");
     expect(r.conid).toBe(320227571);
   });
+
+  it("setReferenceSymbol preserves conid when symbol unchanged", () => {
+    useCompareStore.getState().setReference("QQQ", 320227571);
+    useCompareStore.getState().setReferenceSymbol("QQQ");
+    expect(useCompareStore.getState().reference.conid).toBe(320227571);
+  });
+
+  it("setReferenceSymbol clears conid when symbol changes", () => {
+    useCompareStore.getState().setReference("QQQ", 320227571);
+    useCompareStore.getState().setReferenceSymbol("AAPL");
+    expect(useCompareStore.getState().reference.conid).toBeNull();
+    expect(useCompareStore.getState().reference.symbol).toBe("AAPL");
+  });
 });
 
 describe("compare store — panes", () => {
@@ -127,5 +140,14 @@ describe("compare store — persistence", () => {
     const raw = localStorage.getItem("parallax-compare-store");
     expect(raw).toBeTruthy();
     expect(raw).toContain("QQQ");
+  });
+
+  it("does not persist active flag or resolved conid", () => {
+    useCompareStore.getState().enter("5m");
+    useCompareStore.getState().setReference("QQQ", 320227571);
+    const raw = localStorage.getItem("parallax-compare-store");
+    const parsed = JSON.parse(raw!).state;
+    expect(parsed).not.toHaveProperty("active");
+    expect(parsed.reference.conid).toBeNull();
   });
 });
