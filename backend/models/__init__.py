@@ -311,6 +311,11 @@ class IndicatorRequest(BaseModel):
     )
     # Deprecated — kept for backwards compat, remove in next release
     period: Optional[str] = None
+    # Optional override for the IBKR history fetch window.
+    # When set, overrides the period from TIMEFRAME_SPEC while keeping the bar size.
+    # Accepts the same labels as the frontend 'defaultPeriod' setting:
+    # '1M', '3M', '6M', '1Y', '2Y', '5Y'.
+    history_period: Optional[str] = None
 
 
 class IndicatorValue(BaseModel):

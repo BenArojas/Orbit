@@ -69,6 +69,9 @@ async def compute_indicators(
         spec = TIMEFRAME_SPEC["1D"]
 
     ibkr_period = spec.period
+    # Apply history_period override if provided (keeps bar size from TIMEFRAME_SPEC)
+    if request.history_period:
+        ibkr_period = request.history_period.lower()
     ibkr_bar = spec.bar
     est_max_bars = spec.est_max_bars
 
