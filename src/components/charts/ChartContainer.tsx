@@ -68,6 +68,12 @@ export interface ChartContainerProps {
   timeframe?: Timeframe;
   /** Symbol string shown as chart watermark */
   symbol?: string;
+  /** Called when the user has panned near the leftmost loaded candle. */
+  onLoadMore?: () => void;
+  /** True while a period escalation is loading. */
+  isLoadingMore?: boolean;
+  /** False when already at the top of the period ladder (5Y). */
+  canLoadMore?: boolean;
 }
 
 // ── Component ────────────────────────────────────────────────
@@ -84,6 +90,9 @@ export default function ChartContainer({
   conid = null,
   timeframe = "1D",
   symbol,
+  onLoadMore,
+  isLoadingMore = false,
+  canLoadMore = false,
 }: ChartContainerProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
@@ -92,6 +101,14 @@ export default function ChartContainer({
   const overlayStateRef = useRef<OverlayState>({});
   const fibOverlayRef = useRef<FibOverlayState>([]);
   const prevConidRef = useRef<number | null>(null);
+  const prevTimeframeRef = useRef<Timeframe>(timeframe);
+  const prevFirstCandleTimeRef = useRef<number | null>(null);
+  const onLoadMoreRef = useRef(onLoadMore);
+  const isLoadingMoreRef = useRef(isLoadingMore);
+  const canLoadMoreRef = useRef(canLoadMore);
+  useEffect(() => { onLoadMoreRef.current = onLoadMore; }, [onLoadMore]);
+  useEffect(() => { isLoadingMoreRef.current = isLoadingMore; }, [isLoadingMore]);
+  useEffect(() => { canLoadMoreRef.current = canLoadMore; }, [canLoadMore]);
 
   // Branch 3 / plan decision 4B: user-driven "Clear chart fib" flag.
   const fibCleared = useChartStore((s) => s.fibCleared);
@@ -219,6 +236,10 @@ export default function ChartContainer({
     const chart = chartRef.current;
     if (!candleSeries || !chart || candles.length === 0) return;
 
+    // Capture the current visible range before data changes. Used to
+    // restore position after a period escalation (older bars loaded).
+    const visibleRange = chart.timeScale().getVisibleLogicalRange();
+
     const candleData: CandlestickData<Time>[] = candles.map((c) => ({
       time: c.time as Time,
       open: c.open,
@@ -229,17 +250,31 @@ export default function ChartContainer({
 
     candleSeries.setData(candleData);
 
-    if (conid !== prevConidRef.current) {
+    const newFirst = candles[0].time;
+    const isNewSymbol = conid !== prevConidRef.current;
+    const isTimeframeChange = timeframe !== prevTimeframeRef.current;
+    const isPeriodEscalation =
+      !isNewSymbol &&
+      !isTimeframeChange &&
+      prevFirstCandleTimeRef.current !== null &&
+      newFirst < prevFirstCandleTimeRef.current;
+
+    if (isNewSymbol) {
       // New symbol — re-enable autoscale so the price axis fits the new range.
       chart.priceScale("right").applyOptions({ autoScale: true });
       chart.timeScale().fitContent();
+    } else if (isPeriodEscalation && visibleRange) {
+      // Older candles loaded: keep the user's view exactly where it was.
+      chart.timeScale().setVisibleLogicalRange(visibleRange);
     } else {
-      // Same symbol (timeframe/indicator change) — don't refit, preserve zoom.
+      // Same symbol, timeframe/indicator change — fit to new content.
       chart.timeScale().fitContent();
     }
 
     prevConidRef.current = conid;
-  }, [candles, conid]);
+    prevTimeframeRef.current = timeframe;
+    prevFirstCandleTimeRef.current = newFirst;
+  }, [candles, conid, timeframe]);
 
   // ── Reset zoom (store-driven) ──────────────────────────────
 
@@ -249,6 +284,27 @@ export default function ChartContainer({
     chart.priceScale("right").applyOptions({ autoScale: true });
     chart.timeScale().fitContent();
   }, [resetZoomRequestId]);
+
+  // ── Auto-load older candles on left-edge pan ───────────────
+
+  useEffect(() => {
+    const chart = chartRef.current;
+    if (!chart) return;
+    const handler = () => {
+      if (!canLoadMoreRef.current || isLoadingMoreRef.current) return;
+      const logicalRange = chart.timeScale().getVisibleLogicalRange();
+      if (!logicalRange) return;
+      // Trigger when the left edge of the visible window is within 10 bars
+      // of the start of the loaded data.
+      if (logicalRange.from <= 10) {
+        onLoadMoreRef.current?.();
+      }
+    };
+    chart.timeScale().subscribeVisibleTimeRangeChange(handler);
+    return () => {
+      try { chart.timeScale().unsubscribeVisibleTimeRangeChange(handler); } catch { /* chart gone */ }
+    };
+  }, []);
 
   // ── Volume overlay — controlled by indicator toggle ────────
 
@@ -441,6 +497,13 @@ export default function ChartContainer({
         conid={conid}
         candles={candles}
       />
+
+      {isLoadingMore && (
+        <div className="pointer-events-none absolute bottom-8 left-4 z-10 flex items-center gap-1.5 rounded-full border border-[var(--clr-cyan)] bg-[var(--bg-0)] px-3 py-1 text-[10px] text-[var(--clr-cyan)]">
+          <div className="h-2.5 w-2.5 animate-spin rounded-full border border-[var(--clr-cyan)] border-t-transparent" />
+          Loading older bars…
+        </div>
+      )}
     </div>
   );
 }

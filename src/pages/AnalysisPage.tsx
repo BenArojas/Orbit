@@ -164,6 +164,9 @@ export default function AnalysisPage() {
     isLoading,
     isFetching,
     error,
+    loadMore,
+    isLoadingMore,
+    canLoadMore,
   } = useChartData(activeConid, timeframe, activeIndicators);
 
   // Bug 1: surface `no_active_fib` to the user.
@@ -358,6 +361,9 @@ export default function AnalysisPage() {
               conid={activeConid}
               timeframe={timeframe}
               symbol={activeSymbol || undefined}
+              onLoadMore={loadMore}
+              isLoadingMore={isLoadingMore}
+              canLoadMore={canLoadMore}
             />
           ) : (
             <div className="flex h-full items-center justify-center">
