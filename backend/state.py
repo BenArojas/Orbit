@@ -29,6 +29,10 @@ class IBKRState(BaseModel):
     ws_connected: bool = False
     ibkr_ws: Any = None  # websockets.WebSocketClientProtocol (Any to avoid import)
     ws_subscriptions: set[int] = Field(default_factory=set)  # conids we're subscribed to
+    # Subscribes requested while the IBKR WS was not yet connected. Flushed
+    # on connect (see _ws_loop). Prevents lost-tick scenarios on first paint
+    # when the frontend hits us before IBKR is ready.
+    ws_pending_subscribes: set[int] = Field(default_factory=set)
 
     # Accounts
     # `accounts` is the raw list of account IDs from /iserver/accounts (e.g.
@@ -80,6 +84,7 @@ class IBKRState(BaseModel):
         self.ws_connected = False
         self.ibkr_ws = None
         self.ws_subscriptions.clear()
+        self.ws_pending_subscribes.clear()
         self.accounts_fetched = False
         self.accounts.clear()
         self.selected_account = None

@@ -1760,10 +1760,16 @@ class IBKRService:
         log.info("IBKR WebSocket stopped.")
 
     async def ws_subscribe(self, conid: int) -> None:
-        """Subscribe to real-time market data for a conid."""
+        """Subscribe to real-time market data for a conid.
+
+        If the IBKR WebSocket isn't connected yet, the subscribe is queued
+        and flushed on connect (see _ws_loop). This avoids lost ticks when
+        the frontend subscribes before IBKR is ready.
+        """
         ws = self.state.ibkr_ws
         if not ws or not self.state.ws_connected:
-            log.warning("Cannot subscribe — WebSocket not connected.")
+            self.state.ws_pending_subscribes.add(conid)
+            log.debug("Queued subscribe for conid %d — IBKR WS not yet connected", conid)
             return
         fields_json = json.dumps({"fields": LIVE_STREAM_FIELDS})
         cmd = f"smd+{conid}+{fields_json}"
@@ -1773,6 +1779,9 @@ class IBKRService:
 
     async def ws_unsubscribe(self, conid: int) -> None:
         """Unsubscribe from real-time market data for a conid."""
+        # Always drop from pending — a queued subscribe should not survive
+        # an explicit unsubscribe, even when WS isn't connected.
+        self.state.ws_pending_subscribes.discard(conid)
         ws = self.state.ibkr_ws
         if not ws or not self.state.ws_connected:
             return
@@ -1828,6 +1837,17 @@ class IBKRService:
                     for conid in list(self.state.ws_subscriptions):
                         fields_json = json.dumps({"fields": LIVE_STREAM_FIELDS})
                         await ws.send(f"smd+{conid}+{fields_json}")
+
+                    # Flush any subscribes that were queued before this connection
+                    # came up (frontend subscribed before IBKR was ready).
+                    pending = list(self.state.ws_pending_subscribes)
+                    self.state.ws_pending_subscribes.clear()
+                    if pending:
+                        fields_json = json.dumps({"fields": LIVE_STREAM_FIELDS})
+                        for conid in pending:
+                            await ws.send(f"smd+{conid}+{fields_json}")
+                            self.state.ws_subscriptions.add(conid)
+                        log.info("Flushed %d pending subscribes on IBKR WS connect.", len(pending))
 
                     # Main receive loop
                     async for raw_msg in ws:
