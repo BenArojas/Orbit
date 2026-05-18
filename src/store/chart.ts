@@ -289,7 +289,6 @@ interface ChartState {
   removeActiveFib: (id: string) => void;
   /** Wipe the entire stack. Called on conid change via clearChart. */
   clearAllActiveFibs: () => void;
-  requestResetZoom: () => void;
 }
 
 /**
