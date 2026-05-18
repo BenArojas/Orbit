@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { renderHook, waitFor } from "@testing-library/react";
+import type { Layout } from "@/store/compare";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { createElement } from "react";
 import { useCompareData } from "../useCompareData";
@@ -135,6 +136,20 @@ describe("useCompareData — unmount", () => {
     await waitFor(() => expect(mockSubscribe).toHaveBeenCalled());
     unmount();
     expect(mockUnsubscribe).toHaveBeenCalledWith(265598);
+    expect(mockUnsubscribe).toHaveBeenCalledWith(320227571);
+  });
+});
+
+describe("useCompareData — layout change", () => {
+  it("unsubscribes from reference when layout changes to stockOnly", async () => {
+    const client = makeClient();
+    const { rerender } = renderHook(
+      ({ layout }: { layout: Layout }) =>
+        useCompareData(265598, 320227571, "5m", layout),
+      { wrapper: wrapper(client), initialProps: { layout: "overlay" as Layout } },
+    );
+    await waitFor(() => expect(mockSubscribe).toHaveBeenCalledWith(320227571));
+    rerender({ layout: "stockOnly" });
     expect(mockUnsubscribe).toHaveBeenCalledWith(320227571);
   });
 });

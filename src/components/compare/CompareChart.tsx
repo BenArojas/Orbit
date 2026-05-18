@@ -230,6 +230,15 @@ export default function CompareChart({
       low: Math.min(last.low, stockLiveTick.last),
       close: stockLiveTick.last,
     });
+    const volSeries = volumeSeriesRef.current;
+    if (volSeries && stockLiveTick.volume > 0) {
+      const theme = readChartTheme();
+      volSeries.update({
+        time: last.time as Time,
+        value: stockLiveTick.volume,
+        color: stockLiveTick.last >= last.open ? theme.upColor : theme.downColor,
+      });
+    }
   }, [stockLiveTick, stockCandles]);
 
   useEffect(() => {

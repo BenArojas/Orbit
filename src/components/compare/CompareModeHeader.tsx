@@ -43,8 +43,8 @@ export default function CompareModeHeader() {
       setReference(result.symbol, result.conid);
     },
     onError: (_err, sym) => {
-      const isPostRehydrateFallback = sym !== "SPY" && reference.conid == null;
-      if (isPostRehydrateFallback) {
+      const isAutoResolveFallback = sym === reference.symbol && reference.conid == null;
+      if (isAutoResolveFallback) {
         toast.error(`Reference symbol unresolvable: ${sym} — falling back to SPY`);
         setReferenceSymbol("SPY");
       } else {
