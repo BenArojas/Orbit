@@ -23,6 +23,14 @@ import { fibonacciResultFromCandidate } from "@/lib/fib";
 import { useFibConfig } from "./useFibConfig";
 import { useWebSocket, type WsMessage } from "./useWebSocket";
 import { useIbkrReady } from "@/context/GatewayContext";
+import { useSettingsStore } from "@/store/settings";
+
+const PERIOD_LADDER = ["1M", "3M", "6M", "1Y", "2Y", "5Y"] as const;
+type LoadedPeriod = (typeof PERIOD_LADDER)[number];
+
+function normalizePeriod(p: string): LoadedPeriod {
+  return (PERIOD_LADDER as readonly string[]).includes(p) ? (p as LoadedPeriod) : "3M";
+}
 
 // ── Map frontend indicator IDs → backend indicator names ─────
 
@@ -72,17 +80,35 @@ export function useChartData(
   // Convert indicator set to a stable string for query key
   const indicatorKey = Array.from(activeIndicators).sort().join(",");
 
+  // ── Period escalation state ───────────────────────────────
+  //
+  // loadedPeriod starts at the user's defaultPeriod setting and escalates
+  // through PERIOD_LADDER when the user pans near the left edge of the chart.
+  // Resets when conid or defaultPeriod changes.
+
+  const defaultPeriod = useSettingsStore((s) => s.defaultPeriod);
+  const [loadedPeriod, setLoadedPeriod] = useState<LoadedPeriod>(
+    () => normalizePeriod(defaultPeriod),
+  );
+  const isEscalatingRef = useRef(false);
+
+  useEffect(() => {
+    setLoadedPeriod(normalizePeriod(defaultPeriod));
+    isEscalatingRef.current = false;
+  }, [conid, defaultPeriod]);
+
   // ── TanStack Query: fetch candles + indicators ─────────────
 
   const ibkrReady = useIbkrReady();
 
   const candlesQuery = useQuery<IndicatorComputeResponse>({
-    queryKey: ["candles", conid, timeframe],
+    queryKey: ["candles", conid, timeframe, loadedPeriod],
     queryFn: () =>
       api.computeIndicators({
         conid: conid!,
         timeframe,
         indicators: [],
+        history_period: loadedPeriod,
       }),
     enabled: ibkrReady && conid != null,
     staleTime: 60_000,
@@ -91,12 +117,13 @@ export function useChartData(
   });
 
   const indicatorsQuery = useQuery<IndicatorComputeResponse>({
-    queryKey: ["indicators", conid, timeframe, indicatorKey],
+    queryKey: ["indicators", conid, timeframe, indicatorKey, loadedPeriod],
     queryFn: () =>
       api.computeIndicators({
         conid: conid!,
         timeframe,
         indicators: indicatorIdsToBackendNames(activeIndicators),
+        history_period: loadedPeriod,
       }),
     enabled: ibkrReady && conid != null,
     staleTime: 60_000,
@@ -215,6 +242,27 @@ export function useChartData(
     setPrimaryFib(fibonacci, fibSource === "override" ? "manual" : "auto");
   }, [fibonacci, fibSource, setPrimaryFib]);
 
+  // ── Period escalation: loadMore + isLoadingMore + canLoadMore ──
+
+  const currentPeriodIndex = PERIOD_LADDER.indexOf(loadedPeriod);
+  const canLoadMore = currentPeriodIndex < PERIOD_LADDER.length - 1;
+  const isLoadingMore = candlesQuery.isFetching && isEscalatingRef.current;
+
+  const loadMore = useCallback(() => {
+    if (currentPeriodIndex >= PERIOD_LADDER.length - 1) return;
+    if (candlesQuery.isFetching) return;
+    const nextPeriod = PERIOD_LADDER[currentPeriodIndex + 1];
+    isEscalatingRef.current = true;
+    setLoadedPeriod(nextPeriod);
+  }, [currentPeriodIndex, candlesQuery.isFetching]);
+
+  // Clear the escalating flag once the new candles finish loading
+  useEffect(() => {
+    if (!candlesQuery.isFetching) {
+      isEscalatingRef.current = false;
+    }
+  }, [candlesQuery.isFetching]);
+
   return {
     /** OHLCV candle data */
     candles: candlesQuery.data?.candles ?? [],
@@ -241,5 +289,11 @@ export function useChartData(
     error: candlesQuery.error,
     /** Refetch chart data manually */
     refetch: candlesQuery.refetch,
+    /** Escalate to the next period in the ladder. No-op at the top. */
+    loadMore,
+    /** True while loading a period escalation. */
+    isLoadingMore,
+    /** False when already at the top of the period ladder (5Y). */
+    canLoadMore,
   };
 }

@@ -229,6 +229,8 @@ export interface IndicatorRequest {
   indicators?: string[];
   /** @deprecated Use timeframe instead */
   period?: string;
+  /** Override the backend's default history window. Accepts: "1M", "3M", "6M", "1Y", "2Y", "5Y". */
+  history_period?: string;
 }
 
 export interface IndicatorValue {
