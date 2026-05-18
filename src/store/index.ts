@@ -45,3 +45,11 @@ export {
 } from "./ai";
 export { useCrosshairStore } from "./crosshair";
 export { useDrawingsStore, type DrawingToolId } from "./drawings";
+export {
+  useCompareStore,
+  MAX_PANES as COMPARE_MAX_PANES,
+  DEFAULT_REFERENCE as COMPARE_DEFAULT_REFERENCE,
+  type Layout as CompareLayout,
+  type ComparePane,
+  type CompareReference,
+} from "./compare";
