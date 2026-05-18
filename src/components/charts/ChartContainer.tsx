@@ -103,6 +103,10 @@ export default function ChartContainer({
   const prevConidRef = useRef<number | null>(null);
   const prevTimeframeRef = useRef<Timeframe>(timeframe);
   const prevFirstCandleTimeRef = useRef<number | null>(null);
+  // Auto-load only fires after the user has explicitly panned/wheeled the chart.
+  // Without this, fitContent on initial load puts the visible range at logical
+  // position 0, which would otherwise trigger an immediate cascade of escalations.
+  const userHasPannedRef = useRef(false);
   const onLoadMoreRef = useRef(onLoadMore);
   const isLoadingMoreRef = useRef(isLoadingMore);
   const canLoadMoreRef = useRef(canLoadMore);
@@ -236,9 +240,11 @@ export default function ChartContainer({
     const chart = chartRef.current;
     if (!candleSeries || !chart || candles.length === 0) return;
 
-    // Capture the current visible range before data changes. Used to
-    // restore position after a period escalation (older bars loaded).
-    const visibleRange = chart.timeScale().getVisibleLogicalRange();
+    // Capture the current visible TIME range before data changes. Time range
+    // (timestamps) is what we want — when older bars load, restoring time keeps
+    // the user looking at the same calendar window. Restoring the logical range
+    // would glue them to the new oldest bar instead.
+    const visibleRange = chart.timeScale().getVisibleRange();
 
     const candleData: CandlestickData<Time>[] = candles.map((c) => ({
       time: c.time as Time,
@@ -263,11 +269,16 @@ export default function ChartContainer({
       // New symbol — re-enable autoscale so the price axis fits the new range.
       chart.priceScale("right").applyOptions({ autoScale: true });
       chart.timeScale().fitContent();
+      userHasPannedRef.current = false;
     } else if (isPeriodEscalation && visibleRange) {
       // Older candles loaded: keep the user's view exactly where it was.
-      chart.timeScale().setVisibleLogicalRange(visibleRange);
+      chart.timeScale().setVisibleRange(visibleRange);
+    } else if (isTimeframeChange) {
+      // Timeframe switch — fit to new content and reset the pan flag.
+      chart.timeScale().fitContent();
+      userHasPannedRef.current = false;
     } else {
-      // Same symbol, timeframe/indicator change — fit to new content.
+      // Indicator toggle or other same-period refetch — fit to new content.
       chart.timeScale().fitContent();
     }
 
@@ -286,16 +297,35 @@ export default function ChartContainer({
   }, [resetZoomRequestId]);
 
   // ── Auto-load older candles on left-edge pan ───────────────
+  //
+  // Two guards prevent a cascade on initial load:
+  //   1. userHasPannedRef — only auto-load after the user has explicitly
+  //      wheeled / dragged / touched the chart. Otherwise fitContent on a
+  //      fresh chart would put us at logical position 0 and trigger immediately.
+  //   2. logicalRange.from <= 10 — near the leftmost loaded bar.
+
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+    const markPanned = () => { userHasPannedRef.current = true; };
+    container.addEventListener("wheel", markPanned, { passive: true });
+    container.addEventListener("mousedown", markPanned);
+    container.addEventListener("touchstart", markPanned, { passive: true });
+    return () => {
+      container.removeEventListener("wheel", markPanned);
+      container.removeEventListener("mousedown", markPanned);
+      container.removeEventListener("touchstart", markPanned);
+    };
+  }, []);
 
   useEffect(() => {
     const chart = chartRef.current;
     if (!chart) return;
     const handler = () => {
       if (!canLoadMoreRef.current || isLoadingMoreRef.current) return;
+      if (!userHasPannedRef.current) return;
       const logicalRange = chart.timeScale().getVisibleLogicalRange();
       if (!logicalRange) return;
-      // Trigger when the left edge of the visible window is within 10 bars
-      // of the start of the loaded data.
       if (logicalRange.from <= 10) {
         onLoadMoreRef.current?.();
       }

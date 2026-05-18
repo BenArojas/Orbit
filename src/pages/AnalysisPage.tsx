@@ -22,7 +22,7 @@
  */
 
 import { useState, useMemo, useEffect, useRef, useCallback, type KeyboardEvent } from "react";
-import { Maximize2, ChevronLeft } from "lucide-react";
+import { RotateCcw, ChevronLeft } from "lucide-react";
 import { useMutation } from "@tanstack/react-query";
 import { useChartStore, useAiStore, type Timeframe, type IndicatorId } from "@/store";
 import { useDrawingsStore } from "@/store/drawings";
@@ -306,7 +306,7 @@ export default function AnalysisPage() {
             title="Reset zoom"
             className="flex items-center justify-center rounded border border-border p-1.5 text-[var(--text-3)] transition-all hover:border-[var(--clr-cyan)] hover:text-[var(--clr-cyan)]"
           >
-            <Maximize2 size={12} />
+            <RotateCcw size={12} />
           </button>
 
           {/* ATR value badge — shown inline when ATR is toggled on */}
@@ -352,19 +352,27 @@ export default function AnalysisPage() {
           <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_60%_30%,rgba(0,212,255,0.02),transparent_50%)]" />
 
           {activeConid && candles.length > 0 ? (
-            <ChartContainer
-              candles={candles}
-              indicators={indicators}
-              fibonacci={fibonacci}
-              activeIndicators={activeIndicators}
-              liveTick={liveTick}
-              conid={activeConid}
-              timeframe={timeframe}
-              symbol={activeSymbol || undefined}
-              onLoadMore={loadMore}
-              isLoadingMore={isLoadingMore}
-              canLoadMore={canLoadMore}
-            />
+            // Dim the chart while a non-escalation refetch is in flight so the
+            // user sees that the previously-rendered candles are stale (e.g.
+            // they just changed the symbol and the new candles haven't arrived
+            // yet). isLoadingMore is excluded so the chart stays bright during
+            // period-escalation auto-loads (the "Loading older bars…" pill is
+            // the indicator there).
+            <div className={`h-full transition-opacity ${isFetching && !isLoadingMore ? "opacity-40" : "opacity-100"}`}>
+              <ChartContainer
+                candles={candles}
+                indicators={indicators}
+                fibonacci={fibonacci}
+                activeIndicators={activeIndicators}
+                liveTick={liveTick}
+                conid={activeConid}
+                timeframe={timeframe}
+                symbol={activeSymbol || undefined}
+                onLoadMore={loadMore}
+                isLoadingMore={isLoadingMore}
+                canLoadMore={canLoadMore}
+              />
+            </div>
           ) : (
             <div className="flex h-full items-center justify-center">
               {isLoading ? (
