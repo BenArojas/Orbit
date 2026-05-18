@@ -284,8 +284,8 @@ export default function AnalysisPage() {
 
   return (
     <div className={`grid h-full min-h-0 ${rightPanelCollapsed ? "grid-cols-[32px_1fr_32px]" : "grid-cols-[32px_1fr_340px]"}`}>
-      {/* ── Drawing toolbar — left vertical rail ── */}
-      <DrawingToolbar conid={activeConid} />
+      {/* ── Drawing toolbar — left vertical rail (hidden in compare mode) ── */}
+      {compareActive ? <div className="border-r border-[var(--border)] bg-[var(--bg-1)]" /> : <DrawingToolbar conid={activeConid} />}
 
       {/* ── Center: Chart area ── */}
       <div className="flex min-h-0 flex-col overflow-hidden">

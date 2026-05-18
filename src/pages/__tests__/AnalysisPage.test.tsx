@@ -293,4 +293,22 @@ describe("AnalysisPage — Compare Mode integration", () => {
     });
     expect(useCompareStore.getState().active).toBe(false);
   });
+
+  it("does not toggle compare mode when 'C' is pressed inside an input", () => {
+    renderPage();
+    act(() => {
+      fireEvent.click(screen.getByRole("button", { name: /compare/i }));
+    });
+    expect(useCompareStore.getState().active).toBe(true);
+
+    const fakeInput = document.createElement("input");
+    document.body.appendChild(fakeInput);
+    fakeInput.focus();
+    act(() => {
+      const evt = new KeyboardEvent("keydown", { key: "c", bubbles: true });
+      fakeInput.dispatchEvent(evt);
+    });
+    expect(useCompareStore.getState().active).toBe(true);
+    document.body.removeChild(fakeInput);
+  });
 });
