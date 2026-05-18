@@ -84,7 +84,7 @@ afterEach(() => {
 });
 
 describe("CompareChart — overlay layout", () => {
-  it("mounts two candle series and a volume histogram (for stock)", () => {
+  it("mounts two line series (stock + ref)", () => {
     render(
       <CompareChart
         layout="overlay"
@@ -96,8 +96,8 @@ describe("CompareChart — overlay layout", () => {
         refLiveTick={null}
       />,
     );
-    // 2 candles + 1 volume = 3 addSeries calls
-    expect(mockAddSeries).toHaveBeenCalledTimes(3);
+    // 1 stock line + 1 ref line = 2 addSeries calls
+    expect(mockAddSeries).toHaveBeenCalledTimes(2);
   });
 
   it("sets both price scales to Mode.Normal (Regular)", () => {
@@ -121,7 +121,7 @@ describe("CompareChart — overlay layout", () => {
 });
 
 describe("CompareChart — stockOnly layout", () => {
-  it("mounts one candle series + volume", () => {
+  it("mounts one line series (stock only)", () => {
     render(
       <CompareChart
         layout="stockOnly"
@@ -133,13 +133,13 @@ describe("CompareChart — stockOnly layout", () => {
         refLiveTick={null}
       />,
     );
-    // 1 candle + 1 volume = 2 addSeries
-    expect(mockAddSeries).toHaveBeenCalledTimes(2);
+    // 1 stock line only
+    expect(mockAddSeries).toHaveBeenCalledTimes(1);
   });
 });
 
 describe("CompareChart — refOnly layout", () => {
-  it("mounts one candle series, no volume", () => {
+  it("mounts one line series (ref only)", () => {
     render(
       <CompareChart
         layout="refOnly"
@@ -151,7 +151,39 @@ describe("CompareChart — refOnly layout", () => {
         refLiveTick={null}
       />,
     );
-    // 1 candle, no volume
+    // 1 ref line only
     expect(mockAddSeries).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("CompareChart — layout change", () => {
+  it("re-pushes data to series when layout changes (no black chart)", () => {
+    const { rerender } = render(
+      <CompareChart
+        layout="overlay"
+        stockCandles={CANDLES}
+        refCandles={REF_CANDLES}
+        stockSymbol="AAPL"
+        refSymbol="SPY"
+        stockLiveTick={null}
+        refLiveTick={null}
+      />,
+    );
+    const initialSetDataCount = mockSetData.mock.calls.length;
+    expect(initialSetDataCount).toBeGreaterThanOrEqual(2);
+
+    rerender(
+      <CompareChart
+        layout="stockOnly"
+        stockCandles={CANDLES}
+        refCandles={REF_CANDLES}
+        stockSymbol="AAPL"
+        refSymbol="SPY"
+        stockLiveTick={null}
+        refLiveTick={null}
+      />,
+    );
+    // After layout change, setData should have been called again on the new series
+    expect(mockSetData.mock.calls.length).toBeGreaterThan(initialSetDataCount);
   });
 });

@@ -1,13 +1,11 @@
 import {
   createChart,
-  CandlestickSeries,
-  HistogramSeries,
+  LineSeries,
   ColorType,
   CrosshairMode,
   type IChartApi,
   type ISeriesApi,
-  type CandlestickData,
-  type HistogramData,
+  type LineData,
   type Time,
   type MouseEventParams,
 } from "lightweight-charts";
@@ -23,8 +21,10 @@ const CROSSHAIR_COLOR = "rgba(0, 212, 255, 0.4)";
 const CROSSHAIR_LABEL_BG = "#0f1724";
 const STOCK_PRICE_SCALE_ID = "right";
 const REF_PRICE_SCALE_ID = "left";
-const REF_SERIES_UP_COLOR = "rgba(110, 232, 132, 0.95)";
-const REF_SERIES_DOWN_COLOR = "rgba(110, 232, 132, 0.55)";
+
+const STOCK_LINE_COLOR = "#ffffff";
+const REF_LINE_COLOR = "#6ee884";
+const LINE_WIDTH = 2;
 
 export interface CompareChartProps {
   layout: Layout;
@@ -36,16 +36,8 @@ export interface CompareChartProps {
   refLiveTick: CompareLiveTick | null;
 }
 
-function toCandlestickData(c: CandleData): CandlestickData<Time> {
-  return { time: c.time as Time, open: c.open, high: c.high, low: c.low, close: c.close };
-}
-
-function toHistogramData(c: CandleData, upColor: string, downColor: string): HistogramData<Time> {
-  return {
-    time: c.time as Time,
-    value: c.volume,
-    color: c.close >= c.open ? upColor : downColor,
-  };
+function toLineData(c: CandleData): LineData<Time> {
+  return { time: c.time as Time, value: c.close };
 }
 
 export default function CompareChart({
@@ -59,9 +51,8 @@ export default function CompareChart({
 }: CompareChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
-  const stockSeriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
-  const refSeriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
-  const volumeSeriesRef = useRef<ISeriesApi<"Histogram"> | null>(null);
+  const stockSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
+  const refSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
   const chartId = useId();
 
   const showStock = layout !== "refOnly";
@@ -117,35 +108,25 @@ export default function CompareChart({
     chartRef.current = chart;
 
     if (showStock) {
-      const stockSeries = chart.addSeries(CandlestickSeries, {
-        upColor: theme.upColor,
-        downColor: theme.downColor,
-        wickUpColor: theme.upColor,
-        wickDownColor: theme.downColor,
-        borderVisible: false,
+      const stockSeries = chart.addSeries(LineSeries, {
+        color: STOCK_LINE_COLOR,
+        lineWidth: LINE_WIDTH,
         priceScaleId: STOCK_PRICE_SCALE_ID,
+        priceLineVisible: true,
+        lastValueVisible: true,
+        crosshairMarkerVisible: true,
       });
       stockSeriesRef.current = stockSeries;
-
-      const volumeSeries = chart.addSeries(HistogramSeries, {
-        priceScaleId: "volume",
-        priceFormat: { type: "volume" },
-      });
-      chart.priceScale("volume").applyOptions({
-        scaleMargins: { top: 0.85, bottom: 0 },
-        mode: 0,
-      });
-      volumeSeriesRef.current = volumeSeries;
     }
 
     if (showRef) {
-      const refSeries = chart.addSeries(CandlestickSeries, {
-        upColor: REF_SERIES_UP_COLOR,
-        downColor: REF_SERIES_DOWN_COLOR,
-        wickUpColor: REF_SERIES_UP_COLOR,
-        wickDownColor: REF_SERIES_DOWN_COLOR,
-        borderVisible: false,
+      const refSeries = chart.addSeries(LineSeries, {
+        color: REF_LINE_COLOR,
+        lineWidth: LINE_WIDTH,
         priceScaleId: REF_PRICE_SCALE_ID,
+        priceLineVisible: true,
+        lastValueVisible: true,
+        crosshairMarkerVisible: true,
       });
       refSeriesRef.current = refSeries;
     }
@@ -169,12 +150,6 @@ export default function CompareChart({
         leftPriceScale: { borderColor: t.borderColor },
         timeScale: { borderColor: t.borderColor },
       });
-      stockSeriesRef.current?.applyOptions({
-        upColor: t.upColor,
-        downColor: t.downColor,
-        wickUpColor: t.upColor,
-        wickDownColor: t.downColor,
-      });
     });
     themeObs.observe(document.documentElement, { attributes: true, attributeFilter: ["class"] });
 
@@ -194,65 +169,36 @@ export default function CompareChart({
       chartRef.current = null;
       stockSeriesRef.current = null;
       refSeriesRef.current = null;
-      volumeSeriesRef.current = null;
     };
   }, [layout, chartId, broadcastHovered, showStock, showRef]);
 
-  // Update data
+  // Update data — layout in deps so effects re-fire when chart rebuilds on layout change (black chart fix)
   useEffect(() => {
     const series = stockSeriesRef.current;
     if (!series || !stockCandles || stockCandles.length === 0) return;
-    series.setData(stockCandles.map(toCandlestickData));
-  }, [stockCandles]);
+    series.setData(stockCandles.map(toLineData));
+  }, [stockCandles, layout]);
 
   useEffect(() => {
     const series = refSeriesRef.current;
     if (!series || !refCandles || refCandles.length === 0) return;
-    series.setData(refCandles.map(toCandlestickData));
-  }, [refCandles]);
-
-  useEffect(() => {
-    const series = volumeSeriesRef.current;
-    if (!series || !stockCandles || stockCandles.length === 0) return;
-    const theme = readChartTheme();
-    series.setData(stockCandles.map((c) => toHistogramData(c, theme.upColor, theme.downColor)));
-  }, [stockCandles]);
+    series.setData(refCandles.map(toLineData));
+  }, [refCandles, layout]);
 
   // Live tick updates
   useEffect(() => {
     const series = stockSeriesRef.current;
     if (!series || !stockCandles || stockCandles.length === 0 || !stockLiveTick) return;
     const last = stockCandles[stockCandles.length - 1];
-    series.update({
-      time: last.time as Time,
-      open: last.open,
-      high: Math.max(last.high, stockLiveTick.last),
-      low: Math.min(last.low, stockLiveTick.last),
-      close: stockLiveTick.last,
-    });
-    const volSeries = volumeSeriesRef.current;
-    if (volSeries && stockLiveTick.volume > 0) {
-      const theme = readChartTheme();
-      volSeries.update({
-        time: last.time as Time,
-        value: stockLiveTick.volume,
-        color: stockLiveTick.last >= last.open ? theme.upColor : theme.downColor,
-      });
-    }
-  }, [stockLiveTick, stockCandles]);
+    series.update({ time: last.time as Time, value: stockLiveTick.last });
+  }, [stockLiveTick, stockCandles, layout]);
 
   useEffect(() => {
     const series = refSeriesRef.current;
     if (!series || !refCandles || refCandles.length === 0 || !refLiveTick) return;
     const last = refCandles[refCandles.length - 1];
-    series.update({
-      time: last.time as Time,
-      open: last.open,
-      high: Math.max(last.high, refLiveTick.last),
-      low: Math.min(last.low, refLiveTick.last),
-      close: refLiveTick.last,
-    });
-  }, [refLiveTick, refCandles]);
+    series.update({ time: last.time as Time, value: refLiveTick.last });
+  }, [refLiveTick, refCandles, layout]);
 
   // Mirror shared crosshair from other panes
   useEffect(() => {
@@ -303,7 +249,7 @@ export default function CompareChart({
         {legend.stock && (
           <div>
             <span className="font-bold text-[var(--text-1)]">{stockSymbol}</span>{" "}
-            O {fmt(legend.stock.open)}  H {fmt(legend.stock.high)}  L {fmt(legend.stock.low)}  C {fmt(legend.stock.close)}  V {legend.stock.volume?.toLocaleString() ?? "—"}
+            O {fmt(legend.stock.open)}  H {fmt(legend.stock.high)}  L {fmt(legend.stock.low)}  C {fmt(legend.stock.close)}
           </div>
         )}
         {legend.ref && (
