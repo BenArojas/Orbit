@@ -82,20 +82,37 @@ async def ws_endpoint(ws: WebSocket):
     if not hasattr(ibkr, "_broadcast") or ibkr._broadcast is None:
         ibkr.set_broadcast(broadcast)
 
-    # Start IBKR WebSocket if authenticated
-    if ibkr.state.authenticated:
-        await ibkr.start_ibkr_websocket()
+    # Start IBKR WebSocket if authenticated. The FE→BE gate below waits
+    # for it to actually connect before we accept the browser connection.
+    # If the user isn't authenticated we refuse the connection outright —
+    # frontend reconnect loop will retry once auth completes.
+    if not ibkr.state.authenticated:
+        log.info("Frontend WS rejected: IBKR session not authenticated")
+        return  # do not accept
+
+    await ibkr.start_ibkr_websocket()
+
+    # Gate: wait for the IBKR WS to be fully up (initial subscribes flushed)
+    # before accepting the frontend. Ports MoonMarket's wait_for_connection
+    # pattern — eliminates the "connected to backend, not to IBKR" UX wart.
+    # Frontend has indefinite reconnect, so a rejected connection just makes
+    # it try again with backoff. 10 s timeout matches MoonMarket.
+    ibkr_ready = await ibkr.wait_for_ws_ready()
+    if not ibkr_ready:
+        log.warning("Frontend WS rejected: IBKR WebSocket did not become ready in time")
+        return  # do not accept
 
     # Accept the frontend connection
     await ws.accept()
     _clients.add(ws)
     log.info("Frontend client connected (%d total)", len(_clients))
 
-    # Send initial connection status
+    # Send initial connection status — both flags are True at this point
+    # because the gate above guarantees IBKR readiness before we accept.
     await ws.send_text(json.dumps({
         "type": "connection_status",
-        "ibkr_connected": ibkr.state.authenticated,
-        "ws_ready": ibkr.state.ws_connected,
+        "ibkr_connected": True,
+        "ws_ready": True,
     }))
 
     try:

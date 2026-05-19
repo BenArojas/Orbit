@@ -33,6 +33,11 @@ class IBKRState(BaseModel):
     # on connect (see _ws_loop). Prevents lost-tick scenarios on first paint
     # when the frontend hits us before IBKR is ready.
     ws_pending_subscribes: set[int] = Field(default_factory=set)
+    # Readiness signal — set when the IBKR WebSocket is fully connected and
+    # has flushed initial subscribes; cleared on disconnect. The frontend WS
+    # endpoint waits on this before accepting the browser connection so the
+    # FE never sees an intermediate "connected to backend, not to IBKR" state.
+    ws_ready_event: asyncio.Event = Field(default_factory=asyncio.Event)
 
     # Accounts
     # `accounts` is the raw list of account IDs from /iserver/accounts (e.g.
@@ -85,6 +90,7 @@ class IBKRState(BaseModel):
         self.ibkr_ws = None
         self.ws_subscriptions.clear()
         self.ws_pending_subscribes.clear()
+        self.ws_ready_event.clear()
         self.accounts_fetched = False
         self.accounts.clear()
         self.selected_account = None

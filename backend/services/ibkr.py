@@ -31,6 +31,19 @@ IBKR_HISTORY_MAX_CONCURRENT = 4
 IBKR_RETRY_MAX_ATTEMPTS = 4
 IBKR_RETRY_BACKOFF_SECONDS = (0.5, 1.0, 2.0, 4.0)
 
+# Bulk-subscribe pacing — when flushing N pending subscribes (or doing the
+# 10-min refresh sweep) we space the smd sends out by this many seconds so
+# IBKR doesn't burst-reject the batch. Matches the MoonMarket project's
+# pattern; 50ms is enough to avoid overwhelming IBKR's per-connection
+# rate-limiting without measurably slowing down the user experience.
+IBKR_WS_BULK_SUBSCRIBE_DELAY_SECONDS = 0.05
+
+# Gate timeout — how long the frontend WS endpoint waits for the IBKR WS to
+# become ready before rejecting the FE connection. The FE has indefinite
+# reconnect, so a rejection just makes it try again. Mirrors MoonMarket's
+# wait_for_connection(timeout=10.0).
+IBKR_WS_READY_GATE_TIMEOUT_SECONDS = 10.0
+
 import httpx
 import websockets
 
@@ -1773,6 +1786,24 @@ class IBKRService:
         self._ws_task = asyncio.create_task(self._ws_loop())
         log.info("IBKR WebSocket loop started.")
 
+    async def wait_for_ws_ready(self, timeout: float = IBKR_WS_READY_GATE_TIMEOUT_SECONDS) -> bool:
+        """Wait up to `timeout` seconds for the IBKR WebSocket to become ready.
+
+        Returns True if the connection is up and has flushed initial subscribes,
+        False on timeout. The frontend WS endpoint uses this to gate browser
+        connections — never accept the FE until IBKR is actually streaming, so
+        clients don't see a misleading "connected to backend, no live data"
+        intermediate state. Mirrors MoonMarket's wait_for_connection pattern.
+        """
+        # Fast path: already ready.
+        if self.state.ws_ready_event.is_set():
+            return True
+        try:
+            await asyncio.wait_for(self.state.ws_ready_event.wait(), timeout=timeout)
+            return True
+        except asyncio.TimeoutError:
+            return False
+
     async def stop_ibkr_websocket(self) -> None:
         """Stop the IBKR WebSocket connection."""
         if not self._ws_task or self._ws_task.done():
@@ -1875,15 +1906,23 @@ class IBKRService:
                         await ws.send(f"smd+{conid}+{fields_json}")
 
                     # Flush any subscribes that were queued before this connection
-                    # came up (frontend subscribed before IBKR was ready).
+                    # came up (frontend subscribed before IBKR was ready). 50ms
+                    # spacing between sends avoids IBKR rate-limiting on bulk
+                    # subscribe bursts (matches MoonMarket's pattern).
                     pending = list(self.state.ws_pending_subscribes)
                     self.state.ws_pending_subscribes.clear()
                     if pending:
                         fields_json = json.dumps({"fields": LIVE_STREAM_FIELDS})
-                        for conid in pending:
+                        for i, conid in enumerate(pending):
                             await ws.send(f"smd+{conid}+{fields_json}")
                             self.state.ws_subscriptions.add(conid)
+                            if i < len(pending) - 1:
+                                await asyncio.sleep(IBKR_WS_BULK_SUBSCRIBE_DELAY_SECONDS)
                         log.info("Flushed %d pending subscribes on IBKR WS connect.", len(pending))
+
+                    # All initial subscribes are queued — signal readiness so the
+                    # FE WS endpoint can accept the browser connection.
+                    self.state.ws_ready_event.set()
 
                     # Main receive loop
                     async for raw_msg in ws:
@@ -1896,6 +1935,7 @@ class IBKRService:
             finally:
                 self.state.ws_connected = False
                 self.state.ibkr_ws = None
+                self.state.ws_ready_event.clear()
                 if heartbeat_task and not heartbeat_task.done():
                     heartbeat_task.cancel()
                 if refresh_task and not refresh_task.done():
@@ -1933,8 +1973,10 @@ class IBKRService:
                 if not conids:
                     continue
                 fields_json = json.dumps({"fields": LIVE_STREAM_FIELDS})
-                for conid in conids:
+                for i, conid in enumerate(conids):
                     await self.state.ibkr_ws.send(f"smd+{conid}+{fields_json}")
+                    if i < len(conids) - 1:
+                        await asyncio.sleep(IBKR_WS_BULK_SUBSCRIBE_DELAY_SECONDS)
                 log.info("Refreshed %d IBKR market-data subscriptions (10-min keepalive).", len(conids))
             except (asyncio.CancelledError, websockets.exceptions.ConnectionClosed):
                 break

@@ -264,3 +264,68 @@ async def test_refresh_with_no_active_subscriptions_is_noop():
     # The real method has `if not conids: continue` — verified by not sending below.
     assert conids == []
     mock_ws.send.assert_not_awaited()
+
+
+# ── FE→BE readiness gate (ported from MoonMarket) ────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_wait_for_ws_ready_returns_true_when_event_set():
+    """If the IBKR WS is already ready, wait_for_ws_ready returns True immediately."""
+    svc = _make_svc(ws_connected=True, authenticated=True)
+    svc.state.ws_ready_event.set()
+
+    ready = await svc.wait_for_ws_ready(timeout=0.1)
+    assert ready is True
+
+
+@pytest.mark.asyncio
+async def test_wait_for_ws_ready_times_out_when_event_never_set():
+    """If the IBKR WS never comes up, wait_for_ws_ready returns False after timeout."""
+    svc = _make_svc(ws_connected=False, authenticated=True)
+    # ws_ready_event is unset by default
+
+    ready = await svc.wait_for_ws_ready(timeout=0.1)
+    assert ready is False
+
+
+@pytest.mark.asyncio
+async def test_wait_for_ws_ready_unblocks_when_event_fires_during_wait():
+    """The gate returns True if the event is set while wait_for_ws_ready is in flight."""
+    svc = _make_svc(ws_connected=False, authenticated=True)
+
+    async def set_after_delay():
+        await asyncio.sleep(0.05)
+        svc.state.ws_ready_event.set()
+
+    setter = asyncio.create_task(set_after_delay())
+    ready = await svc.wait_for_ws_ready(timeout=1.0)
+    await setter
+
+    assert ready is True
+
+
+def test_state_reset_clears_ws_ready_event():
+    """IBKRState.reset() must clear ws_ready_event so a re-auth starts ungated."""
+    state = IBKRState()
+    state.ws_ready_event.set()
+    assert state.ws_ready_event.is_set()
+
+    state.reset()
+
+    assert not state.ws_ready_event.is_set()
+
+
+# ── Bulk-subscribe pacing constant ──────────────────────────────────────────
+
+
+def test_bulk_subscribe_pacing_constant():
+    """The 50ms pacing constant is exposed for the flush/refresh loops to use."""
+    from services.ibkr import IBKR_WS_BULK_SUBSCRIBE_DELAY_SECONDS
+    assert IBKR_WS_BULK_SUBSCRIBE_DELAY_SECONDS == 0.05
+
+
+def test_ws_ready_gate_timeout_constant():
+    """The FE→BE gate timeout is exposed and matches MoonMarket's 10s."""
+    from services.ibkr import IBKR_WS_READY_GATE_TIMEOUT_SECONDS
+    assert IBKR_WS_READY_GATE_TIMEOUT_SECONDS == 10.0
