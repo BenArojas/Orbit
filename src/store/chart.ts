@@ -303,7 +303,7 @@ const DEFAULT_INDICATORS: IndicatorId[] = [];
 export const useChartStore = create<ChartState>()((set, get) => ({
   activeConid: null,
   activeSymbol: "",
-  timeframe: "1D",
+  timeframe: "15m",
   activeIndicators: new Set<IndicatorId>(DEFAULT_INDICATORS),
   fibDrawMode: null,
   fibDrawPointA: null,
@@ -338,7 +338,7 @@ export const useChartStore = create<ChartState>()((set, get) => ({
       useDrawingsStore.getState().resetDrawingsForConidChange();
       return {
         activeConid: conid,
-        timeframe: "1D",
+        timeframe: "15m",
         activeIndicators: new Set<IndicatorId>(DEFAULT_INDICATORS),
         fibDrawMode: null,
         fibDrawPointA: null,
@@ -382,7 +382,7 @@ export const useChartStore = create<ChartState>()((set, get) => ({
     set({
       activeConid: null,
       activeSymbol: "",
-      timeframe: "1D",
+      timeframe: "15m",
       activeIndicators: new Set<IndicatorId>(DEFAULT_INDICATORS),
       fibDrawMode: null,
       fibDrawPointA: null,

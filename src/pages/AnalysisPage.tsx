@@ -22,7 +22,7 @@
  */
 
 import { useState, useMemo, useEffect, useRef, useCallback, type KeyboardEvent } from "react";
-import { RotateCcw, ChevronLeft } from "lucide-react";
+import { RotateCcw, ChevronLeft, GitCompare } from "lucide-react";
 import { useMutation } from "@tanstack/react-query";
 import { useChartStore, useAiStore, type Timeframe, type IndicatorId } from "@/store";
 import { useDrawingsStore } from "@/store/drawings";
@@ -35,6 +35,8 @@ import { useLockedFibs } from "@/hooks/useLockedFibs";
 import { IndicatorToolbar } from "@/components/indicators";
 import { RightSidebar } from "@/components/ai";
 import { SHORTCUT_MAP } from "@/components/charts/drawingsRegistry";
+import { useCompareStore } from "@/store/compare";
+import { CompareView } from "@/components/compare";
 
 // ── Constants ────────────────────────────────────────────────
 
@@ -74,6 +76,10 @@ export default function AnalysisPage() {
     toggleRightPanel,
   } = useChartStore();
 
+  const compareActive = useCompareStore((s) => s.active);
+  const enterCompare = useCompareStore((s) => s.enter);
+  const exitCompare = useCompareStore((s) => s.exit);
+
   const [symbolInput, setSymbolInput] = useState(activeSymbol || "");
   const [inputFocused, setInputFocused] = useState(false);
 
@@ -104,6 +110,26 @@ export default function AnalysisPage() {
     prevConidRef.current = activeConid;
   }, [activeConid, clearAiChat]);
 
+  // Compare entry: auto-collapse the AI panel rail (does NOT auto-re-expand on exit).
+  useEffect(() => {
+    if (compareActive && !rightPanelCollapsed) {
+      toggleRightPanel();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [compareActive]);
+
+  // Force-exit compare mode when the primary stock changes.
+  const prevCompareConidRef = useRef<number | null>(activeConid);
+  useEffect(() => {
+    if (prevCompareConidRef.current !== null
+        && prevCompareConidRef.current !== activeConid
+        && compareActive) {
+      exitCompare();
+      toast.info(`Exited compare mode for ${activeSymbol || "new symbol"}`);
+    }
+    prevCompareConidRef.current = activeConid;
+  }, [activeConid, activeSymbol, compareActive, exitCompare]);
+
   // ── Drawing tool keyboard shortcuts ──────────────────────────
   //
   // H/T/R/S/V/X  — toggle the matching core tool
@@ -122,6 +148,14 @@ export default function AnalysisPage() {
       ) {
         return;
       }
+      if (e.key.toLowerCase() === "c") {
+        if (useCompareStore.getState().active) {
+          exitCompare();
+        } else {
+          enterCompare(useChartStore.getState().timeframe);
+        }
+        return;
+      }
       if (e.key === "Escape") {
         setDrawingTool(null);
         return;
@@ -136,7 +170,7 @@ export default function AnalysisPage() {
         setDrawingTool(activeDrawingTool === toolId ? null : toolId);
       }
     },
-    [setDrawingTool, activeDrawingTool, toggleRightPanel],
+    [setDrawingTool, activeDrawingTool, toggleRightPanel, exitCompare, enterCompare],
   );
 
   useEffect(() => {
@@ -250,169 +284,200 @@ export default function AnalysisPage() {
 
   return (
     <div className={`grid h-full min-h-0 ${rightPanelCollapsed ? "grid-cols-[32px_1fr_32px]" : "grid-cols-[32px_1fr_340px]"}`}>
-      {/* ── Drawing toolbar — left vertical rail ── */}
-      <DrawingToolbar conid={activeConid} />
+      {/* ── Drawing toolbar — left vertical rail (hidden in compare mode) ── */}
+      {compareActive ? <div className="border-r border-[var(--border)] bg-[var(--bg-1)]" /> : <DrawingToolbar conid={activeConid} />}
 
       {/* ── Center: Chart area ── */}
       <div className="flex min-h-0 flex-col overflow-hidden">
-        {/* Toolbar — shrink-0 so it stays at its natural height when sub-panels
+        {/* Toolbar — hidden in compare mode (CompareView has its own header).
+            shrink-0 so it stays at its natural height when sub-panels
             are added below; otherwise flex squeezes it and only the bottom row
             of indicator/timeframe pills remains visible. */}
-        <div className="flex shrink-0 flex-wrap items-center gap-2.5 border-b border-border bg-[var(--bg-1)] px-3.5 py-2">
-          {/* Symbol input — shows activeSymbol when blurred, raw input when focused */}
-          <input
-            type="text"
-            placeholder="AAPL"
-            value={inputFocused ? symbolInput : (symbolInput || activeSymbol)}
-            onChange={(e) => setSymbolInput(e.target.value.toUpperCase())}
-            onKeyDown={handleSymbolKeyDown}
-            onFocus={() => setInputFocused(true)}
-            onBlur={() => { setInputFocused(false); resolveSymbol(); }}
-            className={`w-[90px] rounded-md border border-border bg-[var(--bg-0)] px-2.5 py-1.5 text-center text-sm font-bold text-foreground outline-none transition-all focus:border-[var(--clr-cyan)] focus:shadow-[0_0_12px_var(--glow-cyan)] ${
-              resolveConidMutation.isPending ? "animate-pulse" : ""
-            }`}
-          />
+        {!compareActive && (
+          <div className="flex shrink-0 flex-wrap items-center gap-2.5 border-b border-border bg-[var(--bg-1)] px-3.5 py-2">
+            {/* Symbol input — shows activeSymbol when blurred, raw input when focused */}
+            <input
+              type="text"
+              placeholder="AAPL"
+              value={inputFocused ? symbolInput : (symbolInput || activeSymbol)}
+              onChange={(e) => setSymbolInput(e.target.value.toUpperCase())}
+              onKeyDown={handleSymbolKeyDown}
+              onFocus={() => setInputFocused(true)}
+              onBlur={() => { setInputFocused(false); resolveSymbol(); }}
+              className={`w-[90px] rounded-md border border-border bg-[var(--bg-0)] px-2.5 py-1.5 text-center text-sm font-bold text-foreground outline-none transition-all focus:border-[var(--clr-cyan)] focus:shadow-[0_0_12px_var(--glow-cyan)] ${
+                resolveConidMutation.isPending ? "animate-pulse" : ""
+              }`}
+            />
 
-          {/* Timeframe bar */}
-          <div className="flex gap-px rounded-md border border-border bg-[var(--bg-0)] p-0.5">
-            {TIMEFRAMES.map((tf) => (
-              <button
-                key={tf}
-                onClick={() => setTimeframe(tf)}
-                className={`rounded px-2.5 py-1 font-data text-[10px] font-medium transition-all ${
-                  tf === timeframe
-                    ? "bg-[var(--bg-4)] text-foreground shadow-[inset_0_0_8px_var(--glow-cyan)]"
-                    : "text-[var(--text-3)] hover:text-[var(--text-2)]"
-                }`}
-              >
-                {tf}
-              </button>
-            ))}
-          </div>
-
-          {/* Company name badge — shown after the timeframe bar */}
-          {companyName && (
-            <span className="max-w-[240px] truncate text-[10px] text-[var(--text-3)]">
-              {companyName}
-            </span>
-          )}
-
-          {/* Indicator pills (task 4.6 — Ofek's IndicatorToolbar) */}
-          <IndicatorToolbar />
-
-          {/* Reset zoom — re-fits the price axis and time scale to all loaded data */}
-          <button
-            onClick={requestResetZoom}
-            title="Reset zoom"
-            className="flex items-center justify-center rounded border border-border p-1.5 text-[var(--text-3)] transition-all hover:border-[var(--clr-cyan)] hover:text-[var(--clr-cyan)]"
-          >
-            <RotateCcw size={12} />
-          </button>
-
-          {/* ATR value badge — shown inline when ATR is toggled on */}
-          {activeIndicators.has("atr") && (
-            <AtrBadge indicators={indicators} />
-          )}
-
-          {/* Fib draw mode buttons (task 4.5) */}
-          <div className="mx-1 h-5 w-px bg-[var(--border)]" />
-          {fibDrawMode ? (
-            <button
-              onClick={exitFibDrawMode}
-              className="rounded-full border border-[var(--clr-red)] bg-[rgba(255,68,102,0.1)] px-2.5 py-1 font-data text-[10px] font-medium text-[var(--clr-red)] transition-all hover:bg-[rgba(255,68,102,0.2)]"
-            >
-              Cancel Draw
-            </button>
-          ) : (
-            <>
-              <button
-                onClick={() => enterFibDrawMode("retracement")}
-                className="rounded-full border border-[var(--border)] px-2.5 py-1 font-data text-[10px] font-medium text-[var(--text-3)] transition-all hover:border-[var(--clr-green)] hover:text-[var(--clr-green)]"
-                title="Draw Fibonacci retracement — click two points on the chart"
-              >
-                Draw Fib
-              </button>
-              <button
-                onClick={() => enterFibDrawMode("extension")}
-                className="rounded-full border border-[var(--border)] px-2.5 py-1 font-data text-[10px] font-medium text-[var(--text-3)] transition-all hover:border-[var(--clr-purple)] hover:text-[var(--clr-purple)]"
-                title="Draw Fibonacci extension — click two points on the chart"
-              >
-                Draw Ext
-              </button>
-            </>
-          )}
-        </div>
-
-        {/* Main chart — flex-[2] gives it twice the share of remaining space
-            vs the sub-panel column below. min-h-[200px] guarantees the candle
-            chart never shrinks to zero when 4–5 sub-panels are toggled on
-            (which previously caused the candles to "disappear"). */}
-        <div className="relative flex-[2] min-h-[200px] bg-[var(--bg-0)]">
-          {/* Subtle radial glow background */}
-          <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_60%_30%,rgba(0,212,255,0.02),transparent_50%)]" />
-
-          {activeConid && candles.length > 0 ? (
-            // Dim the chart while a non-escalation refetch is in flight so the
-            // user sees that the previously-rendered candles are stale (e.g.
-            // they just changed the symbol and the new candles haven't arrived
-            // yet). isLoadingMore is excluded so the chart stays bright during
-            // period-escalation auto-loads (the "Loading older bars…" pill is
-            // the indicator there).
-            <div className={`h-full transition-opacity ${isFetching && !isLoadingMore ? "opacity-40" : "opacity-100"}`}>
-              <ChartContainer
-                candles={candles}
-                indicators={indicators}
-                fibonacci={fibonacci}
-                activeIndicators={activeIndicators}
-                liveTick={liveTick}
-                conid={activeConid}
-                timeframe={timeframe}
-                symbol={activeSymbol || undefined}
-                onLoadMore={loadMore}
-                isLoadingMore={isLoadingMore}
-                canLoadMore={canLoadMore}
-              />
+            {/* Timeframe bar */}
+            <div className="flex gap-px rounded-md border border-border bg-[var(--bg-0)] p-0.5">
+              {TIMEFRAMES.map((tf) => (
+                <button
+                  key={tf}
+                  onClick={() => setTimeframe(tf)}
+                  className={`rounded px-2.5 py-1 font-data text-[10px] font-medium transition-all ${
+                    tf === timeframe
+                      ? "bg-[var(--bg-4)] text-foreground shadow-[inset_0_0_8px_var(--glow-cyan)]"
+                      : "text-[var(--text-3)] hover:text-[var(--text-2)]"
+                  }`}
+                >
+                  {tf}
+                </button>
+              ))}
             </div>
-          ) : (
-            <div className="flex h-full items-center justify-center">
-              {isLoading ? (
-                <div className="flex items-center gap-2 text-sm text-[var(--text-3)]">
-                  <div className="h-4 w-4 animate-spin rounded-full border-2 border-[var(--clr-cyan)] border-t-transparent" />
-                  Loading chart data…
+
+            {/* Company name badge — shown after the timeframe bar */}
+            {companyName && (
+              <span className="max-w-[240px] truncate text-[10px] text-[var(--text-3)]">
+                {companyName}
+              </span>
+            )}
+
+            {/* Indicator pills (task 4.6 — Ofek's IndicatorToolbar) */}
+            <IndicatorToolbar />
+
+            {/* ATR value badge — shown inline when ATR is toggled on */}
+            {activeIndicators.has("atr") && (
+              <AtrBadge indicators={indicators} />
+            )}
+
+            {/* Fib draw mode buttons (task 4.5) */}
+            <div className="mx-1 h-5 w-px bg-[var(--border)]" />
+            {fibDrawMode ? (
+              <button
+                onClick={exitFibDrawMode}
+                className="rounded-full border border-[var(--clr-red)] bg-[rgba(255,68,102,0.1)] px-2.5 py-1 font-data text-[10px] font-medium text-[var(--clr-red)] transition-all hover:bg-[rgba(255,68,102,0.2)]"
+              >
+                Cancel Draw
+              </button>
+            ) : (
+              <>
+                <button
+                  onClick={() => enterFibDrawMode("retracement")}
+                  className="rounded-full border border-[var(--border)] px-2.5 py-1 font-data text-[10px] font-medium text-[var(--text-3)] transition-all hover:border-[var(--clr-green)] hover:text-[var(--clr-green)]"
+                  title="Draw Fibonacci retracement — click two points on the chart"
+                >
+                  Draw Fib
+                </button>
+                <button
+                  onClick={() => enterFibDrawMode("extension")}
+                  className="rounded-full border border-[var(--border)] px-2.5 py-1 font-data text-[10px] font-medium text-[var(--text-3)] transition-all hover:border-[var(--clr-purple)] hover:text-[var(--clr-purple)]"
+                  title="Draw Fibonacci extension — click two points on the chart"
+                >
+                  Draw Ext
+                </button>
+              </>
+            )}
+
+            {/* Compare Mode toggle */}
+            <div className="mx-1 h-5 w-px bg-[var(--border)]" />
+            <button
+              onClick={() =>
+                compareActive
+                  ? exitCompare()
+                  : enterCompare(timeframe)
+              }
+              title={compareActive ? "Exit Compare mode (C)" : "Enter Compare mode (C)"}
+              className={`flex items-center gap-1 rounded-full border px-2.5 py-1 font-data text-[10px] font-medium transition-all ${
+                compareActive
+                  ? "border-[var(--clr-cyan)] bg-[rgba(0,212,255,0.1)] text-[var(--clr-cyan)]"
+                  : "border-[var(--border)] text-[var(--text-3)] hover:border-[var(--clr-cyan)] hover:text-[var(--clr-cyan)]"
+              }`}
+            >
+              <GitCompare size={12} /> Compare
+            </button>
+          </div>
+        )}
+
+        {compareActive ? (
+          <CompareView />
+        ) : (
+          <>
+            {/* Main chart — flex-[2] gives it twice the share of remaining space
+                vs the sub-panel column below. min-h-[200px] guarantees the candle
+                chart never shrinks to zero when 4–5 sub-panels are toggled on
+                (which previously caused the candles to "disappear"). */}
+            <div className="relative flex-[2] min-h-[200px] bg-[var(--bg-0)]">
+              {/* Subtle radial glow background */}
+              <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_60%_30%,rgba(0,212,255,0.02),transparent_50%)]" />
+
+              {activeConid && candles.length > 0 ? (
+                // Dim the chart while a non-escalation refetch is in flight so the
+                // user sees that the previously-rendered candles are stale (e.g.
+                // they just changed the symbol and the new candles haven't arrived
+                // yet). isLoadingMore is excluded so the chart stays bright during
+                // period-escalation auto-loads (the "Loading older bars…" pill is
+                // the indicator there).
+                <div className={`h-full transition-opacity ${isFetching && !isLoadingMore ? "opacity-40" : "opacity-100"}`}>
+                  <ChartContainer
+                    candles={candles}
+                    indicators={indicators}
+                    fibonacci={fibonacci}
+                    activeIndicators={activeIndicators}
+                    liveTick={liveTick}
+                    conid={activeConid}
+                    timeframe={timeframe}
+                    symbol={activeSymbol || undefined}
+                    onLoadMore={loadMore}
+                    isLoadingMore={isLoadingMore}
+                    canLoadMore={canLoadMore}
+                  />
                 </div>
-              ) : error ? (
-                <span className="text-sm text-[var(--clr-red)]">
-                  Failed to load chart data
-                </span>
               ) : (
-                <span className="text-sm text-[var(--text-3)]">
-                  {activeConid
-                    ? "No data available"
-                    : "Enter a symbol to begin analysis"}
-                </span>
+                <div className="flex h-full items-center justify-center">
+                  {isLoading ? (
+                    <div className="flex items-center gap-2 text-sm text-[var(--text-3)]">
+                      <div className="h-4 w-4 animate-spin rounded-full border-2 border-[var(--clr-cyan)] border-t-transparent" />
+                      Loading chart data…
+                    </div>
+                  ) : error ? (
+                    <span className="text-sm text-[var(--clr-red)]">
+                      Failed to load chart data
+                    </span>
+                  ) : (
+                    <span className="text-sm text-[var(--text-3)]">
+                      {activeConid
+                        ? "No data available"
+                        : "Enter a symbol to begin analysis"}
+                    </span>
+                  )}
+                </div>
+              )}
+
+              {/* Floating Reset Zoom — hovers over the chart so it doesn't
+                  steal toolbar space and doesn't get mixed in with indicators. */}
+              {activeConid && candles.length > 0 && (
+                <button
+                  onClick={requestResetZoom}
+                  title="Reset zoom (fits all loaded data)"
+                  aria-label="Reset zoom"
+                  className="absolute bottom-3 right-3 z-10 flex items-center justify-center rounded-full border border-[var(--border)] bg-[var(--bg-1)]/85 p-2 text-[var(--text-3)] shadow-lg backdrop-blur-sm transition-all hover:border-[var(--clr-cyan)] hover:text-[var(--clr-cyan)]"
+                >
+                  <RotateCcw size={14} />
+                </button>
               )}
             </div>
-          )}
-        </div>
 
-        {/* Sub-chart panels — stacked vertically, one per active oscillator.
-            The container takes flex-1 of the remaining (post-main-chart) space
-            with min-h-0 + overflow-y-auto, so when many panels are toggled on
-            (4–5) the area scrolls *internally* instead of pushing the toolbar
-            off-screen or collapsing the main chart.
-            Each SubChartPanel is shrink-0 with an explicit 120px height. */}
-        {activeSubCharts.length > 0 && (
-          <div className="flex min-h-0 flex-1 flex-col overflow-y-auto border-t border-border">
-            {activeSubCharts.map((type) => (
-              <SubChartPanel
-                key={type}
-                type={type}
-                indicator={indicators.find(
-                  (ind) => ind.name === SUB_CHART_BACKEND_NAMES[type]
-                )}
-              />
-            ))}
-          </div>
+            {/* Sub-chart panels — stacked vertically, one per active oscillator.
+                The container takes flex-1 of the remaining (post-main-chart) space
+                with min-h-0 + overflow-y-auto, so when many panels are toggled on
+                (4–5) the area scrolls *internally* instead of pushing the toolbar
+                off-screen or collapsing the main chart.
+                Each SubChartPanel is shrink-0 with an explicit 120px height. */}
+            {activeSubCharts.length > 0 && (
+              <div className="flex min-h-0 flex-1 flex-col overflow-y-auto border-t border-border">
+                {activeSubCharts.map((type) => (
+                  <SubChartPanel
+                    key={type}
+                    type={type}
+                    indicator={indicators.find(
+                      (ind) => ind.name === SUB_CHART_BACKEND_NAMES[type]
+                    )}
+                  />
+                ))}
+              </div>
+            )}
+          </>
         )}
       </div>
 

@@ -63,7 +63,7 @@ const TEARDOWN_GRACE_MS = 10_000;
 // ── Singleton state ─────────────────────────────────────────
 
 const handlers = new Set<MessageHandler>();
-const subscriptions = new Set<number>();
+const subscriptions = new Map<number, number>(); // conid → refcount
 const statusListeners = new Set<StatusListener>();
 
 let ws: WebSocket | null = null;
@@ -96,7 +96,7 @@ function connect() {
     reconnectAttempt = 0;
     setStatus("connected");
     // Re-subscribe to all active conids after (re)connect
-    for (const conid of subscriptions) {
+    for (const conid of subscriptions.keys()) {
       sock.send(JSON.stringify({ action: "subscribe", conid }));
     }
   };
@@ -197,13 +197,22 @@ export function useWebSocket() {
   }, []);
 
   const subscribe = useCallback((conid: number) => {
-    subscriptions.add(conid);
-    send({ action: "subscribe", conid });
+    const prev = subscriptions.get(conid) ?? 0;
+    subscriptions.set(conid, prev + 1);
+    if (prev === 0) {
+      send({ action: "subscribe", conid });
+    }
   }, []);
 
   const unsubscribe = useCallback((conid: number) => {
-    subscriptions.delete(conid);
-    send({ action: "unsubscribe", conid });
+    const prev = subscriptions.get(conid) ?? 0;
+    if (prev <= 0) return;
+    if (prev === 1) {
+      subscriptions.delete(conid);
+      send({ action: "unsubscribe", conid });
+    } else {
+      subscriptions.set(conid, prev - 1);
+    }
   }, []);
 
   const addHandler = useCallback((handler: MessageHandler) => {

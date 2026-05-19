@@ -28,8 +28,36 @@ import { useSettingsStore } from "@/store/settings";
 const PERIOD_LADDER = ["1M", "3M", "6M", "1Y", "2Y", "5Y"] as const;
 type LoadedPeriod = (typeof PERIOD_LADDER)[number];
 
+// Per-timeframe ceiling for the escalation ladder.
+//
+// IBKR refuses (period, bar) combos that exceed its history-window quota —
+// e.g. 2Y of 15min bars consistently 503s and never recovers. The backend
+// has a final clamp, but stopping the ladder at the bar's true ceiling on
+// the frontend prevents wasted queries (and the corresponding 4-attempt
+// retry storm) when the user pans far back at a fine timeframe.
+//
+// Values mirror max_period in backend/constants/ibkr_history.py — keep in sync.
+const TIMEFRAME_PERIOD_CEILING: Record<string, LoadedPeriod> = {
+  "1m":  "1M",
+  "5m":  "1M",
+  "15m": "1M",
+  "1h":  "6M",
+  "4h":  "1Y",
+  "1D":  "5Y",
+  "1W":  "5Y",
+  "1M":  "5Y",
+};
+
 function normalizePeriod(p: string): LoadedPeriod {
   return (PERIOD_LADDER as readonly string[]).includes(p) ? (p as LoadedPeriod) : "3M";
+}
+
+function clampPeriodToTimeframe(p: LoadedPeriod, timeframe: string): LoadedPeriod {
+  const ceiling = TIMEFRAME_PERIOD_CEILING[timeframe];
+  if (!ceiling) return p;
+  const requestedIdx = PERIOD_LADDER.indexOf(p);
+  const ceilingIdx = PERIOD_LADDER.indexOf(ceiling);
+  return requestedIdx > ceilingIdx ? ceiling : p;
 }
 
 // ── Map frontend indicator IDs → backend indicator names ─────
@@ -88,14 +116,24 @@ export function useChartData(
 
   const defaultPeriod = useSettingsStore((s) => s.defaultPeriod);
   const [loadedPeriod, setLoadedPeriod] = useState<LoadedPeriod>(
-    () => normalizePeriod(defaultPeriod),
+    () => clampPeriodToTimeframe(normalizePeriod(defaultPeriod), timeframe),
   );
   const isEscalatingRef = useRef(false);
 
+  // Reset to default when conid or defaultPeriod changes (also clamp to TF).
   useEffect(() => {
-    setLoadedPeriod(normalizePeriod(defaultPeriod));
+    setLoadedPeriod(clampPeriodToTimeframe(normalizePeriod(defaultPeriod), timeframe));
     isEscalatingRef.current = false;
+    // intentionally NOT depending on timeframe — that has its own effect below
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [conid, defaultPeriod]);
+
+  // Switching timeframe can invalidate the current loadedPeriod (e.g. user
+  // had escalated to 2Y on the 1D chart, then switches to 15m — 2Y is invalid
+  // at 15min). Clamp down so we never issue a request IBKR will 503.
+  useEffect(() => {
+    setLoadedPeriod((prev) => clampPeriodToTimeframe(prev, timeframe));
+  }, [timeframe]);
 
   // ── TanStack Query: fetch candles + indicators ─────────────
 
@@ -103,13 +141,13 @@ export function useChartData(
 
   const candlesQuery = useQuery<IndicatorComputeResponse>({
     queryKey: ["candles", conid, timeframe, loadedPeriod],
-    queryFn: () =>
+    queryFn: ({ signal }) =>
       api.computeIndicators({
         conid: conid!,
         timeframe,
         indicators: [],
         history_period: loadedPeriod,
-      }),
+      }, signal),
     enabled: ibkrReady && conid != null,
     staleTime: 60_000,
     gcTime: 5 * 60_000,
@@ -118,13 +156,13 @@ export function useChartData(
 
   const indicatorsQuery = useQuery<IndicatorComputeResponse>({
     queryKey: ["indicators", conid, timeframe, indicatorKey, loadedPeriod],
-    queryFn: () =>
+    queryFn: ({ signal }) =>
       api.computeIndicators({
         conid: conid!,
         timeframe,
         indicators: indicatorIdsToBackendNames(activeIndicators),
         history_period: loadedPeriod,
-      }),
+      }, signal),
     enabled: ibkrReady && conid != null,
     staleTime: 60_000,
     gcTime: 5 * 60_000,
@@ -132,22 +170,33 @@ export function useChartData(
   });
 
   // ── WebSocket: subscribe to live data for active conid ─────
-
+  //
+  // Diff-only — subscribe new / unsubscribe old when the conid changes.
+  // The unmount cleanup is a SEPARATE effect with empty deps so we never
+  // do an unsubscribe-then-resubscribe cycle just because subscribe /
+  // unsubscribe identities re-flow through React (they shouldn't, but
+  // the explicit split is the safer pattern and matches useCompareData
+  // and useLiveQuotes).
   useEffect(() => {
     if (!conid) return;
-
-    // Unsubscribe from previous conid
     if (prevConidRef.current && prevConidRef.current !== conid) {
       unsubscribe(prevConidRef.current);
     }
-
-    subscribe(conid);
-    prevConidRef.current = conid;
-
-    return () => {
-      unsubscribe(conid);
-    };
+    if (prevConidRef.current !== conid) {
+      subscribe(conid);
+      prevConidRef.current = conid;
+    }
   }, [conid, subscribe, unsubscribe]);
+
+  useEffect(() => {
+    return () => {
+      if (prevConidRef.current != null) {
+        unsubscribe(prevConidRef.current);
+        prevConidRef.current = null;
+      }
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // ── Handle incoming WebSocket messages ─────────────────────
 
@@ -244,8 +293,12 @@ export function useChartData(
 
   // ── Period escalation: loadMore + isLoadingMore + canLoadMore ──
 
+  // canLoadMore is capped by the per-timeframe ceiling — escalating past
+  // it would trigger an IBKR 503 the retry loop can't recover from.
   const currentPeriodIndex = PERIOD_LADDER.indexOf(loadedPeriod);
-  const canLoadMore = currentPeriodIndex < PERIOD_LADDER.length - 1;
+  const ceiling = TIMEFRAME_PERIOD_CEILING[timeframe] ?? "5Y";
+  const ceilingIndex = PERIOD_LADDER.indexOf(ceiling);
+  const canLoadMore = currentPeriodIndex < Math.min(PERIOD_LADDER.length - 1, ceilingIndex);
   const isLoadingMore = candlesQuery.isFetching && isEscalatingRef.current;
 
   const loadMore = useCallback(() => {

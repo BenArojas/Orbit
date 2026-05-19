@@ -82,21 +82,49 @@ async def ws_endpoint(ws: WebSocket):
     if not hasattr(ibkr, "_broadcast") or ibkr._broadcast is None:
         ibkr.set_broadcast(broadcast)
 
-    # Start IBKR WebSocket if authenticated
+    # Start the IBKR WS task if possible (no-op if it's already running or
+    # the session token isn't set yet — start_ibkr_websocket guards both).
     if ibkr.state.authenticated:
         await ibkr.start_ibkr_websocket()
 
-    # Accept the frontend connection
+    # Accept the frontend connection immediately. We used to gate on
+    # wait_for_ws_ready() but that produced a 30s+ rejection loop on cold
+    # boot when the tickle hadn't yet populated the session token: the FE
+    # would reconnect 3-4 times with 10s ASGI timeouts in between. Better
+    # to accept and let the frontend handle the "connected to backend,
+    # not yet to IBKR" intermediate state — the connection_status message
+    # below + the pending-subscribe queue make this clean.
     await ws.accept()
     _clients.add(ws)
     log.info("Frontend client connected (%d total)", len(_clients))
 
-    # Send initial connection status
+    # Initial status snapshot. ws_ready may flip from false → true later
+    # when the IBKR loop comes online; a follow-up connection_status push
+    # could announce that, but for now the frontend just polls.
     await ws.send_text(json.dumps({
         "type": "connection_status",
         "ibkr_connected": ibkr.state.authenticated,
         "ws_ready": ibkr.state.ws_connected,
     }))
+
+    # Background task: once IBKR becomes ready (if not already), push a
+    # second connection_status so the FE can flip its UI without polling.
+    if not ibkr.state.ws_connected:
+        async def _notify_ready() -> None:
+            try:
+                ready = await ibkr.wait_for_ws_ready(timeout=60.0)
+                if ready:
+                    try:
+                        await ws.send_text(json.dumps({
+                            "type": "connection_status",
+                            "ibkr_connected": True,
+                            "ws_ready": True,
+                        }))
+                    except (WebSocketDisconnect, RuntimeError):
+                        pass  # client disconnected before IBKR came up
+            except Exception as exc:
+                log.debug("ws_ready notifier exited: %s", exc)
+        asyncio.create_task(_notify_ready())
 
     try:
         while True:

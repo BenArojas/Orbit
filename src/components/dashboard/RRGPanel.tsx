@@ -36,7 +36,7 @@ export default function RRGPanel() {
   const ready = useIbkrReadyTier(2);
   const { data: rrg, isLoading, error } = useQuery({
     queryKey: ["sectors", "rrg"],
-    queryFn: api.sectorRRG,
+    queryFn: ({ signal }) => api.sectorRRG(signal),
     staleTime: 60_000,
     refetchInterval: 5 * 60_000,
     enabled: ready,

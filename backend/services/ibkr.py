@@ -11,6 +11,7 @@ Ported from MoonMarket with improvements:
 import asyncio
 import json
 import logging
+import os
 import ssl
 import time
 import re
@@ -19,6 +20,29 @@ from typing import Any, Awaitable, Callable
 # After this many consecutive tickle failures we declare the session dropped
 # and broadcast a WS event so the frontend can prompt re-auth immediately.
 TICKLE_FAIL_THRESHOLD = 3
+
+# IBKR docs: "Only a max of 5 concurrent historical data requests available at
+# a time." We cap at 4 to leave headroom for IBKR-internal traffic.
+IBKR_HISTORY_MAX_CONCURRENT = 4
+
+# Retry policy for transient errors (404/503). Four attempts with exponential
+# backoff giving the cold-(conid, bar) pre-warming pattern time to recover
+# before we surface a failure to the frontend.
+IBKR_RETRY_MAX_ATTEMPTS = 4
+IBKR_RETRY_BACKOFF_SECONDS = (0.5, 1.0, 2.0, 4.0)
+
+# Bulk-subscribe pacing — when flushing N pending subscribes (or doing the
+# 10-min refresh sweep) we space the smd sends out by this many seconds so
+# IBKR doesn't burst-reject the batch. Matches the MoonMarket project's
+# pattern; 50ms is enough to avoid overwhelming IBKR's per-connection
+# rate-limiting without measurably slowing down the user experience.
+IBKR_WS_BULK_SUBSCRIBE_DELAY_SECONDS = 0.05
+
+# Gate timeout — how long the frontend WS endpoint waits for the IBKR WS to
+# become ready before rejecting the FE connection. The FE has indefinite
+# reconnect, so a rejection just makes it try again. Mirrors MoonMarket's
+# wait_for_connection(timeout=10.0).
+IBKR_WS_READY_GATE_TIMEOUT_SECONDS = 10.0
 
 import httpx
 import websockets
@@ -47,6 +71,17 @@ from rate_control import paced
 from state import IBKRState
 
 log = logging.getLogger("parallax.ibkr")
+
+
+def _log_response_body(endpoint: str, body: object) -> None:
+    """Optionally log the JSON body of a response at DEBUG level.
+
+    Enabled when the environment variable PARALLAX_LOG_RESPONSE_BODIES is
+    set to "1". Off by default — purely additive, no existing log output
+    changed. Truncates at 2000 characters to keep logs readable.
+    """
+    if os.getenv("PARALLAX_LOG_RESPONSE_BODIES") == "1":
+        log.debug("Response body for %s: %s", endpoint, json.dumps(body)[:2000])
 
 
 class IBKRService:
@@ -107,12 +142,15 @@ class IBKRService:
 
         # Phase 8 / Task 2.2: concurrency semaphore for history_bundled.
         # IBKR caps /iserver/marketdata/history at 5 concurrent in-flight
-        # requests.  The @paced("dynamic") decorator on _request enforces this
-        # at the HTTP layer, but history_bundled also carries an explicit
-        # asyncio.Semaphore so tests can verify the cap without needing to
-        # stub the pacing infrastructure, and so concurrent history_bundled
-        # calls share the same budget.
-        self._history_semaphore: asyncio.Semaphore = asyncio.Semaphore(5)
+        # requests.  We use IBKR_HISTORY_MAX_CONCURRENT (4) — one below the
+        # documented limit — to leave headroom for IBKR-internal traffic.
+        # The @paced("dynamic") decorator on _request enforces this at the
+        # HTTP layer, but the explicit semaphore makes the cap observable in
+        # tests and ensures concurrent history_bundled calls share the same
+        # budget.
+        self._history_semaphore: asyncio.Semaphore = asyncio.Semaphore(
+            IBKR_HISTORY_MAX_CONCURRENT
+        )
 
         # Phase 8 / Task 1.7: server-side cache for /iserver/auth/status.
         # /gateway/status polls every 2s while not authenticated and each
@@ -185,11 +223,11 @@ class IBKRService:
         Send a request to the IBKR Client Portal API.
         Handles retries for transient errors (404/503) and typed exceptions.
         """
-        max_retries = 3
-        base_delay = 0.5
+        max_retries = IBKR_RETRY_MAX_ATTEMPTS
+        backoff = IBKR_RETRY_BACKOFF_SECONDS
 
         for attempt in range(max_retries):
-            delay = base_delay * (2 ** attempt)
+            delay = backoff[min(attempt, len(backoff) - 1)]
             try:
                 resp = await self.http.request(method, endpoint, **kwargs)
 
@@ -395,11 +433,22 @@ class IBKRService:
         """
         Keep the IBKR session alive. Call periodically.
         Returns True if session is still valid.
+
+        On success this also starts the IBKR WebSocket task if it isn't
+        already running. tickle() is THE call that populates
+        state.session_token (the /tickle endpoint is the only thing that
+        returns it), so this is the right hook for "we now have everything
+        we need to talk to IBKR over WS, start the loop". Critical for the
+        cold-boot path where the frontend connects to /ws before auth has
+        completed — without this, the WS task would never start.
+        start_ibkr_websocket is idempotent so calling it on every tickle
+        is a no-op once the task is running.
         """
         try:
             data = await self._request("POST", "/tickle")
             self.state.session_token = data.get("session")
             self.state.authenticated = True
+            await self.start_ibkr_websocket()
             return True
         except (IBKRAuthError, IBKRConnectionError):
             self.state.authenticated = False
@@ -480,9 +529,23 @@ class IBKRService:
     # ── Session Keep-Alive ───────────────────────────────────
 
     async def start_tickle_loop(self) -> None:
-        """Start the background tickle loop to keep IBKR session alive."""
+        """Start the background tickle loop to keep IBKR session alive.
+
+        Does an immediate tickle before kicking off the periodic loop —
+        otherwise the first tickle (and therefore the first WS-task
+        startup, since tickle() is what triggers it) would be delayed by
+        IBKR_TICKLE_INTERVAL (~55s) after auth becomes valid. That's the
+        delay we were seeing in cold-boot logs.
+        """
         if self._tickle_task and not self._tickle_task.done():
             return  # Already running
+        # Fire one tickle immediately to populate the session token and
+        # start the IBKR WS task. Errors are tolerated — the periodic
+        # loop below will retry on its own cadence.
+        try:
+            await self.tickle()
+        except Exception as exc:  # noqa: BLE001
+            log.debug("Initial tickle on start_tickle_loop failed: %s", exc)
         self._tickle_task = asyncio.create_task(self._tickle_loop())
         log.info("Tickle loop started (interval: %ds)", IBKR_TICKLE_INTERVAL)
 
@@ -870,7 +933,7 @@ class IBKRService:
         if not hasattr(self, "_history_futures"):
             self._history_futures = {}
         if not hasattr(self, "_history_semaphore"):
-            self._history_semaphore = asyncio.Semaphore(5)
+            self._history_semaphore = asyncio.Semaphore(IBKR_HISTORY_MAX_CONCURRENT)
 
     async def _preflight_snapshot(self, conid: int, fields: str) -> None:
         """Run IBKR's documented "pre-flight" snapshot for a fresh conid.
@@ -1064,6 +1127,7 @@ class IBKRService:
             if not isinstance(response, list):
                 response = []
             dump_if_first("marketdata_snapshot", response)
+            _log_response_body("/iserver/marketdata/snapshot", response)
             if not fut.done():
                 fut.set_result(response)
             return response
@@ -1202,9 +1266,15 @@ class IBKRService:
                 "bar": bar,
                 "outsideRth": "true",
             }
-            result = await self._request(
-                "GET", "/iserver/marketdata/history", params=params
-            )
+            # Share the same concurrency cap as history_bundled. Per IBKR
+            # docs only 5 concurrent /iserver/marketdata/history requests
+            # are allowed; the overflow returns 503. Previously history()
+            # bypassed this cap so chart + compare-pane + sub-chart loads
+            # could blow through the limit and trigger the 503-retry loop.
+            async with self._history_semaphore:
+                result = await self._request(
+                    "GET", "/iserver/marketdata/history", params=params
+                )
             dump_if_first("marketdata_history", result)
             if not fut.done():
                 fut.set_result(result)
@@ -1234,17 +1304,19 @@ class IBKRService:
         Phase 8 / Task 2.2 — bundled history fan-out.
 
         Uses asyncio.gather over individual history() calls, bounded by
-        self._history_semaphore (5 slots) to honor IBKR's documented
-        5-concurrent cap on /iserver/marketdata/history. The @paced("dynamic")
-        decorator on _request enforces the same cap at the HTTP layer; the
-        explicit semaphore here makes the constraint observable in tests and
-        ensures concurrent history_bundled calls share the same budget.
+        self._history_semaphore (IBKR_HISTORY_MAX_CONCURRENT slots) to honor
+        IBKR's documented 5-concurrent cap on /iserver/marketdata/history. The
+        @paced("dynamic") decorator on _request enforces the same cap at the
+        HTTP layer; the explicit semaphore here makes the constraint observable
+        in tests and ensures concurrent history_bundled calls share the same
+        budget.
 
         Retry policy:
           * 429 (IBKRRateLimitError): honor Retry-After, up to 3 retries per
             conid.  After 3 retries the conid is recorded in `errors`.
-          * 503 / transient: already retried up to 3 times with 0.5s backoff
-            inside _request — no additional handling needed here.
+          * 503 / transient: already retried inside _request (IBKR_RETRY_MAX_ATTEMPTS
+            attempts, IBKR_RETRY_BACKOFF_SECONDS schedule) — no additional
+            handling needed here.
 
         Partial failure: one conid error never cancels the others.  The result
         always contains both `items` (successes) and `errors` (failed conids).
@@ -1737,13 +1809,31 @@ class IBKRService:
     async def start_ibkr_websocket(self) -> None:
         """Start the background IBKR WebSocket connection loop."""
         if self._ws_task and not self._ws_task.done():
-            log.info("IBKR WebSocket already running.")
+            log.debug("IBKR WebSocket already running.")
             return
         if not self.state.session_token:
             log.warning("Cannot start WebSocket — no session token.")
             return
         self._ws_task = asyncio.create_task(self._ws_loop())
         log.info("IBKR WebSocket loop started.")
+
+    async def wait_for_ws_ready(self, timeout: float = IBKR_WS_READY_GATE_TIMEOUT_SECONDS) -> bool:
+        """Wait up to `timeout` seconds for the IBKR WebSocket to become ready.
+
+        Returns True if the connection is up and has flushed initial subscribes,
+        False on timeout. The frontend WS endpoint uses this to gate browser
+        connections — never accept the FE until IBKR is actually streaming, so
+        clients don't see a misleading "connected to backend, no live data"
+        intermediate state. Mirrors MoonMarket's wait_for_connection pattern.
+        """
+        # Fast path: already ready.
+        if self.state.ws_ready_event.is_set():
+            return True
+        try:
+            await asyncio.wait_for(self.state.ws_ready_event.wait(), timeout=timeout)
+            return True
+        except asyncio.TimeoutError:
+            return False
 
     async def stop_ibkr_websocket(self) -> None:
         """Stop the IBKR WebSocket connection."""
@@ -1760,10 +1850,19 @@ class IBKRService:
         log.info("IBKR WebSocket stopped.")
 
     async def ws_subscribe(self, conid: int) -> None:
-        """Subscribe to real-time market data for a conid."""
+        """Subscribe to real-time market data for a conid.
+
+        If the IBKR WebSocket isn't connected yet, the subscribe is queued
+        and flushed on connect (see _ws_loop). This avoids lost ticks when
+        the frontend subscribes before IBKR is ready.
+        """
         ws = self.state.ibkr_ws
-        if not ws or not self.state.ws_connected:
-            log.warning("Cannot subscribe — WebSocket not connected.")
+        if not ws or not self.state.ws_connected or not self.state.authenticated:
+            self.state.ws_pending_subscribes.add(conid)
+            log.debug(
+                "Queued subscribe for conid %d — IBKR not ready (connected=%s, authenticated=%s)",
+                conid, self.state.ws_connected, self.state.authenticated,
+            )
             return
         fields_json = json.dumps({"fields": LIVE_STREAM_FIELDS})
         cmd = f"smd+{conid}+{fields_json}"
@@ -1773,6 +1872,9 @@ class IBKRService:
 
     async def ws_unsubscribe(self, conid: int) -> None:
         """Unsubscribe from real-time market data for a conid."""
+        # Always drop from pending — a queued subscribe should not survive
+        # an explicit unsubscribe, even when WS isn't connected.
+        self.state.ws_pending_subscribes.discard(conid)
         ws = self.state.ibkr_ws
         if not ws or not self.state.ws_connected:
             return
@@ -1793,6 +1895,7 @@ class IBKRService:
 
         while not self.state.shutdown_event.is_set():
             heartbeat_task = None
+            refresh_task = None
             try:
                 cookie = f'api={{"session":"{self.state.session_token}"}}'
                 log.info("Connecting to IBKR WebSocket...")
@@ -1810,6 +1913,10 @@ class IBKRService:
 
                     # Start heartbeat
                     heartbeat_task = asyncio.create_task(self._ws_heartbeat())
+                    # Start 10-minute subscription refresh — IBKR auto-terminates
+                    # market-data streams after 15 minutes per their docs. Sending
+                    # a fresh smd+conid+{fields} every 10 minutes resets the clock.
+                    refresh_task = asyncio.create_task(self._ws_refresh_subscriptions())
 
                     # Phase 8 / Task 2.5: subscribe to the IBKR system sts topic
                     # so we receive auth-state push notifications without polling.
@@ -1829,6 +1936,25 @@ class IBKRService:
                         fields_json = json.dumps({"fields": LIVE_STREAM_FIELDS})
                         await ws.send(f"smd+{conid}+{fields_json}")
 
+                    # Flush any subscribes that were queued before this connection
+                    # came up (frontend subscribed before IBKR was ready). 50ms
+                    # spacing between sends avoids IBKR rate-limiting on bulk
+                    # subscribe bursts (matches MoonMarket's pattern).
+                    pending = list(self.state.ws_pending_subscribes)
+                    self.state.ws_pending_subscribes.clear()
+                    if pending:
+                        fields_json = json.dumps({"fields": LIVE_STREAM_FIELDS})
+                        for i, conid in enumerate(pending):
+                            await ws.send(f"smd+{conid}+{fields_json}")
+                            self.state.ws_subscriptions.add(conid)
+                            if i < len(pending) - 1:
+                                await asyncio.sleep(IBKR_WS_BULK_SUBSCRIBE_DELAY_SECONDS)
+                        log.info("Flushed %d pending subscribes on IBKR WS connect.", len(pending))
+
+                    # All initial subscribes are queued — signal readiness so the
+                    # FE WS endpoint can accept the browser connection.
+                    self.state.ws_ready_event.set()
+
                     # Main receive loop
                     async for raw_msg in ws:
                         await self._process_ws_message(raw_msg)
@@ -1840,8 +1966,11 @@ class IBKRService:
             finally:
                 self.state.ws_connected = False
                 self.state.ibkr_ws = None
+                self.state.ws_ready_event.clear()
                 if heartbeat_task and not heartbeat_task.done():
                     heartbeat_task.cancel()
+                if refresh_task and not refresh_task.done():
+                    refresh_task.cancel()
 
                 if not self.state.shutdown_event.is_set():
                     log.info("Reconnecting IBKR WebSocket in 10s...")
@@ -1856,6 +1985,30 @@ class IBKRService:
                 await asyncio.sleep(30)
                 if self.state.ibkr_ws:
                     await self.state.ibkr_ws.send("tic")
+            except (asyncio.CancelledError, websockets.exceptions.ConnectionClosed):
+                break
+
+    async def _ws_refresh_subscriptions(self) -> None:
+        """Re-send active smd subscriptions every 10 minutes.
+
+        IBKR's docs state market data streams terminate after 15 minutes and
+        the client must send a new subscribe request after 10 minutes to keep
+        receiving data. Without this, live ticks silently die after ~15 min.
+        """
+        while self.state.ws_connected:
+            try:
+                await asyncio.sleep(600)
+                if not self.state.ibkr_ws or not self.state.ws_connected:
+                    break
+                conids = list(self.state.ws_subscriptions)
+                if not conids:
+                    continue
+                fields_json = json.dumps({"fields": LIVE_STREAM_FIELDS})
+                for i, conid in enumerate(conids):
+                    await self.state.ibkr_ws.send(f"smd+{conid}+{fields_json}")
+                    if i < len(conids) - 1:
+                        await asyncio.sleep(IBKR_WS_BULK_SUBSCRIBE_DELAY_SECONDS)
+                log.info("Refreshed %d IBKR market-data subscriptions (10-min keepalive).", len(conids))
             except (asyncio.CancelledError, websockets.exceptions.ConnectionClosed):
                 break
 

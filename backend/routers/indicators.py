@@ -13,7 +13,7 @@ import logging
 
 from fastapi import APIRouter, Depends
 
-from constants.ibkr_history import TIMEFRAME_SPEC, IBKR_BAR_LIMIT
+from constants.ibkr_history import TIMEFRAME_SPEC, IBKR_BAR_LIMIT, clamp_period_to_bar
 from deps import get_db, get_ibkr
 from exceptions import IBKRBarLimitExceededError
 from models import (
@@ -69,9 +69,20 @@ async def compute_indicators(
         spec = TIMEFRAME_SPEC["1D"]
 
     ibkr_period = spec.period
-    # Apply history_period override if provided (keeps bar size from TIMEFRAME_SPEC)
+    # Apply history_period override if provided (keeps bar size from TIMEFRAME_SPEC).
+    # IBKR consistently 503s on (period, bar) combos that exceed its quota — e.g.
+    # 2y of 15min bars. Clamp the override to the bar's documented max so we don't
+    # waste 4 retry attempts on a request that can never succeed.
     if request.history_period:
-        ibkr_period = request.history_period.lower()
+        effective_period, clamped = clamp_period_to_bar(request.history_period, request.timeframe)
+        if clamped:
+            log.warning(
+                "history_period %r exceeds max for timeframe %r — clamped to %r",
+                request.history_period,
+                request.timeframe,
+                effective_period,
+            )
+        ibkr_period = effective_period
     ibkr_bar = spec.bar
     est_max_bars = spec.est_max_bars
 

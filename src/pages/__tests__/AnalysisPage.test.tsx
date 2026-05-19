@@ -5,9 +5,10 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, act } from "@testing-library/react";
+import { render, screen, act, fireEvent } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { useChartStore } from "@/store";
+import { useCompareStore } from "@/store/compare";
 import AnalysisPage from "../AnalysisPage";
 
 // ── Mocks ─────────────────────────────────────────────────────
@@ -53,6 +54,10 @@ vi.mock("@/components/charts", () => ({
   AtrBadge: () => null,
   SUB_CHART_BACKEND_NAMES: { rsi: "rsi", macd: "macd", stochastic: "stoch", obv: "obv", adx: "adx" },
   SHORTCUT_MAP: {},
+}));
+
+vi.mock("@/components/compare", () => ({
+  CompareView: () => <div data-testid="compare-view" />,
 }));
 
 // ── Helpers ───────────────────────────────────────────────────
@@ -222,5 +227,88 @@ describe("AnalysisPage — chart stays mounted across indicator toggles (Spec B)
     // reset on the conid change.
     expect(screen.queryByTestId("chart-container")).toBeNull();
     expect(screen.getByText(/Loading chart data/)).toBeInTheDocument();
+  });
+});
+
+describe("AnalysisPage — Compare Mode integration", () => {
+  beforeEach(() => {
+    useCompareStore.getState().__resetForTests();
+    useChartStore.setState({ activeConid: 265598, activeSymbol: "AAPL", timeframe: "5m" });
+    resetChartDataMock();
+  });
+
+  it("renders a Compare toggle button in the toolbar", () => {
+    renderPage();
+    expect(screen.getByRole("button", { name: /compare/i })).toBeInTheDocument();
+  });
+
+  it("entering compare mode hides the indicator toolbar + sub-chart panels and shows CompareView", () => {
+    chartDataMock.candles = [
+      { time: 1700000000, open: 1, high: 2, low: 1, close: 2, volume: 100 },
+    ];
+    renderPage();
+    expect(screen.queryByTestId("compare-view")).not.toBeInTheDocument();
+
+    act(() => {
+      fireEvent.click(screen.getByRole("button", { name: /compare/i }));
+    });
+
+    expect(screen.getByTestId("compare-view")).toBeInTheDocument();
+    expect(screen.queryByTestId("indicator-toolbar")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("chart-container")).not.toBeInTheDocument();
+  });
+
+  it("auto-collapses the right panel on compare entry", () => {
+    renderPage();
+    useChartStore.setState({ rightPanelCollapsed: false });
+
+    act(() => {
+      fireEvent.click(screen.getByRole("button", { name: /compare/i }));
+    });
+    expect(useChartStore.getState().rightPanelCollapsed).toBe(true);
+  });
+
+  it("pressing 'C' toggles compare mode", () => {
+    renderPage();
+    act(() => {
+      fireEvent.keyDown(window, { key: "c" });
+    });
+    expect(useCompareStore.getState().active).toBe(true);
+
+    act(() => {
+      fireEvent.keyDown(window, { key: "c" });
+    });
+    expect(useCompareStore.getState().active).toBe(false);
+  });
+
+  it("changing the active conid while in compare mode force-exits", () => {
+    renderPage();
+    act(() => {
+      fireEvent.click(screen.getByRole("button", { name: /compare/i }));
+    });
+    expect(useCompareStore.getState().active).toBe(true);
+
+    act(() => {
+      useChartStore.setState({ activeConid: 999, activeSymbol: "MSFT" });
+    });
+    expect(useCompareStore.getState().active).toBe(false);
+  });
+
+  it("does not toggle compare mode when 'C' is pressed inside an input", () => {
+    renderPage();
+    act(() => {
+      fireEvent.click(screen.getByRole("button", { name: /compare/i }));
+    });
+    expect(useCompareStore.getState().active).toBe(true);
+
+    const fakeInput = document.createElement("input");
+    document.body.appendChild(fakeInput);
+    fakeInput.focus();
+    act(() => {
+      const evt = new KeyboardEvent("keydown", { key: "c", bubbles: true });
+      fakeInput.dispatchEvent(evt);
+    });
+    expect(useCompareStore.getState().active).toBe(true);
+    document.body.removeChild(fakeInput);
   });
 });

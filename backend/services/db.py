@@ -475,11 +475,21 @@ class DatabaseService:
         helpers in this class now go through this helper so the
         connection is touched by at most one worker at a time.
 
-        Reads (`_fetchone` / `_fetchall`) bypass the lock — SQLite's
-        WAL mode serialises read-vs-write at the file level and a
-        bare SELECT on the shared connection is short enough that
-        we accept the residual risk in exchange for read concurrency.
+        Reads also go through this same lock — earlier we let them
+        bypass for "read concurrency" but in practice the dashboard
+        cold-start fires ~14 parallel `get_cached_conid` calls which
+        was the source of intermittent SQLITE_MISUSE errors (observed
+        for the /market/conid/USO route). SQLite reads on the shared
+        connection are microsecond-fast, so the lost concurrency is
+        negligible.
         """
+        async with self._write_lock:
+            return await asyncio.to_thread(fn)
+
+    async def _run_read(self, fn):
+        """Serialise a synchronous SQLite read through the same lock as
+        writes. See _run_write for the rationale — concurrent reads on
+        the same Connection object corrupt cursor state."""
         async with self._write_lock:
             return await asyncio.to_thread(fn)
 
@@ -494,14 +504,15 @@ class DatabaseService:
         if enabled_only:
             sql += " WHERE enabled = 1"
         sql += " ORDER BY created_at DESC"
-        return await asyncio.to_thread(self._fetchall, sql)
+        return await self._run_read(lambda: self._fetchall(sql))
 
     async def get_trigger_rule(self, rule_id: int) -> dict | None:
         """Get a single trigger rule by ID."""
-        return await asyncio.to_thread(
-            self._fetchone,
-            "SELECT * FROM trigger_rules WHERE id = ?",
-            (rule_id,),
+        return await self._run_read(
+            lambda: self._fetchone(
+                "SELECT * FROM trigger_rules WHERE id = ?",
+                (rule_id,),
+            )
         )
 
     async def get_trigger_rules_for_stock(self, conid: int, enabled_only: bool = True) -> list[dict]:
@@ -509,7 +520,7 @@ class DatabaseService:
         sql = "SELECT * FROM trigger_rules WHERE conid = ?"
         if enabled_only:
             sql += " AND enabled = 1"
-        return await asyncio.to_thread(self._fetchall, sql, (conid,))
+        return await self._run_read(lambda: self._fetchall(sql, (conid,)))
 
     async def create_trigger_rule(
         self,
@@ -690,7 +701,7 @@ class DatabaseService:
         if unacknowledged_only:
             sql += " WHERE h.acknowledged = 0"
         sql += " ORDER BY h.triggered_at DESC LIMIT ?"
-        rows = await asyncio.to_thread(self._fetchall, sql, (limit,))
+        rows = await self._run_read(lambda: self._fetchall(sql, (limit,)))
         for row in rows:
             row["acknowledged"] = bool(row.get("acknowledged", 0))
             row["moved_back"] = bool(row.get("moved_back", 0))
@@ -767,10 +778,11 @@ class DatabaseService:
         Get a single setting value by key.
         Returns the default if the key doesn't exist.
         """
-        row = await asyncio.to_thread(
-            self._fetchone,
-            "SELECT value FROM settings WHERE key = ?",
-            (key,),
+        row = await self._run_read(
+            lambda: self._fetchone(
+                "SELECT value FROM settings WHERE key = ?",
+                (key,),
+            )
         )
         return row["value"] if row else default
 
@@ -1019,10 +1031,11 @@ class DatabaseService:
         on the way in so the cache is case-insensitive on symbol but
         preserves the exact stored sec_type hint string.
         """
-        return await asyncio.to_thread(
-            self._fetchone,
-            "SELECT * FROM conid_cache WHERE symbol = ? AND sec_type = ?",
-            (symbol.upper(), sec_type.upper()),
+        return await self._run_read(
+            lambda: self._fetchone(
+                "SELECT * FROM conid_cache WHERE symbol = ? AND sec_type = ?",
+                (symbol.upper(), sec_type.upper()),
+            )
         )
 
     async def upsert_cached_conid(

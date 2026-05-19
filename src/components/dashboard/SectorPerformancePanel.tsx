@@ -30,7 +30,7 @@ export default function SectorPerformancePanel() {
 
   const { data: sectors, isLoading, error } = useQuery({
     queryKey: ["sectors", "performance"],
-    queryFn: api.sectorPerformance,
+    queryFn: ({ signal }) => api.sectorPerformance(signal),
     staleTime: 60_000,
     refetchInterval: 5 * 60_000,
     enabled: ready,
