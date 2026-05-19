@@ -11,6 +11,7 @@ Ported from MoonMarket with improvements:
 import asyncio
 import json
 import logging
+import os
 import ssl
 import time
 import re
@@ -19,6 +20,16 @@ from typing import Any, Awaitable, Callable
 # After this many consecutive tickle failures we declare the session dropped
 # and broadcast a WS event so the frontend can prompt re-auth immediately.
 TICKLE_FAIL_THRESHOLD = 3
+
+# IBKR docs: "Only a max of 5 concurrent historical data requests available at
+# a time." We cap at 4 to leave headroom for IBKR-internal traffic.
+IBKR_HISTORY_MAX_CONCURRENT = 4
+
+# Retry policy for transient errors (404/503). Four attempts with exponential
+# backoff giving the cold-(conid, bar) pre-warming pattern time to recover
+# before we surface a failure to the frontend.
+IBKR_RETRY_MAX_ATTEMPTS = 4
+IBKR_RETRY_BACKOFF_SECONDS = (0.5, 1.0, 2.0, 4.0)
 
 import httpx
 import websockets
@@ -47,6 +58,17 @@ from rate_control import paced
 from state import IBKRState
 
 log = logging.getLogger("parallax.ibkr")
+
+
+def _log_response_body(endpoint: str, body: object) -> None:
+    """Optionally log the JSON body of a response at DEBUG level.
+
+    Enabled when the environment variable PARALLAX_LOG_RESPONSE_BODIES is
+    set to "1". Off by default — purely additive, no existing log output
+    changed. Truncates at 2000 characters to keep logs readable.
+    """
+    if os.getenv("PARALLAX_LOG_RESPONSE_BODIES") == "1":
+        log.debug("Response body for %s: %s", endpoint, json.dumps(body)[:2000])
 
 
 class IBKRService:
@@ -107,12 +129,15 @@ class IBKRService:
 
         # Phase 8 / Task 2.2: concurrency semaphore for history_bundled.
         # IBKR caps /iserver/marketdata/history at 5 concurrent in-flight
-        # requests.  The @paced("dynamic") decorator on _request enforces this
-        # at the HTTP layer, but history_bundled also carries an explicit
-        # asyncio.Semaphore so tests can verify the cap without needing to
-        # stub the pacing infrastructure, and so concurrent history_bundled
-        # calls share the same budget.
-        self._history_semaphore: asyncio.Semaphore = asyncio.Semaphore(5)
+        # requests.  We use IBKR_HISTORY_MAX_CONCURRENT (4) — one below the
+        # documented limit — to leave headroom for IBKR-internal traffic.
+        # The @paced("dynamic") decorator on _request enforces this at the
+        # HTTP layer, but the explicit semaphore makes the cap observable in
+        # tests and ensures concurrent history_bundled calls share the same
+        # budget.
+        self._history_semaphore: asyncio.Semaphore = asyncio.Semaphore(
+            IBKR_HISTORY_MAX_CONCURRENT
+        )
 
         # Phase 8 / Task 1.7: server-side cache for /iserver/auth/status.
         # /gateway/status polls every 2s while not authenticated and each
@@ -185,11 +210,11 @@ class IBKRService:
         Send a request to the IBKR Client Portal API.
         Handles retries for transient errors (404/503) and typed exceptions.
         """
-        max_retries = 3
-        base_delay = 0.5
+        max_retries = IBKR_RETRY_MAX_ATTEMPTS
+        backoff = IBKR_RETRY_BACKOFF_SECONDS
 
         for attempt in range(max_retries):
-            delay = base_delay * (2 ** attempt)
+            delay = backoff[min(attempt, len(backoff) - 1)]
             try:
                 resp = await self.http.request(method, endpoint, **kwargs)
 
@@ -870,7 +895,7 @@ class IBKRService:
         if not hasattr(self, "_history_futures"):
             self._history_futures = {}
         if not hasattr(self, "_history_semaphore"):
-            self._history_semaphore = asyncio.Semaphore(5)
+            self._history_semaphore = asyncio.Semaphore(IBKR_HISTORY_MAX_CONCURRENT)
 
     async def _preflight_snapshot(self, conid: int, fields: str) -> None:
         """Run IBKR's documented "pre-flight" snapshot for a fresh conid.
@@ -1064,6 +1089,7 @@ class IBKRService:
             if not isinstance(response, list):
                 response = []
             dump_if_first("marketdata_snapshot", response)
+            _log_response_body("/iserver/marketdata/snapshot", response)
             if not fut.done():
                 fut.set_result(response)
             return response
@@ -1234,17 +1260,19 @@ class IBKRService:
         Phase 8 / Task 2.2 — bundled history fan-out.
 
         Uses asyncio.gather over individual history() calls, bounded by
-        self._history_semaphore (5 slots) to honor IBKR's documented
-        5-concurrent cap on /iserver/marketdata/history. The @paced("dynamic")
-        decorator on _request enforces the same cap at the HTTP layer; the
-        explicit semaphore here makes the constraint observable in tests and
-        ensures concurrent history_bundled calls share the same budget.
+        self._history_semaphore (IBKR_HISTORY_MAX_CONCURRENT slots) to honor
+        IBKR's documented 5-concurrent cap on /iserver/marketdata/history. The
+        @paced("dynamic") decorator on _request enforces the same cap at the
+        HTTP layer; the explicit semaphore here makes the constraint observable
+        in tests and ensures concurrent history_bundled calls share the same
+        budget.
 
         Retry policy:
           * 429 (IBKRRateLimitError): honor Retry-After, up to 3 retries per
             conid.  After 3 retries the conid is recorded in `errors`.
-          * 503 / transient: already retried up to 3 times with 0.5s backoff
-            inside _request — no additional handling needed here.
+          * 503 / transient: already retried inside _request (IBKR_RETRY_MAX_ATTEMPTS
+            attempts, IBKR_RETRY_BACKOFF_SECONDS schedule) — no additional
+            handling needed here.
 
         Partial failure: one conid error never cancels the others.  The result
         always contains both `items` (successes) and `errors` (failed conids).
