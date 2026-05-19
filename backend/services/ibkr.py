@@ -433,11 +433,22 @@ class IBKRService:
         """
         Keep the IBKR session alive. Call periodically.
         Returns True if session is still valid.
+
+        On success this also starts the IBKR WebSocket task if it isn't
+        already running. tickle() is THE call that populates
+        state.session_token (the /tickle endpoint is the only thing that
+        returns it), so this is the right hook for "we now have everything
+        we need to talk to IBKR over WS, start the loop". Critical for the
+        cold-boot path where the frontend connects to /ws before auth has
+        completed — without this, the WS task would never start.
+        start_ibkr_websocket is idempotent so calling it on every tickle
+        is a no-op once the task is running.
         """
         try:
             data = await self._request("POST", "/tickle")
             self.state.session_token = data.get("session")
             self.state.authenticated = True
+            await self.start_ibkr_websocket()
             return True
         except (IBKRAuthError, IBKRConnectionError):
             self.state.authenticated = False
@@ -518,9 +529,23 @@ class IBKRService:
     # ── Session Keep-Alive ───────────────────────────────────
 
     async def start_tickle_loop(self) -> None:
-        """Start the background tickle loop to keep IBKR session alive."""
+        """Start the background tickle loop to keep IBKR session alive.
+
+        Does an immediate tickle before kicking off the periodic loop —
+        otherwise the first tickle (and therefore the first WS-task
+        startup, since tickle() is what triggers it) would be delayed by
+        IBKR_TICKLE_INTERVAL (~55s) after auth becomes valid. That's the
+        delay we were seeing in cold-boot logs.
+        """
         if self._tickle_task and not self._tickle_task.done():
             return  # Already running
+        # Fire one tickle immediately to populate the session token and
+        # start the IBKR WS task. Errors are tolerated — the periodic
+        # loop below will retry on its own cadence.
+        try:
+            await self.tickle()
+        except Exception as exc:  # noqa: BLE001
+            log.debug("Initial tickle on start_tickle_loop failed: %s", exc)
         self._tickle_task = asyncio.create_task(self._tickle_loop())
         log.info("Tickle loop started (interval: %ds)", IBKR_TICKLE_INTERVAL)
 
