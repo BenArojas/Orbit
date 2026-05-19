@@ -339,13 +339,13 @@ describe("chart store — setActiveConid resets chart state (Branch 7)", () => {
     expect(useChartStore.getState().activeIndicators.size).toBe(0);
   });
 
-  it("changing conid resets timeframe to 1D (plan decision 10A)", () => {
+  it("changing conid resets timeframe to 15m (default per UX feedback; plan decision 10A)", () => {
     useChartStore.getState().setActiveConid(265598);
     useChartStore.getState().setTimeframe("4h");
     expect(useChartStore.getState().timeframe).toBe("4h");
 
     useChartStore.getState().setActiveConid(8314);
-    expect(useChartStore.getState().timeframe).toBe("1D");
+    expect(useChartStore.getState().timeframe).toBe("15m");
   });
 
   it("changing conid clears fibDrawMode and fibDrawPointA", () => {

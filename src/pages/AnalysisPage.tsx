@@ -336,15 +336,6 @@ export default function AnalysisPage() {
             {/* Indicator pills (task 4.6 — Ofek's IndicatorToolbar) */}
             <IndicatorToolbar />
 
-            {/* Reset zoom — re-fits the price axis and time scale to all loaded data */}
-            <button
-              onClick={requestResetZoom}
-              title="Reset zoom"
-              className="flex items-center justify-center rounded border border-border p-1.5 text-[var(--text-3)] transition-all hover:border-[var(--clr-cyan)] hover:text-[var(--clr-cyan)]"
-            >
-              <RotateCcw size={12} />
-            </button>
-
             {/* ATR value badge — shown inline when ATR is toggled on */}
             {activeIndicators.has("atr") && (
               <AtrBadge indicators={indicators} />
@@ -451,6 +442,19 @@ export default function AnalysisPage() {
                     </span>
                   )}
                 </div>
+              )}
+
+              {/* Floating Reset Zoom — hovers over the chart so it doesn't
+                  steal toolbar space and doesn't get mixed in with indicators. */}
+              {activeConid && candles.length > 0 && (
+                <button
+                  onClick={requestResetZoom}
+                  title="Reset zoom (fits all loaded data)"
+                  aria-label="Reset zoom"
+                  className="absolute bottom-3 right-3 z-10 flex items-center justify-center rounded-full border border-[var(--border)] bg-[var(--bg-1)]/85 p-2 text-[var(--text-3)] shadow-lg backdrop-blur-sm transition-all hover:border-[var(--clr-cyan)] hover:text-[var(--clr-cyan)]"
+                >
+                  <RotateCcw size={14} />
+                </button>
               )}
             </div>
 

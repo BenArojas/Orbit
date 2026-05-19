@@ -63,16 +63,54 @@ export default function ComparePane({ pane }: ComparePaneProps) {
               </div>
             );
           }
+
+          // Cold-start loading state: no candles at all yet — render a
+          // labeled pill so the user understands the pane is fetching.
+          const hasAnyData =
+            (data.stockCandles && data.stockCandles.length > 0) ||
+            (data.refCandles && data.refCandles.length > 0);
+          if (data.isLoading && !hasAnyData) {
+            return (
+              <div className="flex h-full items-center justify-center">
+                <div className="flex items-center gap-2 rounded border border-[var(--border)] bg-[var(--bg-1)] px-3 py-1.5 font-mono text-[11px] text-[var(--text-2)]">
+                  <div className="h-3 w-3 animate-spin rounded-full border-2 border-[var(--clr-cyan)] border-t-transparent" />
+                  Loading {stockSymbol || "—"} vs {reference.symbol}…
+                </div>
+              </div>
+            );
+          }
+
+          // Mid-flight refetch (timeframe/layout switch): keep the chart
+          // visible at reduced opacity and float a small "Loading…" pill
+          // so the user knows the displayed candles are about to update.
           return (
-            <CompareChart
-              layout={pane.layout}
-              stockCandles={data.stockCandles}
-              refCandles={data.refCandles}
-              stockSymbol={stockSymbol || "—"}
-              refSymbol={reference.symbol}
-              stockLiveTick={data.stockLiveTick}
-              refLiveTick={data.refLiveTick}
-            />
+            <div className="relative h-full w-full">
+              <div
+                className={
+                  data.isLoading
+                    ? "h-full w-full opacity-50 transition-opacity"
+                    : "h-full w-full transition-opacity"
+                }
+              >
+                <CompareChart
+                  layout={pane.layout}
+                  stockCandles={data.stockCandles}
+                  refCandles={data.refCandles}
+                  stockSymbol={stockSymbol || "—"}
+                  refSymbol={reference.symbol}
+                  stockLiveTick={data.stockLiveTick}
+                  refLiveTick={data.refLiveTick}
+                />
+              </div>
+              {data.isLoading && (
+                <div className="pointer-events-none absolute inset-0 flex items-start justify-center pt-3">
+                  <div className="flex items-center gap-1.5 rounded-full border border-[var(--border)] bg-[var(--bg-1)]/90 px-2.5 py-1 font-mono text-[10px] text-[var(--text-2)] backdrop-blur-sm">
+                    <div className="h-2.5 w-2.5 animate-spin rounded-full border-2 border-[var(--clr-cyan)] border-t-transparent" />
+                    Loading…
+                  </div>
+                </div>
+              )}
+            </div>
           );
         })()}
       </div>
