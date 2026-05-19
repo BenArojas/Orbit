@@ -154,61 +154,6 @@ describe("compare store — panes", () => {
   });
 });
 
-describe("compare store — markers", () => {
-  beforeEach(() => {
-    useCompareStore.getState().enter("5m");
-  });
-
-  it("toggleMarkerMode flips the flag", () => {
-    expect(useCompareStore.getState().markerMode).toBe(false);
-    useCompareStore.getState().toggleMarkerMode();
-    expect(useCompareStore.getState().markerMode).toBe(true);
-    useCompareStore.getState().toggleMarkerMode();
-    expect(useCompareStore.getState().markerMode).toBe(false);
-  });
-
-  it("addMarker appends a new marker with a stable id", () => {
-    useCompareStore.getState().addMarker(1700000000);
-    const markers = useCompareStore.getState().markers;
-    expect(markers).toHaveLength(1);
-    expect(markers[0].time).toBe(1700000000);
-    expect(markers[0].id).toMatch(/.+/);
-  });
-
-  it("removeMarker removes by id", () => {
-    useCompareStore.getState().addMarker(1700000000);
-    useCompareStore.getState().addMarker(1700000300);
-    const [first] = useCompareStore.getState().markers;
-    useCompareStore.getState().removeMarker(first.id);
-    expect(useCompareStore.getState().markers).toHaveLength(1);
-  });
-
-  it("clearMarkers wipes the list", () => {
-    useCompareStore.getState().addMarker(1700000000);
-    useCompareStore.getState().addMarker(1700000300);
-    useCompareStore.getState().clearMarkers();
-    expect(useCompareStore.getState().markers).toEqual([]);
-  });
-
-  it("exit() resets markerMode but preserves markers", () => {
-    useCompareStore.getState().toggleMarkerMode();
-    useCompareStore.getState().addMarker(1700000000);
-    useCompareStore.getState().exit();
-    const s = useCompareStore.getState();
-    expect(s.markerMode).toBe(false);
-    expect(s.markers).toHaveLength(1);
-  });
-
-  it("persists markers to localStorage but not markerMode", () => {
-    useCompareStore.getState().toggleMarkerMode();
-    useCompareStore.getState().addMarker(1700000000);
-    const raw = JSON.parse(localStorage.getItem("parallax-compare-store")!).state;
-    expect(raw.markers).toBeDefined();
-    expect(raw.markers).toHaveLength(1);
-    expect(raw).not.toHaveProperty("markerMode");
-  });
-});
-
 describe("compare store — persistence", () => {
   it("writes to localStorage on change", () => {
     useCompareStore.getState().enter("5m");

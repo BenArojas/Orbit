@@ -31,23 +31,9 @@ export interface ComparePane {
   reference: CompareReference;
 }
 
-export interface CompareMarker {
-  id: string;
-  time: number; // unix seconds, same as candle.time — identifies the bar
-  /**
-   * Sub-bar click position as a 0..1 ratio of bar width. 0 = bar's left
-   * edge, 1 = bar's right edge. Persisted so the marker survives zoom
-   * (the absolute pixel offset would drift when barSpacing changes).
-   * Optional — older persisted markers default to 0.5 (bar center).
-   */
-  xRatio?: number;
-}
-
 interface CompareState {
   active: boolean;
   panes: ComparePane[];
-  markerMode: boolean;
-  markers: CompareMarker[];
 
   enter: (initialTimeframe: Timeframe) => void;
   exit: () => void;
@@ -60,10 +46,6 @@ interface CompareState {
   removePane: (id: string) => void;
   setPaneLayout: (id: string, layout: Layout) => void;
   setPaneTimeframe: (id: string, tf: Timeframe) => void;
-  toggleMarkerMode: () => void;
-  addMarker: (time: number, xRatio?: number) => void;
-  removeMarker: (id: string) => void;
-  clearMarkers: () => void;
 
   /** Test-only reset. Not part of the runtime API. */
   __resetForTests: () => void;
@@ -80,8 +62,6 @@ function newPaneId(): string {
 const initialState = {
   active: false,
   panes: [] as ComparePane[],
-  markerMode: false,
-  markers: [] as CompareMarker[],
 };
 
 export const useCompareStore = create<CompareState>()(
@@ -108,7 +88,7 @@ export const useCompareStore = create<CompareState>()(
           };
         }),
 
-      exit: () => set({ active: false, markerMode: false }),
+      exit: () => set({ active: false }),
 
       setPaneReference: (paneId, symbol, conid) =>
         set((state) => ({
@@ -170,39 +150,24 @@ export const useCompareStore = create<CompareState>()(
           panes: state.panes.map((p) => (p.id === id ? { ...p, timeframe: tf } : p)),
         })),
 
-      toggleMarkerMode: () => set((s) => ({ markerMode: !s.markerMode })),
-
-      addMarker: (time, xRatio) =>
-        set((s) => ({
-          markers: [
-            ...s.markers,
-            { id: crypto.randomUUID(), time, xRatio: xRatio ?? 0.5 },
-          ],
-        })),
-
-      removeMarker: (id) =>
-        set((s) => ({ markers: s.markers.filter((m) => m.id !== id) })),
-
-      clearMarkers: () => set({ markers: [] }),
-
-      __resetForTests: () =>
-        set({ ...initialState, panes: [], markers: [], markerMode: false }),
+      __resetForTests: () => set({ ...initialState, panes: [] }),
     }),
     {
       name: "parallax-compare-store",
       storage: createJSONStorage(() => localStorage),
-      version: 2,
-      // Migration: v0/v1 stored a single top-level `reference` shared
-      // across all panes. v2 stores reference per-pane. Spread the
-      // legacy top-level reference into any pane that doesn't have its
-      // own. Future-proof: unknown versions fall through unchanged.
+      version: 3,
+      // Migration history:
+      //   v0/v1 → v2: single top-level reference spread per-pane
+      //   v2 → v3: marker feature removed (markers/markerMode dropped silently)
       migrate: (persisted, version) => {
         if (!persisted || typeof persisted !== "object") return persisted;
+        let p = persisted as {
+          reference?: CompareReference;
+          panes?: Array<Partial<ComparePane>>;
+          markers?: unknown;
+          markerMode?: unknown;
+        };
         if (version < 2) {
-          const p = persisted as {
-            reference?: CompareReference;
-            panes?: Array<Partial<ComparePane>>;
-          };
           const legacyRef = p.reference ?? { ...DEFAULT_REFERENCE };
           const migratedPanes = (p.panes ?? []).map((pane) => ({
             ...pane,
@@ -211,22 +176,26 @@ export const useCompareStore = create<CompareState>()(
               conid: null,
             },
           }));
-          // Drop the legacy top-level reference field on its way through.
           const { reference: _drop, ...rest } = p;
-          return { ...rest, panes: migratedPanes };
+          p = { ...rest, panes: migratedPanes };
         }
-        return persisted;
+        if (version < 3) {
+          // Drop the marker fields entirely — the feature was removed
+          // because the click-position math kept misaligning. Future
+          // marker-like features should pick a new field name.
+          const { markers: _m, markerMode: _mm, ...rest } = p;
+          p = rest;
+        }
+        return p;
       },
       partialize: (state) => ({
         // Persist user preferences but NOT the live `active` flag (compare
         // mode shouldn't auto-resume on reload) and NOT resolved conids
         // (IBKR can re-issue them — always re-resolve on mount).
-        // markerMode is transient UI state — not persisted.
         panes: state.panes.map((p) => ({
           ...p,
           reference: { symbol: p.reference.symbol, conid: null },
         })),
-        markers: state.markers,
       }),
     },
   ),

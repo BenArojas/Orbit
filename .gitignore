@@ -50,4 +50,4 @@ src-tauri/binaries/
 .fuse_hidden*
 
 # IBKR response samples (dev only, not committed)
-backend/dev_samples/*.json
+backend/dev_samples/*.json.claude/worktrees/

@@ -36,30 +36,16 @@ describe("CompareModeHeader", () => {
     expect(useCompareStore.getState().active).toBe(false);
   });
 
-  it("Marker button toggles markerMode", () => {
+  it("does not render any marker-related controls (marker feature removed)", () => {
     render(<CompareModeHeader />);
-    fireEvent.click(screen.getByRole("button", { name: /enter marker mode/i }));
-    expect(useCompareStore.getState().markerMode).toBe(true);
-  });
-
-  it("Clear button only renders when markers exist", () => {
-    render(<CompareModeHeader />);
-    expect(screen.queryByRole("button", { name: /clear all markers/i })).not.toBeInTheDocument();
-  });
-
-  it("Clear button removes all markers when clicked", () => {
-    useCompareStore.getState().addMarker(1700000000);
-    useCompareStore.getState().addMarker(1700000300);
-    render(<CompareModeHeader />);
-    fireEvent.click(screen.getByRole("button", { name: /clear all markers/i }));
-    expect(useCompareStore.getState().markers).toEqual([]);
+    expect(screen.queryByRole("button", { name: /marker/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /clear/i })).not.toBeInTheDocument();
   });
 });
 
-// Bonus: end-to-end migration test for v0/v1 → v2.
-describe("compare store — migration (v1 → v2)", () => {
-  it("spreads legacy top-level reference into each pane that lacks one", async () => {
-    // Simulate persisted v1 state in localStorage.
+// End-to-end migration tests for the persisted-state schema.
+describe("compare store — persisted state migrations", () => {
+  it("v1 → v2: spreads legacy top-level reference into each pane", async () => {
     const v1 = {
       state: {
         reference: { symbol: "QQQ", conid: null },
@@ -67,16 +53,38 @@ describe("compare store — migration (v1 → v2)", () => {
           { id: "p-a", layout: "overlay", timeframe: "5m" },
           { id: "p-b", layout: "stockOnly", timeframe: "1h" },
         ],
-        markers: [],
       },
       version: 1,
     };
     localStorage.setItem("parallax-compare-store", JSON.stringify(v1));
-    // Force the store to re-hydrate from the seeded localStorage.
     await useCompareStore.persist.rehydrate();
     const panes = useCompareStore.getState().panes;
     expect(panes).toHaveLength(2);
     expect(panes[0].reference).toEqual({ symbol: "QQQ", conid: null });
     expect(panes[1].reference).toEqual({ symbol: "QQQ", conid: null });
+  });
+
+  it("v2 → v3: drops legacy markers + markerMode silently", async () => {
+    const v2 = {
+      state: {
+        panes: [
+          {
+            id: "p-a",
+            layout: "overlay",
+            timeframe: "5m",
+            reference: { symbol: "SPY", conid: null },
+          },
+        ],
+        markers: [{ id: "m-1", time: 1700000000, xRatio: 0.5 }],
+        markerMode: true,
+      },
+      version: 2,
+    };
+    localStorage.setItem("parallax-compare-store", JSON.stringify(v2));
+    await useCompareStore.persist.rehydrate();
+    const s = useCompareStore.getState() as unknown as Record<string, unknown>;
+    expect(s.panes).toBeDefined();
+    expect(s).not.toHaveProperty("markers");
+    expect(s).not.toHaveProperty("markerMode");
   });
 });

@@ -195,8 +195,8 @@ describe("CompareChart — layout change", () => {
   });
 });
 
-describe("CompareChart — marker click subscription", () => {
-  it("subscribes to chart click events", () => {
+describe("CompareChart — no click subscription (marker feature removed)", () => {
+  it("does not subscribe to chart click events", () => {
     render(
       <CompareChart
         layout="overlay"
@@ -208,6 +208,6 @@ describe("CompareChart — marker click subscription", () => {
         refLiveTick={null}
       />,
     );
-    expect(mockSubscribeClick).toHaveBeenCalled();
+    expect(mockSubscribeClick).not.toHaveBeenCalled();
   });
 });
