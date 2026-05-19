@@ -151,7 +151,7 @@ describe("MarketPulse — Task 3.1 bundled endpoints", () => {
     vi.clearAllMocks();
   });
 
-  it("issues exactly 1 quotes call and 1 candles call for 3 tickers", async () => {
+  it("issues exactly 1 quotes call for 3 tickers (candles call is removed; live ticks take over)", async () => {
     const qc = freshClient();
     renderPulse(qc);
 
@@ -159,19 +159,19 @@ describe("MarketPulse — Task 3.1 bundled endpoints", () => {
       expect(api.quotesBundled).toHaveBeenCalledTimes(1);
     });
 
-    expect(api.candlesBundled).toHaveBeenCalledTimes(1);
+    // Sparkline + the bundled candles call were removed. Live ticks
+    // (from useLiveQuotes via the WS singleton) now provide ongoing
+    // updates; no second HTTP fetch fires on cold load.
+    expect(api.candlesBundled).not.toHaveBeenCalled();
 
-    // The bundled calls must have received ALL three conids, not per-ticker.
+    // The bundled quotes call must have received ALL three conids,
+    // not per-ticker.
     const quotesCall = (api.quotesBundled as ReturnType<typeof vi.fn>).mock.calls[0];
     const passedConids: number[] = quotesCall[0];
     expect(passedConids).toHaveLength(3);
     expect(passedConids).toContain(CONIDS.SPY);
     expect(passedConids).toContain(CONIDS.QQQ);
     expect(passedConids).toContain(CONIDS.BTC);
-
-    // Period defaults to "5D".
-    const candlesCall = (api.candlesBundled as ReturnType<typeof vi.fn>).mock.calls[0];
-    expect(candlesCall[1]).toBe("5D");
   });
 
   it("each PulseItem displays the correct price from its bundled response slice", async () => {
@@ -271,25 +271,17 @@ describe("MarketPulse — Task 3.1 bundled endpoints", () => {
     expect(api.candlesBundled).not.toHaveBeenCalled();
   });
 
-  it("Task 3.3: candles query fires only after the first quotes response arrives", async () => {
+  it("candles query never fires anymore (sparkline removed; live ticks replaced polling)", async () => {
     const qc = freshClient();
     renderPulse(qc);
 
-    // Quotes resolve first.
+    // Quotes resolve.
     await waitFor(() => {
       expect(api.quotesBundled).toHaveBeenCalledTimes(1);
     });
 
-    // Candles must now fire (quotesData != null → enabled=true).
-    await waitFor(() => {
-      expect(api.candlesBundled).toHaveBeenCalledTimes(1);
-    });
-
-    // Verify the call order: quotes before candles.
-    const quoteOrder = (api.quotesBundled as ReturnType<typeof vi.fn>).mock
-      .invocationCallOrder[0];
-    const candleOrder = (api.candlesBundled as ReturnType<typeof vi.fn>).mock
-      .invocationCallOrder[0];
-    expect(quoteOrder).toBeLessThan(candleOrder);
+    // No candles call follows — historical sparkline was removed.
+    // Live updates flow through useLiveQuotes / the WS singleton instead.
+    expect(api.candlesBundled).not.toHaveBeenCalled();
   });
 });
