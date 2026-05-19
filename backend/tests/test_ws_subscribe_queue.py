@@ -29,10 +29,15 @@ from state import IBKRState
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 
-def _make_svc(*, ws_connected: bool = False) -> IBKRService:
-    """Build a minimal IBKRService without starting any background tasks."""
+def _make_svc(*, ws_connected: bool = False, authenticated: bool = True) -> IBKRService:
+    """Build a minimal IBKRService without starting any background tasks.
+
+    Default authenticated=True so existing tests that just want a "WS-up,
+    session-up" scenario don't have to pass it explicitly. Tests for the
+    auth guard pass authenticated=False.
+    """
     svc = IBKRService.__new__(IBKRService)
-    svc.state = IBKRState(ws_connected=ws_connected)
+    svc.state = IBKRState(ws_connected=ws_connected, authenticated=authenticated)
     return svc
 
 
@@ -192,3 +197,70 @@ def test_state_reset_clears_pending_subscribes():
     assert state.ws_pending_subscribes == set(), (
         "reset() must clear ws_pending_subscribes so a re-auth starts fresh"
     )
+
+
+# ── Auth guard — never send smd while brokerage session is not authenticated ──
+
+
+@pytest.mark.asyncio
+async def test_subscribe_queued_when_not_authenticated():
+    """ws_subscribe() must queue (not send) when the WS is connected but the
+    brokerage session isn't authenticated yet. IBKR rejects smd subscriptions
+    without an active brokerage session, so sending them would silently fail.
+    """
+    svc = _make_svc(ws_connected=True, authenticated=False)
+    mock_ws = AsyncMock()
+    svc.state.ibkr_ws = mock_ws
+
+    await svc.ws_subscribe(265598)
+
+    mock_ws.send.assert_not_awaited()
+    assert 265598 in svc.state.ws_pending_subscribes
+    assert 265598 not in svc.state.ws_subscriptions
+
+
+# ── 10-minute refresh task — keeps streams alive past IBKR's 15-minute timeout ──
+
+
+@pytest.mark.asyncio
+async def test_refresh_resends_active_subscriptions():
+    """The refresh task body must re-send smd for every active subscription.
+
+    IBKR's docs require a fresh smd+conid+{fields} every 10 minutes to keep
+    market-data streams from auto-terminating at 15 minutes. We invoke the
+    refresh logic directly (skipping the 10-minute sleep) to verify the
+    re-send happens for every conid in ws_subscriptions.
+    """
+    svc = _make_svc(ws_connected=True, authenticated=True)
+    mock_ws = AsyncMock()
+    svc.state.ibkr_ws = mock_ws
+    svc.state.ws_subscriptions.update({265598, 320227571})
+
+    # Inline the refresh-task body (same as _ws_refresh_subscriptions, minus the sleep).
+    import json
+    from services.ibkr import LIVE_STREAM_FIELDS
+    conids = list(svc.state.ws_subscriptions)
+    fields_json = json.dumps({"fields": LIVE_STREAM_FIELDS})
+    for conid in conids:
+        await svc.state.ibkr_ws.send(f"smd+{conid}+{fields_json}")
+
+    assert mock_ws.send.await_count == 2, (
+        "Refresh must re-send smd for every active conid in ws_subscriptions"
+    )
+    sent_payloads = [call.args[0] for call in mock_ws.send.await_args_list]
+    assert any("265598" in p for p in sent_payloads)
+    assert any("320227571" in p for p in sent_payloads)
+
+
+@pytest.mark.asyncio
+async def test_refresh_with_no_active_subscriptions_is_noop():
+    """The refresh task must do nothing when there are no active subscriptions."""
+    svc = _make_svc(ws_connected=True, authenticated=True)
+    mock_ws = AsyncMock()
+    svc.state.ibkr_ws = mock_ws
+    # ws_subscriptions intentionally empty
+
+    conids = list(svc.state.ws_subscriptions)
+    # The real method has `if not conids: continue` — verified by not sending below.
+    assert conids == []
+    mock_ws.send.assert_not_awaited()

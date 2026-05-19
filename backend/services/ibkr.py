@@ -1767,9 +1767,12 @@ class IBKRService:
         the frontend subscribes before IBKR is ready.
         """
         ws = self.state.ibkr_ws
-        if not ws or not self.state.ws_connected:
+        if not ws or not self.state.ws_connected or not self.state.authenticated:
             self.state.ws_pending_subscribes.add(conid)
-            log.debug("Queued subscribe for conid %d — IBKR WS not yet connected", conid)
+            log.debug(
+                "Queued subscribe for conid %d — IBKR not ready (connected=%s, authenticated=%s)",
+                conid, self.state.ws_connected, self.state.authenticated,
+            )
             return
         fields_json = json.dumps({"fields": LIVE_STREAM_FIELDS})
         cmd = f"smd+{conid}+{fields_json}"
@@ -1802,6 +1805,7 @@ class IBKRService:
 
         while not self.state.shutdown_event.is_set():
             heartbeat_task = None
+            refresh_task = None
             try:
                 cookie = f'api={{"session":"{self.state.session_token}"}}'
                 log.info("Connecting to IBKR WebSocket...")
@@ -1819,6 +1823,10 @@ class IBKRService:
 
                     # Start heartbeat
                     heartbeat_task = asyncio.create_task(self._ws_heartbeat())
+                    # Start 10-minute subscription refresh — IBKR auto-terminates
+                    # market-data streams after 15 minutes per their docs. Sending
+                    # a fresh smd+conid+{fields} every 10 minutes resets the clock.
+                    refresh_task = asyncio.create_task(self._ws_refresh_subscriptions())
 
                     # Phase 8 / Task 2.5: subscribe to the IBKR system sts topic
                     # so we receive auth-state push notifications without polling.
@@ -1862,6 +1870,8 @@ class IBKRService:
                 self.state.ibkr_ws = None
                 if heartbeat_task and not heartbeat_task.done():
                     heartbeat_task.cancel()
+                if refresh_task and not refresh_task.done():
+                    refresh_task.cancel()
 
                 if not self.state.shutdown_event.is_set():
                     log.info("Reconnecting IBKR WebSocket in 10s...")
@@ -1876,6 +1886,28 @@ class IBKRService:
                 await asyncio.sleep(30)
                 if self.state.ibkr_ws:
                     await self.state.ibkr_ws.send("tic")
+            except (asyncio.CancelledError, websockets.exceptions.ConnectionClosed):
+                break
+
+    async def _ws_refresh_subscriptions(self) -> None:
+        """Re-send active smd subscriptions every 10 minutes.
+
+        IBKR's docs state market data streams terminate after 15 minutes and
+        the client must send a new subscribe request after 10 minutes to keep
+        receiving data. Without this, live ticks silently die after ~15 min.
+        """
+        while self.state.ws_connected:
+            try:
+                await asyncio.sleep(600)
+                if not self.state.ibkr_ws or not self.state.ws_connected:
+                    break
+                conids = list(self.state.ws_subscriptions)
+                if not conids:
+                    continue
+                fields_json = json.dumps({"fields": LIVE_STREAM_FIELDS})
+                for conid in conids:
+                    await self.state.ibkr_ws.send(f"smd+{conid}+{fields_json}")
+                log.info("Refreshed %d IBKR market-data subscriptions (10-min keepalive).", len(conids))
             except (asyncio.CancelledError, websockets.exceptions.ConnectionClosed):
                 break
 
