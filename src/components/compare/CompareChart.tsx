@@ -167,13 +167,26 @@ export default function CompareChart({
     const clickHandler = (param: MouseEventParams) => {
       if (!useCompareStore.getState().markerMode) return;
       const t = param.time as number | undefined;
-      if (t == null) return;
+      if (t == null || !param.point) return;
+      // Compute the click position as a 0..1 ratio of bar width so the
+      // marker lands exactly where the user clicked, not at the bar's
+      // left edge (which is what time-based positioning returns).
+      const ts = chart.timeScale();
+      const barLeftPx = ts.timeToCoordinate(t as Time);
+      const barSpacingPx = ts.options().barSpacing ?? 8;
+      let xRatio = 0.5;
+      if (barLeftPx != null && barSpacingPx > 0) {
+        const raw = (param.point.x - barLeftPx) / barSpacingPx;
+        // Clamp to a sensible range — lightweight-charts' bar edges can
+        // be fuzzy when the chart is zoomed-out.
+        xRatio = Math.max(-0.5, Math.min(1.5, raw));
+      }
       const currentMarkers = useCompareStore.getState().markers;
       const nearby = currentMarkers.find((m) => Math.abs(m.time - t) < 5);
       if (nearby) {
         useCompareStore.getState().removeMarker(nearby.id);
       } else {
-        useCompareStore.getState().addMarker(t);
+        useCompareStore.getState().addMarker(t, xRatio);
       }
     };
     chart.subscribeClick(clickHandler);

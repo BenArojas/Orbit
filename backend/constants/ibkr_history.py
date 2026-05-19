@@ -48,14 +48,20 @@ PERIOD_ORDER: tuple[str, ...] = (
 
 
 TIMEFRAME_SPEC: dict[str, HistorySpec] = {
-    "1m":  HistorySpec(period="1d",  bar="1min",  est_max_bars=400, max_period="2d"),
-    "5m":  HistorySpec(period="5d",  bar="5min",  est_max_bars=400, max_period="5d"),
-    "15m": HistorySpec(period="1w",  bar="15min", est_max_bars=110, max_period="1m"),
-    "1h":  HistorySpec(period="1m",  bar="1h",    est_max_bars=160, max_period="6m"),
-    "4h":  HistorySpec(period="6m",  bar="4h",    est_max_bars=240, max_period="1y"),
-    "1D":  HistorySpec(period="1y",  bar="1d",    est_max_bars=260, max_period="5y"),
-    "1W":  HistorySpec(period="5y",  bar="1w",    est_max_bars=270, max_period="15y"),
-    "1M":  HistorySpec(period="15y", bar="1m",    est_max_bars=200, max_period="15y"),
+    # est_max_bars reflects what IBKR actually delivers at the *max_period*
+    # for each bar size — empirically calibrated against the 1000-bar hard
+    # cap. Numbers below 1000 mean IBKR returns less than the cap (e.g. 1D
+    # bars over 5y = ~260 trading days * 5 ≈ 1300, capped at 1000). Numbers
+    # at 1000 mean the response saturates the cap and we still get useful
+    # data — not a real problem.
+    "1m":  HistorySpec(period="1d",  bar="1min",  est_max_bars=400,  max_period="2d"),
+    "5m":  HistorySpec(period="5d",  bar="5min",  est_max_bars=1000, max_period="5d"),
+    "15m": HistorySpec(period="1w",  bar="15min", est_max_bars=1000, max_period="1m"),
+    "1h":  HistorySpec(period="1m",  bar="1h",    est_max_bars=1000, max_period="6m"),
+    "4h":  HistorySpec(period="6m",  bar="4h",    est_max_bars=1000, max_period="1y"),
+    "1D":  HistorySpec(period="1y",  bar="1d",    est_max_bars=1000, max_period="5y"),
+    "1W":  HistorySpec(period="5y",  bar="1w",    est_max_bars=270,  max_period="15y"),
+    "1M":  HistorySpec(period="15y", bar="1m",    est_max_bars=200,  max_period="15y"),
 }
 
 # Hard cap documented by IBKR — responses never legally exceed this.

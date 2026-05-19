@@ -29,7 +29,14 @@ export interface CompareReference {
 
 export interface CompareMarker {
   id: string;
-  time: number; // unix seconds, same as candle.time
+  time: number; // unix seconds, same as candle.time — identifies the bar
+  /**
+   * Sub-bar click position as a 0..1 ratio of bar width. 0 = bar's left
+   * edge, 1 = bar's right edge. Persisted so the marker survives zoom
+   * (the absolute pixel offset would drift when barSpacing changes).
+   * Optional — older persisted markers default to 0.5 (bar center).
+   */
+  xRatio?: number;
 }
 
 interface CompareState {
@@ -49,7 +56,7 @@ interface CompareState {
   setPaneLayout: (id: string, layout: Layout) => void;
   setPaneTimeframe: (id: string, tf: Timeframe) => void;
   toggleMarkerMode: () => void;
-  addMarker: (time: number) => void;
+  addMarker: (time: number, xRatio?: number) => void;
   removeMarker: (id: string) => void;
   clearMarkers: () => void;
 
@@ -140,8 +147,13 @@ export const useCompareStore = create<CompareState>()(
 
       toggleMarkerMode: () => set((s) => ({ markerMode: !s.markerMode })),
 
-      addMarker: (time) =>
-        set((s) => ({ markers: [...s.markers, { id: crypto.randomUUID(), time }] })),
+      addMarker: (time, xRatio) =>
+        set((s) => ({
+          markers: [
+            ...s.markers,
+            { id: crypto.randomUUID(), time, xRatio: xRatio ?? 0.5 },
+          ],
+        })),
 
       removeMarker: (id) =>
         set((s) => ({ markers: s.markers.filter((m) => m.id !== id) })),

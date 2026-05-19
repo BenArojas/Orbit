@@ -21,14 +21,17 @@ export default function MarkerOverlay({ chartRef, containerRef, markers }: Props
 
     const updatePositions = () => {
       const ts = chart.timeScale();
-      // subscribeClick returns param.time as the *start* of the bar under
-      // the cursor. Offset by half the bar width so the marker line visually
-      // centers on the clicked bar instead of pinning to its left edge.
-      const barSpacingPx = chart.timeScale().options().barSpacing ?? 8;
+      // param.time identifies the bar under the click; xRatio (stored with
+      // each marker) is the sub-bar position 0..1 of the actual click. So
+      // the marker lands exactly where the user clicked, not snapped to
+      // bar center. Legacy markers stored before this fix default to 0.5.
+      const barSpacingPx = ts.options().barSpacing ?? 8;
       const next: { id: string; x: number }[] = [];
       for (const m of markers) {
         const x = ts.timeToCoordinate(m.time as Time);
-        if (x != null && x >= 0) next.push({ id: m.id, x: x + barSpacingPx / 2 });
+        if (x == null || x < 0) continue;
+        const ratio = m.xRatio ?? 0.5;
+        next.push({ id: m.id, x: x + ratio * barSpacingPx });
       }
       setPositions(next);
       const container = containerRef.current;
