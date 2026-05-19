@@ -15,16 +15,15 @@ beforeEach(() => {
 });
 
 describe("compare store — initial state", () => {
-  it("defaults to inactive with SPY reference and no panes", () => {
+  it("defaults to inactive with no panes", () => {
     const s = useCompareStore.getState();
     expect(s.active).toBe(false);
-    expect(s.reference).toEqual({ symbol: "SPY", conid: null });
     expect(s.panes).toEqual([]);
   });
 });
 
 describe("compare store — enter / exit", () => {
-  it("enter() activates the mode and seeds one overlay pane at the given TF", () => {
+  it("enter() activates the mode and seeds one overlay pane at the given TF with SPY ref", () => {
     useCompareStore.getState().enter("5m");
     const s = useCompareStore.getState();
     expect(s.active).toBe(true);
@@ -32,6 +31,8 @@ describe("compare store — enter / exit", () => {
     expect(s.panes[0].layout).toBe("overlay");
     expect(s.panes[0].timeframe).toBe("5m");
     expect(s.panes[0].id).toMatch(/.+/);
+    // Per-pane reference seeded from DEFAULT_REFERENCE.
+    expect(s.panes[0].reference).toEqual({ symbol: "SPY", conid: null });
   });
 
   it("enter() is idempotent on a non-empty panes list", () => {
@@ -54,25 +55,44 @@ describe("compare store — enter / exit", () => {
   });
 });
 
-describe("compare store — reference", () => {
-  it("setReference updates symbol + conid", () => {
-    useCompareStore.getState().setReference("QQQ", 320227571);
-    const r = useCompareStore.getState().reference;
-    expect(r.symbol).toBe("QQQ");
-    expect(r.conid).toBe(320227571);
+describe("compare store — per-pane reference", () => {
+  beforeEach(() => {
+    useCompareStore.getState().enter("5m");
   });
 
-  it("setReferenceSymbol preserves conid when symbol unchanged", () => {
-    useCompareStore.getState().setReference("QQQ", 320227571);
-    useCompareStore.getState().setReferenceSymbol("QQQ");
-    expect(useCompareStore.getState().reference.conid).toBe(320227571);
+  it("setPaneReference updates only the targeted pane's reference", () => {
+    useCompareStore.getState().addPane();
+    const [first, second] = useCompareStore.getState().panes;
+    useCompareStore.getState().setPaneReference(second.id, "QQQ", 320227571);
+    const after = useCompareStore.getState().panes;
+    expect(after[0].reference).toEqual({ symbol: "SPY", conid: null });
+    expect(after[1].reference).toEqual({ symbol: "QQQ", conid: 320227571 });
+    expect(after[0].id).toBe(first.id);
   });
 
-  it("setReferenceSymbol clears conid when symbol changes", () => {
-    useCompareStore.getState().setReference("QQQ", 320227571);
-    useCompareStore.getState().setReferenceSymbol("AAPL");
-    expect(useCompareStore.getState().reference.conid).toBeNull();
-    expect(useCompareStore.getState().reference.symbol).toBe("AAPL");
+  it("setPaneReferenceSymbol preserves conid when symbol unchanged", () => {
+    const id = useCompareStore.getState().panes[0].id;
+    useCompareStore.getState().setPaneReference(id, "QQQ", 320227571);
+    useCompareStore.getState().setPaneReferenceSymbol(id, "QQQ");
+    expect(useCompareStore.getState().panes[0].reference.conid).toBe(320227571);
+  });
+
+  it("setPaneReferenceSymbol clears conid when symbol changes", () => {
+    const id = useCompareStore.getState().panes[0].id;
+    useCompareStore.getState().setPaneReference(id, "QQQ", 320227571);
+    useCompareStore.getState().setPaneReferenceSymbol(id, "XLK");
+    const ref = useCompareStore.getState().panes[0].reference;
+    expect(ref.symbol).toBe("XLK");
+    expect(ref.conid).toBeNull();
+  });
+
+  it("addPane inherits the previous pane's reference symbol (conid cleared)", () => {
+    const firstId = useCompareStore.getState().panes[0].id;
+    useCompareStore.getState().setPaneReference(firstId, "QQQ", 320227571);
+    useCompareStore.getState().addPane();
+    const panes = useCompareStore.getState().panes;
+    expect(panes).toHaveLength(2);
+    expect(panes[1].reference).toEqual({ symbol: "QQQ", conid: null });
   });
 });
 
@@ -191,7 +211,9 @@ describe("compare store — markers", () => {
 
 describe("compare store — persistence", () => {
   it("writes to localStorage on change", () => {
-    useCompareStore.getState().setReference("QQQ", 320227571);
+    useCompareStore.getState().enter("5m");
+    const id = useCompareStore.getState().panes[0].id;
+    useCompareStore.getState().setPaneReference(id, "QQQ", 320227571);
     const raw = localStorage.getItem("parallax-compare-store");
     expect(raw).toBeTruthy();
     expect(raw).toContain("QQQ");
@@ -199,10 +221,13 @@ describe("compare store — persistence", () => {
 
   it("does not persist active flag or resolved conid", () => {
     useCompareStore.getState().enter("5m");
-    useCompareStore.getState().setReference("QQQ", 320227571);
+    const id = useCompareStore.getState().panes[0].id;
+    useCompareStore.getState().setPaneReference(id, "QQQ", 320227571);
     const raw = localStorage.getItem("parallax-compare-store");
     const parsed = JSON.parse(raw!).state;
     expect(parsed).not.toHaveProperty("active");
-    expect(parsed.reference.conid).toBeNull();
+    // Conid is stripped from every pane's reference on persist.
+    expect(parsed.panes[0].reference.conid).toBeNull();
+    expect(parsed.panes[0].reference.symbol).toBe("QQQ");
   });
 });

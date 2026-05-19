@@ -1,12 +1,14 @@
 /**
  * Compare Store — Analysis-page Compare Mode state.
  *
- * Owns the active flag, shared reference symbol, and the stack of
- * configurable panes. Persisted to localStorage so the user's reference
- * + last pane configuration survives a reload.
+ * Owns the active flag and the stack of configurable panes. Each pane
+ * has its own reference symbol so the user can compare against multiple
+ * relative tickers simultaneously (e.g. AAPL vs SPY, AAPL vs QQQ,
+ * AAPL vs XLK in three panes side-by-side).
  *
- * Reference conid is intentionally NOT persisted (cleared on rehydrate)
- * because IBKR can re-issue conids — we always re-resolve on entry.
+ * Persisted to localStorage so per-pane references + layout + timeframe
+ * survive a reload. Resolved conids are intentionally NOT persisted (IBKR
+ * can re-issue them — always re-resolve on entry).
  */
 
 import { create } from "zustand";
@@ -16,15 +18,17 @@ import type { Timeframe } from "@/store/chart";
 
 export type Layout = "overlay" | "stockOnly" | "refOnly";
 
+export interface CompareReference {
+  symbol: string;
+  conid: number | null;
+}
+
 export interface ComparePane {
   id: string;
   layout: Layout;
   timeframe: Timeframe;
-}
-
-export interface CompareReference {
-  symbol: string;
-  conid: number | null;
+  /** Per-pane reference symbol — independent across panes. */
+  reference: CompareReference;
 }
 
 export interface CompareMarker {
@@ -41,16 +45,17 @@ export interface CompareMarker {
 
 interface CompareState {
   active: boolean;
-  reference: CompareReference;
   panes: ComparePane[];
   markerMode: boolean;
   markers: CompareMarker[];
 
   enter: (initialTimeframe: Timeframe) => void;
   exit: () => void;
-  setReference: (symbol: string, conid: number) => void;
-  /** Internal — used when symbol changes before resolution completes. */
-  setReferenceSymbol: (symbol: string) => void;
+  /** Per-pane reference setter — used by each pane's resolver. */
+  setPaneReference: (paneId: string, symbol: string, conid: number) => void;
+  /** Per-pane symbol-only setter; clears conid when symbol changes so
+   *  the next resolve-on-mount cycle picks up the new symbol. */
+  setPaneReferenceSymbol: (paneId: string, symbol: string) => void;
   addPane: () => void;
   removePane: (id: string) => void;
   setPaneLayout: (id: string, layout: Layout) => void;
@@ -74,7 +79,6 @@ function newPaneId(): string {
 
 const initialState = {
   active: false,
-  reference: { ...DEFAULT_REFERENCE },
   panes: [] as ComparePane[],
   markerMode: false,
   markers: [] as CompareMarker[],
@@ -98,6 +102,7 @@ export const useCompareStore = create<CompareState>()(
                 id: newPaneId(),
                 layout: "overlay" as Layout,
                 timeframe: initialTimeframe,
+                reference: { ...DEFAULT_REFERENCE },
               },
             ],
           };
@@ -105,15 +110,23 @@ export const useCompareStore = create<CompareState>()(
 
       exit: () => set({ active: false, markerMode: false }),
 
-      setReference: (symbol, conid) =>
-        set({ reference: { symbol, conid } }),
-
-      setReferenceSymbol: (symbol) =>
+      setPaneReference: (paneId, symbol, conid) =>
         set((state) => ({
-          reference: {
-            symbol,
-            conid: state.reference.symbol === symbol ? state.reference.conid : null,
-          },
+          panes: state.panes.map((p) =>
+            p.id === paneId ? { ...p, reference: { symbol, conid } } : p,
+          ),
+        })),
+
+      setPaneReferenceSymbol: (paneId, symbol) =>
+        set((state) => ({
+          panes: state.panes.map((p) => {
+            if (p.id !== paneId) return p;
+            // Preserve conid if the symbol didn't actually change (the
+            // resolver shouldn't have to fire again). Otherwise drop the
+            // conid so the next mount/effect picks up the new symbol.
+            const conid = p.reference.symbol === symbol ? p.reference.conid : null;
+            return { ...p, reference: { symbol, conid } };
+          }),
         })),
 
       addPane: () =>
@@ -121,10 +134,22 @@ export const useCompareStore = create<CompareState>()(
           if (state.panes.length >= MAX_PANES) return {};
           const last = state.panes[state.panes.length - 1];
           const timeframe = last?.timeframe ?? "1D";
+          // New panes inherit the previous pane's reference (symbol only —
+          // conid will be re-resolved on mount). Matches how timeframe is
+          // inherited and gives a natural "add another pane like this one"
+          // feel; the user can change it via the pane's own input.
+          const reference: CompareReference = last
+            ? { symbol: last.reference.symbol, conid: null }
+            : { ...DEFAULT_REFERENCE };
           return {
             panes: [
               ...state.panes,
-              { id: newPaneId(), layout: "overlay" as Layout, timeframe },
+              {
+                id: newPaneId(),
+                layout: "overlay" as Layout,
+                timeframe,
+                reference,
+              },
             ],
           };
         }),
@@ -161,18 +186,46 @@ export const useCompareStore = create<CompareState>()(
       clearMarkers: () => set({ markers: [] }),
 
       __resetForTests: () =>
-        set({ ...initialState, reference: { ...DEFAULT_REFERENCE }, markers: [], markerMode: false }),
+        set({ ...initialState, panes: [], markers: [], markerMode: false }),
     }),
     {
       name: "parallax-compare-store",
       storage: createJSONStorage(() => localStorage),
+      version: 2,
+      // Migration: v0/v1 stored a single top-level `reference` shared
+      // across all panes. v2 stores reference per-pane. Spread the
+      // legacy top-level reference into any pane that doesn't have its
+      // own. Future-proof: unknown versions fall through unchanged.
+      migrate: (persisted, version) => {
+        if (!persisted || typeof persisted !== "object") return persisted;
+        if (version < 2) {
+          const p = persisted as {
+            reference?: CompareReference;
+            panes?: Array<Partial<ComparePane>>;
+          };
+          const legacyRef = p.reference ?? { ...DEFAULT_REFERENCE };
+          const migratedPanes = (p.panes ?? []).map((pane) => ({
+            ...pane,
+            reference: pane.reference ?? {
+              symbol: legacyRef.symbol,
+              conid: null,
+            },
+          }));
+          // Drop the legacy top-level reference field on its way through.
+          const { reference: _drop, ...rest } = p;
+          return { ...rest, panes: migratedPanes };
+        }
+        return persisted;
+      },
       partialize: (state) => ({
-        // Persist the user's preferences but NOT the live `active` flag
-        // (compare mode shouldn't auto-resume on reload) and NOT the
-        // resolved conid (IBKR can re-issue them — always re-resolve).
+        // Persist user preferences but NOT the live `active` flag (compare
+        // mode shouldn't auto-resume on reload) and NOT resolved conids
+        // (IBKR can re-issue them — always re-resolve on mount).
         // markerMode is transient UI state — not persisted.
-        reference: { symbol: state.reference.symbol, conid: null },
-        panes: state.panes,
+        panes: state.panes.map((p) => ({
+          ...p,
+          reference: { symbol: p.reference.symbol, conid: null },
+        })),
         markers: state.markers,
       }),
     },

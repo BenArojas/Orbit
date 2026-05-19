@@ -1,5 +1,10 @@
+import { useEffect } from "react";
+import { useMutation } from "@tanstack/react-query";
+import { toast } from "sonner";
+
 import PaneToolbar from "./PaneToolbar";
 import CompareChart from "./CompareChart";
+import { api } from "@/lib/api";
 import { useChartStore } from "@/store/chart";
 import { useCompareStore, type ComparePane as ComparePaneType } from "@/store/compare";
 import { useCompareData } from "@/hooks/useCompareData";
@@ -13,11 +18,49 @@ const PANE_MIN_HEIGHT = 200;
 export default function ComparePane({ pane }: ComparePaneProps) {
   const stockConid = useChartStore((s) => s.activeConid);
   const stockSymbol = useChartStore((s) => s.activeSymbol);
-  const reference = useCompareStore((s) => s.reference);
   const panes = useCompareStore((s) => s.panes);
   const setPaneTimeframe = useCompareStore((s) => s.setPaneTimeframe);
   const setPaneLayout = useCompareStore((s) => s.setPaneLayout);
+  const setPaneReference = useCompareStore((s) => s.setPaneReference);
+  const setPaneReferenceSymbol = useCompareStore((s) => s.setPaneReferenceSymbol);
   const removePane = useCompareStore((s) => s.removePane);
+
+  const reference = pane.reference;
+
+  // Per-pane reference resolver. Each pane independently resolves its
+  // own symbol → conid. Mutation state is local to the pane (different
+  // panes can be resolving different symbols at the same time without
+  // stepping on each other).
+  const resolveMutation = useMutation({
+    mutationFn: (sym: string) => api.resolveConid(sym),
+    onSuccess: (result) => {
+      setPaneReference(pane.id, result.symbol, result.conid);
+    },
+    onError: (_err, sym) => {
+      // If the auto-resolve on mount failed for the persisted symbol,
+      // fall back to SPY rather than leaving the pane in a stuck state.
+      // Manual user mistypes against an already-resolved symbol just
+      // revert the input via the toolbar's local state.
+      const isAutoResolveFallback =
+        sym === reference.symbol && reference.conid == null;
+      if (isAutoResolveFallback) {
+        toast.error(`Pane reference unresolvable: ${sym} — falling back to SPY`);
+        setPaneReferenceSymbol(pane.id, "SPY");
+      } else {
+        toast.error(`Reference symbol not found: ${sym}`);
+      }
+    },
+  });
+
+  // Auto-resolve on mount whenever this pane's reference has no conid yet
+  // (fresh pane, or post-rehydrate where conids aren't persisted).
+  useEffect(() => {
+    if (reference.conid == null && !resolveMutation.isPending) {
+      resolveMutation.mutate(reference.symbol);
+    }
+    // intentionally only re-runs when the symbol changes
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [reference.symbol]);
 
   const data = useCompareData(
     stockConid,
@@ -37,9 +80,12 @@ export default function ComparePane({ pane }: ComparePaneProps) {
         paneId={pane.id}
         timeframe={pane.timeframe}
         layout={pane.layout}
+        refSymbol={reference.symbol}
+        refResolving={resolveMutation.isPending}
         canRemove={canRemove}
         onTimeframeChange={(tf) => setPaneTimeframe(pane.id, tf)}
         onLayoutChange={(layout) => setPaneLayout(pane.id, layout)}
+        onRefSubmit={(sym) => resolveMutation.mutate(sym)}
         onRemove={() => removePane(pane.id)}
       />
       <div className="relative min-h-0 flex-1">
