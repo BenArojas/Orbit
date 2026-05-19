@@ -1241,9 +1241,15 @@ class IBKRService:
                 "bar": bar,
                 "outsideRth": "true",
             }
-            result = await self._request(
-                "GET", "/iserver/marketdata/history", params=params
-            )
+            # Share the same concurrency cap as history_bundled. Per IBKR
+            # docs only 5 concurrent /iserver/marketdata/history requests
+            # are allowed; the overflow returns 503. Previously history()
+            # bypassed this cap so chart + compare-pane + sub-chart loads
+            # could blow through the limit and trigger the 503-retry loop.
+            async with self._history_semaphore:
+                result = await self._request(
+                    "GET", "/iserver/marketdata/history", params=params
+                )
             dump_if_first("marketdata_history", result)
             if not fut.done():
                 fut.set_result(result)
