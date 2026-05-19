@@ -51,7 +51,7 @@ export default function WatchlistSidebar() {
   // Rule 3: static — watchlist names don't change mid-session; mutations invalidate explicitly
   const { data: watchlists } = useQuery({
     queryKey: ["watchlists"],
-    queryFn: api.getWatchlists,
+    queryFn: ({ signal }) => api.getWatchlists(signal),
     staleTime: Infinity,
     refetchInterval: false,
     enabled: ibkrReady,
@@ -72,7 +72,7 @@ export default function WatchlistSidebar() {
     error: instrumentsError,
   } = useQuery({
     queryKey: ["watchlist-instruments", selectedWatchlistId],
-    queryFn: () => api.getWatchlistInstruments(selectedWatchlistId!),
+    queryFn: ({ signal }) => api.getWatchlistInstruments(selectedWatchlistId!, signal),
     enabled: ibkrReady && !!selectedWatchlistId,
     staleTime: Infinity,
     refetchInterval: false,
@@ -91,7 +91,7 @@ export default function WatchlistSidebar() {
   // Rule 1: live market data — staleTime = refetchInterval / 2
   const { data: quotesData } = useQuery({
     queryKey: ["watchlist-quotes", selectedWatchlistId, conidsKey],
-    queryFn: () => api.getWatchlistQuotes(selectedWatchlistId!, conids),
+    queryFn: ({ signal }) => api.getWatchlistQuotes(selectedWatchlistId!, conids, signal),
     enabled: ibkrReady && !!selectedWatchlistId && conids.length > 0,
     staleTime: 15_000,
     refetchInterval: 30_000,

@@ -70,13 +70,13 @@ export function useCompareData(
 
   const stockQuery = useQuery<IndicatorComputeResponse>({
     queryKey: ["candles", stockConid, timeframe, HISTORY_PERIOD],
-    queryFn: () =>
+    queryFn: ({ signal }) =>
       api.computeIndicators({
         conid: stockConid!,
         timeframe,
         indicators: [],
         history_period: HISTORY_PERIOD,
-      }),
+      }, signal),
     enabled: ibkrReady && wantsStock && stockConid != null,
     staleTime: 60_000,
     gcTime: 5 * 60_000,
@@ -85,13 +85,13 @@ export function useCompareData(
 
   const refQuery = useQuery<IndicatorComputeResponse>({
     queryKey: ["candles", refConid, timeframe, HISTORY_PERIOD],
-    queryFn: () =>
+    queryFn: ({ signal }) =>
       api.computeIndicators({
         conid: refConid!,
         timeframe,
         indicators: [],
         history_period: HISTORY_PERIOD,
-      }),
+      }, signal),
     enabled: ibkrReady && wantsRef && refConid != null,
     staleTime: 60_000,
     gcTime: 5 * 60_000,

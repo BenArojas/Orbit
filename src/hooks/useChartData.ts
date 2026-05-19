@@ -103,13 +103,13 @@ export function useChartData(
 
   const candlesQuery = useQuery<IndicatorComputeResponse>({
     queryKey: ["candles", conid, timeframe, loadedPeriod],
-    queryFn: () =>
+    queryFn: ({ signal }) =>
       api.computeIndicators({
         conid: conid!,
         timeframe,
         indicators: [],
         history_period: loadedPeriod,
-      }),
+      }, signal),
     enabled: ibkrReady && conid != null,
     staleTime: 60_000,
     gcTime: 5 * 60_000,
@@ -118,13 +118,13 @@ export function useChartData(
 
   const indicatorsQuery = useQuery<IndicatorComputeResponse>({
     queryKey: ["indicators", conid, timeframe, indicatorKey, loadedPeriod],
-    queryFn: () =>
+    queryFn: ({ signal }) =>
       api.computeIndicators({
         conid: conid!,
         timeframe,
         indicators: indicatorIdsToBackendNames(activeIndicators),
         history_period: loadedPeriod,
-      }),
+      }, signal),
     enabled: ibkrReady && conid != null,
     staleTime: 60_000,
     gcTime: 5 * 60_000,

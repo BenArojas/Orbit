@@ -935,6 +935,7 @@ async function request<T>(
   method: string,
   path: string,
   body?: unknown,
+  signal?: AbortSignal,
 ): Promise<T> {
   // Phase 8.1-F — fast-fail if the browser already knows we're offline.
   // Skips the fetch + retry chain entirely and surfaces the toast
@@ -946,6 +947,7 @@ async function request<T>(
   const options: RequestInit = {
     method,
     headers: { "Content-Type": "application/json" },
+    signal,
   };
   if (body !== undefined) {
     options.body = JSON.stringify(body);
@@ -960,6 +962,12 @@ async function request<T>(
     }
     return data as T;
   } catch (err) {
+    // Caller cancelled the request (TanStack Query unmount, key supersession,
+    // route change). Rethrow without the offline-check chain so cancellation
+    // doesn't surface a misleading "you're offline" toast.
+    if (err instanceof DOMException && err.name === "AbortError") {
+      throw err;
+    }
     // `fetch()` throws a TypeError on network failure (DNS, no route,
     // sidecar down, etc.). If we've since gone offline, upgrade the
     // error so retry logic skips it and the singleton toast fires.
@@ -982,79 +990,89 @@ export const api = {
   logout: () => request<void>("POST", "/auth/logout"),
 
   // Market Data
-  quote: (conid: number) =>
-    request<QuoteResponse>("GET", `/market/quote/${conid}`),
+  quote: (conid: number, signal?: AbortSignal) =>
+    request<QuoteResponse>("GET", `/market/quote/${conid}`, undefined, signal),
 
-  candles: (conid: number, period = "3M") =>
-    request<CandleData[]>("GET", `/market/candles/${conid}?period=${period}`),
+  candles: (conid: number, period = "3M", signal?: AbortSignal) =>
+    request<CandleData[]>("GET", `/market/candles/${conid}?period=${period}`, undefined, signal),
 
   // Phase 8 / Task 3.1 — bundled endpoints for the pulse bar.
   // One request replaces N per-ticker requests; backend handles fan-out
   // and IBKR pacing internally.
-  quotesBundled: (conids: number[]) =>
+  quotesBundled: (conids: number[], signal?: AbortSignal) =>
     request<QuotesBundledResponse>(
       "GET",
       `/market/quotes?conids=${conids.join(",")}`,
+      undefined,
+      signal,
     ),
 
-  candlesBundled: (conids: number[], period = "5D") =>
+  candlesBundled: (conids: number[], period = "5D", signal?: AbortSignal) =>
     request<CandlesBundledResponse>(
       "GET",
       `/market/candles?conids=${conids.join(",")}&period=${period}`,
+      undefined,
+      signal,
     ),
 
-  search: (query: string) =>
-    request<SearchResult[]>("GET", `/market/search?q=${encodeURIComponent(query)}`),
+  search: (query: string, signal?: AbortSignal) =>
+    request<SearchResult[]>("GET", `/market/search?q=${encodeURIComponent(query)}`, undefined, signal),
 
-  resolveConid: (symbol: string, secType?: string) => {
+  resolveConid: (symbol: string, secType?: string, signal?: AbortSignal) => {
     const qs = secType ? `?sec_type=${encodeURIComponent(secType)}` : "";
     return request<ConidResponse>(
       "GET",
       `/market/conid/${encodeURIComponent(symbol)}${qs}`,
+      undefined,
+      signal,
     );
   },
 
   /** Fetch a cached instrument record by conid. Returns null if not cached. */
-  getInstrument: (conid: number) =>
-    request<InstrumentCacheResponse | null>("GET", `/instruments/${conid}`),
+  getInstrument: (conid: number, signal?: AbortSignal) =>
+    request<InstrumentCacheResponse | null>("GET", `/instruments/${conid}`, undefined, signal),
 
   // Indicators
-  computeIndicators: (req: IndicatorRequest) =>
-    request<IndicatorComputeResponse>("POST", "/indicators/compute", req),
+  computeIndicators: (req: IndicatorRequest, signal?: AbortSignal) =>
+    request<IndicatorComputeResponse>("POST", "/indicators/compute", req, signal),
 
   // Sectors (Phase 3)
-  sectorPerformance: () =>
-    request<SectorPerformance[]>("GET", "/sectors/performance"),
+  sectorPerformance: (signal?: AbortSignal) =>
+    request<SectorPerformance[]>("GET", "/sectors/performance", undefined, signal),
 
-  sectorRRG: () =>
-    request<RRGDataPoint[]>("GET", "/sectors/rrg"),
+  sectorRRG: (signal?: AbortSignal) =>
+    request<RRGDataPoint[]>("GET", "/sectors/rrg", undefined, signal),
 
-  sectorOverview: () =>
-    request<SectorOverviewResponse>("GET", "/sectors/overview"),
+  sectorOverview: (signal?: AbortSignal) =>
+    request<SectorOverviewResponse>("GET", "/sectors/overview", undefined, signal),
 
   // Arc-gauge feeds (Phase 8 / Task 8.9)
-  marketBreadth: () =>
-    request<MarketBreadthResponse>("GET", "/sectors/breadth"),
+  marketBreadth: (signal?: AbortSignal) =>
+    request<MarketBreadthResponse>("GET", "/sectors/breadth", undefined, signal),
 
-  sectorRotation: () =>
-    request<SectorRotationResponse>("GET", "/sectors/rotation"),
+  sectorRotation: (signal?: AbortSignal) =>
+    request<SectorRotationResponse>("GET", "/sectors/rotation", undefined, signal),
 
   // Watchlists (Phase 3)
-  getWatchlists: () =>
-    request<WatchlistInfo[]>("GET", "/watchlist/lists"),
+  getWatchlists: (signal?: AbortSignal) =>
+    request<WatchlistInfo[]>("GET", "/watchlist/lists", undefined, signal),
 
   // Phase 8.9 / Commit C — split endpoints so the sidebar can render names
   // immediately and backfill prices on a slower second query.
-  getWatchlistInstruments: (watchlistId: string) =>
+  getWatchlistInstruments: (watchlistId: string, signal?: AbortSignal) =>
     request<WatchlistInstrumentsResponse>(
       "GET",
       `/watchlist/${encodeURIComponent(watchlistId)}/instruments`,
+      undefined,
+      signal,
     ),
 
-  getWatchlistQuotes: (watchlistId: string, conids: number[]) =>
+  getWatchlistQuotes: (watchlistId: string, conids: number[], signal?: AbortSignal) =>
     request<WatchlistQuotesResponse>(
       "GET",
       `/watchlist/${encodeURIComponent(watchlistId)}/quotes?conids=${conids.join(",")}`,
+      undefined,
+      signal,
     ),
 
   watchlistAddInstrument: (watchlistId: string, conid: number) =>

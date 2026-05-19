@@ -193,7 +193,7 @@ export default function ArcGaugeRow() {
   // Resolve VIX conid at runtime (works across paper/live accounts)
   const { data: vixResolved } = useQuery<ConidResponse>({
     queryKey: ["conid", "VIX"],
-    queryFn: () => api.resolveConid("VIX"),
+    queryFn: ({ signal }) => api.resolveConid("VIX", undefined, signal),
     staleTime: Infinity,
     enabled: tierReady,
   });
@@ -203,7 +203,7 @@ export default function ArcGaugeRow() {
   // VIX quote — Rule 1: staleTime = refetchInterval / 2 (live market data)
   const { data: vixQuote } = useQuery<QuoteResponse>({
     queryKey: ["quote", vixConid],
-    queryFn: () => api.quote(vixConid!),
+    queryFn: ({ signal }) => api.quote(vixConid!, signal),
     enabled: tierReady && vixConid != null,
     refetchInterval: 15_000,
     staleTime: 7_500,
@@ -212,7 +212,7 @@ export default function ArcGaugeRow() {
   // Market Strength — breadth proxy from /sectors/breadth
   const { data: breadth } = useQuery<MarketBreadthResponse>({
     queryKey: ["market-breadth"],
-    queryFn: () => api.marketBreadth(),
+    queryFn: ({ signal }) => api.marketBreadth(signal),
     enabled: tierReady,
     // EMA-based breadth changes slowly. 2 min refetch is plenty + avoids
     // pressuring IBKR with 11 daily-bar requests too often.
@@ -223,7 +223,7 @@ export default function ArcGaugeRow() {
   // Sector Rotation — offensive vs defensive 1-month perf
   const { data: rotation } = useQuery<SectorRotationResponse>({
     queryKey: ["sector-rotation"],
-    queryFn: () => api.sectorRotation(),
+    queryFn: ({ signal }) => api.sectorRotation(signal),
     enabled: tierReady,
     refetchInterval: 120_000,
     staleTime: 60_000,

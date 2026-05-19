@@ -191,8 +191,8 @@ export default function MarketPulse() {
   const conidQueries = useQueries({
     queries: items.map((item) => ({
       queryKey: ["conid", item.resolve, item.sec_type ?? ""] as const,
-      queryFn: (): Promise<ConidResponse> =>
-        api.resolveConid(item.resolve, item.sec_type),
+      queryFn: ({ signal }: { signal?: AbortSignal }): Promise<ConidResponse> =>
+        api.resolveConid(item.resolve, item.sec_type, signal),
       staleTime: Infinity,
       enabled: gate,
     })),
@@ -215,7 +215,7 @@ export default function MarketPulse() {
   // we issue exactly 1 request per polling cycle rather than N partial ones.
   const { data: quotesData } = useQuery({
     queryKey: ["quotes-bundled", sortedConidsKey],
-    queryFn: () => api.quotesBundled(knownConids),
+    queryFn: ({ signal }) => api.quotesBundled(knownConids, signal),
     enabled: gate && allResolved,
     // Quotes refresh every 10s (same cadence as the old per-ticker queries).
     refetchInterval: 10_000,
@@ -230,7 +230,7 @@ export default function MarketPulse() {
   // during cold start — the two expensive IBKR fan-outs no longer race.
   const { data: candlesData } = useQuery({
     queryKey: ["candles-bundled", sortedConidsKey, "5D"],
-    queryFn: () => api.candlesBundled(knownConids, "5D"),
+    queryFn: ({ signal }) => api.candlesBundled(knownConids, "5D", signal),
     enabled: gate && allResolved && quotesData != null,
     // Candles are daily bars — 60s stale time matches the old per-ticker value.
     staleTime: 60_000,
