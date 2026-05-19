@@ -50,4 +50,7 @@ src-tauri/binaries/
 .fuse_hidden*
 
 # IBKR response samples (dev only, not committed)
-backend/dev_samples/*.json.claude/worktrees/
+backend/dev_samples/*.json
+
+# Claude Code worktrees (transient — created by brainstorming/planning agents)
+.claude/worktrees/

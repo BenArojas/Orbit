@@ -1,7 +1,7 @@
 # Parallax — Project Plan
 
-> Last updated: 2026-05-04
-> Status: Phase 1–7 complete. Phase 8 (E2E testing) in progress — 8.1, 8.3, 8.9, 8.10 done. Phase 9 (Dashboard request-fan-out optimization) complete — all 22 tasks shipped, pending empirical verification with `summarize_request_log.py`.
+> Last updated: 2026-05-19
+> Status: Phase 1–7 complete. Phase 8 (E2E testing) in progress — 8.1, 8.3, 8.9, 8.10 done. Phase 9 (Dashboard request-fan-out optimization) complete — all 22 tasks shipped, pending empirical verification. **Phase 10 (Compare Mode + WebSocket reliability) complete** — all 29 commits merged to dev.
 ---
 
 ## IBKR Gateway — What We Learned (2026-04-14)
@@ -294,6 +294,99 @@ Per the plan's target table (`docs/phase8-dashboard-optimization-plan.md` line 7
 | Dashboard time-to-fully-rendered | ~60s cold | <5s cold / <1s warm | ⏳ |
 
 Run `uv run python backend/scripts/summarize_request_log.py` after a 170s post-login session and record the numbers back into the optimization plan's status table.
+
+---
+
+### Phase 10: Compare Mode + WebSocket Reliability — COMPLETE
+
+> Goal: Add a dedicated Compare Mode to the Analysis page (per-stock vs. relative-ticker analysis, inspired by @ultrawavetrader's clean-chart methodology) and harden the live-data path against the cold-boot / late-auth / cold-conid scenarios that surfaced once the feature went live.
+> Source spec: [`docs/superpowers/specs/2026-05-18-compare-mode-design.md`](docs/superpowers/specs/2026-05-18-compare-mode-design.md)
+> Source plan: [`docs/superpowers/plans/2026-05-18-compare-mode-plan.md`](docs/superpowers/plans/2026-05-18-compare-mode-plan.md)
+> Merged: dev @ commit `69928d8` (29 commits total).
+
+**Sub-phase 1 — Compare Mode feature (frontend)**
+
+The Compare button on the Analysis toolbar replaces the chart area with a stack of 1–3 dual-axis panes. Each pane shows the primary stock vs. an independent reference symbol on two price scales, both Mode.Normal ("Regular"). LineSeries (not candlesticks) for the cleanest Indi-style read. Per-pane reference input, per-pane timeframe, per-pane layout (overlay / stockOnly / refOnly).
+
+| # | Task | Status | Commit |
+|---|---|---|---|
+| 10.1.1 | Compare Zustand store (active flag, panes list, per-pane reference, persist middleware) | DONE | `16af035`, `8ad8ca1`, `c8a62e1` |
+| 10.1.2 | `useCompareData` hook — per-pane data + live ticks | DONE | `b323391` |
+| 10.1.3 | `CompareChart` component — dual-axis LineSeries with crosshair sync | DONE | `75022a5`, `c1f6169` |
+| 10.1.4 | `PaneToolbar` + `ComparePane` + `CompareView` + `CompareModeHeader` | DONE | `6f26352`, `f460a4a`, `888196f`, `c176891` |
+| 10.1.5 | Wire into AnalysisPage (Compare toggle button, `C` shortcut, conditional render, AI panel auto-collapse, watchlist-click force-exit) | DONE | `db6b944`, `41c1821` |
+| 10.1.6 | Per-pane reference symbol (each pane can compare against a different ticker) + persist migration v1→v2 | DONE | `c8a62e1` |
+| 10.1.7 | UX polish — default 15m, floating Reset Zoom, loading skeleton, layout-change black-chart fix | DONE | `22183a1`, `eaf2041` |
+| 10.1.8 | Marker tool (vertical divergence markers) — added then reverted; click-position math couldn't be pinned down to user satisfaction | REVERTED | `19f1ba4` → `7c46fcf` |
+
+**Sub-phase 2 — WebSocket reliability (the path live data actually flows through)**
+
+| # | Task | Status | Commit |
+|---|---|---|---|
+| 10.2.1 | Ref-count subscriptions at the frontend WS singleton (multiple consumers per conid don't fight) | DONE | `5a56d5b`, `b098ab8` |
+| 10.2.2 | Queue subscribes when IBKR WS isn't connected yet; flush on connect | DONE | `277297a` |
+| 10.2.3 | 10-minute subscription refresh task (IBKR auto-terminates streams at 15 min per their docs) + `authenticated` guard on subscribe | DONE | `f73d3e7` |
+| 10.2.4 | FE→BE WS gate ported from MoonMarket, then loosened (gate was too aggressive on cold boot) — accepts FE immediately, sends `connection_status` updates as IBKR comes online | DONE | `efd93de` → `ff9b232` |
+| 10.2.5 | 50ms pacing on bulk subscribe sends (flush + 10-min refresh) | DONE | `efd93de` |
+| 10.2.6 | IBKR WS auto-starts on auth transition (was: only on FE-connect, which missed the typical cold-boot window) | DONE | `27806d9` |
+| 10.2.7 | Subscription-hook churn fix — separate diff effect from unmount-only cleanup. Eliminated the 3–5 s "stuck" feel on dashboard → analysis nav | DONE | `69928d8` |
+
+**Sub-phase 3 — Backend reliability (history endpoint mostly)**
+
+| # | Task | Status | Commit |
+|---|---|---|---|
+| 10.3.1 | History concurrency semaphore (IBKR's documented 5-concurrent cap; we use 4) — applied to BOTH `history()` and `history_bundled()` | DONE | `6941df5`, `ff9b232` |
+| 10.3.2 | Retry policy 3→4 attempts with exponential backoff `(0.5, 1, 2, 4)` seconds — 503s on cold-conid pre-warming now mostly recover transparently | DONE | `6941df5` |
+| 10.3.3 | `clamp_period_to_bar()` — per-bar-size `max_period` ceiling (15m → 1m, 1h → 6m, 1D → 5y, etc.). Stops `2y@15min` 503s before they reach IBKR | DONE | `692da26` |
+| 10.3.4 | Optional response-body logging behind `PARALLAX_LOG_RESPONSE_BODIES=1` for diagnostics | DONE | `6941df5` |
+| 10.3.5 | SQLite read race — `_run_read()` shares the same lock as `_run_write()` to protect against concurrent shared-connection cursor corruption. Affects `get_cached_conid`, `get_setting`, trigger reads | DONE | `ff9b232`, `69928d8` |
+| 10.3.6 | `est_max_bars` recalibrated to match IBKR's actual 1000-bar cap (was undercounting and firing spurious warnings) | DONE | `eaf2041` |
+
+**Sub-phase 4 — Frontend perf / polish**
+
+| # | Task | Status | Commit |
+|---|---|---|---|
+| 10.4.1 | AbortSignal threaded through `request<T>()` + 14 high-traffic api methods + 13 queryFn call sites. Route-change cancels in-flight requests | DONE | `072252a` |
+| 10.4.2 | MarketPulse live data via WS (replaces 10s `quotesBundled` polling). Sparkline + `candlesBundled` query removed (noise + traffic without analytical value) | DONE | `e7afcbe` |
+| 10.4.3 | `useLiveQuotes` hook — generalized "many tickers, one consumer" WS subscription pattern | DONE | `e7afcbe` |
+| 10.4.4 | Default chart timeframe `1D → 15m` per user feedback (compare mode default also 15m) | DONE | `22183a1` |
+
+**Cross-cutting invariants introduced (must be respected by future work):**
+
+- **`DatabaseService._run_read(fn)`** — every SQLite read on the shared `sqlite3.Connection` now goes through the same lock as writes. Earlier we let reads bypass for concurrency; in practice that produced intermittent `SQLITE_MISUSE` ("bad parameter or other API misuse") under dashboard-cold-load concurrent `resolveConid` calls. SQLite reads are microsecond-fast so the lost concurrency is negligible. New read paths must use `_run_read(lambda: self._fetchone(...))`, never `asyncio.to_thread(self._fetchone, ...)` directly.
+
+- **WS subscription hooks (`useChartData`, `useCompareData`, `useLiveQuotes`)** — diff logic (subscribe new / unsubscribe removed) and unmount cleanup MUST be in two separate `useEffect` calls. Mixing them in one effect causes the cleanup return to drain everything on every dep change, producing the subscription storm we hit in `69928d8`. Pattern:
+  ```ts
+  useEffect(() => { /* diff: sub adds, unsub removes */ }, [conidsKey]);
+  useEffect(() => () => { /* drain on unmount */ }, []);
+  ```
+
+- **History endpoint period clamp** — every `request.history_period` override is passed through `clamp_period_to_bar(period, timeframe)` before reaching `ibkr.history()`. The backend's `TIMEFRAME_SPEC.max_period` is the source of truth; the frontend `PERIOD_LADDER` has matching ceilings in `TIMEFRAME_PERIOD_CEILING` (keep in sync).
+
+- **`tickle()` is the sole WS-lifecycle trigger** — its success branch calls `start_ibkr_websocket()` (idempotent). Auth-transition paths (`/auth/status` flipping to True, gateway warm-up) all flow through `tickle()` eventually via `start_tickle_loop()`. Do not add another start-on-event path; extend the tickle chain instead.
+
+- **IBKR WS concurrency cap is 4** — both `history()` and `history_bundled()` share `self._history_semaphore`. Any new IBKR endpoint that fans out parallel calls must wrap them in the same semaphore.
+
+**Known issues / follow-up work:**
+
+1. **58 pre-existing backend test failures** carried over from before this phase. Categories (see `tests/test_watchlist_*.py`, `test_scanner.py`, `test_fibonacci.py`, `test_chart_context.py`, `test_sectors_gauges.py`):
+   - `'IBKRRequestError' object has no attribute 'detail'` — tests use `.detail`, exception class has `.message`
+   - `services.ibkr does not have the attribute 'cache'` — `patch()` target removed
+   - `MagicMock can't be used in 'await' expression` in scanner — tests should use `AsyncMock`
+   - `_evaluate_group() takes 3 positional arguments but 4 were given` — signature drift
+   - `'DatabaseService' object has no attribute 'connect'` — tests call private `_connect`
+   - `'State' object has no attribute 'ibkr'` — TestClient missing `app.state.ibkr` setup
+   - `Cannot send a request, as the client has been closed` (14 tests) — TestClient lifespan-shutdown closes the http client, next test in the same module reuses it. Single root-cause fixture issue.
+   - Sectors gauges / chart context calibration drift — assertion values don't match current implementation
+   - Most of these are test-code bugs, not production-code bugs.
+
+2. **IBKR cold-conid 503 on first history hit** — still happens (4–6 sector ETFs on every fresh app start) but absorbed by the retry budget. Not actionable from our side.
+
+3. **Marker feature** — reverted. Future re-attempt should probably use horizontal price-level markers rather than vertical time-markers; the time-axis click-position math against lightweight-charts was unreliable.
+
+4. **Color customization** for compare-mode line colors — currently hardcoded white (stock) + green (reference). Settings panel addition is straightforward (`STOCK_LINE_COLOR` + `REF_LINE_COLOR` constants in `CompareChart.tsx`).
+
+5. **Backend cancellation awareness** — TanStack Query now cancels frontend fetches on route change, but the backend doesn't read `request.is_disconnected()` so the Python side keeps doing work + retrying 503s for queries the user has already navigated away from. Worth wiring in long-running routes.
 
 ---
 
