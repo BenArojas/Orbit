@@ -170,22 +170,33 @@ export function useChartData(
   });
 
   // ── WebSocket: subscribe to live data for active conid ─────
-
+  //
+  // Diff-only — subscribe new / unsubscribe old when the conid changes.
+  // The unmount cleanup is a SEPARATE effect with empty deps so we never
+  // do an unsubscribe-then-resubscribe cycle just because subscribe /
+  // unsubscribe identities re-flow through React (they shouldn't, but
+  // the explicit split is the safer pattern and matches useCompareData
+  // and useLiveQuotes).
   useEffect(() => {
     if (!conid) return;
-
-    // Unsubscribe from previous conid
     if (prevConidRef.current && prevConidRef.current !== conid) {
       unsubscribe(prevConidRef.current);
     }
-
-    subscribe(conid);
-    prevConidRef.current = conid;
-
-    return () => {
-      unsubscribe(conid);
-    };
+    if (prevConidRef.current !== conid) {
+      subscribe(conid);
+      prevConidRef.current = conid;
+    }
   }, [conid, subscribe, unsubscribe]);
+
+  useEffect(() => {
+    return () => {
+      if (prevConidRef.current != null) {
+        unsubscribe(prevConidRef.current);
+        prevConidRef.current = null;
+      }
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // ── Handle incoming WebSocket messages ─────────────────────
 

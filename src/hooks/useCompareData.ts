@@ -100,8 +100,13 @@ export function useCompareData(
 
   // ── WebSocket: subscribe to live data for active conids ───
   //
-  // Refs track the previously-subscribed conid so we can unsubscribe from
-  // the old one when the prop changes without triggering re-renders.
+  // Refs track the currently-subscribed conid. Each effect run is a
+  // diff (subscribe new, unsubscribe old) — there is no cleanup return
+  // on these effects. The unmount cleanup is a SEPARATE effect at the
+  // bottom with empty deps. Mixing the diff and the drain in the same
+  // effect was the source of the subscribe-storm we saw on dashboard
+  // → analysis navigation (two panes' effects running in interleaved
+  // order produced fake refcount-0 transitions that pinged IBKR).
 
   const prevStockConidRef = useRef<number | null>(null);
   const prevRefConidRef = useRef<number | null>(null);
@@ -118,13 +123,6 @@ export function useCompareData(
       unsubscribe(prev);
       prevStockConidRef.current = null;
     }
-    return () => {
-      const last = prevStockConidRef.current;
-      if (last != null) {
-        unsubscribe(last);
-        prevStockConidRef.current = null;
-      }
-    };
   }, [wantsStock, stockConid, subscribe, unsubscribe]);
 
   useEffect(() => {
@@ -139,14 +137,22 @@ export function useCompareData(
       unsubscribe(prev);
       prevRefConidRef.current = null;
     }
+  }, [wantsRef, refConid, subscribe, unsubscribe]);
+
+  // Unmount-only cleanup — drains whichever conids are currently held.
+  useEffect(() => {
     return () => {
-      const last = prevRefConidRef.current;
-      if (last != null) {
-        unsubscribe(last);
+      if (prevStockConidRef.current != null) {
+        unsubscribe(prevStockConidRef.current);
+        prevStockConidRef.current = null;
+      }
+      if (prevRefConidRef.current != null) {
+        unsubscribe(prevRefConidRef.current);
         prevRefConidRef.current = null;
       }
     };
-  }, [wantsRef, refConid, subscribe, unsubscribe]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // ── Live tick state ───────────────────────────────────────
 

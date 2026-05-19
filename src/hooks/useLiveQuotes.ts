@@ -30,42 +30,50 @@ export function useLiveQuotes(conids: number[]): Map<number, LiveQuoteTick> {
   const { subscribe, unsubscribe, addHandler } = useWebSocket();
   const [ticks, setTicks] = useState<Map<number, LiveQuoteTick>>(() => new Map());
 
-  // Track the previously-subscribed set so we know which to add/remove
-  // when the conid list changes. A bare Set comparison avoids the
-  // common "subscribe-then-unsubscribe-same-conid-on-re-render" thrash
-  // that breaks ref-counting at the WS singleton layer.
-  const prevConidsRef = useRef<Set<number>>(new Set());
+  // Track the currently-subscribed set so each effect run only emits
+  // the *delta* (newly-added / newly-removed conids). The unmount
+  // cleanup is a SEPARATE effect with an empty dep array — putting the
+  // drain logic in the dep-tracking effect's cleanup is the bug this
+  // hook had previously: every conid-list change would cause cleanup
+  // → drain ALL → body re-subscribe ALL. On MarketPulse cold-load that
+  // amplified into a 12-deep subscribe-storm.
+  const subscribedRef = useRef<Set<number>>(new Set());
 
+  // Diff effect — runs whenever the conid list changes. No cleanup
+  // return on purpose: we only want to add/remove deltas here.
   useEffect(() => {
-    const prev = prevConidsRef.current;
+    const prev = subscribedRef.current;
     const next = new Set(conids);
-    // Subscribe to new ones
     for (const c of next) {
       if (!prev.has(c)) subscribe(c);
     }
-    // Unsubscribe from removed ones
     for (const c of prev) {
       if (!next.has(c)) unsubscribe(c);
     }
-    prevConidsRef.current = next;
-    // Cleanup-on-unmount drains the whole set.
-    return () => {
-      for (const c of prevConidsRef.current) {
-        unsubscribe(c);
-      }
-      prevConidsRef.current = new Set();
-    };
-    // We intentionally depend on the conid list's identity. Callers
-    // should memoize or stabilize the array (e.g. via a sorted-join key
-    // upstream) so we don't churn the WS subscriptions on every render.
+    subscribedRef.current = next;
+    // We intentionally depend on the conid list's *content* (joined),
+    // not the array identity — callers don't have to memoize the array.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [conids.join(",")]);
+
+  // Unmount-only cleanup. Empty deps → this effect's cleanup function
+  // runs exactly once when the component unmounts, draining whatever
+  // is in subscribedRef at that point.
+  useEffect(() => {
+    return () => {
+      for (const c of subscribedRef.current) {
+        unsubscribe(c);
+      }
+      subscribedRef.current = new Set();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const handleMessage = useCallback(
     (msg: WsMessage) => {
       if (msg.type !== "market_data") return;
       const c = msg.conid;
-      if (c == null || !prevConidsRef.current.has(c)) return;
+      if (c == null || !subscribedRef.current.has(c)) return;
       const last = msg.last as number | undefined;
       if (last == null) return;
       setTicks((prev) => {

@@ -778,10 +778,11 @@ class DatabaseService:
         Get a single setting value by key.
         Returns the default if the key doesn't exist.
         """
-        row = await asyncio.to_thread(
-            self._fetchone,
-            "SELECT value FROM settings WHERE key = ?",
-            (key,),
+        row = await self._run_read(
+            lambda: self._fetchone(
+                "SELECT value FROM settings WHERE key = ?",
+                (key,),
+            )
         )
         return row["value"] if row else default
 

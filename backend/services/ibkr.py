@@ -1809,7 +1809,7 @@ class IBKRService:
     async def start_ibkr_websocket(self) -> None:
         """Start the background IBKR WebSocket connection loop."""
         if self._ws_task and not self._ws_task.done():
-            log.info("IBKR WebSocket already running.")
+            log.debug("IBKR WebSocket already running.")
             return
         if not self.state.session_token:
             log.warning("Cannot start WebSocket — no session token.")
