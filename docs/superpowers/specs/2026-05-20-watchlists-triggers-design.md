@@ -112,27 +112,26 @@ A single page rendered before any other UI when `useGateway()` reports `!isAuthe
 
 ### Tables
 
-**`trigger_rules` (modified)**
+**`trigger_rules`**
 
 ```sql
--- existing columns kept
-id, name, enabled, timeframe, scan_interval_seconds, created_at, updated_at
+id INTEGER PRIMARY KEY
+name TEXT NOT NULL
+enabled INTEGER NOT NULL DEFAULT 1
+timeframe TEXT NOT NULL                  -- 1D, 1W, 1M
+scan_interval_seconds INTEGER NOT NULL   -- default 300
+watchlist_name TEXT                      -- IBKR watchlist this rule is scoped to; NULL = per-stock override
+conid INTEGER                            -- nullable; only set when watchlist_name IS NULL
+symbol TEXT                              -- nullable; display only when conid is set
+template_id INTEGER                      -- FK to rule_templates, nullable
+ibkr_mirror_target TEXT                  -- opt-in: when set, hits also move/append to this IBKR watchlist
+created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 
--- new
-watchlist_name TEXT             -- IBKR watchlist this rule is scoped to; NULL = per-stock override
-template_id INTEGER             -- FK to rule_templates, nullable
-ibkr_mirror_target TEXT         -- opt-in: when set, hits also move/append to this IBKR watchlist (revival of the old move behavior)
-
--- existing become nullable (only set when rule is per-stock override)
-conid INTEGER                   -- nullable now
-symbol TEXT                     -- nullable now
-
--- removed from this table (moved to trigger_conditions)
-indicator, condition, threshold, news_candle_method
-
--- kept for migration only, deprecated by new code
-source_watchlist, target_watchlist, auto_expire_days
+CHECK ((watchlist_name IS NOT NULL) OR (conid IS NOT NULL))
 ```
+
+The check constraint guarantees every rule has a scope: either a watchlist or an explicit conid (or both — per-stock overrides inside a watchlist-scoped rule are a future extension, not v1).
 
 **`trigger_conditions` (NEW)** — 1..N rows per rule, ALL must pass on the same bar:
 
@@ -146,18 +145,26 @@ threshold REAL                  -- numeric threshold
 news_candle_method TEXT         -- nullable, only for news_candle indicator
 ```
 
-**`trigger_hits` (modified)**
+**`trigger_hits`**
 
 ```sql
--- existing columns kept
-id, rule_id, conid, symbol, triggered_at, dedup_key,
-source_watchlist, target_watchlist, moved_back  -- (these populated only when ibkr_mirror_target is set)
+id INTEGER PRIMARY KEY
+rule_id INTEGER NOT NULL REFERENCES trigger_rules(id) ON DELETE CASCADE
+conid INTEGER NOT NULL
+symbol TEXT NOT NULL
+triggered_at TIMESTAMP NOT NULL
+dedup_key TEXT NOT NULL                  -- rule_id + conid + date + interval
+condition_values TEXT NOT NULL           -- JSON: [{indicator, condition, threshold, actual_value}, ...]
+watchlist_name TEXT                      -- denormalized for fast filtering; NULL for per-stock rules
+dismissed_at TIMESTAMP                   -- nullable
+snoozed_until TIMESTAMP                  -- nullable
 
--- new
-condition_values TEXT NOT NULL  -- JSON: [{indicator, condition, threshold, actual_value}, ...]
-watchlist_name TEXT             -- denormalized for fast filtering; NULL for per-stock rules
-dismissed_at TIMESTAMP          -- nullable
-snoozed_until TIMESTAMP         -- nullable
+-- IBKR mirror tracking — populated only when the rule has ibkr_mirror_target set
+source_watchlist TEXT
+target_watchlist TEXT
+moved_back INTEGER NOT NULL DEFAULT 0    -- set when the auto-expire return scanner returns the symbol
+
+UNIQUE(dedup_key)
 ```
 
 **`rule_templates` (NEW)**
@@ -184,19 +191,17 @@ Seeded on first boot. Each maps to indicators we already compute.
 5. **Earnings Gap Reaction** *(news)* — news_candle (gap method) > 2% AND volume > 1.5× avg
 6. **Oversold Bounce** *(mean_reversion)* — RSI crosses_above 30 AND close above 50 EMA
 
-### Migration
+### Schema setup (no data migration needed)
 
-Run once on first launch of the new version:
+Parallax is pre-launch; there are no production trigger rules or hits in the wild. The schema lands as a clean install:
 
-1. For each row in `trigger_rules`, insert one row into `trigger_conditions` with the legacy `(indicator, condition, threshold, news_candle_method)` and `order_index = 0`.
-2. Set `trigger_rules.ibkr_mirror_target = target_watchlist` for every row so existing move-to-target behavior continues unchanged.
-3. Set `trigger_rules.watchlist_name = NULL` (per-stock override mode) so the rule still binds to its single `conid`. No user-visible behavior change on day one.
-4. Backfill `trigger_hits.condition_values` from the legacy single-condition columns.
-5. Backfill `trigger_hits.watchlist_name` from the rule's `watchlist_name` (NULL for migrated rules; the user opts into watchlist scope explicitly afterward).
-6. Drop the now-unused columns from `trigger_rules` *only after* one full release cycle of read compatibility. (Phase-2 cleanup migration.)
-7. Seed the 6 built-in templates if `rule_templates` is empty.
+1. Apply the new schema as the next versioned migration. `trigger_rules` ships with the new shape from the outset (`watchlist_name`, `template_id`, `ibkr_mirror_target`, nullable `conid`/`symbol`, no `indicator`/`condition`/`threshold` columns).
+2. Create `trigger_conditions` and `rule_templates` from scratch.
+3. `trigger_hits` ships with `condition_values`, `watchlist_name`, `dismissed_at`, `snoozed_until` already in the schema.
+4. The legacy `source_watchlist`/`target_watchlist`/`auto_expire_days` columns on `trigger_rules` are *not* carried forward — there's no legacy data to preserve. Move-to-target behavior is reachable via the new `ibkr_mirror_target` field (opt-in per rule).
+5. Seed the 6 built-in templates on first boot — `rule_templates` insert is idempotent (`INSERT OR IGNORE` keyed on `(name, is_builtin)`).
 
-After migration, the user can edit any rule and switch it to `watchlist_name = "Swing Setups"` (now a dropdown of their IBKR watchlists) and toggle off `ibkr_mirror_target` to enter the new tag-in-place model.
+If dev SQLite databases already exist on the contributors' machines from earlier testing, the simplest path is to drop and recreate the trigger-related tables as part of the migration. None of that data is production.
 
 ## 7. Trigger evaluation engine
 
@@ -290,15 +295,19 @@ Pydantic models in `backend/models/` updated to match the new payload shape. Fro
 
 Per project rule 1: tests for everything.
 
+Baseline: 798 passing / 1 skipped / 0 failing as of `1939916` (the Phase 10 carryover backlog was cleared in `3faaa6d`). The bar is to keep that green and add coverage for new behavior.
+
 **Backend (pytest):**
 
-- Schema migration — legacy single-condition rules survive, `condition_values` backfills correctly, `ibkr_mirror_target` preserves move behavior
+- Clean schema setup — fresh DB boots with `trigger_conditions`, `rule_templates`, and the new columns; built-in templates seed exactly once across reboots
 - Multi-condition evaluation — 2-of-3 fails, 3-of-3 fires, edge case where conditions hit on the same bar with different indicators
 - Per-watchlist scope — new watchlist member auto-inherits rules, removed member stops firing
+- Per-stock override — rules with `watchlist_name = NULL` and explicit `conid` evaluate exactly as expected
 - Dismiss / snooze — dismissed hit not returned by `?status=active`, snoozed hit reappears after `snoozed_until`
 - Tag endpoint — returns only active tags; respects dismiss and snooze
-- Templates — builtin templates seed on first boot (idempotent), custom save creates a row, delete blocked on builtins, applying a template returns a fully populated rule payload
-- Pre-existing broken trigger tests (per Phase 10 carryover list) — catalog them; collateral fixes for the test-code bugs (`'IBKRRequestError' object has no attribute 'detail'`, `MagicMock` instead of `AsyncMock` in scanner, etc.) get repaired as part of this work since we're already touching the test files
+- Templates — built-ins seed idempotently, custom save creates a row, delete blocked on `is_builtin = 1`, applying a template returns a fully populated rule payload
+- `ibkr_mirror_target` opt-in — when set, hits still call `move_between_watchlists` and the existing auto-expire return-scanner path is exercised; when NULL, no IBKR move occurs
+- Trigger-related tests touched during the refactor get migrated to the new schema; tests covering removed code paths get retired
 
 **Frontend (vitest):**
 
@@ -329,12 +338,12 @@ The plan writer should sequence work so each step is independently shippable and
 
 1. **Connection front-page extraction** — auth guard, page move, no behavior changes downstream. *Foundation for everything else.*
 2. **Market page rename** — split `DashboardPage` into `MarketPage` (gauges/sectors/RRG only) + leave a stub for Today. Clean break before Today is built.
-3. **Schema migration + new trigger data model** — backend only, with full test coverage. Legacy behavior unchanged because `ibkr_mirror_target` carries the old move behavior.
-4. **Multi-condition evaluation engine** — scanner updated to evaluate `trigger_conditions`. Per-watchlist expansion. Test coverage.
-5. **Rule modal redesign** — template picker + conditions list + watchlist/stock-mode toggle. Wire to new endpoints.
-6. **Template library** — seed built-ins, custom save/delete endpoints, UI in the modal.
+3. **New trigger schema** — `trigger_rules` revised shape, `trigger_conditions`, `rule_templates`, `trigger_hits` extensions. Built-in template seeding. Backend tests for the new schema.
+4. **Multi-condition evaluation engine** — scanner evaluates `trigger_conditions`, per-watchlist scope expansion, per-stock override path. Test coverage.
+5. **Rule modal redesign** — template picker + conditions list + watchlist/stock-mode toggle + optional `ibkr_mirror_target`. Wire to new endpoints.
+6. **Template library UI** — custom save/delete from the modal, manage saved templates surface.
 7. **Dismiss/snooze + tag endpoint** — `POST .../dismiss`, `POST .../snooze`, `GET /triggers/tags`. Tests.
 8. **`<StockTagDots>` shared component** — single source of truth for tag rendering. Tests.
 9. **Today page** — context strip, hits grid, filters, timeline, watchlist rail, rules panel. Builds on everything above.
 10. **Screener tag visibility** — wire `<StockTagDots>` into result rows and quick-peek slide-over.
-11. **Cleanup** — delete deprecated columns in a follow-up migration after one release cycle of read compatibility; drop unused components from the old dashboard.
+11. **Cleanup** — drop unused components from the old dashboard, remove now-orphaned `<WatchlistConfigSection>` (recommendations doc §11 retains the rationale).
