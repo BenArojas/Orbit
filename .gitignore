@@ -52,5 +52,8 @@ src-tauri/binaries/
 # IBKR response samples (dev only, not committed)
 backend/dev_samples/*.json
 
+# Superpowers brainstorming mockups (transient — local visual companion)
+.superpowers/
+
 # Claude Code worktrees (transient — created by brainstorming/planning agents)
 .claude/worktrees/
