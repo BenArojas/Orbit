@@ -85,20 +85,24 @@ class TestBuildPriceSummary:
 
     def test_near_high_detected(self):
         """Price at the very top of the range → 'near the period high'."""
+        # Period range: low=90, high=110 (span=20). Threshold is ≥80%.
+        # close=109 → (109-90)/20 = 95% → triggers "near the period high".
         candles = [
             make_candle(close=100.0, high=105.0, low=95.0),
             make_candle(close=102.0, high=107.0, low=97.0),
-            make_candle(close=104.0, high=110.0, low=90.0),  # current = near high
+            make_candle(close=109.0, high=110.0, low=90.0),  # 95% through range
         ]
         result = _build_price_summary(candles, n_bars=3)
         assert "near the period high" in result
 
     def test_near_low_detected(self):
         """Price at the very bottom of the range → 'near the period low'."""
+        # Period range: low=85, high=115 (span=30). Threshold is ≤20%.
+        # close=87 → (87-85)/30 = 6.7% → triggers "near the period low".
         candles = [
             make_candle(close=110.0, high=115.0, low=90.0),
             make_candle(close=105.0, high=112.0, low=88.0),
-            make_candle(close=92.0, high=100.0, low=85.0),  # current = near low
+            make_candle(close=87.0, high=100.0, low=85.0),  # 6.7% through range
         ]
         result = _build_price_summary(candles, n_bars=3)
         assert "near the period low" in result
@@ -172,15 +176,19 @@ class TestDetectCandlestickPatterns:
 
     def test_hammer_detected(self):
         """Small body at the top, long lower shadow = Hammer."""
-        # Body = 0.5 (100.5→100), lower shadow = 8 (100→92), upper shadow = 0.2
-        candle = make_candle(close=100.5, open_=100.0, high=100.7, low=92.0, time=1_700_000_000)
+        # range=12 (90→102), body=1.5 (100→101.5) → body/range=12.5% > 10% (not Doji)
+        # lower_shadow=10 (90→100) > body*2=3 ✓, upper_shadow=0.5 (101.5→102) < body*0.5=0.75 ✓
+        # body=1.5 < range*0.35=4.2 ✓ → Bullish Hammer
+        candle = make_candle(close=101.5, open_=100.0, high=102.0, low=90.0, time=1_700_000_000)
         findings = _detect_candlestick_patterns([candle], n_bars=1)
         assert any("Hammer" in p for _, p in findings)
 
     def test_shooting_star_detected(self):
         """Small body at the bottom, long upper shadow = Shooting Star."""
-        # Body = 0.5 (100→100.5), upper shadow = 8 (100.5→108.5), lower shadow = 0.2
-        candle = make_candle(close=100.0, open_=100.5, high=108.5, low=99.8, time=1_700_000_000)
+        # range=10.5 (99.5→110), body=1.5 (100→101.5) → body/range=14.3% > 10% (not Doji)
+        # upper_shadow=8.5 (101.5→110) > body*2=3 ✓, lower_shadow=0.5 (99.5→100) < body*0.5=0.75 ✓
+        # body=1.5 < range*0.35=3.675 ✓ → Shooting Star
+        candle = make_candle(close=100.0, open_=101.5, high=110.0, low=99.5, time=1_700_000_000)
         findings = _detect_candlestick_patterns([candle], n_bars=1)
         assert any(p == "Shooting Star" for _, p in findings)
 

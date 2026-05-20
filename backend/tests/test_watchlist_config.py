@@ -10,13 +10,15 @@ Covers:
 """
 from __future__ import annotations
 
+import sqlite3
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from deps import get_db
+from deps import get_db, get_ibkr
+from exceptions import IBKRConnectionError, IBKRError
 from routers.watchlist_config import router as wc_router
 from services.db import DatabaseService
 from services.scanner import ScannerService
@@ -88,6 +90,14 @@ def app_and_db():
     db.delete_watchlist_config = AsyncMock(return_value=True)
 
     app.dependency_overrides[get_db] = lambda: db
+
+    # PUT /watchlist-config/{name} calls ibkr.resolve_watchlist_id to validate
+    # the watchlist exists. Simulate IBKR being offline so the write is still
+    # allowed (the router catches IBKRError and proceeds).
+    mock_ibkr = MagicMock()
+    mock_ibkr.resolve_watchlist_id = AsyncMock(side_effect=IBKRError("offline"))
+    app.dependency_overrides[get_ibkr] = lambda: mock_ibkr
+
     return app, db
 
 
@@ -213,7 +223,7 @@ async def test_resolve_expire_days_no_target_skips_lookup():
 @pytest.mark.asyncio
 async def test_resolve_expire_days_lookup_error_falls_back_to_rule():
     db = MagicMock()
-    db.get_watchlist_config = AsyncMock(side_effect=RuntimeError("boom"))
+    db.get_watchlist_config = AsyncMock(side_effect=sqlite3.OperationalError("boom"))
     scanner = make_scanner(db=db)
     rule = {"target_watchlist": "Explode", "auto_expire_days": 15}
     days = await scanner._resolve_expire_days(rule)
@@ -256,7 +266,7 @@ async def test_return_expired_hits_skips_mark_on_move_failure():
     db.mark_moved_back = AsyncMock(return_value=True)
 
     ibkr = MagicMock()
-    ibkr.move_between_watchlists = AsyncMock(side_effect=RuntimeError("ibkr down"))
+    ibkr.move_between_watchlists = AsyncMock(side_effect=IBKRConnectionError("ibkr down"))
 
     scanner = make_scanner(db=db, ibkr=ibkr)
     await scanner._return_expired_hits()
@@ -268,7 +278,7 @@ async def test_return_expired_hits_skips_mark_on_move_failure():
 @pytest.mark.asyncio
 async def test_return_expired_hits_get_expired_failure_is_swallowed():
     db = MagicMock()
-    db.get_expired_hits = AsyncMock(side_effect=RuntimeError("sqlite locked"))
+    db.get_expired_hits = AsyncMock(side_effect=sqlite3.OperationalError("sqlite locked"))
     ibkr = MagicMock()
     ibkr.move_between_watchlists = AsyncMock()
 

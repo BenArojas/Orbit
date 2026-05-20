@@ -103,7 +103,10 @@ class TestAiServiceOneShot:
         assert chat_mock.await_count == 1, "Should be exactly ONE Ollama call"
         assert result["signal"] is not None
         assert result["signal"]["direction"] == "LONG"
-        assert result["message"] == _INLINE_JSON_NARRATIVE
+        # The service strips the trailing ```json``` fence before returning the
+        # message; only the narrative text should remain.
+        assert result["message"] == "AAPL is showing strong momentum with RSI at 65 and price above EMA-50."
+        assert "```json" not in result["message"]
 
     @pytest.mark.asyncio
     async def test_missing_json_triggers_one_reformat(self):

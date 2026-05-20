@@ -63,7 +63,7 @@ async def test_breadth_all_above_ema_returns_100():
     history_map[9999] = _bars(rising)
 
     svc = _make_service(conids, history_map)
-    result = await svc.get_market_breadth()
+    result = await svc.get_market_breadth(force_refresh=True)
 
     assert result["value"] == 100.0
     assert result["above"] == result["total"] == len(SECTOR_ETFS)
@@ -80,7 +80,7 @@ async def test_breadth_all_below_ema_returns_0():
     history_map[9999] = _bars(falling)
 
     svc = _make_service(conids, history_map)
-    result = await svc.get_market_breadth()
+    result = await svc.get_market_breadth(force_refresh=True)
 
     assert result["value"] == 0.0
     assert result["above"] == 0
@@ -104,7 +104,7 @@ async def test_breadth_mixed_returns_correct_percentage():
         history_map[conid] = _bars(rising if i < 6 else falling)
 
     svc = _make_service(conids, history_map)
-    result = await svc.get_market_breadth()
+    result = await svc.get_market_breadth(force_refresh=True)
 
     # 6 out of 11 ETFs above the EMA.
     assert result["total"] == len(SECTOR_ETFS)
@@ -126,7 +126,7 @@ async def test_breadth_skips_sectors_with_too_few_bars():
     history_map[short_sym_conid] = _bars(short)
 
     svc = _make_service(conids, history_map)
-    result = await svc.get_market_breadth()
+    result = await svc.get_market_breadth(force_refresh=True)
 
     assert result["total"] == len(SECTOR_ETFS) - 1
 
@@ -153,7 +153,7 @@ async def test_rotation_neutral_when_groups_match():
     history_map[9999] = _bars(_perf_series(100.0, 110.0))
 
     svc = _make_service(conids, history_map)
-    result = await svc.get_sector_rotation()
+    result = await svc.get_sector_rotation(force_refresh=True)
 
     assert result["delta_pct"] == pytest.approx(0.0, abs=0.01)
     assert result["value"] == pytest.approx(50.0, abs=0.01)
@@ -176,7 +176,7 @@ async def test_rotation_fully_offensive_caps_at_100():
     history_map[9999] = _bars(_perf_series(100.0, 100.0))
 
     svc = _make_service(conids, history_map)
-    result = await svc.get_sector_rotation()
+    result = await svc.get_sector_rotation(force_refresh=True)
 
     assert result["delta_pct"] > ROTATION_RANGE_PCT
     assert result["value"] == 100.0
@@ -199,7 +199,7 @@ async def test_rotation_fully_defensive_clamps_to_0():
     history_map[9999] = _bars(_perf_series(100.0, 100.0))
 
     svc = _make_service(conids, history_map)
-    result = await svc.get_sector_rotation()
+    result = await svc.get_sector_rotation(force_refresh=True)
 
     assert result["delta_pct"] < -ROTATION_RANGE_PCT
     assert result["value"] == 0.0
@@ -213,7 +213,7 @@ async def test_rotation_handles_missing_groups_gracefully():
     history_map = {9999: _bars(_perf_series(100.0, 100.0))}
 
     svc = _make_service(conids, history_map)
-    result = await svc.get_sector_rotation()
+    result = await svc.get_sector_rotation(force_refresh=True)
 
     assert result["value"] == 50.0
     assert result["delta_pct"] == 0.0

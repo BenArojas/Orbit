@@ -490,9 +490,9 @@ class TestFibConfig:
         from services.db import DatabaseService
 
         db = DatabaseService(db_path=":memory:")
-        # DatabaseService.connect() is async; run it eagerly so the
+        # DatabaseService.initialize() is async; run it eagerly so the
         # schema exists before any request hits the test client.
-        asyncio.get_event_loop().run_until_complete(db.connect())
+        asyncio.get_event_loop().run_until_complete(db.initialize())
 
         app = FastAPI()
         app.include_router(fib_router)

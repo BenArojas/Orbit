@@ -17,7 +17,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from exceptions import IBKRRequestError
+from exceptions import IBKRConnectionError, IBKRRequestError
 from services.ibkr import IBKRService
 from services.scanner import ScannerService
 
@@ -252,7 +252,7 @@ class TestMoveBetweenWatchlists:
 
         with pytest.raises(IBKRRequestError) as exc_info:
             await ibkr.move_between_watchlists(265598, "Missing Source", "Target List")
-        assert "Missing Source" in exc_info.value.detail
+        assert "Missing Source" in exc_info.value.message
         ibkr.add_to_watchlist.assert_not_awaited()
 
     @pytest.mark.asyncio
@@ -262,7 +262,7 @@ class TestMoveBetweenWatchlists:
 
         with pytest.raises(IBKRRequestError) as exc_info:
             await ibkr.move_between_watchlists(265598, "Source List", "Missing Target")
-        assert "Missing Target" in exc_info.value.detail
+        assert "Missing Target" in exc_info.value.message
         ibkr.add_to_watchlist.assert_not_awaited()
 
     @pytest.mark.asyncio
@@ -291,7 +291,7 @@ class TestOverwriteWatchlist:
         ibkr = make_ibkr()
         ibkr._request = AsyncMock(return_value={"id": "new123"})
 
-        with patch("services.ibkr.cache") as mock_cache:
+        with patch("cache.cache") as mock_cache:
             mock_cache.delete = AsyncMock()
             await ibkr._overwrite_watchlist("old123", "My List", [{"C": 111}])
             mock_cache.delete.assert_awaited_once_with("get_watchlists")
@@ -312,7 +312,7 @@ class TestOverwriteWatchlist:
 
         ibkr._request = fake_request
 
-        with patch("services.ibkr.cache") as mock_cache:
+        with patch("cache.cache") as mock_cache:
             mock_cache.delete = AsyncMock()
             # Should not raise even though DELETE failed
             await ibkr._overwrite_watchlist("123", "My List", [{"C": 111}])
@@ -344,6 +344,7 @@ class TestRecordHitWithWatchlistMove:
         ibkr.move_between_watchlists = AsyncMock(return_value=True)
         db = MagicMock()
         db.record_trigger_hit = AsyncMock(return_value=42)  # new hit_id
+        db.get_watchlist_config = AsyncMock(return_value=None)
 
         scanner = make_scanner(ibkr=ibkr, db=db)
         rule = self._make_rule()
@@ -363,6 +364,7 @@ class TestRecordHitWithWatchlistMove:
         ibkr.move_between_watchlists = AsyncMock()
         db = MagicMock()
         db.record_trigger_hit = AsyncMock(return_value=None)  # deduped
+        db.get_watchlist_config = AsyncMock(return_value=None)
 
         scanner = make_scanner(ibkr=ibkr, db=db)
         rule = self._make_rule()
@@ -381,6 +383,7 @@ class TestRecordHitWithWatchlistMove:
         )
         db = MagicMock()
         db.record_trigger_hit = AsyncMock(return_value=42)
+        db.get_watchlist_config = AsyncMock(return_value=None)
 
         scanner = make_scanner(ibkr=ibkr, db=db)
         rule = self._make_rule()
@@ -400,10 +403,11 @@ class TestRecordHitWithWatchlistMove:
 
         ibkr = MagicMock()
         ibkr.move_between_watchlists = AsyncMock(
-            side_effect=Exception("IBKR is down")
+            side_effect=IBKRConnectionError("IBKR is down")
         )
         db = MagicMock()
         db.record_trigger_hit = AsyncMock(return_value=7)
+        db.get_watchlist_config = AsyncMock(return_value=None)
 
         scanner = make_scanner(ibkr=ibkr, db=db)
         scanner.on_trigger_fired = callback

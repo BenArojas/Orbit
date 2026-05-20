@@ -66,6 +66,7 @@ def _mock_ibkr(candles: list[CandleData]) -> MagicMock:
             for c in candles
         ]
     })
+    ibkr.move_between_watchlists = AsyncMock(return_value=None)
     return ibkr
 
 
@@ -75,6 +76,7 @@ def _mock_db(hit_id: int | None = 1) -> MagicMock:
     db.get_trigger_rules = AsyncMock(return_value=[])
     db.get_setting = AsyncMock(return_value=None)
     db.record_trigger_hit = AsyncMock(return_value=hit_id)
+    db.get_watchlist_config = AsyncMock(return_value=None)
     return db
 
 
@@ -200,10 +202,15 @@ def _ir(name: str, values: list) -> Any:
 class TestExtractValues:
     """Unit tests for indicator value extraction logic."""
 
-    def _extract(self, indicator, results, last_close=100.0, last_volume=1_000_000.0, candles=None):
+    def _extract(self, indicator, results, last_close=100.0, last_volume=None, candles=None):
         scanner = _make_scanner()
         if candles is None:
             candles = make_candles([100.0, 100.0])
+        # Mirror how _evaluate_group calls _extract_values: last_volume comes
+        # from the last candle, so tests that supply custom candles get the
+        # right volume automatically without having to repeat it.
+        if last_volume is None:
+            last_volume = float(candles[-1].volume)
         return scanner._extract_values(indicator, results, last_close, last_volume, candles)
 
     # ── RSI ─────────────────────────────────────────────────
@@ -339,7 +346,7 @@ class TestEvaluateGroup:
         rule = _make_rule(indicator="rsi", condition="below", threshold=40.0)
 
         # Run evaluation — RSI on a 30-bar decline will be well below 40
-        hits = await scanner._evaluate_group(rule["conid"], rule["timeframe"], [rule])
+        hits = await scanner._evaluate_group(rule["conid"], [rule])
         assert hits == 1
         db.record_trigger_hit.assert_called_once()
         call_kwargs = db.record_trigger_hit.call_args.kwargs
@@ -358,7 +365,7 @@ class TestEvaluateGroup:
 
         rule = _make_rule(indicator="rsi", condition="above", threshold=70.0)
 
-        hits = await scanner._evaluate_group(rule["conid"], rule["timeframe"], [rule])
+        hits = await scanner._evaluate_group(rule["conid"], [rule])
         assert hits == 0
         db.record_trigger_hit.assert_not_called()
 
@@ -379,7 +386,7 @@ class TestEvaluateGroup:
         # threshold=0: price crossing above EMA-9
         rule = _make_rule(indicator="ema_9", condition="crosses_above", threshold=0.0)
 
-        hits = await scanner._evaluate_group(rule["conid"], rule["timeframe"], [rule])
+        hits = await scanner._evaluate_group(rule["conid"], [rule])
         # May or may not fire depending on where in the rally the EMA sits,
         # but the machinery should not raise any exceptions
         assert hits >= 0  # structural integrity
@@ -396,7 +403,7 @@ class TestEvaluateGroup:
         scanner = ScannerService(ibkr=ibkr, db=db)
 
         rule = _make_rule(indicator="rsi", condition="below", threshold=40.0)
-        hits = await scanner._evaluate_group(rule["conid"], rule["timeframe"], [rule])
+        hits = await scanner._evaluate_group(rule["conid"], [rule])
 
         # DB was called (rule evaluated and fired) but hit_id=None → not counted
         assert hits == 0
@@ -419,7 +426,7 @@ class TestEvaluateGroup:
         scanner.on_trigger_fired = _cb
 
         rule = _make_rule(indicator="rsi", condition="below", threshold=40.0)
-        await scanner._evaluate_group(rule["conid"], rule["timeframe"], [rule])
+        await scanner._evaluate_group(rule["conid"], [rule])
 
         assert len(received) == 1
         assert received[0][1] == 99  # hit_id
@@ -432,7 +439,7 @@ class TestEvaluateGroup:
         scanner = ScannerService(ibkr=ibkr, db=db)
 
         rule = _make_rule(indicator="rsi", condition="below", threshold=30.0)
-        hits = await scanner._evaluate_group(rule["conid"], rule["timeframe"], [rule])
+        hits = await scanner._evaluate_group(rule["conid"], [rule])
 
         assert hits == 0
         db.record_trigger_hit.assert_not_called()
@@ -823,7 +830,7 @@ class TestEvaluateGroupNewsCandle:
         scanner = ScannerService(ibkr=ibkr, db=db)
 
         rule = self._rule("gap", threshold=1.5)
-        hits = await scanner._evaluate_group(rule["conid"], rule["timeframe"], [rule])
+        hits = await scanner._evaluate_group(rule["conid"], [rule])
 
         assert hits == 1
         db.record_trigger_hit.assert_called_once()
@@ -843,7 +850,7 @@ class TestEvaluateGroupNewsCandle:
         scanner = ScannerService(ibkr=ibkr, db=db)
 
         rule = self._rule("gap", threshold=5.0)
-        hits = await scanner._evaluate_group(rule["conid"], rule["timeframe"], [rule])
+        hits = await scanner._evaluate_group(rule["conid"], [rule])
         assert hits == 0
         db.record_trigger_hit.assert_not_called()
 
@@ -859,7 +866,7 @@ class TestEvaluateGroupNewsCandle:
         scanner = ScannerService(ibkr=ibkr, db=db)
 
         rule = self._rule("volume_spike", threshold=3.0)
-        hits = await scanner._evaluate_group(rule["conid"], rule["timeframe"], [rule])
+        hits = await scanner._evaluate_group(rule["conid"], [rule])
         assert hits == 1
 
     @pytest.mark.asyncio
@@ -886,7 +893,7 @@ class TestEvaluateGroupNewsCandle:
         rsi_rule = _make_rule(rule_id=1, indicator="rsi", condition="below", threshold=40.0)
         news_rule = self._rule("gap", threshold=1.0, rule_id=2)
 
-        hits = await scanner._evaluate_group(rsi_rule["conid"], rsi_rule["timeframe"], [rsi_rule, news_rule])
+        hits = await scanner._evaluate_group(rsi_rule["conid"], [rsi_rule, news_rule])
 
         # Both should fire
         assert hits == 2
@@ -901,6 +908,6 @@ class TestEvaluateGroupNewsCandle:
         scanner = ScannerService(ibkr=ibkr, db=db)
 
         rule = self._rule("pulsar", threshold=0.1)
-        hits = await scanner._evaluate_group(rule["conid"], rule["timeframe"], [rule])
+        hits = await scanner._evaluate_group(rule["conid"], [rule])
         assert hits == 0
         db.record_trigger_hit.assert_not_called()
