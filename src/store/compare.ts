@@ -70,23 +70,20 @@ export const useCompareStore = create<CompareState>()(
       ...initialState,
 
       enter: (initialTimeframe) =>
-        set((state) => {
-          if (state.panes.length > 0) {
-            // Sticky re-entry — keep the last configuration.
-            return { active: true };
-          }
-          return {
-            active: true,
-            panes: [
-              {
-                id: newPaneId(),
-                layout: "overlay" as Layout,
-                timeframe: initialTimeframe,
-                reference: { ...DEFAULT_REFERENCE },
-              },
-            ],
-          };
-        }),
+        // Always open compare mode with a single fresh pane. The user can
+        // add more via addPane(). Prior sticky-re-entry behavior was removed
+        // because re-entering should feel like a clean start, not resume.
+        set(() => ({
+          active: true,
+          panes: [
+            {
+              id: newPaneId(),
+              layout: "overlay" as Layout,
+              timeframe: initialTimeframe,
+              reference: { ...DEFAULT_REFERENCE },
+            },
+          ],
+        })),
 
       exit: () => set({ active: false }),
 

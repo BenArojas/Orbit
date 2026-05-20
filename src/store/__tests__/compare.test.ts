@@ -35,22 +35,28 @@ describe("compare store — enter / exit", () => {
     expect(s.panes[0].reference).toEqual({ symbol: "SPY", conid: null });
   });
 
-  it("enter() is idempotent on a non-empty panes list", () => {
+  it("enter() always resets to a single fresh pane, discarding prior panes", () => {
     useCompareStore.getState().enter("5m");
-    const firstId = useCompareStore.getState().panes[0].id;
-    useCompareStore.getState().enter("1h");  // already active — should not seed a second pane
+    useCompareStore.getState().addPane();
+    useCompareStore.getState().addPane();
+    expect(useCompareStore.getState().panes).toHaveLength(3);
+
+    const priorIds = useCompareStore.getState().panes.map((p) => p.id);
+    useCompareStore.getState().enter("1h");
     const s = useCompareStore.getState();
+    expect(s.active).toBe(true);
     expect(s.panes).toHaveLength(1);
-    expect(s.panes[0].id).toBe(firstId);
-    expect(s.panes[0].timeframe).toBe("5m");
+    expect(s.panes[0].timeframe).toBe("1h");
+    expect(s.panes[0].reference).toEqual({ symbol: "SPY", conid: null });
+    // Fresh pane — not one of the previous ids.
+    expect(priorIds).not.toContain(s.panes[0].id);
   });
 
-  it("exit() clears active but preserves panes (so re-entry is sticky)", () => {
+  it("exit() clears active but leaves panes intact (next enter still resets them)", () => {
     useCompareStore.getState().enter("5m");
     useCompareStore.getState().exit();
     const s = useCompareStore.getState();
     expect(s.active).toBe(false);
-    // Panes preserved for "sticky" re-entry.
     expect(s.panes).toHaveLength(1);
   });
 });

@@ -372,11 +372,16 @@ export default function ChartContainer({
     const lastCandle = candles[candles.length - 1];
     const time = lastCandle.time as Time;
 
+    // The bar's high/low are widened against the latest tick price only.
+    // liveTick.high / liveTick.low are IBKR day aggregates (fields 70/71) and
+    // are unrelated to the current bar's range — feeding them into Math.min/max
+    // dragged the visible bar's wick down to the session/ADR day-low and blew
+    // out the price scale on first load.
     candleSeriesRef.current.update({
       time,
       open: lastCandle.open,
-      high: Math.max(lastCandle.high, liveTick.high),
-      low:  Math.min(lastCandle.low, liveTick.low),
+      high: Math.max(lastCandle.high, liveTick.last),
+      low:  Math.min(lastCandle.low, liveTick.last),
       close: liveTick.last,
     });
 
