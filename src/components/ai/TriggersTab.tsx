@@ -1,13 +1,13 @@
-// @ts-nocheck
-// TODO(Task 11): file uses removed single-condition TriggerRule fields
-// (indicator/condition/threshold/target_watchlist). Will be reworked in Task 11
-// when dashboard cleanup happens. Suppressed to unblock Task 5.
 /**
- * TriggersTab — View and toggle trigger rules for the active instrument.
+ * TriggersTab — View and toggle trigger rules relevant to the active instrument.
  *
- * Shows all trigger rules whose conid matches the currently displayed stock.
- * Allows enabling/disabling rules inline. Read-only creation is deferred to
- * the full TriggerRules panel on the dashboard.
+ * Shows every rule that targets the current stock either as a per-stock
+ * override (rule.conid === activeConid) or via a watchlist whose name is
+ * known (rule.watchlist_name set). Rules under the new multi-condition
+ * schema describe ALL conditions joined by AND on the same bar.
+ *
+ * Allows enabling/disabling rules inline. Creation/edit still happens
+ * from the dedicated RuleModal surfaced on the Today page.
  *
  * Rules:
  *   - Filters by conid (never by ticker string).
@@ -16,7 +16,7 @@
 
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
-import type { TriggerRule } from "@/lib/api";
+import type { TriggerRule, TriggerCondition } from "@/lib/api";
 
 interface TriggersTabProps {
   /** IBKR contract ID of the currently displayed instrument */
@@ -25,8 +25,33 @@ interface TriggersTabProps {
   activeSymbol: string;
 }
 
+/** Format conditions into a one-line summary: "rsi below 30 AND ema_200 above 0". */
+function summarizeConditions(conds: TriggerCondition[]): string {
+  if (!conds.length) return "(no conditions)";
+  return conds
+    .map((c) => {
+      const op = c.condition.replace(/_/g, " ");
+      const thr = c.threshold ?? "";
+      return `${c.indicator} ${op}${thr !== "" ? ` ${thr}` : ""}`;
+    })
+    .join(" AND ");
+}
+
 /** Compact label for a trigger rule */
-function RuleRow({ rule, onToggle }: { rule: TriggerRule; onToggle: (enabled: boolean) => void }) {
+function RuleRow({
+  rule,
+  onToggle,
+}: {
+  rule: TriggerRule;
+  onToggle: (enabled: boolean) => void;
+}) {
+  const summary = summarizeConditions(rule.conditions);
+  const scopeLabel = rule.watchlist_name
+    ? `watchlist: ${rule.watchlist_name}`
+    : rule.symbol
+      ? `stock: ${rule.symbol}`
+      : null;
+
   return (
     <div
       className="flex items-start gap-2 rounded-md border border-[var(--border)] bg-[var(--bg-0)] px-2.5 py-2"
@@ -52,13 +77,16 @@ function RuleRow({ rule, onToggle }: { rule: TriggerRule; onToggle: (enabled: bo
 
       {/* Rule details */}
       <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-        <span className="truncate text-[11px] font-medium text-[var(--text-1)]">{rule.name}</span>
-        <span className="text-[10px] text-[var(--text-3)]">
-          {rule.indicator} {rule.condition} {rule.threshold} · {rule.timeframe}
+        <span className="truncate text-[11px] font-medium text-[var(--text-1)]">
+          {rule.name}
         </span>
-        {rule.target_watchlist && (
-          <span className="text-[9px] text-[var(--text-3)]">
-            → {rule.target_watchlist}
+        <span className="truncate text-[10px] text-[var(--text-3)]">
+          {summary} · {rule.timeframe}
+        </span>
+        {scopeLabel && (
+          <span className="truncate text-[9px] text-[var(--text-3)]">
+            {scopeLabel}
+            {rule.ibkr_mirror_target ? ` → ${rule.ibkr_mirror_target}` : ""}
           </span>
         )}
       </div>
@@ -77,7 +105,10 @@ function RuleRow({ rule, onToggle }: { rule: TriggerRule; onToggle: (enabled: bo
   );
 }
 
-export default function TriggersTab({ activeConid, activeSymbol }: TriggersTabProps) {
+export default function TriggersTab({
+  activeConid,
+  activeSymbol,
+}: TriggersTabProps) {
   const qc = useQueryClient();
 
   const { data: allRules, isLoading, isError } = useQuery({
@@ -94,7 +125,9 @@ export default function TriggersTab({ activeConid, activeSymbol }: TriggersTabPr
     },
   });
 
-  // Filter to only rules for the active conid
+  // Per-stock rules for this conid. Watchlist-scoped rules aren't shown
+  // here because membership isn't trivially available client-side — they
+  // surface on the Today page, which is the authoritative cockpit.
   const rules: TriggerRule[] = activeConid
     ? (allRules ?? []).filter((r) => r.conid === activeConid)
     : [];
@@ -133,10 +166,10 @@ export default function TriggersTab({ activeConid, activeSymbol }: TriggersTabPr
 
       {!isLoading && !isError && rules.length === 0 && (
         <div className="rounded-lg bg-[var(--bg-0)] px-3 py-4 text-center text-[11px] text-[var(--text-3)]">
-          No trigger rules for {activeSymbol || "this symbol"}.
+          No per-stock rules for {activeSymbol || "this symbol"}.
           <br />
           <span className="text-[10px]">
-            Create rules from the Triggers panel on the dashboard.
+            Watchlist-scoped rules are managed from the Today page.
           </span>
         </div>
       )}
@@ -145,7 +178,9 @@ export default function TriggersTab({ activeConid, activeSymbol }: TriggersTabPr
         <RuleRow
           key={rule.id}
           rule={rule}
-          onToggle={(enabled) => toggleMutation.mutate({ id: rule.id, enabled })}
+          onToggle={(enabled) =>
+            toggleMutation.mutate({ id: rule.id, enabled })
+          }
         />
       ))}
 
