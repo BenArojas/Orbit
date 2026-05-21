@@ -1,6 +1,3 @@
-// @ts-nocheck
-// TODO(Task 11): file scheduled for deletion — uses removed single-condition
-// TriggerHit fields. Suppressed to unblock Task 5.
 /**
  * Arc Gauge Components — Task 3.2 (Phase 8 / Task 8.9 rewrite)
  *
