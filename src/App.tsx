@@ -33,8 +33,14 @@ import { IbkrReconnectBanner } from "@/components/gateway/IbkrReconnectBanner";
 import { HealthStrip } from "@/components/ui/HealthStrip";
 import { ThemeToggle } from "@/components/ui/ThemeToggle";
 import { Toaster } from "@/components/ui/Toaster";
-// Dashboard and Settings are small — keep them eager so the shell feels instant.
-import { DashboardPage, SettingsPage } from "@/pages";
+import { AuthGuard } from "@/components/shell/AuthGuard";
+// Connection + Settings are small — keep eager so the shell feels instant.
+// (DashboardPage is being phased out across Tasks 2/11 — Market replaces it.)
+import { SettingsPage } from "@/pages";
+import ConnectionPage from "@/pages/ConnectionPage";
+// Today and Market are lazy — they'll grow as Tasks 2/9 land.
+const TodayPage = lazy(() => import("@/pages/TodayPage"));
+const MarketPage = lazy(() => import("@/pages/MarketPage"));
 // Analysis and Screener are heavy (TradingView charts, screener logic).
 // Lazy-load so their JS is only parsed when the user first navigates there.
 const AnalysisPage = lazy(() => import("@/pages/AnalysisPage"));
@@ -97,8 +103,11 @@ function useGlobalEffects() {
   return { addHandler };
 }
 
+// The "connection" screen is intentionally absent from this list — it's
+// surfaced by <AuthGuard> when the IBKR session is missing, not via a tab.
 const NAV_ITEMS: { id: Screen; label: string }[] = [
-  { id: "dashboard", label: "Dashboard" },
+  { id: "today", label: "Today" },
+  { id: "market", label: "Market" },
   { id: "analysis", label: "Analysis" },
   { id: "screener", label: "Screener" },
   { id: "settings", label: "Settings" },
@@ -108,8 +117,20 @@ const NAV_ITEMS: { id: Screen; label: string }[] = [
 function ActivePage() {
   const screen = useNavigationStore((s) => s.activeScreen);
   switch (screen) {
-    case "dashboard":
-      return <DashboardPage />;
+    case "connection":
+      return <ConnectionPage />;
+    case "today":
+      return (
+        <Suspense fallback={<PageSkeleton />}>
+          <TodayPage />
+        </Suspense>
+      );
+    case "market":
+      return (
+        <Suspense fallback={<PageSkeleton />}>
+          <MarketPage />
+        </Suspense>
+      );
     case "analysis":
       return (
         <Suspense fallback={<PageSkeleton />}>
@@ -214,7 +235,9 @@ function AppShell() {
           share and trigger window-level scroll — which then becomes the
           target for any descendant scrollIntoView call. */}
       <main className="min-h-0 flex-1 overflow-hidden">
-        <ActivePage />
+        <AuthGuard>
+          <ActivePage />
+        </AuthGuard>
       </main>
 
       {/* ── Health status strip (7.5) ── */}

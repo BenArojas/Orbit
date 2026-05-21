@@ -17,7 +17,7 @@ vi.mock("../chart", () => ({
 
 describe("useNavigationStore.navigateToAnalysis", () => {
   beforeEach(() => {
-    useNavigationStore.setState({ activeScreen: "dashboard" });
+    useNavigationStore.setState({ activeScreen: "today" });
   });
 
   it("switches screen to analysis", async () => {

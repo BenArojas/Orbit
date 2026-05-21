@@ -1,47 +1,66 @@
 /**
  * Navigation Store — Zustand tab-based routing
  *
- * Parallax has 3 fixed screens: Dashboard, Analysis, Screener.
- * No need for React Router — a simple Zustand store drives which
- * page component renders. Desktop app, no URL routing needed.
+ * Parallax tabs are driven by Zustand (no React Router — desktop app, no URLs).
+ *
+ * The `connection` screen is special: it's only shown while the IBKR gateway
+ * is not authenticated. `<AuthGuard>` forces it on/off based on auth state,
+ * so we persist `previousAuthenticatedTab` (the last tab the user was on
+ * while authenticated) and use it to restore after re-auth.
  */
 
 import { create } from "zustand";
+import { persist } from "zustand/middleware";
 
-export type Screen = "dashboard" | "analysis" | "screener" | "settings";
+export type Screen =
+  | "connection"
+  | "today"
+  | "market"
+  | "analysis"
+  | "screener"
+  | "settings";
 
 interface NavigationState {
-  /** Currently active screen */
   activeScreen: Screen;
+  /** Last screen the user was on while authenticated. Used to restore on re-auth. */
+  previousAuthenticatedTab: Screen;
 
-  /** Navigate to a screen */
   navigate: (screen: Screen) => void;
-
-  /**
-   * Navigate to analysis with a specific instrument pre-loaded.
-   * Used when clicking a stock in the watchlist or screener results.
-   * Sets both activeConid and activeSymbol in the chart store so the
-   * symbol input doesn't go stale between navigations.
-   *
-   * `symbol` defaults to "" — callers should pass it when available.
-   * The AnalysisPage will re-sync from the store on mount.
-   */
   navigateToAnalysis: (conid: number, symbol?: string) => void;
 }
 
-export const useNavigationStore = create<NavigationState>()((set) => ({
-  activeScreen: "dashboard",
+export const useNavigationStore = create<NavigationState>()(
+  persist(
+    (set, get) => ({
+      activeScreen: "connection",
+      previousAuthenticatedTab: "today",
 
-  navigate: (screen) => set({ activeScreen: screen }),
+      navigate: (screen) => {
+        const current = get().activeScreen;
+        if (current !== "connection") {
+          set({ previousAuthenticatedTab: current });
+        }
+        set({ activeScreen: screen });
+      },
 
-  navigateToAnalysis: (conid, symbol = "") => {
-    // Import chart store dynamically to avoid circular deps
-    import("./chart").then(({ useChartStore }) => {
-      useChartStore.getState().setActiveConid(conid);
-      if (symbol) {
-        useChartStore.getState().setActiveSymbol(symbol);
-      }
-    });
-    set({ activeScreen: "analysis" });
-  },
-}));
+      navigateToAnalysis: (conid, symbol = "") => {
+        // Import chart store dynamically to avoid circular deps
+        import("./chart").then(({ useChartStore }) => {
+          useChartStore.getState().setActiveConid(conid);
+          if (symbol) {
+            useChartStore.getState().setActiveSymbol(symbol);
+          }
+        });
+        const current = get().activeScreen;
+        if (current !== "connection") {
+          set({ previousAuthenticatedTab: "analysis" });
+        }
+        set({ activeScreen: "analysis" });
+      },
+    }),
+    {
+      name: "parallax-nav",
+      partialize: (s) => ({ previousAuthenticatedTab: s.previousAuthenticatedTab }),
+    },
+  ),
+);

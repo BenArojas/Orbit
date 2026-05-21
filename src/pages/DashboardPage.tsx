@@ -29,7 +29,6 @@ import {
 import SectorPerformancePanel from "../components/dashboard/SectorPerformancePanel";
 import RRGPanel from "../components/dashboard/RRGPanel";
 import WatchlistSidebar from "../components/watchlist/WatchlistSidebar";
-import { GatewaySetup } from "@/components/gateway/GatewaySetup";
 
 export default function DashboardPage() {
   return (
@@ -55,11 +54,6 @@ export default function DashboardPage() {
 
       {/* ── Row 2 Right: Sidebar ── */}
       <div className="flex min-h-0 flex-col overflow-hidden border-l border-border bg-[var(--bg-1)]">
-        {/* Gateway Status — IBKR connection setup */}
-        <div className="border-b border-border p-2">
-          <GatewaySetup />
-        </div>
-
         {/* Master Watchlist — task 3.5 */}
         <div className="flex-1 overflow-hidden border-b border-border">
           <WatchlistSidebar />

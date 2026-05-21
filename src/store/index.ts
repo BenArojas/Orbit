@@ -4,7 +4,7 @@
  * All Zustand stores. Import from "@/store" for convenience.
  *
  * Stores:
- *   navigation — active screen (dashboard/analysis/screener)
+ *   navigation — active screen (connection/today/market/analysis/screener/settings)
  *   chart      — active instrument, timeframe, indicators
  *   watchlist  — master + trigger watchlists, live quotes
  *   screener   — filter criteria, sort state
