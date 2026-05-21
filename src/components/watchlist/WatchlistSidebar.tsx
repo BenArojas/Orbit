@@ -24,13 +24,18 @@ import { useQuery } from "@tanstack/react-query";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import {
   api,
+  type StockTagMap,
   type WatchlistItemResponse,
   type WatchlistQuote,
 } from "../../lib/api";
 import { useNavigationStore } from "../../store/navigation";
 import { useWatchlistStore } from "../../store/watchlist";
 import { useIbkrReadyTier } from "@/hooks/useIbkrReadyTier";
+import { useStockTags } from "@/hooks/useStockTags";
+import { StockTagDots } from "@/components/tags/StockTagDots";
 import { WatchlistSidebarSkeleton } from "../dashboard/skeletons";
+
+type StockTag = StockTagMap[number][number];
 
 // Each WatchlistRow is 40px tall — used by the virtualizer for layout.
 const ROW_HEIGHT = 40;
@@ -148,6 +153,15 @@ export default function WatchlistSidebar() {
 
   const itemCount = items.length;
 
+  // ── Stock tags (rule-fire dots) ────────────────────────────────────────────
+  // Task 8: inline trigger indicators next to each symbol. Keyed off the
+  // filtered conid list so search trims the fetch surface.
+  const conidList = useMemo(
+    () => filteredItems.map((i) => i.conid),
+    [filteredItems],
+  );
+  const { data: tagsByConid } = useStockTags(conidList);
+
   // ── Virtual scroll setup ───────────────────────────────────────────────────
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -260,6 +274,7 @@ export default function WatchlistSidebar() {
                 >
                   <WatchlistRow
                     item={item}
+                    tags={tagsByConid?.[item.conid] ?? []}
                     onClick={() => navigateToAnalysis(item.conid, item.symbol)}
                   />
                 </div>
@@ -274,9 +289,11 @@ export default function WatchlistSidebar() {
 
 function WatchlistRow({
   item,
+  tags,
   onClick,
 }: {
   item: WatchlistItemResponse;
+  tags: StockTag[];
   onClick: () => void;
 }) {
   const hasPrice = item.lastPrice != null;
@@ -299,8 +316,9 @@ function WatchlistRow({
     >
       {/* Symbol + company name */}
       <div className="min-w-0">
-        <div className="text-xs font-semibold text-[var(--text-1)]">
-          {item.symbol}
+        <div className="flex items-center gap-1 text-xs font-semibold text-[var(--text-1)]">
+          <span>{item.symbol}</span>
+          <StockTagDots tags={tags} max={3} />
         </div>
         <div className="mt-0.5 flex items-center gap-1">
           <span className="text-[9px] text-[var(--text-3)] truncate">
