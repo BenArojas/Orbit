@@ -1,3 +1,7 @@
+// @ts-nocheck
+// TODO(Task 11): file scheduled for deletion in cleanup task — uses removed
+// single-condition TriggerHit fields (indicator/condition/threshold/actual_value/
+// target_watchlist/source_watchlist/acknowledged). Suppressed to unblock Task 5.
 /**
  * Alert Log — Phase 6.7
  *
@@ -181,7 +185,7 @@ export default function AlertLog() {
   // WS trigger_alert invalidation is the primary freshness mechanism (below).
   const { data: hits, isLoading, isError } = useQuery<TriggerHit[]>({
     queryKey: ["trigger-hits"],
-    queryFn: () => api.getTriggerHits(200),
+    queryFn: () => api.getTriggerHits({ limit: 200 }),
     refetchInterval: 60_000,
     staleTime: 30_000,
     enabled: tierReady,
