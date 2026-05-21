@@ -60,6 +60,7 @@ export const useNavigationStore = create<NavigationState>()(
     }),
     {
       name: "parallax-nav",
+      version: 1,
       partialize: (s) => ({ previousAuthenticatedTab: s.previousAuthenticatedTab }),
     },
   ),

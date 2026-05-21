@@ -1,7 +1,7 @@
 /**
  * App Shell — Root component with pill navigation
  *
- * Zustand-based tab routing between Dashboard, Analysis, and Screener.
+ * Zustand-based tab routing across Connection / Today / Market / Analysis / Screener / Settings.
  * Wraps the app with TanStack QueryClientProvider and TooltipProvider.
  *
  * Matches the approved Layout A v2 mockup:

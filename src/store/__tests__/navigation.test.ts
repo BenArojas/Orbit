@@ -1,5 +1,7 @@
 /**
- * Tests for navigation store — navigateToAnalysis sets both conid and symbol.
+ * Tests for navigation store — navigateToAnalysis sets both conid and symbol,
+ * and navigate() captures previousAuthenticatedTab on transitions out of
+ * authenticated tabs (but NOT when leaving "connection").
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -56,5 +58,33 @@ describe("useNavigationStore.navigateToAnalysis", () => {
     await Promise.resolve();
 
     expect(mockState.setActiveSymbol).not.toHaveBeenCalled();
+  });
+});
+
+describe("useNavigationStore.navigate — previousAuthenticatedTab capture", () => {
+  it("captures the prior tab when navigating between authenticated screens", () => {
+    useNavigationStore.setState({
+      activeScreen: "today",
+      previousAuthenticatedTab: "today",
+    });
+
+    useNavigationStore.getState().navigate("analysis");
+
+    expect(useNavigationStore.getState().activeScreen).toBe("analysis");
+    expect(useNavigationStore.getState().previousAuthenticatedTab).toBe("today");
+  });
+
+  it("does NOT overwrite previousAuthenticatedTab when leaving 'connection'", () => {
+    useNavigationStore.setState({
+      activeScreen: "connection",
+      previousAuthenticatedTab: "market",
+    });
+
+    useNavigationStore.getState().navigate("today");
+
+    expect(useNavigationStore.getState().activeScreen).toBe("today");
+    // The prior authenticated tab must be preserved — "connection" should
+    // never leak into previousAuthenticatedTab.
+    expect(useNavigationStore.getState().previousAuthenticatedTab).toBe("market");
   });
 });

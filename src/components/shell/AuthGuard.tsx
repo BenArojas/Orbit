@@ -20,12 +20,18 @@ export function AuthGuard({ children }: Props) {
     (s) => s.previousAuthenticatedTab,
   );
 
+  // This effect mutates store state it depends on. That's intentional: the
+  // guards become false after the first write, so subsequent runs no-op.
   useEffect(() => {
     if (isLoading) return;
     if (!isAuthenticated && activeScreen !== "connection") {
       useNavigationStore.setState({ activeScreen: "connection" });
     } else if (isAuthenticated && activeScreen === "connection") {
-      useNavigationStore.setState({ activeScreen: previousAuthenticatedTab });
+      const restore =
+        previousAuthenticatedTab === "connection"
+          ? "today"
+          : previousAuthenticatedTab;
+      useNavigationStore.setState({ activeScreen: restore });
     }
   }, [isAuthenticated, isLoading, activeScreen, previousAuthenticatedTab]);
 
