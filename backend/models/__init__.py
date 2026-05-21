@@ -248,7 +248,7 @@ class RuleTemplateCreate(BaseModel):
 
 
 class SnoozeHitRequest(BaseModel):
-    duration_minutes: int
+    duration_minutes: int = Field(gt=0, description="Minutes from now to suppress this hit")
 
 
 # ═══════════════════════════════════════════════════════════════

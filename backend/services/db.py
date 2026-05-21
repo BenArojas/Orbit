@@ -620,7 +620,17 @@ class DatabaseService:
 
     async def update_trigger_rule(self, rule_id: int, **fields) -> bool:
         """Partial update. If `conditions` is provided, replace all conditions atomically."""
+        ALLOWED = {
+            "name", "enabled", "timeframe", "scan_interval_seconds",
+            "watchlist_name", "conid", "symbol", "template_id",
+            "ibkr_mirror_target",
+        }
+        unknown = set(fields) - ALLOWED - {"conditions"}
+        if unknown:
+            raise ValueError(f"unknown update fields: {sorted(unknown)}")
         conditions = fields.pop("conditions", None)
+        if not fields and conditions is None:
+            return False
         def _do():
             assert self._conn is not None
             with self._conn:
@@ -631,6 +641,8 @@ class DatabaseService:
                         (*fields.values(), rule_id),
                     )
                 if conditions is not None:
+                    if not conditions:
+                        raise ValueError("rule must have at least one condition")
                     self._conn.execute("DELETE FROM trigger_conditions WHERE rule_id=?", (rule_id,))
                     for idx, c in enumerate(conditions):
                         self._conn.execute(
@@ -682,10 +694,9 @@ class DatabaseService:
                          watchlist_name, source_watchlist, target_watchlist, expires_at),
                     )
                     return cur.lastrowid
-                except Exception as e:  # UNIQUE constraint on dedup_key
-                    if "UNIQUE" in str(e):
-                        return None
-                    raise
+                except sqlite3.IntegrityError:
+                    # UNIQUE(dedup_key) — already fired today for this rule+conid+interval
+                    return None
         return await self._run_write(_do)
 
     async def get_trigger_hits(
