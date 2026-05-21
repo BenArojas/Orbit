@@ -751,6 +751,53 @@ class DatabaseService:
                 return cur.rowcount > 0
         return await self._run_write(_do)
 
+    async def get_expired_hits(self) -> list[dict]:
+        """
+        Return trigger_hits with expires_at in the past that haven't been
+        moved back yet. Used by the scanner's IBKR-mirror return pass to
+        auto-revert symbols out of their target watchlist when their
+        auto-expire window elapses.
+
+        Only hits that opted into IBKR mirror (rule has ibkr_mirror_target
+        set, populated source/target_watchlist on the hit) reach this path —
+        tag-only hits leave expires_at NULL and never appear here.
+        """
+        import json as _json
+
+        def _do():
+            assert self._conn is not None
+            cur = self._conn.execute(
+                """
+                SELECT h.*, r.name AS rule_name, r.ibkr_mirror_target
+                FROM trigger_hits h
+                LEFT JOIN trigger_rules r ON r.id = h.rule_id
+                WHERE h.expires_at IS NOT NULL
+                  AND h.expires_at <= datetime('now')
+                  AND h.moved_back = 0
+                ORDER BY h.expires_at ASC
+                """,
+            )
+            cols = [d[0] for d in cur.description]
+            rows = [dict(zip(cols, row)) for row in cur.fetchall()]
+            for r in rows:
+                r["condition_values"] = _json.loads(r["condition_values"])
+            return rows
+
+        return await self._run_read(_do)
+
+    async def mark_moved_back(self, hit_id: int) -> bool:
+        """Flip moved_back=1 on a hit once the IBKR return-move completes."""
+        def _do():
+            assert self._conn is not None
+            with self._conn:
+                cur = self._conn.execute(
+                    "UPDATE trigger_hits SET moved_back = 1 WHERE id = ?",
+                    (hit_id,),
+                )
+                return cur.rowcount > 0
+
+        return await self._run_write(_do)
+
     async def get_active_tags(self, conids: list[int]) -> dict[int, list[dict]]:
         """Return {conid: [{rule_id, rule_name, indicators[], fired_at}]} for active hits."""
         import json as _json
