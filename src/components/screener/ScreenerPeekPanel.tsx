@@ -22,6 +22,7 @@ import { useScreenerStore } from "@/store/screener";
 import { useNavigationStore } from "@/store";
 import { SlideOverSkeleton } from "./ScreenerSkeleton";
 import { useIbkrReady } from "@/context/GatewayContext";
+import { useStockTags } from "@/hooks/useStockTags";
 
 // ── Formatters ────────────────────────────────────────────────
 
@@ -234,6 +235,10 @@ export default function ScreenerPeekPanel() {
     staleTime: 60_000 * 30, // 30 min — static details + computed history don't drift fast
   });
 
+  // Active rule-fire tags for this conid
+  const { data: peekTags } = useStockTags(peekConid != null ? [peekConid] : []);
+  const tagsForThis = peekConid != null ? (peekTags?.[peekConid] ?? []) : [];
+
   // Close on Escape
   useEffect(() => {
     if (!peekConid) return;
@@ -264,16 +269,31 @@ export default function ScreenerPeekPanel() {
       {/* Panel */}
       <div className="fixed right-0 top-0 z-50 flex h-full w-[400px] flex-col border-l border-[var(--border)] bg-[var(--bg-1)] shadow-2xl">
         {/* Header */}
-        <div className="flex items-center justify-between border-b border-[var(--border)] px-4 py-3">
-          <div className="flex items-center gap-2">
-            <span className="font-data text-lg font-bold text-[var(--text-1)]">
-              {row?.symbol || contract?.symbol || "—"}
-            </span>
-            {row?.sec_type && (
-              <span className="rounded bg-[var(--bg-3)] px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-wide text-[var(--text-3)]">
-                {row.sec_type}
-              </span>
+        <div className="flex items-start justify-between border-b border-[var(--border)] px-4 py-3">
+          <div className="flex flex-col gap-1">
+            {tagsForThis.length > 0 && (
+              <div className="mb-1 flex flex-wrap gap-1">
+                {tagsForThis.map((t) => (
+                  <span
+                    key={t.rule_id}
+                    className="rounded-full bg-[var(--bg-3)] px-2 py-0.5 text-[8.5px] text-[var(--text-2)]"
+                    title={t.indicators.join(", ")}
+                  >
+                    {t.rule_name}
+                  </span>
+                ))}
+              </div>
             )}
+            <div className="flex items-center gap-2">
+              <span className="font-data text-lg font-bold text-[var(--text-1)]">
+                {row?.symbol || contract?.symbol || "—"}
+              </span>
+              {row?.sec_type && (
+                <span className="rounded bg-[var(--bg-3)] px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-wide text-[var(--text-3)]">
+                  {row.sec_type}
+                </span>
+              )}
+            </div>
           </div>
           <button
             onClick={() => setPeekConid(null)}
