@@ -452,10 +452,8 @@ class ScannerService:
                 if val is not None:
                     bar["news_candle"] = float(val)
                     break
-            else:
-                # All methods returned None — leave news_candle absent so the
-                # condition fails cleanly with actual_value=NaN.
-                pass
+            # If all methods returned None we leave news_candle absent so the
+            # condition fails cleanly with actual_value=NaN.
 
         return bar
 
@@ -488,6 +486,10 @@ class ScannerService:
         For IBKR-mirror hits, look up watchlist_config[ibkr_mirror_target]
         for an auto_expire_days override. Returns None when no override
         is configured (tag-only or "no expiry").
+
+        Returns None when no watchlist_config row exists for the mirror target —
+        caller treats this as "permanent until manual move." This is intentional:
+        auto-expire is now exclusively a watchlist-level setting, no per-rule fallback.
         """
         target = rule.get("ibkr_mirror_target")
         if not target:
@@ -563,7 +565,7 @@ class ScannerService:
                     "ibkr_mirror move failed for hit %s (rule %d, conid %d): %s — "
                     "hit recorded but stock not moved in IBKR",
                     hit_id, rule["id"], target["conid"],
-                    exc.message if hasattr(exc, "message") else exc,
+                    exc.message,
                 )
 
         await self._broadcast_trigger_alert(hit_id, rule, target, values)

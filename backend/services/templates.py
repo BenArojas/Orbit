@@ -64,7 +64,7 @@ BUILTIN_TEMPLATES: Final[list[dict]] = [
         "category": "news",
         "default_timeframe": "1D",
         "conditions": [
-            {"indicator": "news_candle", "condition": "fires", "threshold": 2.0,
+            {"indicator": "news_candle", "condition": "above", "threshold": 2.0,
              "news_candle_method": "gap"},
             {"indicator": "volume",      "condition": "above", "threshold": 1.5},
         ],

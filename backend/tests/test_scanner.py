@@ -810,3 +810,44 @@ class TestAuthWait:
         asyncio.create_task(_flip())
         result = await scanner._wait_for_ibkr_auth()
         assert result is True
+
+
+# ══════════════════════════════════════════════════════════════
+#  _fetch_evaluation_bar — indicator-compute error handling
+# ══════════════════════════════════════════════════════════════
+
+
+class TestFetchEvaluationBarErrorHandling:
+    """If IndicatorService.compute raises, the bar should still come back
+    (without the indicator), and _evaluate_conditions should treat the
+    missing indicator as a no-fire."""
+
+    @pytest.mark.asyncio
+    async def test_fetch_evaluation_bar_handles_indicator_compute_error(self, monkeypatch):
+        candles = make_candles([100.0 + i for i in range(30)])
+        ibkr = _mock_ibkr(candles)
+        scanner = ScannerService(ibkr=ibkr, db=_mock_db())
+
+        # Force the shared module-level IndicatorService.compute to raise
+        # one of the caught exceptions.
+        from services import scanner as scanner_mod
+
+        def _boom(*args, **kwargs):
+            raise ValueError("indicator compute exploded")
+
+        monkeypatch.setattr(scanner_mod._indicator_svc, "compute", _boom)
+
+        rule = _make_per_stock_rule(
+            indicator="rsi", condition="below", threshold=30.0,
+        )
+
+        bar = await scanner._fetch_evaluation_bar(conid=123, rule=rule)
+
+        # Bar still returned (raw OHLCV is independent of indicator compute),
+        # but the rsi value must be absent.
+        assert bar is not None
+        assert "rsi" not in bar
+
+        # And the condition evaluator must treat that as a no-fire.
+        result = scanner._evaluate_conditions(rule, bar)
+        assert result["fires"] is False
