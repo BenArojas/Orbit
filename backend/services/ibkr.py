@@ -1497,6 +1497,42 @@ class IBKRService:
             return []
         return []
 
+    async def get_watchlist_members(self, name: str) -> list[dict]:
+        """
+        Resolve a watchlist by display name and return its members as
+        a flat list of {conid, symbol} dicts. Returns [] if the watchlist
+        doesn't exist or has no instruments.
+
+        Used by the scanner to expand watchlist-scoped rules into concrete
+        per-conid evaluation targets. Both upstream calls are cached
+        (get_watchlists ttl=60, get_watchlist_items uncached but cheap),
+        so we don't add another caching layer here.
+        """
+        watchlists = await self.get_watchlists()
+        wl_id: str | None = None
+        for wl in watchlists:
+            if wl.get("name") == name:
+                wl_id = str(wl.get("id", ""))
+                break
+        if not wl_id:
+            return []
+        items = await self.get_watchlist_items(wl_id)
+        out: list[dict] = []
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            conid = item.get("conid")
+            if conid is None:
+                continue
+            try:
+                out.append({
+                    "conid": int(conid),
+                    "symbol": item.get("ticker") or item.get("symbol") or "",
+                })
+            except (ValueError, TypeError):
+                continue
+        return out
+
     # ── Watchlist Mutation Methods (Phase 6.3) ────────────────
     #
     # IBKR has no atomic "add one item" endpoint.  The only way to modify a

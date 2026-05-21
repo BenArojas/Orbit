@@ -130,20 +130,22 @@ async def lifespan(app: FastAPI):
     # Import inside lifespan to avoid circular module-level deps.
     from routers.ws import broadcast as ws_broadcast
 
-    async def _on_trigger_fired(rule: dict, hit_id: int, actual_value: float) -> None:
+    async def _on_trigger_fired(
+        hit_id: int,
+        rule: dict,
+        target: dict,
+        condition_values: list[dict],
+    ) -> None:
         await ws_broadcast({
             "type": "trigger_alert",
             "hit_id": hit_id,
             "rule_id": rule["id"],
             "rule_name": rule.get("name"),
-            "symbol": rule["symbol"],
-            "conid": rule["conid"],
-            "indicator": rule["indicator"],
-            "condition": rule["condition"],
-            "threshold": float(rule["threshold"]),
-            "actual_value": float(actual_value),
-            "source_watchlist": rule.get("source_watchlist"),
-            "target_watchlist": rule.get("target_watchlist"),
+            "symbol": target.get("symbol", ""),
+            "conid": target["conid"],
+            "watchlist_name": rule.get("watchlist_name"),
+            "ibkr_mirror_target": rule.get("ibkr_mirror_target"),
+            "condition_values": condition_values,
         })
 
     scanner.on_trigger_fired = _on_trigger_fired

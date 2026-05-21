@@ -728,7 +728,7 @@ class DatabaseService:
                 FROM trigger_hits h
                 LEFT JOIN trigger_rules r ON r.id = h.rule_id
                 {where}
-                ORDER BY h.triggered_at DESC
+                ORDER BY h.triggered_at DESC, h.id DESC
                 LIMIT ?
             """
             cur = self._conn.execute(q, (*params, limit))
