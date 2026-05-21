@@ -124,6 +124,27 @@ class DatabaseService:
         await asyncio.to_thread(self._migrate)
         log.info("SQLite database initialized at %s", self.db_path)
 
+    async def connect(self) -> None:
+        """Alias for :meth:`initialize` used by tests and newer call sites."""
+        await self.initialize()
+
+    async def fetch_all(self, query: str, params: tuple = ()) -> list[dict]:
+        """Run a SELECT and return a list of dict rows."""
+        def _do() -> list[dict]:
+            assert self._conn is not None
+            cur = self._conn.execute(query, params)
+            cols = [d[0] for d in cur.description] if cur.description else []
+            return [dict(zip(cols, row)) for row in cur.fetchall()]
+        return await self._run_read(_do)
+
+    async def execute(self, query: str, params: tuple = ()) -> None:
+        """Run a one-off write."""
+        def _do() -> None:
+            assert self._conn is not None
+            with self._conn:
+                self._conn.execute(query, params)
+        await self._run_write(_do)
+
     async def close(self) -> None:
         """Close the database connection. Called during app shutdown."""
         if self._conn:
@@ -160,67 +181,81 @@ class DatabaseService:
 
         self._conn.executescript("""
             -- ─── Trigger Rules ─────────────────────────────────────
-            -- Conditions you set up to get alerted. For example:
-            --   "When AAPL's RSI drops below 30" or
-            --   "When SPY crosses above its 200 EMA"
+            -- A rule = a setup definition. It has 1..N conditions
+            -- (in trigger_conditions) joined by AND. A rule is scoped
+            -- either to an entire watchlist (watchlist_name set, conid NULL)
+            -- or to a single stock (conid set, watchlist_name NULL).
             --
-            -- Each rule watches one indicator on one specific stock
-            -- and checks if the value is above/below/crossing a threshold.
-            --
-            -- When a trigger fires, the stock is MOVED between IBKR watchlists:
-            --   source_watchlist → target_watchlist
-            -- If auto_expire_days is set, it moves back automatically after N days.
-            --
-            -- conid = IBKR's unique ID for the stock (like a SSN for securities).
-            -- symbol = the human-readable ticker (AAPL, SPY, etc.).
+            -- When a rule fires, by default the stock is TAG-IN-PLACE:
+            -- a row lands in trigger_hits, surfaces on Today, and tag
+            -- dots show wherever the stock appears. No IBKR watchlist
+            -- mutation. Per rule, the user can opt into ibkr_mirror_target
+            -- to also push the stock into a real IBKR watchlist.
             CREATE TABLE IF NOT EXISTS trigger_rules (
-                id                 INTEGER PRIMARY KEY AUTOINCREMENT,
-                name               TEXT NOT NULL,
-                conid              INTEGER NOT NULL,
-                symbol             TEXT NOT NULL,
-                indicator          TEXT NOT NULL,     -- e.g., "rsi", "ema_50", "macd"
-                condition          TEXT NOT NULL,     -- "above", "below", "crosses_above", "crosses_below"
-                threshold          REAL NOT NULL,     -- The number to compare against (e.g., 30 for RSI)
-                timeframe          TEXT DEFAULT '1D', -- Which chart timeframe to check
-                target_watchlist   TEXT NOT NULL,     -- IBKR watchlist name to MOVE the stock INTO when triggered
-                source_watchlist   TEXT NOT NULL,     -- IBKR watchlist name to MOVE the stock OUT OF when triggered
-                auto_expire_days   INTEGER,           -- NULL = manual removal only. N = auto-move back after N days
-                enabled            INTEGER DEFAULT 1, -- 1 = active, 0 = paused
-                scan_interval_seconds INTEGER,         -- NULL = use global default. N = check this rule every N seconds
-                news_candle_method TEXT,               -- Only for indicator='news_candle': 'volume_spike' | 'range_spike' | 'gap' | 'long_wick'
-                created_at         TEXT DEFAULT (datetime('now')),
-                updated_at         TEXT DEFAULT (datetime('now'))
+                id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+                name                  TEXT NOT NULL,
+                enabled               INTEGER NOT NULL DEFAULT 1,
+                timeframe             TEXT NOT NULL DEFAULT '1D',
+                scan_interval_seconds INTEGER NOT NULL DEFAULT 300,
+                watchlist_name        TEXT,                       -- NULL = per-stock override
+                conid                 INTEGER,                    -- NULL when watchlist-scoped
+                symbol                TEXT,                       -- display only; nullable
+                template_id           INTEGER REFERENCES rule_templates(id) ON DELETE SET NULL,
+                ibkr_mirror_target    TEXT,                       -- opt-in IBKR mirror
+                created_at            TEXT DEFAULT (datetime('now')),
+                updated_at            TEXT DEFAULT (datetime('now')),
+                CHECK (watchlist_name IS NOT NULL OR conid IS NOT NULL)
+            );
+
+            -- ─── Trigger Conditions ────────────────────────────────
+            -- 1..N rows per rule, ALL must pass on the same bar.
+            CREATE TABLE IF NOT EXISTS trigger_conditions (
+                id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+                rule_id             INTEGER NOT NULL REFERENCES trigger_rules(id) ON DELETE CASCADE,
+                order_index         INTEGER NOT NULL DEFAULT 0,
+                indicator           TEXT NOT NULL,
+                condition           TEXT NOT NULL,
+                threshold           REAL,
+                news_candle_method  TEXT
+            );
+
+            -- ─── Rule Templates ────────────────────────────────────
+            -- Curated starter setups + user-saved customs.
+            -- conditions_json is a JSON array of {indicator, condition,
+            -- threshold, news_candle_method?} objects matching the
+            -- trigger_conditions row shape.
+            CREATE TABLE IF NOT EXISTS rule_templates (
+                id                INTEGER PRIMARY KEY AUTOINCREMENT,
+                name              TEXT NOT NULL,
+                description       TEXT,
+                category          TEXT NOT NULL,
+                is_builtin        INTEGER NOT NULL DEFAULT 0,
+                default_timeframe TEXT NOT NULL DEFAULT '1D',
+                conditions_json   TEXT NOT NULL,
+                created_at        TEXT DEFAULT (datetime('now')),
+                UNIQUE(name, is_builtin)
             );
 
             -- ─── Trigger Hits ──────────────────────────────────────
-            -- Log of every time a trigger rule actually fired.
-            -- This is what populates the alert feed on the dashboard.
-            --
-            -- We store a dedup_key to avoid alerting the same condition
-            -- over and over (e.g., if RSI stays below 30 for 3 days,
-            -- you only get alerted once per day).
-            --
-            -- When a trigger fires, the stock is moved between watchlists.
-            -- If the rule has auto_expire_days, expires_at is set and the
-            -- background scanner will move the stock back when it expires.
-            -- moved_back = 1 means the stock has already been returned.
+            -- Log of every fired (rule, conid, bar) tuple, deduped.
+            -- condition_values is JSON: each condition's measured value
+            -- at fire time so the UI can render "all 3: RSI=28, ema_21@181, vol=1.8x".
             CREATE TABLE IF NOT EXISTS trigger_hits (
                 id                 INTEGER PRIMARY KEY AUTOINCREMENT,
                 rule_id            INTEGER NOT NULL REFERENCES trigger_rules(id) ON DELETE CASCADE,
                 conid              INTEGER NOT NULL,
                 symbol             TEXT NOT NULL,
-                indicator          TEXT NOT NULL,
-                condition          TEXT NOT NULL,
-                threshold          REAL NOT NULL,
-                actual_value       REAL NOT NULL,    -- What the indicator actually was when it triggered
-                target_watchlist   TEXT NOT NULL,     -- Where the stock was moved to
-                source_watchlist   TEXT NOT NULL,     -- Where the stock was moved from
                 triggered_at       TEXT DEFAULT (datetime('now')),
-                expires_at         TEXT,              -- NULL = no auto-expire. Otherwise datetime when stock moves back
-                moved_back         INTEGER DEFAULT 0, -- 0 = stock is in target watchlist, 1 = already moved back
-                acknowledged       INTEGER DEFAULT 0, -- 0 = unread, 1 = user has seen it
-                dedup_key          TEXT NOT NULL,     -- Prevents duplicate alerts
-                UNIQUE(dedup_key)                     -- Only one alert per unique condition per day
+                dedup_key          TEXT NOT NULL UNIQUE,
+                condition_values   TEXT NOT NULL,                 -- JSON array
+                watchlist_name     TEXT,                          -- denormalized for filtering
+                dismissed_at       TEXT,
+                snoozed_until      TEXT,
+                -- IBKR mirror tracking — populated only when rule has ibkr_mirror_target set
+                source_watchlist   TEXT,
+                target_watchlist   TEXT,
+                moved_back         INTEGER NOT NULL DEFAULT 0,
+                expires_at         TEXT
             );
 
             -- ─── Settings ──────────────────────────────────────────
@@ -291,23 +326,26 @@ class DatabaseService:
             -- ─── Indexes ───────────────────────────────────────────
             -- Indexes are like a book's table of contents — they help
             -- the database find things faster without reading every row.
+            CREATE INDEX IF NOT EXISTS idx_trigger_rules_watchlist
+                ON trigger_rules(watchlist_name) WHERE watchlist_name IS NOT NULL;
             CREATE INDEX IF NOT EXISTS idx_trigger_rules_conid
-                ON trigger_rules(conid);
-
+                ON trigger_rules(conid) WHERE conid IS NOT NULL;
             CREATE INDEX IF NOT EXISTS idx_trigger_rules_enabled
                 ON trigger_rules(enabled);
-
+            CREATE INDEX IF NOT EXISTS idx_trigger_conditions_rule
+                ON trigger_conditions(rule_id);
             CREATE INDEX IF NOT EXISTS idx_trigger_hits_rule
                 ON trigger_hits(rule_id);
-
+            CREATE INDEX IF NOT EXISTS idx_trigger_hits_conid
+                ON trigger_hits(conid);
+            CREATE INDEX IF NOT EXISTS idx_trigger_hits_active
+                ON trigger_hits(dismissed_at, snoozed_until);
             CREATE INDEX IF NOT EXISTS idx_trigger_hits_triggered_at
                 ON trigger_hits(triggered_at);
-
-            CREATE INDEX IF NOT EXISTS idx_trigger_hits_acknowledged
-                ON trigger_hits(acknowledged);
-
             CREATE INDEX IF NOT EXISTS idx_trigger_hits_expires_at
                 ON trigger_hits(expires_at);
+            CREATE INDEX IF NOT EXISTS idx_rule_templates_builtin
+                ON rule_templates(is_builtin, category);
 
             CREATE INDEX IF NOT EXISTS idx_instruments_symbol
                 ON instruments(symbol);
@@ -414,11 +452,6 @@ class DatabaseService:
         """
         assert self._conn is not None
         migrations = [
-            # Phase 6: per-rule scan interval (NULL = use global default)
-            "ALTER TABLE trigger_rules ADD COLUMN scan_interval_seconds INTEGER",
-            # Phase 6.6: news-candle detection method (only used when indicator='news_candle')
-            #   one of: 'volume_spike', 'range_spike', 'gap', 'long_wick'
-            "ALTER TABLE trigger_rules ADD COLUMN news_candle_method TEXT",
             # Phase 8.9 / Commit D: sec_type hint for pulse items
             "ALTER TABLE pulse_config ADD COLUMN sec_type TEXT NOT NULL DEFAULT ''",
         ]
@@ -493,283 +526,310 @@ class DatabaseService:
         async with self._write_lock:
             return await asyncio.to_thread(fn)
 
-    # ── Trigger Rule Operations ──────────────────────────────
+    # ── Trigger Rules ─────────────────────────────────────
 
     async def get_trigger_rules(self, enabled_only: bool = False) -> list[dict]:
-        """
-        Get all trigger rules.
-        If enabled_only=True, skip paused rules (only return active ones).
-        """
-        sql = "SELECT * FROM trigger_rules"
-        if enabled_only:
-            sql += " WHERE enabled = 1"
-        sql += " ORDER BY created_at DESC"
-        return await self._run_read(lambda: self._fetchall(sql))
+        def _do():
+            assert self._conn is not None
+            q = "SELECT * FROM trigger_rules"
+            if enabled_only:
+                q += " WHERE enabled=1"
+            q += " ORDER BY id DESC"
+            cur = self._conn.execute(q)
+            cols = [d[0] for d in cur.description]
+            rules = [dict(zip(cols, row)) for row in cur.fetchall()]
+            for r in rules:
+                r["conditions"] = self._read_conditions(r["id"])
+            return rules
+        return await self._run_read(_do)
 
     async def get_trigger_rule(self, rule_id: int) -> dict | None:
-        """Get a single trigger rule by ID."""
-        return await self._run_read(
-            lambda: self._fetchone(
-                "SELECT * FROM trigger_rules WHERE id = ?",
-                (rule_id,),
-            )
-        )
+        def _do():
+            assert self._conn is not None
+            cur = self._conn.execute("SELECT * FROM trigger_rules WHERE id=?", (rule_id,))
+            cols = [d[0] for d in cur.description]
+            row = cur.fetchone()
+            if not row:
+                return None
+            rule = dict(zip(cols, row))
+            rule["conditions"] = self._read_conditions(rule_id)
+            return rule
+        return await self._run_read(_do)
 
-    async def get_trigger_rules_for_stock(self, conid: int, enabled_only: bool = True) -> list[dict]:
-        """Get all trigger rules that apply to a specific stock."""
-        sql = "SELECT * FROM trigger_rules WHERE conid = ?"
-        if enabled_only:
-            sql += " AND enabled = 1"
-        return await self._run_read(lambda: self._fetchall(sql, (conid,)))
+    def _read_conditions(self, rule_id: int) -> list[dict]:
+        """Synchronous helper — caller must hold the read or write lock."""
+        assert self._conn is not None
+        cur = self._conn.execute(
+            "SELECT indicator, condition, threshold, news_candle_method "
+            "FROM trigger_conditions WHERE rule_id=? ORDER BY order_index",
+            (rule_id,),
+        )
+        cols = [d[0] for d in cur.description]
+        return [dict(zip(cols, row)) for row in cur.fetchall()]
+
+    async def get_trigger_rules_for_watchlist(self, watchlist_name: str) -> list[dict]:
+        def _do():
+            assert self._conn is not None
+            cur = self._conn.execute(
+                "SELECT * FROM trigger_rules WHERE watchlist_name=? AND enabled=1",
+                (watchlist_name,),
+            )
+            cols = [d[0] for d in cur.description]
+            rules = [dict(zip(cols, row)) for row in cur.fetchall()]
+            for r in rules:
+                r["conditions"] = self._read_conditions(r["id"])
+            return rules
+        return await self._run_read(_do)
 
     async def create_trigger_rule(
         self,
+        *,
         name: str,
-        conid: int,
-        symbol: str,
-        indicator: str,
-        condition: str,
-        threshold: float,
-        target_watchlist: str,
-        source_watchlist: str,
-        timeframe: str = "1D",
-        auto_expire_days: int | None = None,
-        scan_interval_seconds: int | None = None,
-        news_candle_method: str | None = None,
+        watchlist_name: str | None,
+        conid: int | None,
+        symbol: str | None,
+        template_id: int | None,
+        ibkr_mirror_target: str | None,
+        timeframe: str,
+        scan_interval_seconds: int,
+        enabled: bool,
+        conditions: list[dict],
     ) -> int:
-        """
-        Create a new trigger rule. Returns the new rule's ID.
-
-        When this trigger fires, the stock is MOVED in IBKR:
-          source_watchlist → target_watchlist
-
-        If auto_expire_days is set, the stock automatically moves back
-        after that many days. If None, you remove it manually.
-
-        Example: create_trigger_rule(
-            name="AAPL EMA 9 Weekly",
-            conid=265598,
-            symbol="AAPL",
-            indicator="ema_9",
-            condition="crosses_below",
-            threshold=0,
-            target_watchlist="EMA 9 Hits",
-            source_watchlist="My Stocks",
-            timeframe="1W",
-            auto_expire_days=5,
-        )
-        """
-        def _insert() -> int:
-            cursor = self._execute(
-                """INSERT INTO trigger_rules
-                   (name, conid, symbol, indicator, condition, threshold, timeframe,
-                    target_watchlist, source_watchlist, auto_expire_days,
-                    scan_interval_seconds, news_candle_method)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (name, conid, symbol, indicator, condition, threshold, timeframe,
-                 target_watchlist, source_watchlist, auto_expire_days,
-                 scan_interval_seconds, news_candle_method),
-            )
+        def _do():
             assert self._conn is not None
-            self._conn.commit()
-            assert cursor.lastrowid is not None
-            return cursor.lastrowid
+            with self._conn:
+                cur = self._conn.execute(
+                    """INSERT INTO trigger_rules
+                       (name, watchlist_name, conid, symbol, template_id,
+                        ibkr_mirror_target, timeframe, scan_interval_seconds, enabled)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (name, watchlist_name, conid, symbol, template_id,
+                     ibkr_mirror_target, timeframe, scan_interval_seconds, int(enabled)),
+                )
+                rule_id = cur.lastrowid
+                for idx, c in enumerate(conditions):
+                    self._conn.execute(
+                        """INSERT INTO trigger_conditions
+                           (rule_id, order_index, indicator, condition, threshold, news_candle_method)
+                           VALUES (?, ?, ?, ?, ?, ?)""",
+                        (rule_id, idx, c["indicator"], c["condition"],
+                         c.get("threshold"), c.get("news_candle_method")),
+                    )
+                return rule_id
+        return await self._run_write(_do)
 
-        return await self._run_write(_insert)
-
-    async def update_trigger_rule(self, rule_id: int, **fields: Any) -> bool:
-        """
-        Update one or more fields on a trigger rule.
-        Pass only the fields you want to change as keyword arguments.
-
-        Example: update_trigger_rule(5, threshold=25.0, enabled=False)
-        """
-        allowed = {"name", "conid", "symbol", "indicator", "condition",
-                    "threshold", "timeframe", "target_watchlist",
-                    "source_watchlist", "auto_expire_days", "enabled",
-                    "scan_interval_seconds", "news_candle_method"}
-        updates = {k: v for k, v in fields.items() if k in allowed}
-        if not updates:
-            return False
-
-        def _update() -> bool:
-            parts = [f"{k} = ?" for k in updates]
-            parts.append("updated_at = datetime('now')")
-            values = list(updates.values()) + [rule_id]
-            cursor = self._execute(
-                f"UPDATE trigger_rules SET {', '.join(parts)} WHERE id = ?",
-                tuple(values),
-            )
+    async def update_trigger_rule(self, rule_id: int, **fields) -> bool:
+        """Partial update. If `conditions` is provided, replace all conditions atomically."""
+        conditions = fields.pop("conditions", None)
+        def _do():
             assert self._conn is not None
-            self._conn.commit()
-            return cursor.rowcount > 0
-
-        return await self._run_write(_update)
+            with self._conn:
+                if fields:
+                    set_clause = ", ".join(f"{k}=?" for k in fields)
+                    self._conn.execute(
+                        f"UPDATE trigger_rules SET {set_clause}, updated_at=datetime('now') WHERE id=?",
+                        (*fields.values(), rule_id),
+                    )
+                if conditions is not None:
+                    self._conn.execute("DELETE FROM trigger_conditions WHERE rule_id=?", (rule_id,))
+                    for idx, c in enumerate(conditions):
+                        self._conn.execute(
+                            """INSERT INTO trigger_conditions
+                               (rule_id, order_index, indicator, condition, threshold, news_candle_method)
+                               VALUES (?, ?, ?, ?, ?, ?)""",
+                            (rule_id, idx, c["indicator"], c["condition"],
+                             c.get("threshold"), c.get("news_candle_method")),
+                        )
+                cur = self._conn.execute("SELECT 1 FROM trigger_rules WHERE id=?", (rule_id,))
+                return cur.fetchone() is not None
+        return await self._run_write(_do)
 
     async def delete_trigger_rule(self, rule_id: int) -> bool:
-        """Delete a trigger rule (and its hit history via CASCADE)."""
-        def _delete() -> bool:
-            cursor = self._execute(
-                "DELETE FROM trigger_rules WHERE id = ?", (rule_id,)
-            )
+        def _do():
             assert self._conn is not None
-            self._conn.commit()
-            return cursor.rowcount > 0
+            with self._conn:
+                cur = self._conn.execute("DELETE FROM trigger_rules WHERE id=?", (rule_id,))
+                return cur.rowcount > 0
+        return await self._run_write(_do)
 
-        return await self._run_write(_delete)
-
-    # ── Trigger Hit Operations ───────────────────────────────
+    # ── Trigger Hits ──────────────────────────────────────
 
     async def record_trigger_hit(
         self,
+        *,
         rule_id: int,
         conid: int,
         symbol: str,
-        indicator: str,
-        condition: str,
-        threshold: float,
-        actual_value: float,
-        target_watchlist: str,
-        source_watchlist: str,
-        auto_expire_days: int | None = None,
+        dedup_key: str,
+        condition_values: list[dict],
+        watchlist_name: str | None,
+        source_watchlist: str | None = None,
+        target_watchlist: str | None = None,
+        expires_at: str | None = None,
     ) -> int | None:
-        """
-        Record that a trigger rule fired. Returns the hit ID,
-        or None if this exact condition was already recorded (deduplicated).
-
-        The dedup_key is built from: rule_id + conid + ET-date.
-        This means the same rule can only fire once per stock per ET market day.
-
-        NOTE — same-day re-fire after auto-move-back is intentionally blocked:
-        if a 1-day auto-expire returns the stock and the condition still holds,
-        the rule will NOT re-fire until the next ET market day. This prevents
-        a tight condition from hammering IBKR watchlists intra-day.
-
-        If auto_expire_days is set, calculates expires_at so the
-        background scanner knows when to move the stock back.
-        """
-        # Use Eastern Time date so the dedup window aligns with US market days,
-        # not UTC midnight (which falls mid-session at 19:00 ET).
-        today = datetime.now(_ET).strftime("%Y-%m-%d")
-        dedup_key = f"{rule_id}:{conid}:{today}"
-
-        # Calculate expiry if auto_expire_days is set
-        expires_at: str | None = None
-        if auto_expire_days is not None:
-            from datetime import timedelta
-            expires_at = (datetime.now(timezone.utc) + timedelta(days=auto_expire_days)).strftime(
-                "%Y-%m-%d %H:%M:%S"
-            )
-
-        def _insert() -> int | None:
-            try:
-                cursor = self._execute(
-                    """INSERT INTO trigger_hits
-                       (rule_id, conid, symbol, indicator, condition, threshold,
-                        actual_value, target_watchlist, source_watchlist, expires_at, dedup_key)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                    (rule_id, conid, symbol, indicator, condition, threshold,
-                     actual_value, target_watchlist, source_watchlist, expires_at, dedup_key),
-                )
-                assert self._conn is not None
-                self._conn.commit()
-                return cursor.lastrowid
-            except sqlite3.IntegrityError:
-                # Duplicate — this trigger already fired for this stock today
-                return None
-
-        return await self._run_write(_insert)
+        """Insert a hit. Returns hit id, or None if dedup_key already existed."""
+        import json as _json
+        def _do():
+            assert self._conn is not None
+            with self._conn:
+                try:
+                    cur = self._conn.execute(
+                        """INSERT INTO trigger_hits
+                           (rule_id, conid, symbol, dedup_key, condition_values,
+                            watchlist_name, source_watchlist, target_watchlist, expires_at)
+                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        (rule_id, conid, symbol, dedup_key, _json.dumps(condition_values),
+                         watchlist_name, source_watchlist, target_watchlist, expires_at),
+                    )
+                    return cur.lastrowid
+                except Exception as e:  # UNIQUE constraint on dedup_key
+                    if "UNIQUE" in str(e):
+                        return None
+                    raise
+        return await self._run_write(_do)
 
     async def get_trigger_hits(
         self,
-        limit: int = 50,
-        unacknowledged_only: bool = False,
+        limit: int = 200,
+        status: str = "active",
+        watchlist: str | None = None,
     ) -> list[dict]:
-        """
-        Get recent trigger hits (newest first).
-        If unacknowledged_only=True, only return hits the user hasn't seen yet.
-
-        SQLite stores booleans as INTEGER (0/1). We cast acknowledged and
-        moved_back to Python bool here so callers see consistent types.
-        """
-        # LEFT JOIN so hits survive if their rule was later deleted.
-        sql = (
-            "SELECT h.*, r.name AS rule_name "
-            "FROM trigger_hits h "
-            "LEFT JOIN trigger_rules r ON r.id = h.rule_id"
-        )
-        if unacknowledged_only:
-            sql += " WHERE h.acknowledged = 0"
-        sql += " ORDER BY h.triggered_at DESC LIMIT ?"
-        rows = await self._run_read(lambda: self._fetchall(sql, (limit,)))
-        for row in rows:
-            row["acknowledged"] = bool(row.get("acknowledged", 0))
-            row["moved_back"] = bool(row.get("moved_back", 0))
-        return rows
-
-    async def get_trigger_hits_for_rule(self, rule_id: int, limit: int = 20) -> list[dict]:
-        """Get recent hits for a specific rule."""
-        return await asyncio.to_thread(
-            self._fetchall,
-            "SELECT * FROM trigger_hits WHERE rule_id = ? ORDER BY triggered_at DESC LIMIT ?",
-            (rule_id, limit),
-        )
-
-    async def get_expired_hits(self) -> list[dict]:
-        """
-        Get trigger hits where auto-expire has passed and the stock
-        hasn't been moved back yet. The background scanner uses this
-        to know which stocks to return to their source watchlist.
-        """
-        return await asyncio.to_thread(
-            self._fetchall,
-            """SELECT * FROM trigger_hits
-               WHERE expires_at IS NOT NULL
-               AND expires_at <= datetime('now')
-               AND moved_back = 0
-               ORDER BY expires_at""",
-        )
-
-    async def mark_moved_back(self, hit_id: int) -> bool:
-        """
-        Mark a trigger hit as "moved back" — the stock has been
-        returned to its source watchlist after auto-expire.
-        """
-        def _mark() -> bool:
-            cursor = self._execute(
-                "UPDATE trigger_hits SET moved_back = 1 WHERE id = ?",
-                (hit_id,),
-            )
+        """status: active | dismissed | snoozed | all."""
+        import json as _json
+        def _do():
             assert self._conn is not None
-            self._conn.commit()
-            return cursor.rowcount > 0
+            clauses: list[str] = []
+            params: list = []
+            if status == "active":
+                clauses.append("dismissed_at IS NULL")
+                clauses.append("(snoozed_until IS NULL OR snoozed_until < datetime('now'))")
+            elif status == "dismissed":
+                clauses.append("dismissed_at IS NOT NULL")
+            elif status == "snoozed":
+                clauses.append("snoozed_until IS NOT NULL AND snoozed_until >= datetime('now')")
+            # status == "all": no clauses
+            if watchlist:
+                clauses.append("h.watchlist_name=?")
+                params.append(watchlist)
+            where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
+            q = f"""
+                SELECT h.*, r.name AS rule_name
+                FROM trigger_hits h
+                LEFT JOIN trigger_rules r ON r.id = h.rule_id
+                {where}
+                ORDER BY h.triggered_at DESC
+                LIMIT ?
+            """
+            cur = self._conn.execute(q, (*params, limit))
+            cols = [d[0] for d in cur.description]
+            rows = [dict(zip(cols, row)) for row in cur.fetchall()]
+            for r in rows:
+                r["condition_values"] = _json.loads(r["condition_values"])
+            return rows
+        return await self._run_read(_do)
 
-        return await self._run_write(_mark)
-
-    async def acknowledge_trigger_hit(self, hit_id: int) -> bool:
-        """Mark a trigger hit as seen/read by the user."""
-        def _ack() -> bool:
-            cursor = self._execute(
-                "UPDATE trigger_hits SET acknowledged = 1 WHERE id = ?",
-                (hit_id,),
-            )
+    async def dismiss_trigger_hit(self, hit_id: int) -> bool:
+        def _do():
             assert self._conn is not None
-            self._conn.commit()
-            return cursor.rowcount > 0
+            with self._conn:
+                cur = self._conn.execute(
+                    "UPDATE trigger_hits SET dismissed_at=datetime('now') WHERE id=?",
+                    (hit_id,),
+                )
+                return cur.rowcount > 0
+        return await self._run_write(_do)
 
-        return await self._run_write(_ack)
-
-    async def acknowledge_all_hits(self) -> int:
-        """Mark ALL unread trigger hits as acknowledged. Returns count."""
-        def _ack_all() -> int:
-            cursor = self._execute(
-                "UPDATE trigger_hits SET acknowledged = 1 WHERE acknowledged = 0"
-            )
+    async def snooze_trigger_hit(self, hit_id: int, minutes: int) -> bool:
+        def _do():
             assert self._conn is not None
-            self._conn.commit()
-            return cursor.rowcount
+            with self._conn:
+                cur = self._conn.execute(
+                    "UPDATE trigger_hits "
+                    "SET snoozed_until=datetime('now', ? || ' minutes') WHERE id=?",
+                    (f"+{minutes}", hit_id),
+                )
+                return cur.rowcount > 0
+        return await self._run_write(_do)
 
-        return await self._run_write(_ack_all)
+    async def get_active_tags(self, conids: list[int]) -> dict[int, list[dict]]:
+        """Return {conid: [{rule_id, rule_name, indicators[], fired_at}]} for active hits."""
+        import json as _json
+        if not conids:
+            return {}
+        def _do():
+            assert self._conn is not None
+            placeholders = ",".join("?" * len(conids))
+            cur = self._conn.execute(
+                f"""SELECT h.conid, h.rule_id, r.name AS rule_name,
+                           h.condition_values, h.triggered_at
+                    FROM trigger_hits h
+                    LEFT JOIN trigger_rules r ON r.id = h.rule_id
+                    WHERE h.conid IN ({placeholders})
+                      AND h.dismissed_at IS NULL
+                      AND (h.snoozed_until IS NULL OR h.snoozed_until < datetime('now'))
+                    ORDER BY h.triggered_at DESC""",
+                tuple(conids),
+            )
+            cols = [d[0] for d in cur.description]
+            out: dict[int, list[dict]] = {c: [] for c in conids}
+            for row in cur.fetchall():
+                r = dict(zip(cols, row))
+                indicators = [v["indicator"] for v in _json.loads(r["condition_values"])]
+                out[r["conid"]].append({
+                    "rule_id": r["rule_id"],
+                    "rule_name": r["rule_name"],
+                    "indicators": indicators,
+                    "fired_at": r["triggered_at"],
+                })
+            return out
+        return await self._run_read(_do)
+
+    # ── Rule Templates ────────────────────────────────────
+
+    async def list_rule_templates(self) -> list[dict]:
+        import json as _json
+        def _do():
+            assert self._conn is not None
+            cur = self._conn.execute(
+                "SELECT * FROM rule_templates ORDER BY is_builtin DESC, category, name"
+            )
+            cols = [d[0] for d in cur.description]
+            rows = [dict(zip(cols, row)) for row in cur.fetchall()]
+            for r in rows:
+                r["conditions"] = _json.loads(r["conditions_json"])
+                r["is_builtin"] = bool(r["is_builtin"])
+                del r["conditions_json"]
+            return rows
+        return await self._run_read(_do)
+
+    async def create_rule_template(
+        self, *, name: str, description: str | None, category: str,
+        default_timeframe: str, conditions: list[dict],
+    ) -> int:
+        import json as _json
+        def _do():
+            assert self._conn is not None
+            with self._conn:
+                cur = self._conn.execute(
+                    """INSERT INTO rule_templates
+                       (name, description, category, is_builtin, default_timeframe, conditions_json)
+                       VALUES (?, ?, ?, 0, ?, ?)""",
+                    (name, description, category, default_timeframe, _json.dumps(conditions)),
+                )
+                return cur.lastrowid
+        return await self._run_write(_do)
+
+    async def delete_rule_template(self, template_id: int) -> bool:
+        """Builtins (is_builtin=1) are protected — deletion no-ops."""
+        def _do():
+            assert self._conn is not None
+            with self._conn:
+                cur = self._conn.execute(
+                    "DELETE FROM rule_templates WHERE id=? AND is_builtin=0",
+                    (template_id,),
+                )
+                return cur.rowcount > 0
+        return await self._run_write(_do)
 
     # ── Settings Operations ──────────────────────────────────
 

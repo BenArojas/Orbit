@@ -131,134 +131,124 @@ class InstrumentResponse(BaseModel):
 # ═══════════════════════════════════════════════════════════════
 
 
-class TriggerRuleCreate(BaseModel):
-    """
-    Request body to create a trigger rule.
-    Each rule targets one specific stock.
-
-    When the trigger fires, the stock is MOVED between IBKR watchlists:
-      source_watchlist → target_watchlist
-
-    If auto_expire_days is set, the stock moves back automatically
-    after that many days. If not set, you remove it manually.
-
-    Example: "When AAPL touches the 9 EMA weekly, move it to 'EMA 9 Hits'"
-      → name="AAPL EMA 9 Weekly", conid=265598, symbol="AAPL",
-        indicator="ema_9", condition="crosses_below", threshold=0,
-        target_watchlist="EMA 9 Hits", source_watchlist="My Stocks",
-        timeframe="1W", auto_expire_days=5
-    """
-    name: str                                        # Human-readable name
-    conid: int                                        # IBKR's unique ID for the stock
-    symbol: str                                       # Ticker for display (AAPL, SPY, etc.)
-    indicator: str                                    # "rsi", "ema_50", "macd", etc.
-    condition: str                                    # "above", "below", "crosses_above", "crosses_below", "fires"
-    threshold: float                                  # The value to compare against
-    target_watchlist: str                             # IBKR watchlist to move the stock INTO
-    source_watchlist: str                             # IBKR watchlist to move the stock OUT OF
-    timeframe: str = "1D"                             # Chart timeframe (user's view; scanner always uses daily bars)
-    auto_expire_days: Optional[int] = None            # NULL = manual removal. N = auto-move back after N days
-    scan_interval_seconds: Optional[int] = None       # NULL = use global default. N = check this rule every N seconds
+class TriggerConditionPayload(BaseModel):
+    """A single condition inside a multi-condition rule."""
+    indicator: str
+    condition: Literal["above", "below", "crosses_above", "crosses_below", "fires"]
+    threshold: Optional[float] = None
     news_candle_method: Optional[Literal["volume_spike", "range_spike", "gap", "long_wick"]] = None
 
     @model_validator(mode="after")
-    def _validate_news_candle(self) -> "TriggerRuleCreate":
+    def _validate_news_candle(self) -> "TriggerConditionPayload":
         if self.indicator == "news_candle":
             if self.news_candle_method is None:
-                raise ValueError("news_candle_method is required when indicator='news_candle'")
+                raise ValueError("news_candle_method required for news_candle indicator")
             if self.condition != "fires":
-                raise ValueError("condition must be 'fires' when indicator='news_candle'")
-        else:
-            valid_conditions = {"above", "below", "crosses_above", "crosses_below"}
-            if self.condition not in valid_conditions:
-                raise ValueError(
-                    f"condition must be one of {sorted(valid_conditions)} "
-                    f"(got '{self.condition}')"
-                )
-            if self.source_watchlist == self.target_watchlist:
-                raise ValueError("source_watchlist and target_watchlist must be different")
+                raise ValueError("news_candle condition must be 'fires'")
+        return self
+
+
+class TriggerRuleCreate(BaseModel):
+    """Create a new multi-condition trigger rule."""
+    name: str
+    watchlist_name: Optional[str] = None
+    conid: Optional[int] = None
+    symbol: Optional[str] = None
+    template_id: Optional[int] = None
+    ibkr_mirror_target: Optional[str] = None
+    timeframe: str = "1D"
+    scan_interval_seconds: int = 300
+    enabled: bool = True
+    conditions: list[TriggerConditionPayload]
+
+    @model_validator(mode="after")
+    def _validate_scope_and_conditions(self) -> "TriggerRuleCreate":
+        if self.watchlist_name is None and self.conid is None:
+            raise ValueError("Rule must have either watchlist_name or conid")
+        if not self.conditions:
+            raise ValueError("Rule must have at least one condition")
         return self
 
 
 class TriggerRuleUpdate(BaseModel):
-    """Request body to update a trigger rule (all fields optional)."""
+    """Partial update — fields not sent stay as-is."""
     name: Optional[str] = None
-    indicator: Optional[str] = None
-    condition: Optional[str] = None
-    threshold: Optional[float] = None
+    enabled: Optional[bool] = None
+    timeframe: Optional[str] = None
+    scan_interval_seconds: Optional[int] = None
+    watchlist_name: Optional[str] = None
     conid: Optional[int] = None
     symbol: Optional[str] = None
-    timeframe: Optional[str] = None
-    target_watchlist: Optional[str] = None
-    source_watchlist: Optional[str] = None
-    auto_expire_days: Optional[int] = None
-    scan_interval_seconds: Optional[int] = None
-    news_candle_method: Optional[Literal["volume_spike", "range_spike", "gap", "long_wick"]] = None
-    enabled: Optional[bool] = None
-
-    @model_validator(mode="after")
-    def _validate_watchlists_differ(self) -> "TriggerRuleUpdate":
-        if (
-            self.source_watchlist is not None
-            and self.target_watchlist is not None
-            and self.source_watchlist == self.target_watchlist
-        ):
-            raise ValueError("source_watchlist and target_watchlist must be different")
-        return self
+    ibkr_mirror_target: Optional[str] = None
+    conditions: Optional[list[TriggerConditionPayload]] = None
 
 
 class TriggerRuleResponse(BaseModel):
-    """A trigger rule as returned by the API."""
+    """A trigger rule as returned by the API, with conditions inlined."""
     id: int
     name: str
-    conid: int
-    symbol: str
-    indicator: str
-    condition: str
-    threshold: float
-    timeframe: str
-    target_watchlist: str
-    source_watchlist: str
-    auto_expire_days: Optional[int] = None
-    scan_interval_seconds: Optional[int] = None
-    news_candle_method: Optional[str] = None
     enabled: bool
+    timeframe: str
+    scan_interval_seconds: int
+    watchlist_name: Optional[str] = None
+    conid: Optional[int] = None
+    symbol: Optional[str] = None
+    template_id: Optional[int] = None
+    ibkr_mirror_target: Optional[str] = None
+    conditions: list[TriggerConditionPayload]
     created_at: str
     updated_at: str
 
 
-# ═══════════════════════════════════════════════════════════════
-#  Trigger Hits
-# ═══════════════════════════════════════════════════════════════
+class TriggerConditionValue(BaseModel):
+    """One condition's measured value at fire time."""
+    indicator: str
+    condition: str
+    threshold: Optional[float] = None
+    actual_value: float
+    news_candle_method: Optional[str] = None
 
 
 class TriggerHitResponse(BaseModel):
-    """
-    A logged trigger event — "this rule fired at this time."
-
-    actual_value = what the indicator was when the trigger fired.
-    E.g., if your rule is "RSI below 30" and RSI hit 27.3,
-    then threshold=30.0 and actual_value=27.3.
-
-    The stock was moved from source_watchlist → target_watchlist.
-    If expires_at is set, the stock will be moved back automatically.
-    moved_back = True means it's already been returned.
-    """
     id: int
     rule_id: int
-    rule_name: Optional[str] = None  # LEFT-joined; None if rule was deleted
+    rule_name: Optional[str] = None
     conid: int
     symbol: str
-    indicator: str
-    condition: str
-    threshold: float
-    actual_value: float
-    target_watchlist: str
-    source_watchlist: str
     triggered_at: str
-    expires_at: Optional[str] = None
+    watchlist_name: Optional[str] = None
+    condition_values: list[TriggerConditionValue]
+    dismissed_at: Optional[str] = None
+    snoozed_until: Optional[str] = None
+    # IBKR mirror tracking (populated only when ibkr_mirror_target was set)
+    source_watchlist: Optional[str] = None
+    target_watchlist: Optional[str] = None
     moved_back: bool = False
-    acknowledged: bool
+    expires_at: Optional[str] = None
+
+
+class RuleTemplateResponse(BaseModel):
+    id: int
+    name: str
+    description: Optional[str] = None
+    category: str
+    is_builtin: bool
+    default_timeframe: str
+    conditions: list[TriggerConditionPayload]
+    created_at: str
+
+
+class RuleTemplateCreate(BaseModel):
+    """Save a custom template (is_builtin always 0)."""
+    name: str
+    description: Optional[str] = None
+    category: str = "custom"
+    default_timeframe: str = "1D"
+    conditions: list[TriggerConditionPayload]
+
+
+class SnoozeHitRequest(BaseModel):
+    duration_minutes: int
 
 
 # ═══════════════════════════════════════════════════════════════

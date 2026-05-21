@@ -30,6 +30,7 @@ from exceptions import (
     ScreenerError,
 )
 from services.db import DatabaseService
+from services.templates import seed_builtin_templates
 from services.gateway import GatewayLifecycle
 from services.ibkr import IBKRService
 from services.screener import ScreenerService
@@ -81,6 +82,7 @@ async def lifespan(app: FastAPI):
     db = DatabaseService()
     await db.initialize()
     await db.seed_defaults()
+    await seed_builtin_templates(db)
     app.state.db = db
 
     # Phase 8 / Task 1.5: wire the SQLite conid cache into IBKRService.
