@@ -35,7 +35,6 @@ import { ThemeToggle } from "@/components/ui/ThemeToggle";
 import { Toaster } from "@/components/ui/Toaster";
 import { AuthGuard } from "@/components/shell/AuthGuard";
 // Connection + Settings are small — keep eager so the shell feels instant.
-// (DashboardPage is being phased out across Tasks 2/11 — Market replaces it.)
 import { SettingsPage } from "@/pages";
 import ConnectionPage from "@/pages/ConnectionPage";
 // Today and Market are lazy — they'll grow as Tasks 2/9 land.
