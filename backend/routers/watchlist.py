@@ -165,11 +165,8 @@ async def get_watchlist_instruments(
     if not raw_instruments:
         return {"id": watchlist_id, "name": watchlist_name, "items": []}
 
-    # TEMP diagnostic log — remove once watchlist field names are confirmed.
-    log.info(
-        "[watchlist] raw instruments count=%d first=%s",
-        len(raw_instruments),
-        raw_instruments[0] if raw_instruments else None,
+    log.debug(
+        "[watchlist] %s: %d raw instruments", watchlist_id, len(raw_instruments)
     )
 
     items: list[dict] = []
@@ -178,9 +175,6 @@ async def get_watchlist_instruments(
             # IBKR occasionally injects bare strings (section headers)
             # into instrument lists — skip them rather than crash.
             continue
-        # TEMP diagnostic log — one line per instrument so we can see
-        # the exact key names IBKR is using. Remove with the first log.
-        log.info("[watchlist] raw inst=%s", inst)
 
         raw_conid = inst.get("conid") or inst.get("C")
         if not raw_conid:
