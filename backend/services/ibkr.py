@@ -1639,6 +1639,38 @@ class IBKRService:
         await _cache.delete("get_watchlists")
         log.debug("Watchlist '%s' overwritten — cache invalidated", name)
 
+    async def create_watchlist(
+        self, name: str, conids: list[int] | None = None
+    ) -> dict:
+        """
+        Create a new IBKR watchlist. IDs are client-assigned strings; we use a
+        millisecond timestamp. Returns {"id", "name"}. Invalidates the
+        get_watchlists cache so the next list fetch is fresh.
+        """
+        from cache import cache as _cache
+        import time
+
+        new_id = str(int(time.time() * 1000))
+        rows = [{"C": int(c)} for c in (conids or [])]
+        await self._request(
+            "POST",
+            "/iserver/watchlist",
+            json={"id": new_id, "name": name, "rows": rows},
+        )
+        await _cache.delete("get_watchlists")
+        log.info("Created watchlist '%s' (id=%s)", name, new_id)
+        return {"id": new_id, "name": name}
+
+    async def delete_watchlist(self, watchlist_id: str) -> None:
+        """Delete an IBKR watchlist by id. Invalidates the get_watchlists cache."""
+        from cache import cache as _cache
+
+        await self._request(
+            "DELETE", "/iserver/watchlist", params={"id": watchlist_id}
+        )
+        await _cache.delete("get_watchlists")
+        log.info("Deleted watchlist id=%s", watchlist_id)
+
     async def add_to_watchlist(
         self,
         watchlist_id: str,

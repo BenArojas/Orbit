@@ -1056,6 +1056,12 @@ export const api = {
   getWatchlists: (signal?: AbortSignal) =>
     request<WatchlistInfo[]>("GET", "/watchlist/lists", undefined, signal),
 
+  createWatchlist: (name: string) =>
+    request<{ id: string; name: string }>("POST", "/watchlist/lists", { name }),
+
+  deleteWatchlist: (watchlistId: string) =>
+    request<void>("DELETE", `/watchlist/lists/${encodeURIComponent(watchlistId)}`),
+
   // Phase 8.9 / Commit C — split endpoints so the sidebar can render names
   // immediately and backfill prices on a slower second query.
   getWatchlistInstruments: (watchlistId: string, signal?: AbortSignal) =>

@@ -25,7 +25,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from constants import DEFAULT_QUOTE_FIELDS_STR
 from deps import get_db, get_ibkr
 from exceptions import IBKRAuthError, IBKRConnectionError, IBKRRateLimitError, IBKRRequestError
-from models import WatchlistAddRequest
+from models import WatchlistAddRequest, WatchlistCreateRequest
 from services.db import DatabaseService
 from services.ibkr import IBKRService, _safe_float
 
@@ -54,6 +54,38 @@ async def get_watchlists(
         for wl in raw
         if isinstance(wl, dict) and wl.get("id")
     ]
+
+
+@router.post("/lists", status_code=201)
+async def create_watchlist(
+    body: WatchlistCreateRequest,
+    ibkr: IBKRService = Depends(get_ibkr),
+):
+    """Create a new IBKR watchlist (initially empty)."""
+    name = body.name.strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Watchlist name is required")
+    try:
+        return await ibkr.create_watchlist(name)
+    except IBKRAuthError:
+        raise HTTPException(status_code=401, detail="Not authenticated with IBKR")
+    except (IBKRConnectionError, IBKRRateLimitError, IBKRRequestError) as exc:
+        raise HTTPException(status_code=502, detail=f"IBKR error: {exc.message}")
+
+
+@router.delete("/lists/{watchlist_id}", status_code=204)
+async def delete_watchlist(
+    watchlist_id: str,
+    ibkr: IBKRService = Depends(get_ibkr),
+):
+    """Delete an IBKR watchlist by id."""
+    try:
+        await ibkr.delete_watchlist(watchlist_id)
+    except IBKRAuthError:
+        raise HTTPException(status_code=401, detail="Not authenticated with IBKR")
+    except (IBKRConnectionError, IBKRRateLimitError, IBKRRequestError) as exc:
+        raise HTTPException(status_code=502, detail=f"IBKR error: {exc.message}")
+    return None
 
 
 @router.get("/membership")

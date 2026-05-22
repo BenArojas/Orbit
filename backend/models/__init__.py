@@ -643,6 +643,11 @@ class WatchlistAddRequest(BaseModel):
     conid: int
 
 
+class WatchlistCreateRequest(BaseModel):
+    """Create a new IBKR watchlist."""
+    name: str
+
+
 class WatchlistMembershipResponse(BaseModel):
     """Watchlist IDs that contain the queried conid."""
     conid: int
