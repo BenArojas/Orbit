@@ -32,6 +32,7 @@ import { useNavigationStore } from "../../store/navigation";
 import { useWatchlistStore } from "../../store/watchlist";
 import { useIbkrReadyTier } from "@/hooks/useIbkrReadyTier";
 import { useStockTags } from "@/hooks/useStockTags";
+import { useLiveQuotes } from "@/hooks/useLiveQuotes";
 import { StockTagDots } from "@/components/tags/StockTagDots";
 import { WatchlistSidebarSkeleton } from "../dashboard/skeletons";
 
@@ -93,16 +94,22 @@ export default function WatchlistSidebar() {
   );
   const conidsKey = conids.join(",");
 
-  // Rule 1: live market data — staleTime = refetchInterval / 2
+  // Snapshot quotes — provides the first paint and backfills fields the live
+  // stream may not carry. WS live ticks (below) are now the primary freshness
+  // mechanism, so this poll is slowed to a 60s safety net rather than 30s.
   const { data: quotesData } = useQuery({
     queryKey: ["watchlist-quotes", selectedWatchlistId, conidsKey],
     queryFn: ({ signal }) => api.getWatchlistQuotes(selectedWatchlistId!, conids, signal),
     enabled: ibkrReady && !!selectedWatchlistId && conids.length > 0,
-    staleTime: 15_000,
-    refetchInterval: 30_000,
+    staleTime: 30_000,
+    refetchInterval: 60_000,
   });
 
-  // ── Merge instruments + quotes into a single render-ready list ──────────
+  // Live WS ticks for every visible conid. Takes priority over the snapshot;
+  // also fills cold conids that the initial snapshot returned empty for.
+  const liveTicks = useLiveQuotes(conids);
+
+  // ── Merge instruments + snapshot + live ticks into one render-ready list ──
   const items: WatchlistItemResponse[] = useMemo(() => {
     if (!instruments) return [];
     const quoteMap = new Map<number, WatchlistQuote>();
@@ -111,16 +118,18 @@ export default function WatchlistSidebar() {
     }
     return instruments.map((inst) => {
       const q = quoteMap.get(inst.conid);
+      const live = liveTicks.get(inst.conid);
       return {
         conid: inst.conid,
         symbol: inst.symbol,
         companyName: inst.companyName,
-        lastPrice: q?.lastPrice ?? null,
-        changePercent: q?.changePercent ?? null,
-        changeAmount: q?.changeAmount ?? null,
+        // Prefer the live tick; fall back to the snapshot; then null ("--").
+        lastPrice: live?.last ?? q?.lastPrice ?? null,
+        changePercent: live?.changePct ?? q?.changePercent ?? null,
+        changeAmount: live?.changeAmt ?? q?.changeAmount ?? null,
       };
     });
-  }, [instruments, quotesData]);
+  }, [instruments, quotesData, liveTicks]);
 
   // Sync to Zustand store for other components
   useEffect(() => {
