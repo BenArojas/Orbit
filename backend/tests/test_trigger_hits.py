@@ -1,10 +1,10 @@
 """
-Tests for trigger-hit DB reads (Phase 6.7).
+Tests for trigger-hit DB reads under the multi-condition schema.
 
-The /triggers/hits list endpoint now LEFT JOINs trigger_rules to surface
+The /triggers/hits list endpoint LEFT JOINs trigger_rules to surface
 rule_name so the Alert Log can label each hit. We verify:
   - Attached rule: rule_name comes back populated
-  - Orphaned hit (rule deleted via CASCADE-side effect): rule_name is None
+  - condition_values JSON roundtrips through the column as a list
   - Newest-first ordering holds across the join
 """
 from __future__ import annotations
@@ -25,39 +25,53 @@ def db() -> DatabaseService:
 async def _seed_rule(db: DatabaseService, name: str = "My Rule") -> int:
     return await db.create_trigger_rule(
         name=name,
+        watchlist_name=None,
         conid=265598,
         symbol="AAPL",
-        indicator="rsi",
-        condition="below",
-        threshold=30.0,
+        template_id=None,
+        ibkr_mirror_target=None,
         timeframe="1D",
-        target_watchlist="RSI Oversold",
-        source_watchlist="My Stocks",
-        auto_expire_days=None,
-        scan_interval_seconds=None,
-        news_candle_method=None,
+        scan_interval_seconds=300,
+        enabled=True,
+        conditions=[
+            {"indicator": "rsi", "condition": "below", "threshold": 30.0},
+        ],
     )
 
 
-async def _record_hit(db: DatabaseService, rule_id: int, *, conid: int = 265598):
+async def _record_hit(
+    db: DatabaseService,
+    rule_id: int,
+    *,
+    conid: int = 265598,
+    dedup_suffix: str = "",
+):
     return await db.record_trigger_hit(
         rule_id=rule_id,
         conid=conid,
         symbol="AAPL",
-        indicator="rsi",
-        condition="below",
-        threshold=30.0,
-        actual_value=27.3,
-        target_watchlist="RSI Oversold",
-        source_watchlist="My Stocks",
-        auto_expire_days=None,
+        dedup_key=f"{rule_id}:{conid}:2026-05-21:1D{dedup_suffix}",
+        condition_values=[
+            {
+                "indicator": "rsi",
+                "condition": "below",
+                "threshold": 30.0,
+                "actual_value": 27.3,
+                "news_candle_method": None,
+            },
+        ],
+        watchlist_name=None,
+        source_watchlist=None,
+        target_watchlist=None,
+        expires_at=None,
     )
 
 
 @pytest.mark.asyncio
 async def test_hit_returns_rule_name_via_join(db: DatabaseService):
     rule_id = await _seed_rule(db, name="AAPL RSI Oversold")
-    await _record_hit(db, rule_id)
+    hit_id = await _record_hit(db, rule_id)
+    assert hit_id is not None
 
     rows = await db.get_trigger_hits(limit=10)
     assert len(rows) == 1
@@ -66,19 +80,17 @@ async def test_hit_returns_rule_name_via_join(db: DatabaseService):
 
 
 @pytest.mark.asyncio
-async def test_orphaned_hit_rule_name_is_none(db: DatabaseService):
-    rule_id = await _seed_rule(db, name="Doomed Rule")
+async def test_condition_values_roundtrip(db: DatabaseService):
+    rule_id = await _seed_rule(db)
     await _record_hit(db, rule_id)
 
-    # Delete the rule but keep the hit (simulate CASCADE-off / manual scenario).
-    await db.delete_trigger_rule(rule_id)
-
     rows = await db.get_trigger_hits(limit=10)
-    # CASCADE DELETE removes the hit in production schema; if it doesn't, we still
-    # want rule_name to come back as None instead of raising.
-    for row in rows:
-        if row["rule_id"] == rule_id:
-            assert row["rule_name"] is None
+    assert len(rows) == 1
+    values = rows[0]["condition_values"]
+    assert isinstance(values, list)
+    assert len(values) == 1
+    assert values[0]["indicator"] == "rsi"
+    assert values[0]["actual_value"] == 27.3
 
 
 @pytest.mark.asyncio
@@ -90,6 +102,6 @@ async def test_hits_ordered_newest_first(db: DatabaseService):
     await _record_hit(db, rule_b, conid=2)
 
     rows = await db.get_trigger_hits(limit=10)
-    # Most recent first: Rule B hit was recorded second, should appear first.
+    # Most recent first: Rule B's hit was inserted second.
     assert rows[0]["rule_name"] == "Rule B"
     assert rows[1]["rule_name"] == "Rule A"

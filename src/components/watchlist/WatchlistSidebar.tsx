@@ -24,13 +24,23 @@ import { useQuery } from "@tanstack/react-query";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import {
   api,
+  type StockTagMap,
   type WatchlistItemResponse,
   type WatchlistQuote,
 } from "../../lib/api";
 import { useNavigationStore } from "../../store/navigation";
 import { useWatchlistStore } from "../../store/watchlist";
 import { useIbkrReadyTier } from "@/hooks/useIbkrReadyTier";
+import { useStockTags } from "@/hooks/useStockTags";
+import { useLiveQuotes } from "@/hooks/useLiveQuotes";
+import { StockTagDots } from "@/components/tags/StockTagDots";
 import { WatchlistSidebarSkeleton } from "../dashboard/skeletons";
+import {
+  useCreateWatchlist,
+  useDeleteWatchlist,
+} from "@/hooks/useWatchlistMutations";
+
+type StockTag = StockTagMap[number][number];
 
 // Each WatchlistRow is 40px tall — used by the virtualizer for layout.
 const ROW_HEIGHT = 40;
@@ -39,6 +49,12 @@ export default function WatchlistSidebar() {
   const [selectedWatchlistId, setSelectedWatchlistId] = useState<string | null>(null);
   const { searchQuery, setSearchQuery, setMasterWatchlist } = useWatchlistStore();
   const navigateToAnalysis = useNavigationStore((s) => s.navigateToAnalysis);
+
+  // Inline create-watchlist UI state
+  const [creating, setCreating] = useState(false);
+  const [newName, setNewName] = useState("");
+  const createWatchlist = useCreateWatchlist();
+  const deleteWatchlist = useDeleteWatchlist();
 
   // Watchlist sidebar is Tier 5 in the 9-tier dashboard cascade
   // (Phase 8 / Task 8.9). Within the component, the items query depends on the
@@ -88,16 +104,22 @@ export default function WatchlistSidebar() {
   );
   const conidsKey = conids.join(",");
 
-  // Rule 1: live market data — staleTime = refetchInterval / 2
+  // Snapshot quotes — provides the first paint and backfills fields the live
+  // stream may not carry. WS live ticks (below) are now the primary freshness
+  // mechanism, so this poll is slowed to a 60s safety net rather than 30s.
   const { data: quotesData } = useQuery({
     queryKey: ["watchlist-quotes", selectedWatchlistId, conidsKey],
     queryFn: ({ signal }) => api.getWatchlistQuotes(selectedWatchlistId!, conids, signal),
     enabled: ibkrReady && !!selectedWatchlistId && conids.length > 0,
-    staleTime: 15_000,
-    refetchInterval: 30_000,
+    staleTime: 30_000,
+    refetchInterval: 60_000,
   });
 
-  // ── Merge instruments + quotes into a single render-ready list ──────────
+  // Live WS ticks for every visible conid. Takes priority over the snapshot;
+  // also fills cold conids that the initial snapshot returned empty for.
+  const liveTicks = useLiveQuotes(conids);
+
+  // ── Merge instruments + snapshot + live ticks into one render-ready list ──
   const items: WatchlistItemResponse[] = useMemo(() => {
     if (!instruments) return [];
     const quoteMap = new Map<number, WatchlistQuote>();
@@ -106,16 +128,18 @@ export default function WatchlistSidebar() {
     }
     return instruments.map((inst) => {
       const q = quoteMap.get(inst.conid);
+      const live = liveTicks.get(inst.conid);
       return {
         conid: inst.conid,
         symbol: inst.symbol,
         companyName: inst.companyName,
-        lastPrice: q?.lastPrice ?? null,
-        changePercent: q?.changePercent ?? null,
-        changeAmount: q?.changeAmount ?? null,
+        // Prefer the live tick; fall back to the snapshot; then null ("--").
+        lastPrice: live?.last ?? q?.lastPrice ?? null,
+        changePercent: live?.changePct ?? q?.changePercent ?? null,
+        changeAmount: live?.changeAmt ?? q?.changeAmount ?? null,
       };
     });
-  }, [instruments, quotesData]);
+  }, [instruments, quotesData, liveTicks]);
 
   // Sync to Zustand store for other components
   useEffect(() => {
@@ -148,6 +172,15 @@ export default function WatchlistSidebar() {
 
   const itemCount = items.length;
 
+  // ── Stock tags (rule-fire dots) ────────────────────────────────────────────
+  // Task 8: inline trigger indicators next to each symbol. Keyed off the
+  // filtered conid list so search trims the fetch surface.
+  const conidList = useMemo(
+    () => filteredItems.map((i) => i.conid),
+    [filteredItems],
+  );
+  const { data: tagsByConid } = useStockTags(conidList);
+
   // ── Virtual scroll setup ───────────────────────────────────────────────────
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -159,6 +192,37 @@ export default function WatchlistSidebar() {
   });
 
   const virtualItems = virtualizer.getVirtualItems();
+
+  // ── Create / delete handlers ────────────────────────────────────────────
+  const selectedWatchlist = watchlists?.find((w) => w.id === selectedWatchlistId);
+
+  const submitCreate = () => {
+    const name = newName.trim();
+    if (!name) return;
+    createWatchlist.mutate(name, {
+      onSuccess: () => {
+        setCreating(false);
+        setNewName("");
+      },
+    });
+  };
+
+  const handleDelete = () => {
+    if (!selectedWatchlist) return;
+    if (
+      !window.confirm(
+        `Delete watchlist "${selectedWatchlist.name}"? This removes it from IBKR too.`,
+      )
+    ) {
+      return;
+    }
+    deleteWatchlist.mutate(selectedWatchlist.id, {
+      onSuccess: () => {
+        const remaining = watchlists?.filter((w) => w.id !== selectedWatchlist.id);
+        setSelectedWatchlistId(remaining?.[0]?.id ?? null);
+      },
+    });
+  };
 
   // Skeleton while tier gate closed OR initial watchlists fetch in flight.
   // Once we have the `watchlists` dropdown data we transition to the real
@@ -176,13 +240,66 @@ export default function WatchlistSidebar() {
           <span className="text-[10px] font-semibold uppercase tracking-wider text-[var(--text-3)]">
             Watchlist
           </span>
-          <span className="rounded-full bg-[var(--bg-3)] px-1.5 py-0.5 font-data text-[9px] text-[var(--text-3)]">
-            {itemCount}
-          </span>
+          <div className="flex items-center gap-1.5">
+            <button
+              type="button"
+              title="New watchlist"
+              onClick={() => {
+                setCreating((c) => !c);
+                setNewName("");
+              }}
+              className="flex h-4 w-4 items-center justify-center rounded text-[12px] leading-none text-[var(--text-3)] transition-colors hover:text-[var(--cyan)]"
+            >
+              +
+            </button>
+            {selectedWatchlist && (
+              <button
+                type="button"
+                title="Delete current watchlist"
+                onClick={handleDelete}
+                disabled={deleteWatchlist.isPending}
+                className="flex h-4 w-4 items-center justify-center rounded text-[12px] leading-none text-[var(--text-3)] transition-colors hover:text-[var(--red)] disabled:opacity-40"
+              >
+                ×
+              </button>
+            )}
+            <span className="rounded-full bg-[var(--bg-3)] px-1.5 py-0.5 font-data text-[9px] text-[var(--text-3)]">
+              {itemCount}
+            </span>
+          </div>
         </div>
 
         {/* Watchlist dropdown + search */}
         <div className="flex flex-col gap-1.5 px-3 pb-2.5">
+          {creating && (
+            <div className="flex items-center gap-1">
+              <input
+                type="text"
+                autoFocus
+                placeholder="New watchlist name..."
+                value={newName}
+                onChange={(e) => setNewName(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") submitCreate();
+                  if (e.key === "Escape") {
+                    setCreating(false);
+                    setNewName("");
+                  }
+                }}
+                className="w-full rounded-md border border-border bg-[var(--bg-2)] px-2 py-1 text-[10px] text-[var(--text-1)] placeholder:text-[var(--text-3)] outline-none focus:border-[var(--cyan)]"
+              />
+              <button
+                type="button"
+                title="Create"
+                onClick={submitCreate}
+                disabled={!newName.trim() || createWatchlist.isPending}
+                className="flex h-6 w-6 shrink-0 items-center justify-center rounded text-[12px] leading-none text-[var(--text-3)] transition-colors hover:text-[var(--green)] disabled:opacity-40"
+              >
+                ✓
+              </button>
+            </div>
+          )}
+
           {watchlists && watchlists.length > 1 && (
             <select
               value={selectedWatchlistId ?? ""}
@@ -260,6 +377,7 @@ export default function WatchlistSidebar() {
                 >
                   <WatchlistRow
                     item={item}
+                    tags={tagsByConid?.[item.conid] ?? []}
                     onClick={() => navigateToAnalysis(item.conid, item.symbol)}
                   />
                 </div>
@@ -274,9 +392,11 @@ export default function WatchlistSidebar() {
 
 function WatchlistRow({
   item,
+  tags,
   onClick,
 }: {
   item: WatchlistItemResponse;
+  tags: StockTag[];
   onClick: () => void;
 }) {
   const hasPrice = item.lastPrice != null;
@@ -299,8 +419,9 @@ function WatchlistRow({
     >
       {/* Symbol + company name */}
       <div className="min-w-0">
-        <div className="text-xs font-semibold text-[var(--text-1)]">
-          {item.symbol}
+        <div className="flex items-center gap-1 text-xs font-semibold text-[var(--text-1)]">
+          <span>{item.symbol}</span>
+          <StockTagDots tags={tags} max={3} />
         </div>
         <div className="mt-0.5 flex items-center gap-1">
           <span className="text-[9px] text-[var(--text-3)] truncate">

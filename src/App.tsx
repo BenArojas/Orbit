@@ -1,7 +1,7 @@
 /**
  * App Shell — Root component with pill navigation
  *
- * Zustand-based tab routing between Dashboard, Analysis, and Screener.
+ * Zustand-based tab routing across Connection / Today / Market / Analysis / Screener / Settings.
  * Wraps the app with TanStack QueryClientProvider and TooltipProvider.
  *
  * Matches the approved Layout A v2 mockup:
@@ -28,13 +28,18 @@ import {
 import { useSidecar } from "@/hooks/useSidecar";
 import { useWebSocket } from "@/hooks/useWebSocket";
 import { useTriggerAlerts } from "@/hooks/useTriggerAlerts";
-import { GatewayProvider } from "@/context/GatewayContext";
+import { GatewayProvider, useGatewayContext } from "@/context/GatewayContext";
 import { IbkrReconnectBanner } from "@/components/gateway/IbkrReconnectBanner";
 import { HealthStrip } from "@/components/ui/HealthStrip";
 import { ThemeToggle } from "@/components/ui/ThemeToggle";
 import { Toaster } from "@/components/ui/Toaster";
-// Dashboard and Settings are small — keep them eager so the shell feels instant.
-import { DashboardPage, SettingsPage } from "@/pages";
+import { AuthGuard } from "@/components/shell/AuthGuard";
+// Connection + Settings are small — keep eager so the shell feels instant.
+import { SettingsPage } from "@/pages";
+import ConnectionPage from "@/pages/ConnectionPage";
+// Today and Market are lazy — they'll grow as Tasks 2/9 land.
+const TodayPage = lazy(() => import("@/pages/TodayPage"));
+const MarketPage = lazy(() => import("@/pages/MarketPage"));
 // Analysis and Screener are heavy (TradingView charts, screener logic).
 // Lazy-load so their JS is only parsed when the user first navigates there.
 const AnalysisPage = lazy(() => import("@/pages/AnalysisPage"));
@@ -97,8 +102,11 @@ function useGlobalEffects() {
   return { addHandler };
 }
 
+// The "connection" screen is intentionally absent from this list — it's
+// surfaced by <AuthGuard> when the IBKR session is missing, not via a tab.
 const NAV_ITEMS: { id: Screen; label: string }[] = [
-  { id: "dashboard", label: "Dashboard" },
+  { id: "today", label: "Today" },
+  { id: "market", label: "Market" },
   { id: "analysis", label: "Analysis" },
   { id: "screener", label: "Screener" },
   { id: "settings", label: "Settings" },
@@ -108,8 +116,20 @@ const NAV_ITEMS: { id: Screen; label: string }[] = [
 function ActivePage() {
   const screen = useNavigationStore((s) => s.activeScreen);
   switch (screen) {
-    case "dashboard":
-      return <DashboardPage />;
+    case "connection":
+      return <ConnectionPage />;
+    case "today":
+      return (
+        <Suspense fallback={<PageSkeleton />}>
+          <TodayPage />
+        </Suspense>
+      );
+    case "market":
+      return (
+        <Suspense fallback={<PageSkeleton />}>
+          <MarketPage />
+        </Suspense>
+      );
     case "analysis":
       return (
         <Suspense fallback={<PageSkeleton />}>
@@ -161,6 +181,27 @@ function ConnectionStatus() {
 }
 
 /**
+ * NavLogoutButton — soft IBKR logout, shown in the navbar only while
+ * authenticated. Drops the IBKR session (JVM stays up); AuthGuard then
+ * routes back to the Connection screen.
+ */
+function NavLogoutButton() {
+  const { isAuthenticated, logout, actionLoading } = useGatewayContext();
+  if (!isAuthenticated) return null;
+  return (
+    <button
+      type="button"
+      onClick={logout}
+      disabled={actionLoading}
+      title="Log out of IBKR (gateway stays running)"
+      className="rounded-md border border-border px-2.5 py-[3px] text-[10px] font-medium text-[var(--text-3)] transition-colors hover:border-[var(--clr-red)] hover:text-[var(--clr-red)] disabled:cursor-not-allowed disabled:opacity-40"
+    >
+      {actionLoading ? "…" : "Logout"}
+    </button>
+  );
+}
+
+/**
  * AppShell — renders nav, reconnect banner, and active page.
  * Must be a child of GatewayProvider so it can read gateway context.
  */
@@ -197,9 +238,10 @@ function AppShell() {
           ))}
         </div>
 
-        {/* Connection status + theme toggle (top-right) */}
+        {/* Connection status + logout + theme toggle (top-right) */}
         <div className="flex items-center gap-3">
           <ConnectionStatus />
+          <NavLogoutButton />
           <ThemeToggle />
         </div>
       </nav>
@@ -214,7 +256,9 @@ function AppShell() {
           share and trigger window-level scroll — which then becomes the
           target for any descendant scrollIntoView call. */}
       <main className="min-h-0 flex-1 overflow-hidden">
-        <ActivePage />
+        <AuthGuard>
+          <ActivePage />
+        </AuthGuard>
       </main>
 
       {/* ── Health status strip (7.5) ── */}

@@ -321,35 +321,53 @@ class TestOverwriteWatchlist:
         assert post_called    # POST still happened
 
 
-# ── Scanner _record_hit integration (Phase 6.4) ──────────────
+# ── Scanner _record_hit integration (multi-condition edition) ────
 
 
 class TestRecordHitWithWatchlistMove:
-    def _make_rule(self):
+    """
+    _record_hit under the new schema: a hit is recorded for every rule
+    that fires, but the IBKR mirror move only happens when the rule has
+    ibkr_mirror_target set AND watchlist_name (source) set.
+    """
+
+    def _make_rule(self, *, mirror: str | None = "RSI Hits"):
         return {
             "id": 1,
             "conid": 265598,
             "symbol": "AAPL",
+            "watchlist_name": "My Stocks",
+            "ibkr_mirror_target": mirror,
+            "timeframe": "1D",
+            "conditions": [
+                {"indicator": "rsi", "condition": "below", "threshold": 30.0},
+            ],
+        }
+
+    def _target(self, *, conid: int = 265598, symbol: str = "AAPL") -> dict:
+        return {"conid": conid, "symbol": symbol}
+
+    def _values(self) -> list[dict]:
+        return [{
             "indicator": "rsi",
             "condition": "below",
             "threshold": 30.0,
-            "target_watchlist": "RSI Hits",
-            "source_watchlist": "My Stocks",
-            "auto_expire_days": None,
-        }
+            "actual_value": 28.5,
+            "news_candle_method": None,
+        }]
 
     @pytest.mark.asyncio
-    async def test_move_called_on_new_hit(self):
+    async def test_move_called_on_new_hit_with_mirror(self):
         ibkr = MagicMock()
         ibkr.move_between_watchlists = AsyncMock(return_value=True)
         db = MagicMock()
-        db.record_trigger_hit = AsyncMock(return_value=42)  # new hit_id
+        db.record_trigger_hit = AsyncMock(return_value=42)
         db.get_watchlist_config = AsyncMock(return_value=None)
 
         scanner = make_scanner(ibkr=ibkr, db=db)
         rule = self._make_rule()
 
-        result = await scanner._record_hit(rule, actual_value=28.5)
+        result = await scanner._record_hit(rule, self._target(), self._values())
 
         assert result is True
         ibkr.move_between_watchlists.assert_awaited_once_with(
@@ -357,6 +375,23 @@ class TestRecordHitWithWatchlistMove:
             source_name="My Stocks",
             target_name="RSI Hits",
         )
+
+    @pytest.mark.asyncio
+    async def test_no_move_when_mirror_target_absent(self):
+        """Tag-only rules (no ibkr_mirror_target) must not touch IBKR."""
+        ibkr = MagicMock()
+        ibkr.move_between_watchlists = AsyncMock()
+        db = MagicMock()
+        db.record_trigger_hit = AsyncMock(return_value=42)
+        db.get_watchlist_config = AsyncMock(return_value=None)
+
+        scanner = make_scanner(ibkr=ibkr, db=db)
+        rule = self._make_rule(mirror=None)
+
+        result = await scanner._record_hit(rule, self._target(), self._values())
+
+        assert result is True
+        ibkr.move_between_watchlists.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_move_not_called_on_dedup(self):
@@ -369,7 +404,7 @@ class TestRecordHitWithWatchlistMove:
         scanner = make_scanner(ibkr=ibkr, db=db)
         rule = self._make_rule()
 
-        result = await scanner._record_hit(rule, actual_value=28.5)
+        result = await scanner._record_hit(rule, self._target(), self._values())
 
         assert result is False
         ibkr.move_between_watchlists.assert_not_awaited()
@@ -388,18 +423,20 @@ class TestRecordHitWithWatchlistMove:
         scanner = make_scanner(ibkr=ibkr, db=db)
         rule = self._make_rule()
 
-        # Must not raise — IBKR error is swallowed in scanner
-        result = await scanner._record_hit(rule, actual_value=28.5)
+        result = await scanner._record_hit(rule, self._target(), self._values())
 
-        assert result is True  # hit still recorded
+        assert result is True
 
     @pytest.mark.asyncio
-    async def test_callback_fires_after_move(self):
-        """on_trigger_fired fires even when the watchlist move fails."""
-        fired = []
+    async def test_callback_fires_with_new_payload(self):
+        """
+        on_trigger_fired receives (hit_id, rule, target, condition_values)
+        and runs even when the IBKR move fails.
+        """
+        fired: list[tuple] = []
 
-        async def callback(rule, hit_id, value):
-            fired.append((rule["id"], hit_id, value))
+        async def callback(hit_id, rule, target, values):
+            fired.append((hit_id, rule["id"], target["conid"], values))
 
         ibkr = MagicMock()
         ibkr.move_between_watchlists = AsyncMock(
@@ -412,8 +449,11 @@ class TestRecordHitWithWatchlistMove:
         scanner = make_scanner(ibkr=ibkr, db=db)
         scanner.on_trigger_fired = callback
         rule = self._make_rule()
+        values = self._values()
 
-        await scanner._record_hit(rule, actual_value=25.0)
+        await scanner._record_hit(rule, self._target(), values)
 
         assert len(fired) == 1
-        assert fired[0] == (1, 7, 25.0)
+        hit_id, rule_id, conid, payload_values = fired[0]
+        assert (hit_id, rule_id, conid) == (7, 1, 265598)
+        assert payload_values == values

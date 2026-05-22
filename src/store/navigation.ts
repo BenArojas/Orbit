@@ -1,36 +1,34 @@
 /**
  * Navigation Store — Zustand tab-based routing
  *
- * Parallax has 3 fixed screens: Dashboard, Analysis, Screener.
- * No need for React Router — a simple Zustand store drives which
- * page component renders. Desktop app, no URL routing needed.
+ * Parallax tabs are driven by Zustand (no React Router — desktop app, no URLs).
+ *
+ * The `connection` screen is special: it's only shown while the IBKR gateway
+ * is not authenticated. `<AuthGuard>` forces it on when unauthenticated and
+ * always lands on Today once authenticated.
  */
 
 import { create } from "zustand";
 
-export type Screen = "dashboard" | "analysis" | "screener" | "settings";
+export type Screen =
+  | "connection"
+  | "today"
+  | "market"
+  | "analysis"
+  | "screener"
+  | "settings";
 
 interface NavigationState {
-  /** Currently active screen */
   activeScreen: Screen;
 
-  /** Navigate to a screen */
   navigate: (screen: Screen) => void;
-
-  /**
-   * Navigate to analysis with a specific instrument pre-loaded.
-   * Used when clicking a stock in the watchlist or screener results.
-   * Sets both activeConid and activeSymbol in the chart store so the
-   * symbol input doesn't go stale between navigations.
-   *
-   * `symbol` defaults to "" — callers should pass it when available.
-   * The AnalysisPage will re-sync from the store on mount.
-   */
   navigateToAnalysis: (conid: number, symbol?: string) => void;
 }
 
 export const useNavigationStore = create<NavigationState>()((set) => ({
-  activeScreen: "dashboard",
+  // Boots on the connection screen; AuthGuard flips to Today once the
+  // gateway probe reports authenticated.
+  activeScreen: "connection",
 
   navigate: (screen) => set({ activeScreen: screen }),
 

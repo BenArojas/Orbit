@@ -143,56 +143,32 @@ export type NewsCandleMethod =
   | "gap"
   | "long_wick";
 
-export interface TriggerRule {
+export type TriggerCondition = {
+  indicator: string;
+  condition: "above" | "below" | "crosses_above" | "crosses_below" | "fires";
+  threshold: number | null;
+  news_candle_method?: "volume_spike" | "range_spike" | "gap" | "long_wick" | null;
+};
+
+export type TriggerRule = {
   id: number;
   name: string;
-  conid: number;
-  symbol: string;
-  indicator: string;
-  condition: string;
-  threshold: number;
-  timeframe: string;
-  target_watchlist: string;
-  source_watchlist: string;
-  auto_expire_days: number | null;
-  scan_interval_seconds: number | null;
-  news_candle_method: NewsCandleMethod | null;
   enabled: boolean;
+  timeframe: string;
+  scan_interval_seconds: number;
+  watchlist_name: string | null;
+  conid: number | null;
+  symbol: string | null;
+  template_id: number | null;
+  ibkr_mirror_target: string | null;
+  conditions: TriggerCondition[];
   created_at: string;
   updated_at: string;
-}
+};
 
-export interface TriggerRuleCreate {
-  name: string;
-  conid: number;
-  symbol: string;
-  indicator: string;
-  condition: string;
-  threshold: number;
-  target_watchlist: string;
-  source_watchlist: string;
-  timeframe?: string;
-  auto_expire_days?: number | null;
-  scan_interval_seconds?: number | null;
-  news_candle_method?: NewsCandleMethod | null;
-}
+export type TriggerRuleCreate = Omit<TriggerRule, "id" | "created_at" | "updated_at">;
 
-/** Mirrors backend TriggerRuleUpdate — only updatable fields, all optional */
-export interface TriggerRuleUpdate {
-  name?: string;
-  indicator?: string;
-  condition?: string;
-  threshold?: number;
-  conid?: number;
-  symbol?: string;
-  timeframe?: string;
-  target_watchlist?: string;
-  source_watchlist?: string;
-  auto_expire_days?: number | null;
-  scan_interval_seconds?: number | null;
-  news_candle_method?: NewsCandleMethod | null;
-  enabled?: boolean;
-}
+export type TriggerRuleUpdate = Partial<TriggerRuleCreate>;
 
 export interface WatchlistConfig {
   name: string;
@@ -204,23 +180,46 @@ export interface WatchlistConfigUpdate {
   auto_expire_days: number | null;
 }
 
-export interface TriggerHit {
+export type TriggerConditionValue = {
+  indicator: string;
+  condition: string;
+  threshold: number | null;
+  actual_value: number;
+  news_candle_method?: string | null;
+};
+
+export type TriggerHit = {
   id: number;
   rule_id: number;
   rule_name: string | null;
   conid: number;
   symbol: string;
-  indicator: string;
-  condition: string;
-  threshold: number;
-  actual_value: number;
-  target_watchlist: string;
-  source_watchlist: string;
   triggered_at: string;
-  expires_at: string | null;
+  watchlist_name: string | null;
+  condition_values: TriggerConditionValue[];
+  dismissed_at: string | null;
+  snoozed_until: string | null;
+  source_watchlist: string | null;
+  target_watchlist: string | null;
   moved_back: boolean;
-  acknowledged: boolean;
-}
+  expires_at: string | null;
+};
+
+export type RuleTemplate = {
+  id: number;
+  name: string;
+  description: string | null;
+  category: string;
+  is_builtin: boolean;
+  default_timeframe: string;
+  conditions: TriggerCondition[];
+  created_at: string;
+};
+
+export type StockTagMap = Record<
+  number,
+  { rule_id: number; rule_name: string; indicators: string[]; fired_at: string }[]
+>;
 
 export interface IndicatorRequest {
   conid: number;
@@ -1057,6 +1056,12 @@ export const api = {
   getWatchlists: (signal?: AbortSignal) =>
     request<WatchlistInfo[]>("GET", "/watchlist/lists", undefined, signal),
 
+  createWatchlist: (name: string) =>
+    request<{ id: string; name: string }>("POST", "/watchlist/lists", { name }),
+
+  deleteWatchlist: (watchlistId: string) =>
+    request<void>("DELETE", `/watchlist/lists/${encodeURIComponent(watchlistId)}`),
+
   // Phase 8.9 / Commit C — split endpoints so the sidebar can render names
   // immediately and backfill prices on a slower second query.
   getWatchlistInstruments: (watchlistId: string, signal?: AbortSignal) =>
@@ -1101,14 +1106,54 @@ export const api = {
   createTriggerRule: (rule: TriggerRuleCreate) =>
     request<TriggerRule>("POST", "/triggers/rules", rule),
 
-  updateTriggerRule: (id: number, updates: TriggerRuleUpdate) =>
-    request<TriggerRule>("PATCH", `/triggers/rules/${id}`, updates),
+  updateTriggerRule: (id: number, patch: TriggerRuleUpdate) =>
+    request<TriggerRule>("PATCH", `/triggers/rules/${id}`, patch),
 
   deleteTriggerRule: (id: number) =>
     request<void>("DELETE", `/triggers/rules/${id}`),
 
-  getTriggerHits: (limit = 50) =>
-    request<TriggerHit[]>("GET", `/triggers/hits?limit=${limit}`),
+  getTriggerHits: (
+    opts: {
+      limit?: number;
+      status?: "active" | "dismissed" | "snoozed" | "all";
+      watchlist?: string;
+    } = {},
+  ) => {
+    const params = new URLSearchParams();
+    if (opts.limit != null) params.set("limit", String(opts.limit));
+    if (opts.status) params.set("status", opts.status);
+    if (opts.watchlist) params.set("watchlist", opts.watchlist);
+    const q = params.toString();
+    return request<TriggerHit[]>("GET", `/triggers/hits${q ? `?${q}` : ""}`);
+  },
+
+  dismissTriggerHit: (id: number) =>
+    request<void>("POST", `/triggers/hits/${id}/dismiss`),
+
+  snoozeTriggerHit: (id: number, duration_minutes: number) =>
+    request<void>("POST", `/triggers/hits/${id}/snooze`, { duration_minutes }),
+
+  getStockTags: (conids: number[], signal?: AbortSignal) =>
+    request<StockTagMap>(
+      "GET",
+      `/triggers/tags?conids=${conids.join(",")}`,
+      undefined,
+      signal,
+    ),
+
+  getRuleTemplates: () =>
+    request<RuleTemplate[]>("GET", "/triggers/templates"),
+
+  createRuleTemplate: (tpl: {
+    name: string;
+    description?: string | null;
+    category?: string;
+    default_timeframe?: string;
+    conditions: TriggerCondition[];
+  }) => request<RuleTemplate>("POST", "/triggers/templates", tpl),
+
+  deleteRuleTemplate: (id: number) =>
+    request<void>("DELETE", `/triggers/templates/${id}`),
 
   // Watchlist Config (Phase 6.8) — per-target-watchlist expiry override
   getWatchlistConfigs: () =>

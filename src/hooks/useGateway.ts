@@ -89,6 +89,8 @@ interface ActionFeedback {
 interface UseGatewayReturn {
   /** Current Gateway state from the backend */
   status: GatewayStatusResponse | null;
+  /** Is the first /gateway/status probe still in flight? */
+  isLoading: boolean;
   /** Is the Gateway running and healthy? */
   isRunning: boolean;
   /** Is the IBKR session fully authenticated? */
@@ -178,6 +180,10 @@ export function useGateway(): UseGatewayReturn {
   });
 
   const status = query.data ?? null;
+  // First-probe loading — true only until initial /gateway/status resolves.
+  // Background polls don't flip this back to true (we use `isPending` semantics
+  // — i.e. there's no data yet — rather than `isFetching`).
+  const isLoading = query.isLoading;
   const isProvisioning = status ? PROVISIONING_STATES.includes(status.state) : false;
   const isRunning = status?.running ?? false;
   const isAuthenticated = status?.authenticated ?? false;
@@ -359,6 +365,7 @@ export function useGateway(): UseGatewayReturn {
 
   return {
     status,
+    isLoading,
     isRunning,
     isAuthenticated,
     needsLogin,

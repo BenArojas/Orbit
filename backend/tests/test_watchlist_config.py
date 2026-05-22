@@ -181,53 +181,54 @@ async def test_resolve_expire_days_uses_watchlist_override():
         "name": "Fast Setups", "auto_expire_days": 2, "updated_at": "x",
     })
     scanner = make_scanner(db=db)
-    rule = {"target_watchlist": "Fast Setups", "auto_expire_days": 30}
+    rule = {"ibkr_mirror_target": "Fast Setups"}
     days = await scanner._resolve_expire_days(rule)
     assert days == 2
 
 
 @pytest.mark.asyncio
-async def test_resolve_expire_days_null_override_beats_rule():
+async def test_resolve_expire_days_null_override_means_no_expiry():
     # watchlist_config row with NULL explicitly disables auto-expire for this target.
     db = MagicMock()
     db.get_watchlist_config = AsyncMock(return_value={
         "name": "Manual", "auto_expire_days": None, "updated_at": "x",
     })
     scanner = make_scanner(db=db)
-    rule = {"target_watchlist": "Manual", "auto_expire_days": 30}
+    rule = {"ibkr_mirror_target": "Manual"}
     days = await scanner._resolve_expire_days(rule)
     assert days is None
 
 
 @pytest.mark.asyncio
-async def test_resolve_expire_days_falls_back_to_rule_when_no_row():
+async def test_resolve_expire_days_no_row_returns_none():
+    """Under the new schema there is no rule-level fallback — no row ⇒ no expiry."""
     db = MagicMock()
     db.get_watchlist_config = AsyncMock(return_value=None)
     scanner = make_scanner(db=db)
-    rule = {"target_watchlist": "Unknown", "auto_expire_days": 30}
+    rule = {"ibkr_mirror_target": "Unknown"}
     days = await scanner._resolve_expire_days(rule)
-    assert days == 30
+    assert days is None
 
 
 @pytest.mark.asyncio
-async def test_resolve_expire_days_no_target_skips_lookup():
+async def test_resolve_expire_days_no_mirror_target_skips_lookup():
     db = MagicMock()
     db.get_watchlist_config = AsyncMock(return_value=None)
     scanner = make_scanner(db=db)
-    rule = {"auto_expire_days": 5}
+    rule = {"ibkr_mirror_target": None}
     days = await scanner._resolve_expire_days(rule)
-    assert days == 5
+    assert days is None
     db.get_watchlist_config.assert_not_awaited()
 
 
 @pytest.mark.asyncio
-async def test_resolve_expire_days_lookup_error_falls_back_to_rule():
+async def test_resolve_expire_days_lookup_error_returns_none():
     db = MagicMock()
     db.get_watchlist_config = AsyncMock(side_effect=sqlite3.OperationalError("boom"))
     scanner = make_scanner(db=db)
-    rule = {"target_watchlist": "Explode", "auto_expire_days": 15}
+    rule = {"ibkr_mirror_target": "Explode"}
     days = await scanner._resolve_expire_days(rule)
-    assert days == 15
+    assert days is None
 
 
 # ── Scanner: auto-return expired hits ──────────────────────────

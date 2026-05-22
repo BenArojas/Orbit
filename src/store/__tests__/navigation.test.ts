@@ -1,5 +1,6 @@
 /**
- * Tests for navigation store — navigateToAnalysis sets both conid and symbol.
+ * Tests for navigation store — navigateToAnalysis sets both conid and symbol,
+ * and navigate() switches the active screen.
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -17,7 +18,7 @@ vi.mock("../chart", () => ({
 
 describe("useNavigationStore.navigateToAnalysis", () => {
   beforeEach(() => {
-    useNavigationStore.setState({ activeScreen: "dashboard" });
+    useNavigationStore.setState({ activeScreen: "today" });
   });
 
   it("switches screen to analysis", async () => {
@@ -56,5 +57,13 @@ describe("useNavigationStore.navigateToAnalysis", () => {
     await Promise.resolve();
 
     expect(mockState.setActiveSymbol).not.toHaveBeenCalled();
+  });
+});
+
+describe("useNavigationStore.navigate", () => {
+  it("switches the active screen", () => {
+    useNavigationStore.setState({ activeScreen: "today" });
+    useNavigationStore.getState().navigate("market");
+    expect(useNavigationStore.getState().activeScreen).toBe("market");
   });
 });

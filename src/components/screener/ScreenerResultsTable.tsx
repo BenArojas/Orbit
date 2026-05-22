@@ -32,13 +32,15 @@ import {
   TableHead,
   TableCell,
 } from "@/components/ui/table";
-import type { ScreenerResultRow } from "@/lib/api";
+import type { ScreenerResultRow, StockTagMap } from "@/lib/api";
 import {
   useScreenerStore,
   SCREENER_PAGE_SIZE,
   type SortDir,
 } from "@/store/screener";
 import { TableSkeleton } from "./ScreenerSkeleton";
+import { useStockTags } from "@/hooks/useStockTags";
+import { StockTagDots } from "@/components/tags/StockTagDots";
 
 /** The IBKR /iserver/scanner/run cap we ask for per call. If we got exactly
  *  this many rows back, IBKR likely has more to give us. */
@@ -297,6 +299,10 @@ export default function ScreenerResultsTable() {
     return sorted.slice(start, start + SCREENER_PAGE_SIZE);
   }, [results, sortBy, sortDir, page]);
 
+  // Tag dots for visible page (shows which results are firing watchlist rules)
+  const tagConids = pageRows.map((r) => r.conid);
+  const { data: stockTags } = useStockTags(tagConids);
+
   const handleSort = (col: string) => {
     if (sortBy !== col) {
       // First click on a new column → desc
@@ -357,11 +363,22 @@ export default function ScreenerResultsTable() {
                 {COLUMNS.map((col) => (
                   <TableCell
                     key={col.key}
+                    data-testid={col.key === "symbol" ? "screener-tag-cell" : undefined}
                     className={`px-3 py-2 font-data text-[11px] ${
                       col.align === "right" ? "text-right" : ""
                     }`}
                   >
-                    {col.render(row)}
+                    {col.key === "symbol" ? (
+                      <span className="inline-flex items-center gap-1.5">
+                        {col.render(row)}
+                        <StockTagDots
+                          tags={(stockTags as StockTagMap | undefined)?.[row.conid] ?? []}
+                          max={3}
+                        />
+                      </span>
+                    ) : (
+                      col.render(row)
+                    )}
                   </TableCell>
                 ))}
               </TableRow>
