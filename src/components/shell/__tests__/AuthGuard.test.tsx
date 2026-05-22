@@ -19,10 +19,7 @@ const setup = (gateway: Partial<ReturnType<typeof useGateway>>) => {
 
 describe("AuthGuard", () => {
   beforeEach(() => {
-    useNavigationStore.setState({
-      activeScreen: "today",
-      previousAuthenticatedTab: "today",
-    });
+    useNavigationStore.setState({ activeScreen: "today" });
   });
 
   it("renders a spinner while gateway status is loading", () => {
@@ -38,14 +35,11 @@ describe("AuthGuard", () => {
     expect(useNavigationStore.getState().activeScreen).toBe("connection");
   });
 
-  it("restores previousAuthenticatedTab when re-authenticating from connection", () => {
-    useNavigationStore.setState({
-      activeScreen: "connection",
-      previousAuthenticatedTab: "screener",
-    });
+  it("lands on Today when re-authenticating from connection", () => {
+    useNavigationStore.setState({ activeScreen: "connection" });
     setup({ isAuthenticated: true, isLoading: false });
     render(<AuthGuard><div>protected</div></AuthGuard>);
-    expect(useNavigationStore.getState().activeScreen).toBe("screener");
+    expect(useNavigationStore.getState().activeScreen).toBe("today");
   });
 
   it("renders children when authenticated and not on connection", () => {

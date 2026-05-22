@@ -28,7 +28,7 @@ import {
 import { useSidecar } from "@/hooks/useSidecar";
 import { useWebSocket } from "@/hooks/useWebSocket";
 import { useTriggerAlerts } from "@/hooks/useTriggerAlerts";
-import { GatewayProvider } from "@/context/GatewayContext";
+import { GatewayProvider, useGatewayContext } from "@/context/GatewayContext";
 import { IbkrReconnectBanner } from "@/components/gateway/IbkrReconnectBanner";
 import { HealthStrip } from "@/components/ui/HealthStrip";
 import { ThemeToggle } from "@/components/ui/ThemeToggle";
@@ -181,6 +181,27 @@ function ConnectionStatus() {
 }
 
 /**
+ * NavLogoutButton — soft IBKR logout, shown in the navbar only while
+ * authenticated. Drops the IBKR session (JVM stays up); AuthGuard then
+ * routes back to the Connection screen.
+ */
+function NavLogoutButton() {
+  const { isAuthenticated, logout, actionLoading } = useGatewayContext();
+  if (!isAuthenticated) return null;
+  return (
+    <button
+      type="button"
+      onClick={logout}
+      disabled={actionLoading}
+      title="Log out of IBKR (gateway stays running)"
+      className="rounded-md border border-border px-2.5 py-[3px] text-[10px] font-medium text-[var(--text-3)] transition-colors hover:border-[var(--clr-red)] hover:text-[var(--clr-red)] disabled:cursor-not-allowed disabled:opacity-40"
+    >
+      {actionLoading ? "…" : "Logout"}
+    </button>
+  );
+}
+
+/**
  * AppShell — renders nav, reconnect banner, and active page.
  * Must be a child of GatewayProvider so it can read gateway context.
  */
@@ -217,9 +238,10 @@ function AppShell() {
           ))}
         </div>
 
-        {/* Connection status + theme toggle (top-right) */}
+        {/* Connection status + logout + theme toggle (top-right) */}
         <div className="flex items-center gap-3">
           <ConnectionStatus />
+          <NavLogoutButton />
           <ThemeToggle />
         </div>
       </nav>

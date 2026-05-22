@@ -122,7 +122,7 @@ function cardStyle(
 
 // ── Main component ─────────────────────────────────────────────
 
-export function GatewaySetup() {
+export function GatewaySetup({ hideLogout = false }: { hideLogout?: boolean } = {}) {
   const {
     status,
     isAuthenticated,
@@ -312,17 +312,23 @@ export function GatewaySetup() {
             {/* R1 — soft logout: POST IBKR /v1/api/logout. Drops the IBKR
                 session in ~1 s without touching the JVM.  First reach
                 whenever the session feels wedged (dispatcher loops,
-                stuck "Authenticating…", etc.). */}
-            <button
-              type="button"
-              onClick={logout}
-              disabled={actionLoading}
-              className="inline-flex cursor-pointer items-center gap-1.5 text-[10px] text-[var(--text-3)] underline-offset-2 hover:text-[var(--text-1)] hover:underline disabled:opacity-40 disabled:cursor-not-allowed"
-              title="Drop the IBKR session without restarting Java"
-            >
-              {actionLoading && <Spinner tone="fg" />}
-              {actionLoading ? "Logging out…" : "Logout"}
-            </button>
+                stuck "Authenticating…", etc.).
+
+                Hidden on the pre-auth Connection page (hideLogout) — there's
+                no session to drop there, and the primary Logout affordance
+                lives in the navbar once you're in. */}
+            {!hideLogout && (
+              <button
+                type="button"
+                onClick={logout}
+                disabled={actionLoading}
+                className="inline-flex cursor-pointer items-center gap-1.5 text-[10px] text-[var(--text-3)] underline-offset-2 hover:text-[var(--text-1)] hover:underline disabled:opacity-40 disabled:cursor-not-allowed"
+                title="Drop the IBKR session without restarting Java"
+              >
+                {actionLoading && <Spinner tone="fg" />}
+                {actionLoading ? "Logging out…" : "Logout"}
+              </button>
+            )}
 
             {/* R2 — kill the JVM and respawn.  Use when Logout doesn't
                 fix it — Java itself is wedged or the gateway is unreachable

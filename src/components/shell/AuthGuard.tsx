@@ -16,9 +16,6 @@ interface Props {
 export function AuthGuard({ children }: Props) {
   const { isAuthenticated, isLoading } = useGateway();
   const activeScreen = useNavigationStore((s) => s.activeScreen);
-  const previousAuthenticatedTab = useNavigationStore(
-    (s) => s.previousAuthenticatedTab,
-  );
 
   // This effect mutates store state it depends on. That's intentional: the
   // guards become false after the first write, so subsequent runs no-op.
@@ -27,13 +24,10 @@ export function AuthGuard({ children }: Props) {
     if (!isAuthenticated && activeScreen !== "connection") {
       useNavigationStore.setState({ activeScreen: "connection" });
     } else if (isAuthenticated && activeScreen === "connection") {
-      const restore =
-        previousAuthenticatedTab === "connection"
-          ? "today"
-          : previousAuthenticatedTab;
-      useNavigationStore.setState({ activeScreen: restore });
+      // Always land on Today after authenticating — it's the cockpit.
+      useNavigationStore.setState({ activeScreen: "today" });
     }
-  }, [isAuthenticated, isLoading, activeScreen, previousAuthenticatedTab]);
+  }, [isAuthenticated, isLoading, activeScreen]);
 
   if (isLoading) {
     return (

@@ -55,39 +55,74 @@ export function TodayRulesPanel() {
           No rules yet. Add one to start scanning.
         </div>
       ) : (
-        (rules ?? []).map((r) => (
-          <div
-            key={r.id}
-            className="group flex items-center gap-2 px-2 py-1 hover:bg-[var(--bg-3)]"
-          >
-            <button
-              type="button"
-              aria-label={r.enabled ? "Disable rule" : "Enable rule"}
-              onClick={() => toggle.mutate({ id: r.id, enabled: !r.enabled })}
-              className="h-2 w-2 rounded-full"
-              style={{
-                backgroundColor: r.enabled
-                  ? "var(--clr-green)"
-                  : "var(--text-3)",
-                boxShadow: r.enabled ? "0 0 6px var(--clr-green)" : undefined,
-              }}
-            />
-            <span className="min-w-0 flex-1 truncate text-[10px] text-[var(--text-2)]">
-              {r.name}
-            </span>
-            <span className="font-data text-[9px] text-[var(--text-3)]">
-              {hitsByRule.get(r.id) ?? 0}
-            </span>
-            <button
-              type="button"
-              aria-label="Delete rule"
-              onClick={() => remove.mutate(r.id)}
-              className="hidden text-[10px] text-[var(--text-3)] hover:text-[var(--clr-red)] group-hover:block"
+        (rules ?? []).map((r) => {
+          const scope = r.watchlist_name
+            ? r.watchlist_name
+            : r.symbol ?? "—";
+          const condSummary = r.conditions
+            .map((c) => c.indicator)
+            .join(" + ");
+          return (
+            <div
+              key={r.id}
+              className="group flex items-center gap-2 px-2 py-1 hover:bg-[var(--bg-3)]"
             >
-              ×
-            </button>
-          </div>
-        ))
+              <button
+                type="button"
+                aria-label={r.enabled ? "Disable rule" : "Enable rule"}
+                onClick={() => toggle.mutate({ id: r.id, enabled: !r.enabled })}
+                className="h-2 w-2 shrink-0 rounded-full"
+                style={{
+                  backgroundColor: r.enabled
+                    ? "var(--clr-green)"
+                    : "var(--text-3)",
+                  boxShadow: r.enabled ? "0 0 6px var(--clr-green)" : undefined,
+                }}
+              />
+              {/* Click the rule body to open the editor pre-filled */}
+              <RuleModal
+                initial={{
+                  id: r.id,
+                  name: r.name,
+                  enabled: r.enabled,
+                  timeframe: r.timeframe,
+                  scan_interval_seconds: r.scan_interval_seconds,
+                  watchlist_name: r.watchlist_name,
+                  conid: r.conid,
+                  symbol: r.symbol,
+                  template_id: r.template_id,
+                  ibkr_mirror_target: r.ibkr_mirror_target,
+                  conditions: r.conditions,
+                }}
+                trigger={
+                  <button
+                    type="button"
+                    className="min-w-0 flex-1 text-left"
+                    title={`${condSummary} · ${scope}`}
+                  >
+                    <span className="block truncate text-[10px] text-[var(--text-2)]">
+                      {r.name}
+                    </span>
+                    <span className="block truncate text-[8.5px] text-[var(--text-3)]">
+                      {condSummary} · {scope}
+                    </span>
+                  </button>
+                }
+              />
+              <span className="shrink-0 font-data text-[9px] text-[var(--text-3)]">
+                {hitsByRule.get(r.id) ?? 0}
+              </span>
+              <button
+                type="button"
+                aria-label="Delete rule"
+                onClick={() => remove.mutate(r.id)}
+                className="hidden shrink-0 text-[10px] text-[var(--text-3)] hover:text-[var(--clr-red)] group-hover:block"
+              >
+                ×
+              </button>
+            </div>
+          );
+        })
       )}
     </div>
   );
