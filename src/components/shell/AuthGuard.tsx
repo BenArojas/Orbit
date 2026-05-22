@@ -11,7 +11,7 @@ interface Props {
  * Gates rendering on IBKR auth state.
  * - Loading first auth probe -> spinner
  * - Unauthenticated -> force activeScreen='connection'
- * - Authenticated and stuck on 'connection' -> restore previousAuthenticatedTab
+ * - Authenticated and stuck on 'connection' -> route to Today (the cockpit)
  */
 export function AuthGuard({ children }: Props) {
   const { isAuthenticated, isLoading } = useGateway();
