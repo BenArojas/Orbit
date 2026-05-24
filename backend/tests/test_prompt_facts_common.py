@@ -4,6 +4,9 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
+from services.prompt_facts._common import (
+    is_near, is_rising_n, is_falling_n, recent_cross, percentile_rank,
+)
 from services.prompt_facts.types import PromptFact, PromptContextBlock
 
 
@@ -47,11 +50,6 @@ def test_promptcontextblock_holds_facts_and_metadata():
     assert block.tf_weight == 3
     assert block.last_close == 215.40
     assert block.chart_context is None
-
-
-from services.prompt_facts._common import (
-    is_near, is_rising_n, is_falling_n, recent_cross, percentile_rank,
-)
 
 
 class TestIsNear:
@@ -120,11 +118,11 @@ class TestRecentCross:
 
 class TestPercentileRank:
     def test_returns_0_when_lowest(self):
-        assert percentile_rank(1.0, history=[1, 2, 3, 4, 5]) == pytest.approx(0.0, abs=0.05)
+        assert percentile_rank(1.0, history=[1, 2, 3, 4, 5]) == 0.0
 
     def test_returns_high_when_top(self):
-        assert percentile_rank(5.0, history=[1, 2, 3, 4, 5]) >= 0.8
+        assert percentile_rank(5.0, history=[1, 2, 3, 4, 5]) == 0.8
 
     def test_respects_lookback(self):
         # only last 3 entries counted; current value 0.5 → lowest of [3,4,5]
-        assert percentile_rank(0.5, history=[1, 2, 3, 4, 5], lookback=3) == pytest.approx(0.0, abs=0.05)
+        assert percentile_rank(0.5, history=[1, 2, 3, 4, 5], lookback=3) == 0.0

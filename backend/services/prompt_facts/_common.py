@@ -91,16 +91,23 @@ def recent_cross(
 ) -> tuple[bool, int]:
     """Did `values_a` cross `values_b` within the timeframe's recency window?
 
+    Both input series must have the same length (aligned to the same candle
+    stream). Raises ValueError otherwise.
+
     Returns (True, bars_ago) on cross, (False, -1) otherwise.
     bars_ago counts back from the most recent bar (most recent bar is 0).
     """
+    if len(values_a) != len(values_b):
+        raise ValueError(
+            f"recent_cross requires equal-length inputs, "
+            f"got len(values_a)={len(values_a)} and len(values_b)={len(values_b)}"
+        )
     window = _RECENCY_WINDOWS.get(timeframe, 5)
-    # Align lengths and clean Nones
-    n = min(len(values_a), len(values_b))
+    n = len(values_a)
     if n < 2:
         return False, -1
-    a = values_a[-n:]
-    b = values_b[-n:]
+    a = values_a
+    b = values_b
     start = max(1, n - window)
     for i in range(n - 1, start - 1, -1):
         a_now, a_prev = a[i], a[i - 1]
@@ -123,8 +130,9 @@ def percentile_rank(
 ) -> float:
     """Percentile of `value` against the last `lookback` non-None entries.
 
-    Returns a float in [0, 1]. 0.0 means value is at or below the minimum;
-    1.0 means value is at or above the maximum.
+    Returns a float in [0, 1). The value is the fraction of `history` entries
+    strictly less than `value`. The maximum of the history yields `(len-1)/len`,
+    not 1.0.
     """
     clean = _clean(history)
     if not clean:
