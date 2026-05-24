@@ -87,6 +87,22 @@ def _gp_prices(norm: _Norm) -> dict[float, float]:
     return out
 
 
+def _extension_prices(norm: _Norm) -> dict[float, float]:
+    """Compute target extension prices in the trend direction.
+
+    Up: swing_high + span * (ratio - 1.0)
+    Down: swing_low - span * (ratio - 1.0)
+    """
+    out: dict[float, float] = {}
+    span = norm.swing_high - norm.swing_low
+    for ratio in _TARGET_EXTENSIONS:
+        if norm.direction == "up":
+            out[ratio] = norm.swing_high + span * (ratio - 1.0)
+        else:
+            out[ratio] = norm.swing_low - span * (ratio - 1.0)
+    return out
+
+
 def _make_fact(*, tf, condition, text, polarity, strength, priority, data) -> PromptFact:
     return PromptFact(
         id=f"{tf}.fibonacci.{condition}",
@@ -231,6 +247,18 @@ def build_facts(
 
 
 def _finalize(facts: list[PromptFact], norm: _Norm, timeframe: str) -> list[PromptFact]:
+    ext_prices = _extension_prices(norm)
+    ext_polarity = "bullish" if norm.direction == "up" else "bearish"
+    direction_word = "above" if norm.direction == "up" else "below"
+    for ratio, suffix in _TARGET_EXTENSIONS.items():
+        price = ext_prices[ratio]
+        facts.append(_make_fact(
+            tf=timeframe, condition=f"target_extension_{suffix}",
+            text=f"Extension target {ratio:g}: ${price:.2f} ({direction_word} the swing).",
+            polarity=ext_polarity, strength=45, priority=50,
+            data={"price": price, "ratio": ratio},
+        ))
+
     if norm.is_nested:
         facts.append(_make_fact(
             tf=timeframe, condition="nested_inside_parent",

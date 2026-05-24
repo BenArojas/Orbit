@@ -156,3 +156,48 @@ class TestGuards:
     def test_returns_empty_when_swings_degenerate(self):
         fib = _fib_result(swing_low=100.0, swing_high=100.0)
         assert build_facts(fib, last_close=100.0, atr=1.0, timeframe="D") == []
+
+
+class TestTargetExtensions:
+    """When the builder reports a position relative to the swing, it should
+    also surface the closest target_extension levels so the LLM has concrete
+    upside/downside targets in extension territory."""
+
+    def test_inside_swing_emits_target_extension_above(self):
+        fib = _fib_result(direction="up", swing_low=100.0, swing_high=200.0)
+        facts = build_facts(fib, last_close=160.0, atr=2.0, timeframe="D")
+        ids = {f.id for f in facts}
+        assert "D.fibonacci.target_extension_1272" in ids
+        assert "D.fibonacci.target_extension_1500" in ids
+        assert "D.fibonacci.target_extension_1618" in ids
+        ext = next(f for f in facts if f.id == "D.fibonacci.target_extension_1272")
+        assert abs(ext.data["price"] - 227.2) < 0.01
+        assert ext.data["ratio"] == 1.272
+
+    def test_extension_territory_emits_target_extension_above(self):
+        fib = _fib_result(direction="up", swing_low=145.20, swing_high=210.50)
+        facts = build_facts(fib, last_close=215.40, atr=4.10, timeframe="D")
+        ids = {f.id for f in facts}
+        assert "D.fibonacci.target_extension_1272" in ids
+        assert "D.fibonacci.target_extension_1500" in ids
+        assert "D.fibonacci.target_extension_1618" in ids
+
+    def test_down_swing_emits_target_extension_below(self):
+        fib = _fib_result(direction="down", swing_low=120.0, swing_high=200.0)
+        facts = build_facts(fib, last_close=150.0, atr=2.0, timeframe="D")
+        ids = {f.id for f in facts}
+        assert "D.fibonacci.target_extension_1272" in ids
+        ext = next(f for f in facts if f.id == "D.fibonacci.target_extension_1272")
+        # span=80, extension price = 120 - 80*(1.272-1) = 120 - 21.76 = 98.24
+        assert abs(ext.data["price"] - 98.24) < 0.05
+
+    def test_extension_polarity_matches_direction(self):
+        fib_up = _fib_result(direction="up", swing_low=100.0, swing_high=200.0)
+        facts_up = build_facts(fib_up, last_close=160.0, atr=2.0, timeframe="D")
+        ext_up = next(f for f in facts_up if f.id == "D.fibonacci.target_extension_1272")
+        assert ext_up.polarity == "bullish"
+
+        fib_down = _fib_result(direction="down", swing_low=120.0, swing_high=200.0)
+        facts_down = build_facts(fib_down, last_close=150.0, atr=2.0, timeframe="D")
+        ext_down = next(f for f in facts_down if f.id == "D.fibonacci.target_extension_1272")
+        assert ext_down.polarity == "bearish"
