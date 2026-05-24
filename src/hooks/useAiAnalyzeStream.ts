@@ -64,6 +64,9 @@ function buildFibSnapshots(): FibonacciSnapshot[] {
   return useChartStore
     .getState()
     .activeFibs
+    // Hidden fibs are off the chart, so they're off the analysis too —
+    // "what you see is what gets analyzed."
+    .filter((fib) => !fib.hidden)
     .map((fib, index) => ({
       source: fib.source,
       swing_high: fib.result.swing_high,

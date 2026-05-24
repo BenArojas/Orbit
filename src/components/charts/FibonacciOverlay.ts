@@ -145,6 +145,12 @@ function addLevelLine(
   opacity: number,
   labelSuffix: string,
 ): ISeriesApi<"Line"> | null {
+  // A level can project to a non-positive price — e.g. a deep DOWN
+  // extension (4.618) whose distance below the swing low exceeds the
+  // low itself. A line at $0 or below is meaningless for a price chart,
+  // so we skip it rather than drawing an impossible level.
+  if (!Number.isFinite(level.price) || level.price <= 0) return null;
+
   const isBoundary = level.level === 0 || level.level === 1.0;
   const isGP = level.golden_pocket;
 
@@ -172,8 +178,11 @@ function addLevelLine(
     lineWidth = 2;
     lineStyle = 0;
   } else if (kind === "extension") {
+    // Extensions stay dashed so they read as projections rather than
+    // entries, but at weight 2 (was 1) so the far target lines are
+    // legible instead of hairline-faint at a zoomed-out scale.
     color = palette.extension;
-    lineWidth = 1;
+    lineWidth = 2;
     lineStyle = 2; // dashed
   } else {
     // Non-GP retracement: weight + style now match GP.

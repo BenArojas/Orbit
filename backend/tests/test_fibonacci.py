@@ -587,6 +587,41 @@ class TestFibConfig:
         assert resp.status_code == 400
         assert "Missing factor name" in resp.json()["detail"]
 
+    @staticmethod
+    def _lock_payload(conid: int = 265598, **overrides):
+        payload = {
+            "conid": conid,
+            "timeframe": "1D",
+            "tool_type": "retracement",
+            "swing_high_price": 35.0,
+            "swing_high_time": 1700000000,
+            "swing_low_price": 20.0,
+            "swing_low_time": 1699500000,
+            "direction": "up",
+        }
+        payload.update(overrides)
+        return payload
+
+    def test_clear_locks_removes_all_for_conid(self):
+        client, _db = self._client_and_db()
+        client.post("/fibonacci/lock", json=self._lock_payload())
+        client.post("/fibonacci/lock", json=self._lock_payload(tool_type="extension"))
+        # Different instrument that must survive the clear.
+        client.post("/fibonacci/lock", json=self._lock_payload(conid=99999))
+
+        resp = client.delete("/fibonacci/locks/265598")
+        assert resp.status_code == 200
+        assert resp.json() == {"deleted": 2, "conid": 265598}
+
+        assert client.get("/fibonacci/locks/265598").json() == []
+        assert len(client.get("/fibonacci/locks/99999").json()) == 1
+
+    def test_clear_locks_on_empty_conid_returns_zero(self):
+        client, _db = self._client_and_db()
+        resp = client.delete("/fibonacci/locks/12345")
+        assert resp.status_code == 200
+        assert resp.json() == {"deleted": 0, "conid": 12345}
+
     def test_scoring_uses_passed_weights(self):
         """
         Pass two different weight sets directly to IndicatorService.compute()

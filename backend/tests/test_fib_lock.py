@@ -88,6 +88,31 @@ async def test_delete_nonexistent(db: DatabaseService):
 
 
 @pytest.mark.asyncio
+async def test_clear_all_for_conid(db: DatabaseService, sample_fib: dict):
+    """
+    delete_locked_fibs_for_conid removes every lock for the given conid
+    (across timeframes/tool_types) and leaves other instruments intact.
+    """
+    await db.save_locked_fib(**sample_fib)
+    await db.save_locked_fib(**{**sample_fib, "tool_type": "extension"})
+    await db.save_locked_fib(**{**sample_fib, "timeframe": "1W", "swing_high_time": 1700100000})
+    # A different instrument that must survive the clear.
+    await db.save_locked_fib(**{**sample_fib, "conid": 99999})
+
+    count = await db.delete_locked_fibs_for_conid(265598)
+    assert count == 3
+    assert await db.list_locked_fibs(265598) == []
+    assert len(await db.list_locked_fibs(99999)) == 1
+
+
+@pytest.mark.asyncio
+async def test_clear_all_for_conid_empty(db: DatabaseService):
+    """Clearing an instrument with no locks returns 0, not an error."""
+    count = await db.delete_locked_fibs_for_conid(12345)
+    assert count == 0
+
+
+@pytest.mark.asyncio
 async def test_duplicate_lock_returns_existing(db: DatabaseService, sample_fib: dict):
     """
     Locking the exact same swing twice should not create a duplicate —

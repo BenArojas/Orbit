@@ -20,7 +20,12 @@ import { useMemo } from "react";
 
 import { useChartStore } from "@/store/chart";
 import { FIB_STACK_SOFT_CAP, FIB_STACK_HARD_CAP } from "@/store/chart";
-import { useLockedFibs, useLockFib, useUnlockFib } from "@/hooks/useLockedFibs";
+import {
+  useLockedFibs,
+  useLockFib,
+  useUnlockFib,
+  useClearLockedFibs,
+} from "@/hooks/useLockedFibs";
 import type { ActiveFib } from "@/store/chart";
 
 import FibScoreCard from "../FibScoreCard";
@@ -39,8 +44,10 @@ export default function FibStackPanel() {
   // Keep the lock list query mounted so its side-effect (merging
   // locked fibs into activeFibs) stays alive.
   useLockedFibs(conid);
+  const toggleFibVisibility = useChartStore((s) => s.toggleFibVisibility);
   const lockMutation = useLockFib();
   const unlockMutation = useUnlockFib();
+  const clearMutation = useClearLockedFibs();
 
   const primary: ActiveFib | undefined = activeFibs[0]?.id === "primary"
     ? activeFibs[0]
@@ -50,7 +57,17 @@ export default function FibStackPanel() {
     [activeFibs],
   );
 
+  // Total stored fibs drives the lock caps (hidden fibs still occupy a
+  // slot on the server). The header label, though, reports how many are
+  // actually painted on the chart right now — hidden ones don't count.
   const count = activeFibs.length;
+  const visibleCount = useMemo(
+    () =>
+      activeFibs.filter((f) =>
+        f.source === "locked" ? !f.hidden : !f.result.no_active_fib,
+      ).length,
+    [activeFibs],
+  );
   const atSoftCap = count >= FIB_STACK_SOFT_CAP;
   const atHardCap = count >= FIB_STACK_HARD_CAP;
 
@@ -73,6 +90,15 @@ export default function FibStackPanel() {
   const handleUnlock = (fib: ActiveFib) => {
     if (!conid || fib.lockId == null) return;
     unlockMutation.mutate({ id: fib.lockId, conid });
+  };
+
+  const handleClearAll = () => {
+    if (conid == null) return;
+    clearMutation.mutate(conid);
+  };
+
+  const handleToggleVisibility = (fib: ActiveFib) => {
+    toggleFibVisibility(fib.id);
   };
 
   // Nothing to render when no fibs are active and no primary is
@@ -107,7 +133,7 @@ export default function FibStackPanel() {
                 : undefined
             }
           >
-            Fibs on chart: {count}
+            Fibs on chart: {visibleCount}
           </span>
           {atSoftCap && (
             <span
@@ -154,12 +180,28 @@ export default function FibStackPanel() {
           data-testid="fib-locked-list"
           className="flex flex-col gap-1.5"
         >
+          <div className="flex items-center justify-between px-1">
+            <span className="font-data text-[10px] uppercase tracking-wider text-[var(--text-3)]">
+              Locked ({locked.length})
+            </span>
+            <button
+              type="button"
+              onClick={handleClearAll}
+              disabled={clearMutation.isPending}
+              data-testid="fib-clear-all-button"
+              title="Remove every locked fib for this instrument"
+              className="rounded border border-transparent px-1.5 py-0.5 font-data text-[10px] text-[var(--text-3)] transition-colors hover:border-[var(--clr-red)] hover:text-[var(--clr-red)] disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              {clearMutation.isPending ? "Clearing…" : "Clear all"}
+            </button>
+          </div>
           {locked.map((fib, i) => (
             <FibLockedCard
               key={fib.id}
               fib={fib}
               index={i + 1}
               onDelete={handleUnlock}
+              onToggleVisibility={handleToggleVisibility}
               isDeleting={unlockMutation.isPending}
             />
           ))}

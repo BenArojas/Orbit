@@ -169,17 +169,61 @@ export function useLockFib() {
   const clearDisplayedFib = useChartStore((s) => s.clearDisplayedFib);
   return useMutation({
     mutationFn: (req: LockFibonacciRequest) => api.lockFibonacci(req),
-    onSuccess: (data, req) => {
-      // Optimistic cache write — append the just-locked fib so the
-      // merge effect sees it without a round-trip.
+    // Synchronous optimistic write. `onMutate` runs the instant `mutate()`
+    // is called — before the network request — so the just-drawn fib lands
+    // in the lockedFibs cache (and from there into the chart store's
+    // activeFibs via the merge effect) immediately.
+    //
+    // This closes a race: drawing a fib also toggles the `fibonacci`
+    // indicator on, which triggers a chart-data refetch. If that refetch's
+    // `no_active_fib: true` result arrived before the lock POST resolved,
+    // AnalysisPage's guard would still see zero locked fibs and wrongly
+    // toast + untoggle the indicator — hiding the fib the user just drew.
+    // Optimistic insertion guarantees the locked fib is present before any
+    // network response can win that race.
+    onMutate: async (req) => {
+      await qc.cancelQueries({ queryKey: lockedFibsKey(req.conid) });
+      const previous = qc.getQueryData<LockedFibonacciResponse[]>(
+        lockedFibsKey(req.conid),
+      );
+      // Negative id can't collide with a real (positive) SQLite row id.
+      const tempId = -Date.now();
+      const optimistic: LockedFibonacciResponse = {
+        id: tempId,
+        conid: req.conid,
+        timeframe: req.timeframe,
+        tool_type: req.tool_type,
+        swing_high_price: req.swing_high_price,
+        swing_high_time: req.swing_high_time,
+        swing_low_price: req.swing_low_price,
+        swing_low_time: req.swing_low_time,
+        direction: req.direction,
+        user_note: req.user_note ?? null,
+        locked_at: new Date().toISOString(),
+      };
+      qc.setQueryData<LockedFibonacciResponse[]>(
+        lockedFibsKey(req.conid),
+        (prev) => (prev ? [...prev, optimistic] : [optimistic]),
+      );
+      return { previous, tempId };
+    },
+    onError: (_err, req, ctx) => {
+      // Roll back to the snapshot taken in onMutate so a failed lock
+      // doesn't leave a phantom fib on the chart.
+      if (ctx?.previous !== undefined) {
+        qc.setQueryData(lockedFibsKey(req.conid), ctx.previous);
+      }
+    },
+    onSuccess: (data, req, ctx) => {
+      // Swap the optimistic placeholder for the server's real row.
       qc.setQueryData<LockedFibonacciResponse[]>(
         lockedFibsKey(req.conid),
         (prev) => {
-          if (!prev) return [data];
-          // Dedupe by id in case the server returned the same lock id
-          // we already have (idempotent POST).
-          if (prev.some((l) => l.id === data.id)) return prev;
-          return [...prev, data];
+          const withoutTemp = (prev ?? []).filter((l) => l.id !== ctx?.tempId);
+          // Dedupe by id in case the idempotent POST returned an id we
+          // already have.
+          if (withoutTemp.some((l) => l.id === data.id)) return withoutTemp;
+          return [...withoutTemp, data];
         },
       );
       clearDisplayedFib();
@@ -197,6 +241,21 @@ export function useLockFib() {
  * re-add the just-removed lock from the still-stale cache before the
  * refetch could complete.
  */
+export function useClearLockedFibs() {
+  const qc = useQueryClient();
+  const replaceLockedFibs = useChartStore((s) => s.replaceLockedFibs);
+  return useMutation({
+    mutationFn: (conid: number) => api.clearLockedFibs(conid),
+    onSuccess: (_data, conid) => {
+      // Optimistic: empty the cached list and drop every locked entry
+      // from the store so the chart re-paints with just the primary.
+      qc.setQueryData<LockedFibonacciResponse[]>(lockedFibsKey(conid), []);
+      replaceLockedFibs([]);
+      qc.invalidateQueries({ queryKey: lockedFibsKey(conid) });
+    },
+  });
+}
+
 export function useUnlockFib() {
   const qc = useQueryClient();
   const removeActiveFib = useChartStore((s) => s.removeActiveFib);

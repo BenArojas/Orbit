@@ -21,6 +21,7 @@ interface FibLockedCardProps {
   fib: ActiveFib;
   index: number;            // 1-based position among LOCKED fibs (for "L1", "L2"...)
   onDelete: (fib: ActiveFib) => void;
+  onToggleVisibility: (fib: ActiveFib) => void;
   isDeleting?: boolean;
 }
 
@@ -28,6 +29,7 @@ export default function FibLockedCard({
   fib,
   index,
   onDelete,
+  onToggleVisibility,
   isDeleting = false,
 }: FibLockedCardProps) {
   const palette = FIB_COLOR_PALETTE[fib.colorIndex] ?? FIB_COLOR_PALETTE[0];
@@ -35,7 +37,10 @@ export default function FibLockedCard({
   return (
     <div
       data-testid={`fib-locked-card-${fib.lockId ?? fib.id}`}
-      className="flex items-center gap-2 rounded border border-[var(--border)] bg-[var(--bg-0)] px-2 py-1.5"
+      data-hidden={fib.hidden ? "true" : "false"}
+      className={`flex items-center gap-2 rounded border border-[var(--border)] bg-[var(--bg-0)] px-2 py-1.5 ${
+        fib.hidden ? "opacity-45" : ""
+      }`}
     >
       {/* Color swatch — matches the chart palette */}
       <span
@@ -55,6 +60,21 @@ export default function FibLockedCard({
           ${fib.result.swing_low.toFixed(2)}→${fib.result.swing_high.toFixed(2)}
         </span>
       </div>
+
+      {/* Show/hide toggle — keeps the fib in the list but off the chart */}
+      <button
+        type="button"
+        onClick={() => onToggleVisibility(fib)}
+        data-testid={`fib-locked-visibility-${fib.lockId ?? fib.id}`}
+        title={fib.hidden ? "Show on chart" : "Hide from chart"}
+        aria-label={
+          fib.hidden ? `Show locked fib L${index}` : `Hide locked fib L${index}`
+        }
+        aria-pressed={!fib.hidden}
+        className="rounded border border-transparent px-1 py-0.5 font-data text-[11px] leading-none text-[var(--text-3)] transition-colors hover:border-[var(--clr-cyan)] hover:text-[var(--clr-cyan)]"
+      >
+        {fib.hidden ? "🚫" : "👁"}
+      </button>
 
       {/* Delete button */}
       <button

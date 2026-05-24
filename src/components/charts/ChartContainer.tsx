@@ -420,28 +420,23 @@ export default function ChartContainer({
     removeFibonacciOverlay(chart, fibOverlayRef.current);
     fibOverlayRef.current = [];
 
-    if (!activeIndicators.has("fibonacci") || candles.length === 0) {
-      return;
-    }
+    if (candles.length === 0) return;
 
-    // Branch 4: the chart renders WHATEVER is in `activeFibs` —
-    // primary (auto or override) plus any locked fibs. The store
-    // owns the merge; this effect just iterates. Locked fibs persist
-    // even when the primary is cleared (decision 4B), so we always
-    // attempt rendering whenever the indicator is on.
-    let fibsToDraw = activeFibs;
-
-    // Branch 3 / plan decision 4B: "Clear chart fib" drops the
-    // primary. We still render any locked fibs because they're
-    // independent.
-    if (fibCleared) {
-      fibsToDraw = fibsToDraw.filter((f) => f.source === "locked");
-    }
-
-    // Branch 1: no_active_fib placeholders must not paint either —
-    // belt-and-braces in case setPrimaryFib was called with a
-    // no-active result by accident.
-    fibsToDraw = fibsToDraw.filter((f) => !f.result.no_active_fib);
+    // Two independent layers:
+    //   - The AUTO primary (id "primary") paints only while the
+    //     `fibonacci` indicator pill is on. The pill governs the
+    //     detector's fib and nothing else.
+    //   - LOCKED (user-drawn) fibs paint whenever they're not hidden,
+    //     independent of the pill — so drawing a fib without the pill
+    //     shows just your drawing, and you can stack/hide them freely.
+    const pillOn = activeIndicators.has("fibonacci");
+    const fibsToDraw = activeFibs.filter((f) => {
+      if (f.result.no_active_fib) return false; // never paint placeholders
+      if (f.source === "locked") return !f.hidden;
+      // primary / auto / override layer
+      if (fibCleared) return false; // "Clear chart fib" drops the primary
+      return pillOn;
+    });
 
     if (fibsToDraw.length === 0) return;
 

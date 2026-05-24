@@ -1253,6 +1253,18 @@ class DatabaseService:
 
         return await self._run_write(_delete)
 
+    async def delete_locked_fibs_for_conid(self, conid: int) -> int:
+        """Delete every locked fib for an instrument. Returns the count removed."""
+        def _delete() -> int:
+            cursor = self._execute(
+                "DELETE FROM locked_fibonacci_drawings WHERE conid = ?", (conid,)
+            )
+            assert self._conn is not None
+            self._conn.commit()
+            return cursor.rowcount
+
+        return await self._run_write(_delete)
+
     async def list_locked_fibs(self, conid: int) -> list[dict]:
         """
         Get all locked fib drawings for a given instrument (by conid).

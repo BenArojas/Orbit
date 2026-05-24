@@ -21,7 +21,7 @@ import { useState, useRef, useEffect, useCallback, type KeyboardEvent } from "re
 import { Check, Copy } from "lucide-react";
 
 import { useAiStore, type ChatMessage } from "@/store";
-import type { IndicatorId } from "@/store/chart";
+import { useChartStore, type IndicatorId } from "@/store/chart";
 import { useAiStatus } from "@/hooks/useAiStatus";
 import { useAiStream } from "@/hooks/useAiStream";
 import { useAiAnalyzeStream } from "@/hooks/useAiAnalyzeStream";
@@ -171,6 +171,15 @@ export default function AiChatPanel({ activeConid, activeSymbol, fibonacci, char
     signal,
     isAnalyzing,
   } = useAiStore();
+
+  // The fib panel must appear whenever ANY fib is on the chart — the
+  // auto-detected primary (driven by the `fibonacci` prop / pill) OR a
+  // user-drawn locked fib (which renders independently of the pill).
+  // Gating on the auto result alone hid the management panel — and with
+  // it the hide/delete controls — for drawn fibs when the pill was off.
+  const hasDrawnFib = useChartStore((s) =>
+    s.activeFibs.some((f) => f.source === "locked"),
+  );
 
   // Hooks
   const {
@@ -384,7 +393,7 @@ export default function AiChatPanel({ activeConid, activeSymbol, fibonacci, char
                   (primary + locked) and sources state from the chart
                   store directly — the `fibonacci` prop on AiChatPanel
                   is now vestigial, kept for backward compat. */}
-              {fibonacci && (
+              {(fibonacci || hasDrawnFib) && (
                 <div
                   data-testid="fib-section"
                   className="rounded-md"

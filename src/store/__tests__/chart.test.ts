@@ -286,6 +286,43 @@ describe("chart store — activeFibs (Branch 4)", () => {
     }
   });
 
+  it("toggleFibVisibility flips the hidden flag for the matching fib only", () => {
+    useChartStore.getState().setPrimaryFib(makeResult());
+    useChartStore.getState().addLockedFib(1, makeResult());
+    useChartStore.getState().addLockedFib(2, makeResult());
+
+    useChartStore.getState().toggleFibVisibility("lock-1");
+
+    const fibs = useChartStore.getState().activeFibs;
+    expect(fibs.find((f) => f.id === "lock-1")?.hidden).toBe(true);
+    expect(fibs.find((f) => f.id === "lock-2")?.hidden).toBe(false);
+    expect(fibs.find((f) => f.id === "primary")?.hidden).toBe(false);
+
+    // Toggling again restores visibility.
+    useChartStore.getState().toggleFibVisibility("lock-1");
+    expect(
+      useChartStore.getState().activeFibs.find((f) => f.id === "lock-1")?.hidden,
+    ).toBe(false);
+  });
+
+  it("replaceLockedFibs preserves a fib's hidden state across a server sync", () => {
+    useChartStore.getState().addLockedFib(7, makeResult());
+    useChartStore.getState().toggleFibVisibility("lock-7");
+    expect(
+      useChartStore.getState().activeFibs.find((f) => f.id === "lock-7")?.hidden,
+    ).toBe(true);
+
+    // Server refetch re-sends the same lock — hidden must NOT reset.
+    useChartStore.getState().replaceLockedFibs([
+      { lockId: 7, result: makeResult() },
+      { lockId: 8, result: makeResult() },
+    ]);
+
+    const fibs = useChartStore.getState().activeFibs;
+    expect(fibs.find((f) => f.id === "lock-7")?.hidden).toBe(true);
+    expect(fibs.find((f) => f.id === "lock-8")?.hidden).toBe(false);
+  });
+
   it("replaceLockedFibs works when no primary is set", () => {
     useChartStore.getState().replaceLockedFibs([
       { lockId: 100, result: makeResult() },

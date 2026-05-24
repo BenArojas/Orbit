@@ -120,6 +120,7 @@ function makeActiveFib(
     lockId: partial.lockId ?? null,
     colorIndex: partial.colorIndex ?? 0,
     result: partial.result ?? makeResult(),
+    hidden: partial.hidden ?? false,
   };
 }
 
@@ -216,7 +217,7 @@ describe("addFibonacciOverlays — primary fib styling", () => {
     expect(opts.lineStyle).toBe(0);
   });
 
-  it("renders 1.272 extension with palette.extension, weight 1, dashed", () => {
+  it("renders 1.272 extension with palette.extension, weight 2, dashed", () => {
     const { chart, seriesOptions } = makeStubChart();
     addFibonacciOverlays(
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -226,8 +227,26 @@ describe("addFibonacciOverlays — primary fib styling", () => {
     );
     const [opts] = byLevelLabel(seriesOptions, "1.272");
     expect(opts.color).toBe(FIB_COLOR_PALETTE[0].extension);
-    expect(opts.lineWidth).toBe(1);
+    expect(opts.lineWidth).toBe(2);
     expect(opts.lineStyle).toBe(2);
+  });
+
+  it("skips levels that project to a non-positive price (impossible on a price chart)", () => {
+    const { chart, seriesOptions } = makeStubChart();
+    const result = makeResult();
+    // Simulate a deep DOWN extension that lands below $0.
+    result.extensions = [
+      level(4.618, -150, false, "extension"),
+      level(1.272, 138.16, false, "extension"),
+    ];
+    addFibonacciOverlays(
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      chart as any,
+      [makeActiveFib({ source: "auto", id: "primary", result })],
+      candles,
+    );
+    expect(byLevelLabel(seriesOptions, "4.618")).toHaveLength(0);
+    expect(byLevelLabel(seriesOptions, "1.272")).toHaveLength(1);
   });
 });
 

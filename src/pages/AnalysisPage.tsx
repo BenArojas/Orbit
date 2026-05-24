@@ -203,12 +203,14 @@ export default function AnalysisPage() {
     canLoadMore,
   } = useChartData(activeConid, timeframe, activeIndicators);
 
-  // Bug 1: surface `no_active_fib` to the user.
+  // Surface `no_active_fib` to the user.
   //
-  // When the backend reports there's no currently-active fib for this
-  // (conid, timeframe), the indicator pill stays toggled on but nothing
-  // renders on the chart. The user has no idea why. We toast once and
-  // auto-untoggle the pill so the UI matches reality.
+  // The `fibonacci` pill means "show me the auto-detected fib." When the
+  // detector finds nothing currently in play, we toast once and untoggle
+  // the pill so the lit pill doesn't imply a fib that isn't there. This
+  // only governs the AUTO layer — any user-drawn (locked) fibs render on
+  // their own visibility layer and are unaffected by the untoggle, so we
+  // no longer need to special-case their presence here.
   //
   // The ref guard keys on `${conid}|${timeframe}` so we don't re-fire
   // on background refetches — only on a fresh "no active" result for a

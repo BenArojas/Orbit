@@ -32,6 +32,7 @@ import type {
 const mockGetLockedFibs = vi.fn();
 const mockLockFib = vi.fn();
 const mockUnlockFib = vi.fn();
+const mockClearFib = vi.fn();
 const mockGetFibConfig = vi.fn();
 
 vi.mock("@/lib/api", async (importOriginal) => {
@@ -43,6 +44,7 @@ vi.mock("@/lib/api", async (importOriginal) => {
       getLockedFibs: (conid: number) => mockGetLockedFibs(conid),
       lockFibonacci: (req: LockFibonacciRequest) => mockLockFib(req),
       unlockFibonacci: (id: number) => mockUnlockFib(id),
+      clearLockedFibs: (conid: number) => mockClearFib(conid),
       getFibConfig: () => mockGetFibConfig(),
     },
   };
@@ -115,6 +117,7 @@ beforeEach(() => {
     locked_at: new Date().toISOString(),
   } as LockedFibonacciResponse));
   mockUnlockFib.mockResolvedValue({ deleted: true, id: 0 });
+  mockClearFib.mockResolvedValue({ deleted: 0, conid: 0 });
 
   useChartStore.getState().clearChart();
   useChartStore.getState().setActiveConid(265598);
@@ -199,6 +202,66 @@ describe("FibStackPanel — lock + unlock", () => {
 
     expect(mockUnlockFib).toHaveBeenCalledTimes(1);
     expect(mockUnlockFib).toHaveBeenCalledWith(42);
+  });
+
+  it("'Clear all' calls api.clearLockedFibs with the conid and empties the locked list", async () => {
+    useChartStore.getState().setActiveConid(777);
+    useChartStore.getState().addLockedFib(1, makeResult());
+    useChartStore.getState().addLockedFib(2, makeResult());
+    render(withQueryClient(createElement(FibStackPanel)));
+
+    const clearBtn = await screen.findByTestId("fib-clear-all-button");
+    await act(async () => {
+      fireEvent.click(clearBtn);
+    });
+
+    expect(mockClearFib).toHaveBeenCalledTimes(1);
+    expect(mockClearFib).toHaveBeenCalledWith(777);
+    expect(
+      useChartStore.getState().activeFibs.filter((f) => f.source === "locked"),
+    ).toHaveLength(0);
+  });
+
+  it("clicking the eye toggle hides the fib (without deleting) and updates the count", async () => {
+    // Seed via the server mock so the merge effect keeps the lock in the
+    // store (addLockedFib would be wiped by the [] sync).
+    const lock: LockedFibonacciResponse = {
+      id: 55,
+      conid: 265598,
+      timeframe: "1D",
+      tool_type: "retracement",
+      swing_high_price: 130,
+      swing_high_time: 1_700_000_000,
+      swing_low_price: 100,
+      swing_low_time: 1_699_900_000,
+      direction: "up",
+      user_note: null,
+      locked_at: new Date().toISOString(),
+    };
+    mockGetLockedFibs.mockResolvedValue([lock]);
+    useChartStore.getState().setActiveConid(265598);
+    render(withQueryClient(createElement(FibStackPanel)));
+
+    const eye = await screen.findByTestId("fib-locked-visibility-55");
+    expect(screen.getByTestId("fib-stack-count").textContent).toMatch(/1/);
+
+    await act(async () => {
+      fireEvent.click(eye);
+    });
+
+    // Still present (not deleted) but now hidden, and excluded from the count.
+    const fib = useChartStore
+      .getState()
+      .activeFibs.find((f) => f.id === "lock-55");
+    expect(fib).toBeDefined();
+    expect(fib?.hidden).toBe(true);
+    expect(screen.getByTestId("fib-stack-count").textContent).toMatch(/0/);
+  });
+
+  it("does not render 'Clear all' when there are no locked fibs", () => {
+    useChartStore.getState().setPrimaryFib(makeResult());
+    render(withQueryClient(createElement(FibStackPanel)));
+    expect(screen.queryByTestId("fib-clear-all-button")).toBeNull();
   });
 
   it("rendered locked cards match the order they were added", () => {
@@ -316,5 +379,34 @@ describe("FibStackPanel — Bug 2 fixes", () => {
     const fibs = useChartStore.getState().activeFibs;
     expect(fibs.find((f) => f.id === "lock-7")).toBeUndefined();
     expect(fibs.find((f) => f.id === "lock-8")).toBeDefined();
+  });
+});
+
+// ── Race fix: optimistic lock insertion ──────────────────────
+
+describe("FibStackPanel — locking is optimistic (no_active_fib race fix)", () => {
+  it("renders the locked fib before the server responds", async () => {
+    // A lock POST that never resolves — only onMutate runs. This proves
+    // the fib reaches the store optimistically, before any network reply,
+    // which is what prevents the no_active_fib effect from racing ahead
+    // and untoggling the indicator on the first draw.
+    mockLockFib.mockImplementation(() => new Promise(() => {}));
+    useChartStore.getState().setActiveConid(265598);
+    useChartStore.getState().setPrimaryFib(makeResult());
+
+    render(withQueryClient(createElement(FibStackPanel)));
+
+    const btn = await screen.findByTestId("fib-lock-primary-button");
+    await act(async () => {
+      fireEvent.click(btn);
+      // Flush onMutate's cancelQueries + setQueryData and the merge effect.
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const locked = useChartStore
+      .getState()
+      .activeFibs.filter((f) => f.source === "locked");
+    expect(locked).toHaveLength(1);
   });
 });

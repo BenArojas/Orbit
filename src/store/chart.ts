@@ -66,6 +66,14 @@ export interface ActiveFib {
   lockId: number | null;
   result: FibonacciResult;
   colorIndex: number;
+  /**
+   * When true the fib stays in the list but is not painted on the chart
+   * or sent to the AI. Lets the user toggle a drawn fib off without
+   * deleting it (e.g. to compare multi-timeframe overlap). Defaults to
+   * false. Only meaningful for locked fibs — the auto primary's
+   * visibility is governed by the `fibonacci` indicator pill.
+   */
+  hidden: boolean;
 }
 
 /**
@@ -111,7 +119,7 @@ export const FIB_COLOR_PALETTE: readonly FibPaletteEntry[] = [
   {
     goldenPocket: "rgba(255, 200, 0, 0.85)",
     retracement:  "rgba(0, 212, 255, 0.85)",
-    extension:    "rgba(136, 68, 255, 0.55)",
+    extension:    "rgba(136, 68, 255, 0.85)",
     name: "Primary",
   },
   // 1 — teal. Bumped from 0.55/0.40 → 0.75/0.65 so locked retracement
@@ -119,49 +127,49 @@ export const FIB_COLOR_PALETTE: readonly FibPaletteEntry[] = [
   {
     goldenPocket: "rgba(64, 224, 208, 0.75)",
     retracement:  "rgba(64, 224, 208, 0.65)",
-    extension:    "rgba(64, 224, 208, 0.45)",
+    extension:    "rgba(64, 224, 208, 0.68)",
     name: "Teal",
   },
   // 2 — salmon
   {
     goldenPocket: "rgba(250, 128, 114, 0.75)",
     retracement:  "rgba(250, 128, 114, 0.65)",
-    extension:    "rgba(250, 128, 114, 0.45)",
+    extension:    "rgba(250, 128, 114, 0.68)",
     name: "Salmon",
   },
   // 3 — lavender
   {
     goldenPocket: "rgba(181, 126, 220, 0.75)",
     retracement:  "rgba(181, 126, 220, 0.65)",
-    extension:    "rgba(181, 126, 220, 0.45)",
+    extension:    "rgba(181, 126, 220, 0.68)",
     name: "Lavender",
   },
   // 4 — sage
   {
     goldenPocket: "rgba(143, 188, 143, 0.75)",
     retracement:  "rgba(143, 188, 143, 0.65)",
-    extension:    "rgba(143, 188, 143, 0.45)",
+    extension:    "rgba(143, 188, 143, 0.68)",
     name: "Sage",
   },
   // 5 — amber
   {
     goldenPocket: "rgba(255, 159, 28, 0.75)",
     retracement:  "rgba(255, 159, 28, 0.65)",
-    extension:    "rgba(255, 159, 28, 0.45)",
+    extension:    "rgba(255, 159, 28, 0.68)",
     name: "Amber",
   },
   // 6 — rose
   {
     goldenPocket: "rgba(255, 102, 153, 0.75)",
     retracement:  "rgba(255, 102, 153, 0.65)",
-    extension:    "rgba(255, 102, 153, 0.45)",
+    extension:    "rgba(255, 102, 153, 0.68)",
     name: "Rose",
   },
   // 7 — sky
   {
     goldenPocket: "rgba(135, 206, 235, 0.75)",
     retracement:  "rgba(135, 206, 235, 0.65)",
-    extension:    "rgba(135, 206, 235, 0.45)",
+    extension:    "rgba(135, 206, 235, 0.68)",
     name: "Sky",
   },
 ];
@@ -285,6 +293,8 @@ interface ChartState {
   replaceLockedFibs: (
     entries: { lockId: number; result: FibonacciResult }[],
   ) => void;
+  /** Toggle a fib's chart visibility (hidden flag) by its id. */
+  toggleFibVisibility: (id: string) => void;
   /** Remove an active fib by its id ("primary" or "lock-<id>"). */
   removeActiveFib: (id: string) => void;
   /** Wipe the entire stack. Called on conid change via clearChart. */
@@ -439,6 +449,7 @@ export const useChartStore = create<ChartState>()((set, get) => ({
         lockId: null,
         result,
         colorIndex: 0,
+        hidden: false,
       };
       return { activeFibs: [primary, ...withoutPrimary] };
     }),
@@ -471,6 +482,7 @@ export const useChartStore = create<ChartState>()((set, get) => ({
       lockId,
       result,
       colorIndex,
+      hidden: false,
     };
     set({ activeFibs: [...state.activeFibs, locked] });
     return true;
@@ -486,6 +498,14 @@ export const useChartStore = create<ChartState>()((set, get) => ({
   replaceLockedFibs: (entries) =>
     set((state) => {
       const primary = state.activeFibs.find((f) => f.id === "primary");
+      // Preserve any per-fib hidden state across the server sync — a
+      // full replace must not silently un-hide a fib the user toggled
+      // off. Key on lockId since ids are stable across refetches.
+      const hiddenByLockId = new Map(
+        state.activeFibs
+          .filter((f) => f.lockId != null)
+          .map((f) => [f.lockId as number, f.hidden]),
+      );
       // Re-allocate color indices so we keep the palette gap-free
       // when locks are added / removed in any order. Each entry gets
       // the next unused slot starting from 1.
@@ -505,11 +525,19 @@ export const useChartStore = create<ChartState>()((set, get) => ({
           lockId,
           result,
           colorIndex,
+          hidden: hiddenByLockId.get(lockId) ?? false,
         });
       }
       const next = primary ? [primary, ...built] : built;
       return { activeFibs: next };
     }),
+
+  toggleFibVisibility: (id) =>
+    set((state) => ({
+      activeFibs: state.activeFibs.map((f) =>
+        f.id === id ? { ...f, hidden: !f.hidden } : f,
+      ),
+    })),
 
   removeActiveFib: (id) =>
     set((state) => ({

@@ -1200,6 +1200,9 @@ export const api = {
   unlockFibonacci: (id: number) =>
     request<{ deleted: boolean; id: number }>("DELETE", `/fibonacci/lock/${id}`),
 
+  clearLockedFibs: (conid: number) =>
+    request<{ deleted: number; conid: number }>("DELETE", `/fibonacci/locks/${conid}`),
+
   getLockedFibs: (conid: number) =>
     request<LockedFibonacciResponse[]>("GET", `/fibonacci/locks/${conid}`),
 

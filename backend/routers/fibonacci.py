@@ -7,6 +7,7 @@ page reloads. Unlocked fibs are ephemeral — recomputed on chart load.
 Endpoints:
   POST   /fibonacci/lock           — Lock a fib drawing
   DELETE /fibonacci/lock/{id}      — Unlock (remove) a locked fib
+  DELETE /fibonacci/locks/{conid}  — Clear all locked fibs for an instrument
   GET    /fibonacci/locks/{conid}  — List all locked fibs for an instrument
   GET    /fibonacci/config         — Canonical ratios + current scoring weights
   PUT    /fibonacci/config         — Update scoring weights (validated)
@@ -182,6 +183,18 @@ async def lock_fibonacci(
     if row is None:
         raise HTTPException(status_code=500, detail="Failed to retrieve locked fib after save")
     return LockedFibonacciResponse(**row)
+
+
+# ── DELETE /fibonacci/locks/{conid} ──────────────────────────
+
+@router.delete("/locks/{conid}")
+async def clear_locked_fibs(
+    conid: int,
+    db: DatabaseService = Depends(get_db),
+) -> dict:
+    """Remove every locked fib for an instrument. Returns the count cleared."""
+    count = await db.delete_locked_fibs_for_conid(conid)
+    return {"deleted": count, "conid": conid}
 
 
 # ── DELETE /fibonacci/lock/{id} ──────────────────────────────

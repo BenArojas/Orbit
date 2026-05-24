@@ -104,9 +104,68 @@ vi.mock("@/hooks/useLockedFibs", () => ({
   useLockedFibs: () => ({ data: [], isLoading: false, error: null }),
   useLockFib: () => ({ mutate: vi.fn(), isPending: false }),
   useUnlockFib: () => ({ mutate: vi.fn(), isPending: false }),
+  useClearLockedFibs: () => ({ mutate: vi.fn(), isPending: false }),
 }));
 
 // ── Tests ─────────────────────────────────────────────────────
+
+describe("AiChatPanel — fib section gating", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockAnalyzing.current = false;
+  });
+
+  it("shows the fib panel for a drawn fib even when there is no auto fib (pill off)", async () => {
+    const { useChartStore } = await import("@/store/chart");
+    useChartStore.setState({
+      activeFibs: [
+        {
+          id: "lock-1",
+          source: "locked",
+          lockId: 1,
+          colorIndex: 1,
+          hidden: false,
+          result: {
+            tool_mode: "retracement",
+            swing_high: 26,
+            swing_low: 14,
+            swing_high_time: 1,
+            swing_low_time: 0,
+            direction: "up",
+            levels: [],
+            extensions: [],
+            score: 0,
+            swing_clarity: 0,
+            timeframe_clarity: "clean",
+            candidates: [],
+            convergence_zones: [],
+            is_nested: false,
+            parent_fib_id: null,
+            reasoning: "",
+            source: "locked",
+            no_active_fib: false,
+            no_active_fib_reason: null,
+          },
+        },
+      ],
+    });
+
+    const { default: AiChatPanel } = await import("../AiChatPanel");
+    render(
+      createElement(AiChatPanel, {
+        activeConid: 265598,
+        activeSymbol: "WULF",
+        fibonacci: null, // pill off → no auto fib
+      }),
+    );
+
+    // The fib section (and its hide/delete controls) must still appear.
+    expect(screen.getByTestId("fib-section")).toBeTruthy();
+    expect(screen.getByTestId("fib-locked-visibility-1")).toBeTruthy();
+
+    useChartStore.setState({ activeFibs: [] });
+  });
+});
 
 describe("AiChatPanel — Cancel button", () => {
   beforeEach(() => {

@@ -138,4 +138,30 @@ describe("useAiAnalyzeStream", () => {
       },
     ]);
   });
+
+  it("excludes hidden fibs from the analyze request body", async () => {
+    // Hide the locked fib — it should drop out of the AI payload entirely.
+    (activeFibs[1] as { hidden?: boolean }).hidden = true;
+    try {
+      const { result } = renderHook(() => useAiAnalyzeStream());
+      await act(async () => {
+        await result.current.startAnalyze(
+          {
+            conid: 265598,
+            symbol: "AAPL",
+            timeframes: ["D"],
+            indicators: ["Fibonacci"],
+          },
+          "gemma4:4b",
+        );
+      });
+
+      const [, options] = vi.mocked(global.fetch).mock.calls[0];
+      const body = JSON.parse(String(options?.body));
+      expect(body.fibs).toHaveLength(1);
+      expect(body.fibs[0].source).toBe("manual");
+    } finally {
+      delete (activeFibs[1] as { hidden?: boolean }).hidden;
+    }
+  });
 });

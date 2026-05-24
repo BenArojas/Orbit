@@ -30,6 +30,15 @@ vi.mock("@/hooks/useChartData", () => ({
   useChartData: () => chartDataMock,
 }));
 
+const toastInfoMock = vi.fn();
+vi.mock("sonner", () => ({
+  toast: { info: (...args: unknown[]) => toastInfoMock(...args) },
+}));
+
+vi.mock("@/hooks/useLockedFibs", () => ({
+  useLockedFibs: () => ({ data: undefined, isLoading: false }),
+}));
+
 vi.mock("@/hooks/useInstrument", () => ({
   useInstrument: () => ({
     symbol: null,
@@ -121,6 +130,62 @@ describe("AnalysisPage symbol input sync", () => {
 
     // The mock useInstrument returns "Apple Inc."
     expect(screen.getByText("Apple Inc.")).toBeInTheDocument();
+  });
+});
+
+// ── no_active_fib guard (locked-fib override) ────────────────
+
+function makeLockedFib() {
+  return {
+    id: "lock-1",
+    source: "locked" as const,
+    lockId: 1,
+    colorIndex: 1,
+    hidden: false,
+    result: {
+      no_active_fib: false,
+      swing_high: 35,
+      swing_low: 20,
+      direction: "up",
+      levels: [],
+      extensions: [],
+      candidates: [],
+    } as unknown,
+  };
+}
+
+describe("AnalysisPage — no_active_fib toast/untoggle (auto layer only)", () => {
+  beforeEach(() => {
+    resetChartDataMock();
+    toastInfoMock.mockClear();
+    useChartStore.setState({
+      activeSymbol: "ASX",
+      activeConid: 12345,
+      timeframe: "1D",
+      activeIndicators: new Set(["fibonacci"]),
+      fibDrawMode: null,
+      fibDrawPointA: null,
+      activeFibs: [],
+    });
+    chartDataMock.fibonacci = { no_active_fib: true, candidates: [{}, {}] };
+  });
+
+  it("toasts and untoggles the pill when the auto-detector finds no active fib", () => {
+    renderPage();
+    expect(toastInfoMock).toHaveBeenCalledTimes(1);
+    expect(useChartStore.getState().activeIndicators.has("fibonacci")).toBe(false);
+  });
+
+  it("still toasts/untoggles even with a drawn fib present — the pill governs only the auto layer, and the drawn fib stays in the stack", () => {
+    useChartStore.setState({ activeFibs: [makeLockedFib() as never] });
+    renderPage();
+    // Pill untoggles (auto layer has nothing), but the drawn fib is
+    // untouched — it renders on its own visibility layer regardless.
+    expect(toastInfoMock).toHaveBeenCalledTimes(1);
+    expect(useChartStore.getState().activeIndicators.has("fibonacci")).toBe(false);
+    expect(
+      useChartStore.getState().activeFibs.some((f) => f.source === "locked"),
+    ).toBe(true);
   });
 });
 

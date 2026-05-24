@@ -100,8 +100,6 @@ export default function FibDrawMode({
   const setFibDrawPointA = useChartStore((s) => s.setFibDrawPointA);
   const setFibDrawPointB = useChartStore((s) => s.setFibDrawPointB);
   const exitFibDrawMode = useChartStore((s) => s.exitFibDrawMode);
-  const activeIndicators = useChartStore((s) => s.activeIndicators);
-  const toggleIndicator = useChartStore((s) => s.toggleIndicator);
 
   const lockFib = useLockFib();
   const ghostLinesRef = useRef<IPriceLine[]>([]);
@@ -226,14 +224,11 @@ export default function FibDrawMode({
     const direction = fibDrawPointB.price > fibDrawPointA.price ? "up" : "down";
 
     if (conid && swingHigh > swingLow) {
-      // Make sure the fibonacci overlay is enabled so the just-drawn lock
-      // is actually visible on the chart. If the user clicked Draw Fib
-      // without first toggling the indicator on, the lock would save
-      // silently with nothing to render.
-      if (!activeIndicators.has("fibonacci")) {
-        toggleIndicator("fibonacci");
-      }
-
+      // NOTE: drawing intentionally does NOT enable the `fibonacci`
+      // indicator pill. Drawn (locked) fibs render on their own
+      // visibility layer, independent of the pill — so clicking Draw
+      // Fib shows just your drawing without summoning the auto
+      // detector's fib. The pill is reserved for the auto layer.
       lockFib.mutate({
         conid,
         timeframe,
@@ -259,8 +254,6 @@ export default function FibDrawMode({
     lockFib,
     clearGhost,
     exitFibDrawMode,
-    activeIndicators,
-    toggleIndicator,
   ]);
 
   // ── Crosshair move → ghost preview ───────────────────────
