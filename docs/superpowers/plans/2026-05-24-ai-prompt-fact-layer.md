@@ -424,13 +424,13 @@ def is_rising_n(
     net slope > 0 over n bars.
     """
     clean = _clean(values)
-    if len(clean) < n + 1:
+    if len(clean) < n:
         return False
-    window = clean[-(n + 1):]
+    window = clean[-(n + 1):] if len(clean) >= n + 1 else clean
     net = window[-1] - window[0]
     if mode == "slow":
         return net > 0
-    diffs = [window[i + 1] - window[i] for i in range(n)]
+    diffs = [window[i + 1] - window[i] for i in range(min(n, len(window) - 1))]
     same_sign = sum(1 for d in diffs if d > 0)
     return net > 0 and same_sign >= (n + 1) // 2
 
@@ -442,13 +442,13 @@ def is_falling_n(
 ) -> bool:
     """Symmetric counterpart to is_rising_n."""
     clean = _clean(values)
-    if len(clean) < n + 1:
+    if len(clean) < n:
         return False
-    window = clean[-(n + 1):]
+    window = clean[-(n + 1):] if len(clean) >= n + 1 else clean
     net = window[-1] - window[0]
     if mode == "slow":
         return net < 0
-    diffs = [window[i + 1] - window[i] for i in range(n)]
+    diffs = [window[i + 1] - window[i] for i in range(min(n, len(window) - 1))]
     same_sign = sum(1 for d in diffs if d < 0)
     return net < 0 and same_sign >= (n + 1) // 2
 
@@ -488,11 +488,10 @@ def recent_cross(
         if None in (a_now, a_prev, b_now, b_prev):
             continue
         # Cross occurs when sign of (a - b) flips between i-1 and i.
+        # Treat zero as crossing: prev <= 0 and now > 0, or prev >= 0 and now < 0.
         prev_diff = a_prev - b_prev
         now_diff = a_now - b_now
-        if prev_diff == 0 or now_diff == 0:
-            continue
-        if (prev_diff > 0) != (now_diff > 0):
+        if (prev_diff <= 0 and now_diff > 0) or (prev_diff >= 0 and now_diff < 0):
             return True, (n - 1 - i)
     return False, -1
 
@@ -511,8 +510,8 @@ def percentile_rank(
     if not clean:
         return 0.0
     sample = clean[-lookback:]
-    below_or_equal = sum(1 for v in sample if v <= value)
-    return below_or_equal / len(sample)
+    below = sum(1 for v in sample if v < value)
+    return below / len(sample)
 ```
 
 - [ ] **Step 4: Run tests to verify they pass**
