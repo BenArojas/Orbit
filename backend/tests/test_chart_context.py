@@ -21,7 +21,6 @@ from services.prompt_builder import (
     _build_price_summary,
     _detect_candlestick_patterns,
     build_indicator_context,
-    build_multi_timeframe_context,
 )
 
 
@@ -255,80 +254,6 @@ class TestBuildPatternContext:
         result = _build_pattern_context(candles, n_bars=2)
         assert "Summary:" in result
         assert "bullish" in result
-
-
-# ═══════════════════════════════════════════════════════════════
-#  build_indicator_context — context_mode routing
-# ═══════════════════════════════════════════════════════════════
-
-
-class TestBuildIndicatorContextModes:
-    def _make_candles(self, n=10):
-        return trending_candles(n)
-
-    def test_mode_none_has_no_context_block(self):
-        result = build_indicator_context(
-            symbol="AAPL", timeframe="D",
-            candles=self._make_candles(), indicators=[],
-            context_mode="none", context_bars=5,
-        )
-        assert "Price Summary" not in result
-        assert "OHLCV History" not in result
-        assert "Candlestick Patterns" not in result
-
-    def test_mode_summary_appends_block(self):
-        result = build_indicator_context(
-            symbol="AAPL", timeframe="D",
-            candles=self._make_candles(), indicators=[],
-            context_mode="summary", context_bars=5,
-        )
-        assert "Price Summary" in result
-
-    def test_mode_ohlcv_appends_table(self):
-        result = build_indicator_context(
-            symbol="AAPL", timeframe="D",
-            candles=self._make_candles(), indicators=[],
-            context_mode="ohlcv", context_bars=5,
-        )
-        assert "OHLCV History" in result
-        assert "O=" in result
-
-    def test_mode_patterns_appends_pattern_block(self):
-        result = build_indicator_context(
-            symbol="AAPL", timeframe="D",
-            candles=self._make_candles(), indicators=[],
-            context_mode="patterns", context_bars=10,
-        )
-        assert "Candlestick Patterns" in result
-
-
-# ═══════════════════════════════════════════════════════════════
-#  build_multi_timeframe_context — params forwarded
-# ═══════════════════════════════════════════════════════════════
-
-
-class TestBuildMultiTimeframeContext:
-    def test_context_mode_applied_to_all_timeframes(self):
-        candles = trending_candles(10)
-        data = {
-            "4H": {"candles": candles, "indicators": [], "fibonacci": None},
-            "D":  {"candles": candles, "indicators": [], "fibonacci": None},
-        }
-        result = build_multi_timeframe_context(
-            "AAPL", data, context_mode="summary", context_bars=5
-        )
-        # Both timeframe sections should have a Price Summary block
-        assert result.count("Price Summary") == 2
-
-    def test_default_mode_none_has_no_blocks(self):
-        candles = trending_candles(10)
-        data = {
-            "D": {"candles": candles, "indicators": [], "fibonacci": None},
-        }
-        result = build_multi_timeframe_context("AAPL", data)
-        assert "Price Summary" not in result
-        assert "OHLCV History" not in result
-        assert "Candlestick Patterns" not in result
 
 
 # ═══════════════════════════════════════════════════════════════

@@ -66,6 +66,7 @@ MAX_SESSIONS = 50
 from services.prompt_builder import (
     build_indicator_context,        # noqa: F401 — re-export for backwards compat
     build_multi_timeframe_context,  # noqa: F401
+    build_full_prompt_context,
     build_analysis_user_message,
     build_system_prompt,
     get_budget_for_model,
@@ -517,20 +518,21 @@ class AiService:
         session.symbol = symbol
         session.clear()
 
-        context = build_multi_timeframe_context(
-            symbol, timeframe_data,
-            indicator_priority=indicator_priority,
-            context_mode=context_mode,
-            context_bars=context_bars,
-        )
         if self._context_service is not None:
             budget = await self._context_service.get_budget_for_model(model)
         else:
             budget = get_budget_for_model(model)
-        context = truncate_context(context, budget_tokens=budget)
+
+        context = build_full_prompt_context(
+            symbol=symbol,
+            timeframe_data=timeframe_data,
+            indicator_priority=indicator_priority or [],
+            budget_tokens=budget,
+        )
 
         system_prompt = build_system_prompt(
-            indicators=indicators_display,
+            indicators_display=indicators_display,
+            indicator_names=indicator_names,
             watchlist=watchlist,
             indicator_priority=indicator_priority,
         )
