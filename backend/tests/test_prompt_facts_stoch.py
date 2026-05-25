@@ -42,8 +42,14 @@ class TestStochFacts:
         assert ex.polarity == "caution"
 
     def test_oversold_exit_bullish(self):
+        """C9: lock the full emitted ID set so multi-emission is regression-proof."""
         stoch = _stoch([(22, 25), (18, 22), (15, 18), (22, 18)])
         facts = build_stoch_facts(symbol="AAPL", timeframe="D", stoch=stoch)
-        ex = next((f for f in facts if f.id == "D.stoch.oversold_exit"), None)
-        assert ex is not None
+        ids = {f.id for f in facts}
+        # All three signals fire in this scenario:
+        #   - k_above_d  (current k > current d)
+        #   - cross_recent (%K crossed up through %D)
+        #   - oversold_exit (prev_k <= 20 and current k > 20)
+        assert ids == {"D.stoch.k_above_d", "D.stoch.cross_recent", "D.stoch.oversold_exit"}
+        ex = next(f for f in facts if f.id == "D.stoch.oversold_exit")
         assert ex.polarity == "bullish"

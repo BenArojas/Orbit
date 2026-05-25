@@ -86,10 +86,26 @@ class TestIsRisingFalling:
         assert is_rising_n([10, 11], n=3, mode="momentum") is False
 
     def test_handles_none_entries(self):
-        assert is_rising_n([None, 10, 11, 12], n=3, mode="momentum") is True
+        # clean = [10, 11, 12, 13]; len 4 >= n+1=4 → enough for 3 step-diffs.
+        assert is_rising_n([None, 10, 11, 12, 13], n=3, mode="momentum") is True
 
     def test_falling_is_symmetric(self):
         assert is_falling_n([13, 12, 11, 10], n=3, mode="momentum") is True
+
+    def test_is_rising_n_requires_n_plus_1_points(self):
+        """`n` step-diffs requires n+1 points; with exactly n, return False."""
+        # n=3 needs 4 points
+        assert is_rising_n([10, 11, 12], n=3, mode="momentum") is False
+        assert is_rising_n([10, 11, 12, 13], n=3, mode="momentum") is True
+        # slow mode: same contract
+        assert is_rising_n([10, 11, 12], n=3, mode="slow") is False
+        assert is_rising_n([10, 11, 12, 13], n=3, mode="slow") is True
+
+    def test_is_falling_n_requires_n_plus_1_points(self):
+        assert is_falling_n([13, 12, 11], n=3, mode="momentum") is False
+        assert is_falling_n([13, 12, 11, 10], n=3, mode="momentum") is True
+        assert is_falling_n([13, 12, 11], n=3, mode="slow") is False
+        assert is_falling_n([13, 12, 11, 10], n=3, mode="slow") is True
 
 
 class TestRecentCross:
@@ -115,6 +131,21 @@ class TestRecentCross:
         found, _ = recent_cross(a, b, timeframe="1H")
         assert found is True
 
+    def test_raises_on_mismatched_lengths(self):
+        """C4: recent_cross must reject mismatched input lengths."""
+        with pytest.raises(ValueError):
+            recent_cross([1, 2, 3], [1, 2], timeframe="D")
+
+    def test_unknown_timeframe_falls_back_to_default_window(self):
+        """C11: unknown TFs use the default window of 5 bars.
+
+        a goes from below to above b inside the default-5-bar window.
+        """
+        a = [0, 1, 0, 1]
+        b = [0.5, 0.5, 0.5, 0.5]
+        found, _ = recent_cross(a, b, timeframe="30m")
+        assert found is True
+
 
 class TestPercentileRank:
     def test_returns_0_when_lowest(self):
@@ -126,3 +157,15 @@ class TestPercentileRank:
     def test_respects_lookback(self):
         # only last 3 entries counted; current value 0.5 → lowest of [3,4,5]
         assert percentile_rank(0.5, history=[1, 2, 3, 4, 5], lookback=3) == 0.0
+
+    def test_strict_less_than_semantics(self):
+        """C5: percentile_rank uses strict `<` and stays in [0, 1)."""
+        # 3.0 against [1,2,3,4,5]: two entries strictly less → 2/5 = 0.4
+        assert percentile_rank(3.0, history=[1, 2, 3, 4, 5]) == 0.4
+        # below min: nothing strictly less than 0 → 0
+        assert percentile_rank(0.0, history=[1, 2, 3, 4, 5]) == 0.0
+        # above max: every entry is strictly less → 5/5 = 1.0 (consequence of strict <)
+        assert percentile_rank(100.0, history=[1, 2, 3, 4, 5]) == 1.0
+        # max value itself: 4 strictly less of 5 → 4/5 = 0.8 (in [0, 1))
+        assert percentile_rank(5.0, history=[1, 2, 3, 4, 5]) == 0.8
+        assert 0.0 <= percentile_rank(5.0, history=[1, 2, 3, 4, 5]) < 1.0

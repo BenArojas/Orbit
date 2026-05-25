@@ -58,6 +58,41 @@ class TestTruncate:
         assert "D.ema.stack_bullish" in remaining
         assert "D.atr.stop_distances" not in remaining
 
+    def test_multi_block_phase1_drops_neutrals_first(self):
+        """C12: across blocks, phase-1 drops neutrals before directional facts.
+
+        Highest-TF block's directional facts are protected entirely; lower-TF
+        neutrals are first to go; lower-TF directional facts survive if budget allows.
+        """
+        m_block = PromptContextBlock(
+            timeframe="M", tf_weight=5,
+            facts=[
+                _fact("M.ema.stack_bullish", polarity="bullish", priority=90, strength=80),
+                _fact("M.rsi.above_50_rising", polarity="bullish", priority=80, strength=60),
+            ],
+            last_close=100.0,
+        )
+        d_block = PromptContextBlock(
+            timeframe="D", tf_weight=3,
+            facts=[
+                _fact("D.ema.stack_bullish", polarity="bullish", priority=85, strength=70),
+                _fact("D.atr.stop_distances", polarity="neutral", priority=40, strength=30),
+                _fact("D.atr.contracting", polarity="neutral", priority=30, strength=20),
+            ],
+            last_close=100.0,
+        )
+        # Budget tight enough to require dropping some D-level neutrals but
+        # not so tight that we lose all directional facts.
+        out = truncate_by_value([m_block, d_block], budget_tokens=120)
+        ids = {f.id for b in out for f in b.facts}
+        # M block directional facts are protected.
+        assert "M.ema.stack_bullish" in ids
+        assert "M.rsi.above_50_rising" in ids
+        # D-block directional fact survives over D-block neutrals.
+        assert "D.ema.stack_bullish" in ids
+        # D-block neutrals are the first dropped.
+        assert "D.atr.contracting" not in ids or "D.atr.stop_distances" not in ids
+
     def test_drops_lowest_tf_block_last(self):
         blocks = [
             PromptContextBlock(
@@ -74,6 +109,4 @@ class TestTruncate:
         out = truncate_by_value(blocks, budget_tokens=3)
         tfs = {b.timeframe for b in out}
         assert "M" in tfs
-        # 1H should be dropped first
-        if "1H" not in tfs:
-            assert True
+        assert "1H" not in tfs   # 1H must be dropped first per phase-2 rule

@@ -69,13 +69,17 @@ def build_bbands_facts(
             data={"lower": lower, "close": last_close},
         ))
 
-    # Band walks — 3+ of last 5 closes in upper/lower third
+    # Band walks — 3+ of last 5 closes in upper/lower third.
+    # Require a full 5-close window so the "3 of 5" rule has its proper denominator.
     if candle_closes:
         upper_thresh = mid + (upper - mid) * 0.667
         lower_thresh = mid - (mid - lower) * 0.667
         recent = candle_closes[-5:]
-        in_upper = sum(1 for c in recent if c > upper_thresh)
-        in_lower = sum(1 for c in recent if c < lower_thresh)
+        if len(recent) >= 5:
+            in_upper = sum(1 for c in recent if c > upper_thresh)
+            in_lower = sum(1 for c in recent if c < lower_thresh)
+        else:
+            in_upper = in_lower = 0
         if in_upper >= 3:
             facts.append(_make(
                 timeframe, "upper_band_walk",
@@ -91,24 +95,23 @@ def build_bbands_facts(
                 data={"closes_in_lower": in_lower, "window": len(recent)},
             ))
 
-    # %B state
+    # %B state — only emit when inside the band [0, 1].
+    # Outside the band, outside_upper / outside_lower already convey the breakout
+    # as a caution; emitting percent_b_over_100 / under_0 would be a duplicate caution.
     percent_b = (last_close - lower) / width
-    if percent_b < 0:
-        state, polarity, condition = "under_0", "caution", "percent_b_under_0"
-    elif percent_b <= 0.20:
-        state, polarity, condition = "0_20", "bearish", "percent_b_0_20"
-    elif percent_b >= 1.0:
-        state, polarity, condition = "over_100", "caution", "percent_b_over_100"
-    elif percent_b >= 0.80:
-        state, polarity, condition = "80_100", "bullish", "percent_b_80_100"
-    else:
-        state, polarity, condition = None, None, None
-    if state is not None:
-        facts.append(_make(
-            timeframe, condition,
-            f"%B = {percent_b:.2f} (state: {state}).",
-            polarity=polarity, strength=40, priority=65,
-            data={"percent_b": percent_b, "state": state},
-        ))
+    if 0 <= percent_b <= 1:
+        if percent_b <= 0.20:
+            state, polarity, condition = "0_20", "bearish", "percent_b_0_20"
+        elif percent_b >= 0.80:
+            state, polarity, condition = "80_100", "bullish", "percent_b_80_100"
+        else:
+            state, polarity, condition = None, None, None
+        if state is not None:
+            facts.append(_make(
+                timeframe, condition,
+                f"%B = {percent_b:.2f} (state: {state}).",
+                polarity=polarity, strength=40, priority=65,
+                data={"percent_b": percent_b, "state": state},
+            ))
 
     return facts

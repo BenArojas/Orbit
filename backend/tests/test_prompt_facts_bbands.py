@@ -53,6 +53,19 @@ class TestBbands:
         assert "D.bbands.squeeze" in ids
 
 
+    def test_no_duplicate_caution_on_breakout(self):
+        """When close is above upper band, only outside_upper fires — not percent_b_over_100."""
+        ir = _bb([(100, 105, 95)] * 30)
+        facts = build_bbands_facts(symbol="TEST", timeframe="D", bbands=ir,
+                                   last_close=107.0,
+                                   candles=_candles_from_closes([107.0]))
+        caution_facts = [f for f in facts if f.polarity == "caution"]
+        assert len(caution_facts) == 1
+        assert caution_facts[0].id == "D.bbands.outside_upper"
+        # explicitly: percent_b_over_100 must not appear
+        assert all(f.id != "D.bbands.percent_b_over_100" for f in facts)
+
+
 class TestGuards:
     def test_empty_returns_empty(self):
         ir = IndicatorResult(name="bbands", type="overlay", values=[], params={})

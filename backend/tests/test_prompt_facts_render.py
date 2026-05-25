@@ -62,3 +62,18 @@ class TestRenderer:
 
     def test_empty_blocks_renders_nothing(self):
         assert render_prompt_facts([]) == ""
+
+    def test_empty_facts_block_renders_header_only(self):
+        """C13: a block with no facts still shows the header but no section labels.
+
+        Locks the current behavior: render does NOT skip empty blocks, and the
+        section labels ('Verified Facts', 'Cautions') only appear when their
+        respective fact lists are non-empty.
+        """
+        block = PromptContextBlock(
+            timeframe="D", tf_weight=3, facts=[], last_close=100.0,
+        )
+        out = render_prompt_facts([block])
+        assert "=== D (close=$100.00) ===" in out
+        assert "Verified Facts" not in out
+        assert "Cautions" not in out

@@ -60,6 +60,30 @@ class TestNearAndCross:
         assert "D.ema.price_near_21" not in ids
 
 
+class TestCross:
+    def test_ema_9_21_cross_emits_within_recency_window(self):
+        """C7: EMA-9 crosses EMA-21 within the daily recency window (5 bars)."""
+        # Build aligned series where EMA-9 starts below EMA-21 and crosses above
+        # within the last 5 bars.
+        def _series(period: int, values: list[float]) -> IndicatorResult:
+            return IndicatorResult(
+                name=f"ema_{period}", type="overlay",
+                values=[IndicatorValue(time=1_700_000_000 + i * 86_400, value=v)
+                        for i, v in enumerate(values)],
+                params={"period": period},
+            )
+
+        ema9 = _series(9,  [99, 99, 99, 99, 99, 101, 102, 103])
+        ema21 = _series(21, [100, 100, 100, 100, 100, 100, 100, 100])
+        ema50 = _series(50, [100, 100, 100, 100, 100, 100, 100, 100])
+        ema200 = _series(200, [100, 100, 100, 100, 100, 100, 100, 100])
+        facts = build_ema_facts(symbol="TEST", timeframe="D",
+                                emas=[ema9, ema21, ema50, ema200],
+                                last_close=103.0, atr=1.0)
+        ids = {f.id for f in facts}
+        assert "D.ema.cross_9_21_recent" in ids
+
+
 class TestGuards:
     def test_empty_dict_returns_empty(self):
         assert build_ema_facts(symbol="TEST", timeframe="D", emas=[],

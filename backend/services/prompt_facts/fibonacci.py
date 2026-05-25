@@ -271,9 +271,12 @@ def _finalize(facts: list[PromptFact], norm: _Norm, timeframe: str) -> list[Prom
         for zone in norm.convergence_zones:
             price = zone.get("price")
             tfs = zone.get("timeframes", [])
+            if price is None:
+                # No price → can't emit a useful convergence fact.
+                continue
             facts.append(_make_fact(
                 tf=timeframe, condition="convergence_cross_tf",
-                text=f"Cross-TF fib convergence near ${price} across {', '.join(tfs)}.",
+                text=f"Cross-TF fib convergence near ${price:.2f} across {', '.join(tfs)}.",
                 polarity="bullish" if norm.direction == "up" else "bearish",
                 strength=75, priority=88,
                 data={"convergence_price": price, "timeframes": tfs},

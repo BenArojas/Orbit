@@ -34,20 +34,20 @@ def build_atr_facts(*, symbol: str, timeframe: str, atr: IndicatorResult, last_c
     ))
 
     series = [iv.value for iv in atr.values if iv.value is not None]
-    if len(series) >= 5:
+    if len(series) >= 6:
         if is_rising_n(series, n=5, mode="slow"):
             facts.append(_make(
                 timeframe, "expanding",
                 "Volatility expanding — ATR rising over last 5 bars.",
                 polarity="caution", strength=50, priority=72,
-                data={"atr_5_ago": series[-5], "atr_current": last_atr},
+                data={"atr_5_ago": series[-6], "atr_current": last_atr},
             ))
         elif is_falling_n(series, n=5, mode="slow"):
             facts.append(_make(
                 timeframe, "contracting",
                 "Volatility contracting — ATR falling over last 5 bars.",
                 polarity="neutral", strength=45, priority=68,
-                data={"atr_5_ago": series[-5], "atr_current": last_atr},
+                data={"atr_5_ago": series[-6], "atr_current": last_atr},
             ))
 
     return facts

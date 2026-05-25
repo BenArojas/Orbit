@@ -164,12 +164,12 @@ def build_prompt_facts(
             continue
 
         weight = _tf_weight(tf)
-        # Sort: priority desc, tf_weight desc (constant within block), strength desc, recency desc.
-        # Recency = original insertion order — earlier emission means older fact.
-        n = len(facts)
+        # Sort: priority desc, strength desc, recency desc.
+        # tf_weight is constant within a block, so it doesn't affect intra-block order.
+        # Recency proxy = original insertion order — higher index means more recent emission.
         facts_sorted = sorted(
             list(enumerate(facts)),
-            key=lambda pair: (-pair[1].priority, -weight, -pair[1].strength, -(n - pair[0])),
+            key=lambda pair: (-pair[1].priority, -pair[1].strength, -pair[0]),
         )
         ordered = [pair[1] for pair in facts_sorted]
         blocks.append(PromptContextBlock(

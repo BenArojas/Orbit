@@ -42,15 +42,17 @@ def is_rising_n(
 
     slow mode (ADX, OBV slope, BBand-width percentile): looser — just
     net slope > 0 over n bars.
+
+    Computing `n` step-diffs requires n+1 points; with fewer, returns False.
     """
     clean = _clean(values)
-    if len(clean) < n:
+    if len(clean) < n + 1:
         return False
-    window = clean[-(n + 1):] if len(clean) >= n + 1 else clean
+    window = clean[-(n + 1):]
     net = window[-1] - window[0]
     if mode == "slow":
         return net > 0
-    diffs = [window[i + 1] - window[i] for i in range(min(n, len(window) - 1))]
+    diffs = [window[i + 1] - window[i] for i in range(n)]
     same_sign = sum(1 for d in diffs if d > 0)
     return net > 0 and same_sign >= (n + 1) // 2
 
@@ -60,15 +62,18 @@ def is_falling_n(
     n: int = 3,
     mode: _RisingMode = "momentum",
 ) -> bool:
-    """Symmetric counterpart to is_rising_n."""
+    """Symmetric counterpart to is_rising_n.
+
+    Computing `n` step-diffs requires n+1 points; with fewer, returns False.
+    """
     clean = _clean(values)
-    if len(clean) < n:
+    if len(clean) < n + 1:
         return False
-    window = clean[-(n + 1):] if len(clean) >= n + 1 else clean
+    window = clean[-(n + 1):]
     net = window[-1] - window[0]
     if mode == "slow":
         return net < 0
-    diffs = [window[i + 1] - window[i] for i in range(min(n, len(window) - 1))]
+    diffs = [window[i + 1] - window[i] for i in range(n)]
     same_sign = sum(1 for d in diffs if d < 0)
     return net < 0 and same_sign >= (n + 1) // 2
 
@@ -115,7 +120,11 @@ def recent_cross(
         if None in (a_now, a_prev, b_now, b_prev):
             continue
         # Cross occurs when sign of (a - b) flips between i-1 and i.
-        # Treat zero as crossing: prev <= 0 and now > 0, or prev >= 0 and now < 0.
+        # Semantics:
+        #   prev <= 0 and now > 0   → up-cross (a was at/below b, is now strictly above)
+        #   prev >= 0 and now < 0   → down-cross (a was at/above b, is now strictly below)
+        # Note: prev == 0 and now == 0 is NOT a cross (no flip in sign), which is
+        #   the desired behavior — two flat-equal bars don't constitute a crossing.
         prev_diff = a_prev - b_prev
         now_diff = a_now - b_now
         if (prev_diff <= 0 and now_diff > 0) or (prev_diff >= 0 and now_diff < 0):

@@ -28,7 +28,7 @@ def build_adx_facts(*, symbol: str, timeframe: str, adx: IndicatorResult) -> lis
     last = series[-1]
     facts: list[PromptFact] = []
 
-    if last >= 25 and len(series) >= 5:
+    if last >= 25 and len(series) >= 6:
         if is_rising_n(series, n=5, mode="slow"):
             facts.append(_make(
                 timeframe, "strong_rising",
@@ -51,5 +51,7 @@ def build_adx_facts(*, symbol: str, timeframe: str, adx: IndicatorResult) -> lis
             polarity="neutral", strength=45, priority=62,
             data={"adx": last},
         ))
+    # 20 <= last < 25 intentionally emits no fact — this zone is ambiguous
+    # (neither weak nor strong) per spec, so silence is the correct signal.
 
     return facts

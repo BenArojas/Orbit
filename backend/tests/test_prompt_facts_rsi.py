@@ -45,3 +45,11 @@ class TestRsi:
     def test_returns_empty_when_no_values(self):
         ir = IndicatorResult(name="rsi", type="oscillator", values=[], params={})
         assert build_rsi_facts(symbol="TEST", timeframe="D", rsi=ir) == []
+
+    def test_above_50_rising_and_overbought_both_fire(self):
+        """C8: RSI > 70 and rising should emit BOTH above_50_rising and overbought."""
+        facts = build_rsi_facts(symbol="TEST", timeframe="D",
+                                rsi=_rsi([60, 65, 70, 74]))
+        ids = {f.id for f in facts}
+        assert "D.rsi.above_50_rising" in ids
+        assert "D.rsi.overbought" in ids
