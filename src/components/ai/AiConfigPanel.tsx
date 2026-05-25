@@ -30,14 +30,15 @@ type AiIndicator =
   | "ADX"
   | "Stochastic"
   | "VWAP"
-  | "OBV";
+  | "OBV"
+  | "ATR";
 
 /* ── Constants ── */
 
 const TIMEFRAMES: AiTimeframe[] = ["1H", "4H", "D", "W"];
 const INDICATORS: AiIndicator[] = [
   "EMA Stack", "RSI", "Fibonacci", "Volume",
-  "MACD", "BB", "ADX", "Stochastic", "VWAP", "OBV",
+  "MACD", "BB", "ADX", "Stochastic", "VWAP", "OBV", "ATR",
 ];
 
 const DEFAULT_TIMEFRAMES: AiTimeframe[] = ["4H", "D"];
@@ -109,6 +110,7 @@ const CHART_TO_AI_INDICATOR: Partial<Record<IndicatorId, AiIndicator>> = {
   stochastic: "Stochastic",
   vwap: "VWAP",
   obv: "OBV",
+  atr: "ATR",
 };
 
 /** Convert chart indicator set → AI indicator set */

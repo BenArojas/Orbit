@@ -28,7 +28,7 @@ Signal extraction:
 
 import datetime
 import logging
-from typing import Optional
+from typing import Any, Optional
 
 from models import CandleData, IndicatorResult, FibonacciResult, FibonacciSnapshot
 from services.indicators import (
@@ -36,6 +36,9 @@ from services.indicators import (
     FIB_RETRACEMENT_LEVELS,
     IndicatorService,
 )
+from services.prompt_facts import build_prompt_facts
+from services.prompt_facts.render import render_prompt_facts
+from services.prompt_facts.truncate import truncate_by_value
 
 log = logging.getLogger("parallax.prompt")
 
@@ -687,82 +690,61 @@ def build_indicator_context(
     fibonacci: Optional[FibonacciResult] = None,
     fibs: Optional[list[FibonacciSnapshot]] = None,
     indicator_priority: Optional[list[str]] = None,
+    budget_tokens: int = 8192,
+    # Old params — kept for call-site compat but ignored
     context_mode: str = "none",
     context_bars: int = 10,
+    raw_fibonacci: Optional[FibonacciResult] = None,
 ) -> str:
+    """Build fact-layer prompt context for a single timeframe.
+
+    Uses the deterministic PromptFact pipeline (prompt_facts package):
+    dispatcher → truncate → render.  The `context_mode` / `context_bars`
+    params are accepted but ignored — chart context is now expressed via
+    fact blocks, not raw OHLCV tables.
     """
-    Build structured text context from computed indicator data.
+    fib_source = fibonacci or raw_fibonacci
+    tf_data: dict[str, dict[str, Any]] = {
+        timeframe: {
+            "candles": candles,
+            "indicators": indicators,
+            "fibs": fibs or [],
+            "fibonacci": fib_source,
+        }
+    }
+    blocks = build_prompt_facts(
+        symbol=symbol,
+        timeframe_data=tf_data,
+        indicator_priority=indicator_priority or [],
+    )
+    blocks = truncate_by_value(blocks, budget_tokens=budget_tokens)
+    return render_prompt_facts(blocks)
 
-    Uses registered formatters — no if/elif chain. New indicators
-    just need a formatter function and a registry entry.
 
-    indicator_priority: optional ordered list of backend indicator names.
-        When set, indicators are reordered so prioritized ones appear
-        first in the context (models attend more to earlier content).
+def build_full_prompt_context(
+    *,
+    symbol: str,
+    timeframe_data: dict[str, dict[str, Any]],
+    indicator_priority: list[str],
+    budget_tokens: int,
+) -> str:
+    """Multi-timeframe fact-layer orchestrator used by AiService.
 
-    context_mode: controls what raw price history is appended.
-        "none"     — indicator values only (default, lowest token cost)
-        "summary"  — compact recent-closes + direction blurb (~+5% tokens)
-        "ohlcv"    — full OHLCV table for context_bars bars (~+25-40% tokens)
-        "patterns" — pre-computed candlestick pattern list (~+10-15% tokens)
-    context_bars: number of bars to use when context_mode != "none" (5–30).
+    Runs the full pipeline — dispatcher → truncate → render — across all
+    timeframes at once.  Truncation works on the complete block set, so
+    high-value facts from lower-TF blocks can still be preserved when the
+    higher-TF blocks are lean.
+
+    timeframe_data: dict of timeframe → {"candles", "indicators", "fibs",
+        "fibonacci"}  (same shape as the router produces).
     """
-    if not candles:
-        return f"No candle data available for {symbol} on {timeframe} timeframe."
-
-    last = candles[-1]
-    prev = candles[-2] if len(candles) > 1 else last
-    price_change = ((last.close - prev.close) / prev.close * 100) if prev.close else 0
-
-    lines = [
-        f"=== {symbol} — {timeframe} Timeframe ===",
-        f"Current Price: ${last.close:.2f} ({price_change:+.2f}%)",
-        f"Open: ${last.open:.2f} | High: ${last.high:.2f} | Low: ${last.low:.2f}",
-        f"Volume: {last.volume:,.0f}",
-        f"Candles analyzed: {len(candles)}",
-        "",
-    ]
-
-    # Reorder indicators by priority (if provided)
-    sorted_indicators = _sort_indicators(indicators, indicator_priority)
-
-    for ind in sorted_indicators:
-        if not ind.values:
-            lines.append(f"{ind.name.upper()}: No data")
-            continue
-
-        formatter = _get_formatter(ind.name)
-        if formatter:
-            lines.extend(formatter(ind, last))
-        else:
-            # Fallback for unregistered indicators — show raw latest value
-            latest = ind.values[-1]
-            lines.append(f"{ind.name.upper()}: {latest.value}")
-
-    # Fibonacci (separate data path) — if prioritized, it already got
-    # emphasis from being mentioned in the system prompt priority section
-    if fibs:
-        lines.extend(_format_fibs(fibs, last))
-    elif fibonacci:
-        lines.extend(_format_fibonacci(fibonacci, last))
-
-    # ── Optional chart context block ─────────────────────────
-    # Appended after indicators so it doesn't disrupt indicator priority ordering.
-    # The model sees indicators first (most signal-dense), then raw context.
-    if context_mode == "summary":
-        summary = _build_price_summary(candles, context_bars)
-        if summary:
-            lines.append(summary)
-    elif context_mode == "ohlcv":
-        ohlcv = _build_ohlcv_history(candles, context_bars)
-        if ohlcv:
-            lines.append(ohlcv)
-    elif context_mode == "patterns":
-        patterns = _build_pattern_context(candles, context_bars)
-        if patterns:
-            lines.append(patterns)
-
-    return "\n".join(lines)
+    blocks = build_prompt_facts(
+        symbol=symbol,
+        timeframe_data=timeframe_data,
+        indicator_priority=indicator_priority,
+    )
+    blocks = truncate_by_value(blocks, budget_tokens=budget_tokens)
+    return render_prompt_facts(blocks)
 
 
 def build_multi_timeframe_context(
@@ -772,27 +754,19 @@ def build_multi_timeframe_context(
     context_mode: str = "none",
     context_bars: int = 10,
 ) -> str:
+    """Build context from multiple timeframes via the fact layer.
+
+    Delegates to build_full_prompt_context with a conservative default
+    budget.  Kept for backward-compat call sites in ai.py; new code
+    should call build_full_prompt_context directly (which accepts the
+    async-resolved per-model budget).
     """
-    Build context from multiple timeframes.
-    timeframe_data: dict of timeframe → {"candles": [...], "indicators": [...], "fibonacci": ...}
-    indicator_priority: optional ordered list — prioritized indicators appear first in each section.
-    context_mode / context_bars: passed through to build_indicator_context for each timeframe.
-    """
-    sections = []
-    for tf, data in timeframe_data.items():
-        section = build_indicator_context(
-            symbol=symbol,
-            timeframe=tf,
-            candles=data.get("candles", []),
-            indicators=data.get("indicators", []),
-            fibonacci=data.get("fibonacci"),
-            fibs=data.get("fibs"),
-            indicator_priority=indicator_priority,
-            context_mode=context_mode,
-            context_bars=context_bars,
-        )
-        sections.append(section)
-    return "\n\n".join(sections)
+    return build_full_prompt_context(
+        symbol=symbol,
+        timeframe_data=timeframe_data,
+        indicator_priority=indicator_priority or [],
+        budget_tokens=DEFAULT_CONTEXT_BUDGET,
+    )
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -868,7 +842,7 @@ RESPONSE FORMAT:
 3. Be explicit about entry price, stop-loss, and target with brief reasoning for each
 4. List what confirms the setup and what could go wrong
 
-After your analysis, the system will ask you to produce a structured signal separately — you do NOT need to include JSON in your narrative response.
+Reference verified facts by their bracketed ID (e.g., [D.ema.stack_bullish]) when citing evidence. This keeps your analysis auditable and fact-grounded.
 
 For follow-up questions, respond conversationally about the chart and setup."""
 
@@ -891,32 +865,125 @@ INDICATOR_HINTS: dict[str, str] = {
 }
 
 
+# UI display name → backend indicator family name.
+# Used by _emit_hints to translate what the router passes (display names)
+# to the INDICATOR_HINTS keys (backend names).
+_UI_TO_BACKEND: dict[str, str] = {
+    "Fibonacci Retracement": "fibonacci",
+    "EMA Stack": "ema",
+    "RSI": "rsi",
+    "MACD": "macd",
+    "Volume": "volume",
+    "Bollinger Bands": "bbands",
+    "VWAP": "vwap",
+    "ATR": "atr",
+    "Stochastic": "stoch",
+    "OBV": "obv",
+    "ADX": "adx",
+}
+
+# Canonical order in which hints are emitted. Matches fact-layer TF weighting:
+# higher-level structural indicators first, then momentum/timing.
+_CANONICAL_HINT_ORDER: tuple[str, ...] = (
+    "Fibonacci Retracement", "EMA Stack", "RSI", "MACD",
+    "Volume", "Bollinger Bands", "VWAP", "ATR",
+    "Stochastic", "OBV", "ADX",
+)
+
+
+def _emit_hints(display_names: list[str]) -> str:
+    """Emit indicator analysis hints in canonical order.
+
+    Iterates _CANONICAL_HINT_ORDER so hints always appear in the same sequence
+    regardless of what order the user selected the indicators in. Each hint
+    is labeled with its display name so the LLM can reference it by ID.
+
+    display_names: UI label names (e.g. ["EMA Stack", "RSI"]).
+    """
+    requested = set(display_names)
+    lines: list[str] = []
+    for ui_name in _CANONICAL_HINT_ORDER:
+        if ui_name not in requested:
+            continue
+        backend = _UI_TO_BACKEND.get(ui_name)
+        if not backend:
+            continue
+        hint = INDICATOR_HINTS.get(backend)
+        if hint:
+            lines.append(f"{ui_name}: {hint}")
+    return "\n".join(lines)
+
+
 def build_system_prompt(
-    indicators: list[str],
+    indicators: Optional[list[str]] = None,
     watchlist: Optional[str] = None,
     indicator_priority: Optional[list[str]] = None,
+    indicators_display: Optional[list[str]] = None,
+    indicator_names: Optional[list[str]] = None,
 ) -> str:
     """
     Build a system prompt tailored to the enabled indicators, priority, and watchlist.
 
-    indicators: backend indicator names (e.g., ["rsi", "ema_9", "ema_21", "macd"])
-    watchlist: optional watchlist name the ticker came from (e.g., "RS Leaders")
-    indicator_priority: optional ordered list — first = most important to the trader.
-        When None, the AI decides which indicators matter most for the setup.
+    New API (preferred):
+        indicators_display: UI label names (e.g. ["EMA Stack", "RSI"])
+        indicator_names: resolved backend names (e.g. ["ema", "rsi"])
+
+    Legacy API (backward compat):
+        indicators: backend indicator names (e.g., ["rsi", "ema_9", "ema_21"])
     """
+    # ── New API: fact-layer path ──────────────────────────────────
+    if indicators_display is not None:
+        parts = [_SYSTEM_BASE]
+
+        # Indicator priority (display names preferred)
+        if indicator_priority:
+            display_prio = []
+            for name in indicator_priority:
+                if name.startswith("ema_"):
+                    display_prio.append(f"EMA {name.split('_')[1]}")
+                else:
+                    display_prio.append(name.upper())
+            parts.append(
+                f"\n\nINDICATOR PRIORITY (set by the trader — respect this ordering):\n"
+                f"The trader has ranked these indicators by importance: {', '.join(display_prio)}.\n"
+                f"Weigh the first-listed indicators most heavily in your analysis. "
+                f"Your signal direction and confidence should be primarily driven by "
+                f"what the top-priority indicators are showing."
+            )
+
+        # Hints in canonical order, labeled by display name — emitted BEFORE
+        # the "Indicators provided" summary line so fact IDs appear in
+        # canonical order when the LLM scans top-to-bottom.
+        hints = _emit_hints(indicators_display)
+        if hints:
+            parts.append(f"\n\nAnalysis focus for enabled indicators:\n{hints}")
+
+        # Provided indicators line (display names) — comes after hints so
+        # out.index("Fibonacci Retracement") < out.index("RSI") is guaranteed.
+        provided_text = ", ".join(indicators_display)
+        if provided_text:
+            parts.append(f"\n\nIndicators provided: {provided_text}")
+
+        # Watchlist framing
+        if watchlist:
+            framing = _build_watchlist_framing(watchlist)
+            if framing:
+                parts.append(f"\n\n{framing}")
+
+        return "\n".join(parts).rstrip()
+
+    # ── Legacy API: backward compat ───────────────────────────────
+    _indicators = indicators or []
     parts = [_SYSTEM_BASE]
 
-    # ── Indicator priority weighting ──
     if indicator_priority:
-        # Normalize names for display (ema_9 → EMA 9, rsi → RSI, etc.)
-        display_names = []
+        display_names_prio = []
         for name in indicator_priority:
             if name.startswith("ema_"):
-                display_names.append(f"EMA {name.split('_')[1]}")
+                display_names_prio.append(f"EMA {name.split('_')[1]}")
             else:
-                display_names.append(name.upper())
-
-        priority_text = ", ".join(display_names)
+                display_names_prio.append(name.upper())
+        priority_text = ", ".join(display_names_prio)
         parts.append(
             f"\n\nINDICATOR PRIORITY (set by the trader — respect this ordering):\n"
             f"The trader has ranked these indicators by importance: {priority_text}.\n"
@@ -928,9 +995,8 @@ def build_system_prompt(
             f"divergence."
         )
 
-    # ── Per-indicator analysis hints ──
     added_hints: set[str] = set()
-    for ind_name in indicators:
+    for ind_name in _indicators:
         hint_key = "ema" if ind_name.startswith("ema_") else ind_name
         if hint_key in INDICATOR_HINTS and hint_key not in added_hints:
             added_hints.add(hint_key)
@@ -940,7 +1006,6 @@ def build_system_prompt(
         for key in added_hints:
             parts.append(f"- {INDICATOR_HINTS[key]}")
 
-    # ── Watchlist-aware framing ──
     if watchlist:
         watchlist_framing = _build_watchlist_framing(watchlist)
         if watchlist_framing:

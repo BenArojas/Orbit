@@ -37,6 +37,7 @@ from services.screener import ScreenerService
 from services.sectors import SectorService
 from services.ai import AiService
 from services.ollama import OllamaLifecycle
+from services.ollama_context import OllamaContextService
 from services.scanner import ScannerService
 
 # ── Logging setup (must be first) ────────────────────────────
@@ -117,7 +118,11 @@ async def lifespan(app: FastAPI):
 
     # AI service — stateless wrapper for Ollama chat/analysis.
     # The model name is passed per-request from ollama.selected_model.
-    ai = AiService()
+    # OllamaContextService queries /api/show to get the true context-window
+    # ceiling per model and caches it, so the prompt truncator uses an
+    # accurate budget instead of the static tier table.
+    ollama_context = OllamaContextService(ollama)
+    ai = AiService(context_service=ollama_context)
     app.state.ai = ai
 
     # Background trigger scanner (Phase 6.1 / 6.2)

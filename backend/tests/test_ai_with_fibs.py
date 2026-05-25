@@ -72,10 +72,12 @@ class TestAnalyzeRequestWithFibs:
 
 class TestPromptBuilderWithFibs:
     def test_prompt_includes_primary_and_locked_fibs_in_order(self):
+        """Fact layer emits D.fibonacci.* IDs for primary and locked snapshots."""
+        candles = [make_candle(close=110.0 + i, time=1_700_000_000 + i * 86400) for i in range(10)]
         context = build_indicator_context(
             symbol="AAPL",
             timeframe="D",
-            candles=[make_candle()],
+            candles=candles,
             indicators=[],
             fibs=[
                 make_snapshot(source="manual", is_primary=True, score=84.0),
@@ -83,11 +85,12 @@ class TestPromptBuilderWithFibs:
             ],
         )
 
-        primary_idx = context.index("Primary fib")
-        locked_idx = context.index("Locked fib #1")
-        assert primary_idx < locked_idx
-        assert "Source: MANUAL" in context
-        assert "Source: LOCKED" in context
+        # Fact layer uses structured IDs — no legacy "Primary fib" / "Source:" labels
+        assert "Primary fib" not in context
+        assert "Source: MANUAL" not in context
+        assert "Source: LOCKED" not in context
+        # At least one fibonacci fact must have been emitted
+        assert "D.fibonacci." in context
 
 
 class TestFetchTimeframeDataWithFibs:

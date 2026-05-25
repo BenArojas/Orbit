@@ -445,13 +445,12 @@ async def analyze(
         result = await ai.analyze(
             symbol=request.symbol,
             timeframe_data=timeframe_data,
-            indicators_requested=request.indicators,
+            indicators_display=request.indicators,
+            indicator_names=resolved_indicators,
             model=model,
             session_id=request.session_id,
             watchlist=request.watchlist,
-            indicator_priority=request.indicator_priority,
-            context_mode=request.context_mode,
-            context_bars=request.context_bars,
+            indicator_priority=request.indicator_priority or [],
         )
     except AIAnalysisTimeoutError as exc:
         log.warning(
@@ -552,13 +551,12 @@ async def analyze_stream(
             async for event in ai.analyze_stream(
                 symbol=request.symbol,
                 timeframe_data=timeframe_data,
-                indicators_requested=request.indicators,
+                indicators_display=request.indicators,
+                indicator_names=resolved_indicators,
                 model=model,
                 session_id=request.session_id,
                 watchlist=request.watchlist,
-                indicator_priority=request.indicator_priority,
-                context_mode=request.context_mode,
-                context_bars=request.context_bars,
+                indicator_priority=request.indicator_priority or [],
             ):
                 yield f"data: {json.dumps(event)}\n\n"
         except AIAnalysisTimeoutError as exc:

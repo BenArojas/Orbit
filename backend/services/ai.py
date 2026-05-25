@@ -24,7 +24,10 @@ import logging
 import re
 import uuid
 from collections import OrderedDict
-from typing import AsyncIterator, Optional
+from typing import TYPE_CHECKING, AsyncIterator, Optional
+
+if TYPE_CHECKING:
+    from services.ollama_context import OllamaContextService
 
 import httpx
 
@@ -63,6 +66,7 @@ MAX_SESSIONS = 50
 from services.prompt_builder import (
     build_indicator_context,        # noqa: F401 — re-export for backwards compat
     build_multi_timeframe_context,  # noqa: F401
+    build_full_prompt_context,
     build_analysis_user_message,
     build_system_prompt,
     get_budget_for_model,
@@ -264,10 +268,13 @@ class AiService:
     and the HTTP client for Ollama communication.
     """
 
-    def __init__(self) -> None:
+    def __init__(
+        self, context_service: "OllamaContextService | None" = None
+    ) -> None:
         # Model is not hardcoded — it comes from the user's selection
         # stored in SQLite settings and set via OllamaLifecycle.selected_model.
         # The router passes the current model name into analyze()/follow_up().
+        self._context_service = context_service
         self.sessions: OrderedDict[str, ChatSession] = OrderedDict()
         self._http = httpx.AsyncClient(
             base_url=OLLAMA_HOST,
@@ -484,11 +491,12 @@ class AiService:
 
     # ── Internal: build the prompt + return primed session ─────────────
 
-    def _prepare_analysis_session(
+    async def _prepare_analysis_session(
         self,
         symbol: str,
         timeframe_data: dict[str, dict],
-        indicators_requested: list[str],
+        indicators_display: list[str],
+        indicator_names: list[str],
         model: str,
         session_id: Optional[str],
         watchlist: Optional[str],
@@ -500,22 +508,31 @@ class AiService:
         Prepare a ChatSession with system + user messages ready to send to
         Ollama. Shared by both `analyze` and `analyze_stream` so the streaming
         path stays in lockstep with the non-streaming one.
+
+        indicators_display: UI label names (e.g. ["EMA Stack", "RSI"]) — shown
+            in the user-facing narrative prompt.
+        indicator_names: resolved backend names (e.g. ["ema", "rsi"]) — used
+            by the fact builders and system prompt.
         """
         session = self.get_or_create_session(session_id)
         session.symbol = symbol
         session.clear()
 
-        context = build_multi_timeframe_context(
-            symbol, timeframe_data,
-            indicator_priority=indicator_priority,
-            context_mode=context_mode,
-            context_bars=context_bars,
+        if self._context_service is not None:
+            budget = await self._context_service.get_budget_for_model(model)
+        else:
+            budget = get_budget_for_model(model)
+
+        context = build_full_prompt_context(
+            symbol=symbol,
+            timeframe_data=timeframe_data,
+            indicator_priority=indicator_priority or [],
+            budget_tokens=budget,
         )
-        budget = get_budget_for_model(model)
-        context = truncate_context(context, budget_tokens=budget)
 
         system_prompt = build_system_prompt(
-            indicators=indicators_requested,
+            indicators_display=indicators_display,
+            indicator_names=indicator_names,
             watchlist=watchlist,
             indicator_priority=indicator_priority,
         )
@@ -527,7 +544,7 @@ class AiService:
             symbol=symbol,
             context=context,
             timeframes=list(timeframe_data.keys()),
-            indicators_requested=indicators_requested,
+            indicators_requested=indicators_display,
             indicator_priority=indicator_priority,
         )
 
@@ -598,13 +615,16 @@ class AiService:
         self,
         symbol: str,
         timeframe_data: dict[str, dict],
-        indicators_requested: list[str],
+        indicators_display: list[str],
+        indicator_names: list[str],
         model: str,
         session_id: Optional[str] = None,
         watchlist: Optional[str] = None,
         indicator_priority: Optional[list[str]] = None,
         context_mode: str = "none",
         context_bars: int = 10,
+        # Legacy alias — prefer indicators_display + indicator_names
+        indicators_requested: Optional[list[str]] = None,
     ) -> dict:
         """
         Run a full technical analysis for a stock — one-shot flow.
@@ -622,14 +642,21 @@ class AiService:
         reformat), which on 20B+ models routinely took 2+ minutes due to
         the JSON-mode extraction stage timing out at 45s.
 
+        indicators_display: UI label names (e.g. ["EMA Stack"]) — user-facing.
+        indicator_names: resolved backend names (e.g. ["ema"]) — fact builders.
+
         Returns: {
             "session_id": str,
             "signal": dict | None,
             "message": str,
         }
         """
-        session = self._prepare_analysis_session(
-            symbol, timeframe_data, indicators_requested, model,
+        # Backward compat: if caller passes only indicators_requested, use it for both
+        if indicators_requested is not None and not indicators_display:
+            indicators_display = indicators_requested
+            indicator_names = indicators_requested
+        session = await self._prepare_analysis_session(
+            symbol, timeframe_data, indicators_display, indicator_names, model,
             session_id, watchlist, indicator_priority,
             context_mode, context_bars,
         )
@@ -660,13 +687,16 @@ class AiService:
         self,
         symbol: str,
         timeframe_data: dict[str, dict],
-        indicators_requested: list[str],
+        indicators_display: list[str],
+        indicator_names: list[str],
         model: str,
         session_id: Optional[str] = None,
         watchlist: Optional[str] = None,
         indicator_priority: Optional[list[str]] = None,
         context_mode: str = "none",
         context_bars: int = 10,
+        # Legacy alias — prefer indicators_display + indicator_names
+        indicators_requested: Optional[list[str]] = None,
     ) -> AsyncIterator[dict]:
         """
         Stream the analysis. Yields events as dicts:
@@ -682,9 +712,16 @@ class AiService:
         JSON block at the end of its narrative. We accumulate tokens, then
         parse the signal once the stream completes. If parsing fails, we
         attempt one (non-streamed) reformat call before yielding `done`.
+
+        indicators_display: UI label names — user-facing narrative prompt.
+        indicator_names: resolved backend names — fact builders and system prompt.
         """
-        session = self._prepare_analysis_session(
-            symbol, timeframe_data, indicators_requested, model,
+        # Backward compat: if caller passes only indicators_requested, use it for both
+        if indicators_requested is not None and not indicators_display:
+            indicators_display = indicators_requested
+            indicator_names = indicators_requested
+        session = await self._prepare_analysis_session(
+            symbol, timeframe_data, indicators_display, indicator_names, model,
             session_id, watchlist, indicator_priority,
             context_mode, context_bars,
         )

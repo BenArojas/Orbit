@@ -79,7 +79,8 @@ class TestAiServiceOneShot:
                 await svc.analyze(
                     symbol="AAPL",
                     timeframe_data={"1D": {"candles": [], "indicators": [], "fibonacci": None}},
-                    indicators_requested=["rsi"],
+                    indicators_display=["RSI"],
+                indicator_names=["rsi"],
                     model="gemma4:4b",
                 )
         assert exc_info.value.stage == "narrative"
@@ -96,7 +97,8 @@ class TestAiServiceOneShot:
             result = await svc.analyze(
                 symbol="AAPL",
                 timeframe_data={"1D": {"candles": [], "indicators": [], "fibonacci": None}},
-                indicators_requested=["rsi"],
+                indicators_display=["RSI"],
+                indicator_names=["rsi"],
                 model="gemma4:4b",
             )
 
@@ -121,7 +123,8 @@ class TestAiServiceOneShot:
             result = await svc.analyze(
                 symbol="AAPL",
                 timeframe_data={"1D": {"candles": [], "indicators": [], "fibonacci": None}},
-                indicators_requested=["rsi"],
+                indicators_display=["RSI"],
+                indicator_names=["rsi"],
                 model="gemma4:4b",
             )
 
@@ -152,7 +155,8 @@ class TestAiServiceOneShot:
             result = await svc.analyze(
                 symbol="AAPL",
                 timeframe_data={"1D": {"candles": [], "indicators": [], "fibonacci": None}},
-                indicators_requested=["rsi"],
+                indicators_display=["RSI"],
+                indicator_names=["rsi"],
                 model="gemma4:4b",
             )
 
@@ -171,7 +175,8 @@ class TestAiServiceOneShot:
             result = await svc.analyze(
                 symbol="AAPL",
                 timeframe_data={"1D": {"candles": [], "indicators": [], "fibonacci": None}},
-                indicators_requested=["rsi"],
+                indicators_display=["RSI"],
+                indicator_names=["rsi"],
                 model="gemma4:4b",
             )
 
@@ -198,7 +203,8 @@ class TestAiServiceStreaming:
             async for ev in svc.analyze_stream(
                 symbol="AAPL",
                 timeframe_data={"1D": {"candles": [], "indicators": [], "fibonacci": None}},
-                indicators_requested=["rsi"],
+                indicators_display=["RSI"],
+                indicator_names=["rsi"],
                 model="gemma4:4b",
             ):
                 events.append(ev)
