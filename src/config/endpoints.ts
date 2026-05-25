@@ -5,7 +5,7 @@
  * In dev mode the sidecar runs on localhost:8000. In production Tauri
  * launches the sidecar and the same URL applies.
  *
- * If the port or host ever needs to change (e.g., Hub consolidation,
+ * If the port or host ever needs to change (e.g., Orbit consolidation,
  * dynamic port assignment), this is the only file to touch.
  */
 

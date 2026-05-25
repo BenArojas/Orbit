@@ -1,4 +1,4 @@
-# Parallax dev-mode backend launcher (Windows / PowerShell).
+# Orbit dev-mode backend launcher (Windows / PowerShell).
 #
 # Why this exists:
 #   `uvicorn --reload` doesn't always propagate shutdown signals to the worker,

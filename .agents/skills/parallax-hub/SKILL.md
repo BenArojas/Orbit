@@ -1,11 +1,13 @@
 ---
 name: parallax-hub
-description: IBKR Hub multi-module context. Use when working on cross-module concerns, the instruments table, conid lookups, or anything involving MoonMarket or Inflect boundaries. Trigger when discussing shared database schema, module boundaries, or the relationship between Parallax, MoonMarket, and Inflect.
+description: Orbit multi-module context. Use when working on cross-module concerns, the instruments table, conid lookups, or anything involving MoonMarket or Inflect boundaries. Trigger when discussing shared database schema, module boundaries, or the relationship between Parallax, MoonMarket, and Inflect.
 ---
 
-# IBKR Hub Context
+# Orbit Context
 
-Parallax is one of three modules in the **IBKR Hub** — a single Tauri binary:
+Orbit was previously called **IBKR Hub** during planning. Keep that name only as historical context; do not use it as the product name because it sounds official/affiliated with IBKR.
+
+Parallax is one of three modules in **Orbit** — a single Tauri binary:
 
 - **Parallax** — technical analysis (this app)
 - **MoonMarket** — portfolio & account management

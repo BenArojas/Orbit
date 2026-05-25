@@ -1,4 +1,4 @@
-# Parallax — Project Plan
+# Orbit — Project Plan
 
 > Last updated: 2026-05-25
 > Status: Phase 1–7 complete. Phase 8 (E2E testing) in progress — 8.1, 8.3, 8.9, 8.10 done. Phase 9 (Dashboard request-fan-out optimization) complete — all 22 tasks shipped, pending empirical verification. **Phase 10 (Compare Mode + WebSocket reliability) complete** — all 29 commits merged to dev. **Phase 11 (AI Prompt Fact Layer) complete** — merged to dev.
@@ -44,7 +44,7 @@ These are locked in. Don't revisit unless something breaks.
 | AI input | Structured JSON (pre-computed signals) | Not raw OHLCV — cleaner, more reliable |
 | AI scope | Full chat + signal card | Signal card on first response, then follow-up chat |
 | Ollama lifecycle | Detect-only, never auto-install | Guide user, don't decide for them |
-| Persistence | SQLite (local) | Survives restarts, shared across Hub modules |
+| Persistence | SQLite (local) | Survives restarts, shared across Orbit modules |
 | Market data | IBKR Client Portal Web API (port 5001) | Staying with this — TWS API rejected (no scanner, callback model). ibind client. |
 | Multi-timeframe | Single chart + timeframe switcher | Simpler UX |
 | Background scanner | Runs while app is open only | No system tray mode |
@@ -442,7 +442,7 @@ The Compare button on the Analysis toolbar replaces the chart area with a stack 
 
 ### Future (v2 — Not In Scope Now)
 
-- Cloud LLM integration (Claude API / OpenAI) for better analysis
+- Cloud LLM integration (Anthropic / OpenAI) for better analysis
 - Multi-account support
 - Options chain analysis
 - System tray mode with persistent scanning
@@ -452,7 +452,7 @@ The Compare button on the Analysis toolbar replaces the chart area with a stack 
 - Keyboard shortcuts
 - Backup / restore SQLite (watchlists, triggers, settings export)
 
-> **Inflect (trading journal)** is Phase 4 of the Hub roadmap, built after Parallax and MoonMarket.
+> **Inflect (trading journal)** is Phase 4 of the Orbit roadmap, built after Parallax and MoonMarket.
 
 ---
 

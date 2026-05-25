@@ -9,7 +9,7 @@
 # For a macOS universal build (arm64 + x86_64 lipo'd together), use:
 #   bash scripts/build-backend.sh --universal
 #
-# Requires the Parallax uv environment to be set up:
+# Requires the Orbit backend uv environment to be set up:
 #   cd backend && uv sync
 # ──────────────────────────────────────────────────────────────────────────────
 set -euo pipefail

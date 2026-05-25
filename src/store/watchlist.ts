@@ -4,7 +4,7 @@
  * The master watchlist is synced FROM IBKR (read-only source of truth).
  * Dynamic watchlists are populated by trigger hits from the backend scanner.
  *
- * Hub integration: All instruments are identified by conid (IBKR contract ID).
+ * Orbit integration: All instruments are identified by conid (IBKR contract ID).
  * The instruments table in SQLite caches conid → symbol/name lookups.
  * MoonMarket and Inflect also read from this table.
  */

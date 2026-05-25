@@ -319,14 +319,14 @@ ibkr_bar = spec.bar
 
 Run from the backend directory:
 ```bash
-cd /Users/benarojasmac/Desktop/Projects/Parallax/backend && python -c "from models import IndicatorRequest; print('ok')"
+cd /Users/benarojasmac/Desktop/Projects/Orbit/backend && python -c "from models import IndicatorRequest; print('ok')"
 ```
 
 Expected: `ok`
 
 Also run ruff (if available):
 ```bash
-cd /Users/benarojasmac/Desktop/Projects/Parallax/backend && uv run ruff check routers/indicators.py models/__init__.py 2>&1 | head -20
+cd /Users/benarojasmac/Desktop/Projects/Orbit/backend && uv run ruff check routers/indicators.py models/__init__.py 2>&1 | head -20
 ```
 
 Expected: no errors.

@@ -1,13 +1,13 @@
 ---
 name: parallax-v2-roadmap
-description: Parallax v2 backlog. Use whenever discussing future features, deferred work, the Fibonacci learning algorithm, user-feedback scoring, watchlist-driven analysis enhancements, Inflect integration, or any work explicitly pushed out of v1 scope. Trigger when planning roadmap, answering "is X in v1 or v2", or when a v1 task uncovers work that belongs in v2.
+description: Orbit/Parallax v2 backlog. Use whenever discussing future features, deferred work, the Fibonacci learning algorithm, user-feedback scoring, watchlist-driven analysis enhancements, Inflect integration, or any work explicitly pushed out of v1 scope. Trigger when planning roadmap, answering "is X in v1 or v2", or when a v1 task uncovers work that belongs in v2.
 ---
 
-# Parallax v2 Roadmap
+# Orbit / Parallax v2 Roadmap
 
 This skill catalogs everything that has been scoped, discussed, and intentionally pushed out of v1. It exists so v1 stays shippable and so v2 work is grounded in decisions already made rather than re-litigated later.
 
-Trigger: any conversation about future features, deferred scope, or "when are we going to build X". Do NOT pull this into AGENTS.md — it is reference-only, loaded on demand.
+Trigger: any conversation about future features, deferred scope, or "when are we going to build X". Do NOT pull this into root agent instruction files — it is reference-only, loaded on demand.
 
 ---
 
@@ -69,7 +69,7 @@ Related open question Q5 in PROJECT_PLAN.md.
 
 ## 4. Inflect Integration (trading journal)
 
-Inflect is Phase 4 of the IBKR Hub roadmap (built after Parallax + MoonMarket). When it ships, v2 work:
+Inflect is Phase 4 of the Orbit roadmap (built after Parallax + MoonMarket). When it ships, v2 work:
 
 - Read-only link from Parallax analyses to Inflect journal entries, so the user can jump "this fib setup → my trade notes for AMD earnings play."
 - Tag each Inflect trade with the originating Parallax analysis ID (if any), so trades can be retrospectively analyzed by which fib/indicator setup they came from.
@@ -90,16 +90,16 @@ v1 (task 4.4) implements basic parent/nested detection: a small swing entirely w
 
 ## 6. Cloud LLM Provider Support
 
-**Status:** v2. Parallax v1 is 100% local — Ollama only. AGENTS.md rule #3 ("no cloud dependencies") governs v1.
+**Status:** v2. Orbit v1 is 100% local — Ollama only. AGENTS.md and CLAUDE.md rule #3 ("no cloud dependencies") governs v1.
 
 v2 adds an optional escape hatch for users who want cloud model quality instead of local inference. Keeps the local-first default, cloud is purely opt-in.
 
 **Scope:**
-- Provider abstraction layer in `backend/services/ai.py` — `LLMProvider` protocol with `chat()` and `chat_stream()` methods. Ollama becomes one implementation; Codex API and OpenAI become others.
+- Provider abstraction layer in `backend/services/ai.py` — `LLMProvider` protocol with `chat()` and `chat_stream()` methods. Ollama becomes one implementation; Anthropic and OpenAI become others.
 - Settings UI: user picks provider (local Ollama / Anthropic / OpenAI), pastes API key into a local-only SQLite field, chooses model from that provider's available list.
 - API keys stay on the user's machine — stored in SQLite `settings` table, never transmitted except to the provider itself, never logged.
 - Prompt builder stays unchanged. The structured context and system prompt work identically across providers — that's the whole point of having a clean registration pattern.
-- Token budgets become per-provider: cloud models (Codex Sonnet, GPT-4) have much larger context windows than local Gemma, so the budget function keys off the active provider + model rather than a single default.
+- Token budgets become per-provider: cloud models have much larger context windows than local Gemma, so the budget function keys off the active provider + model rather than a single default.
 - Cost awareness: cloud providers are paid. Surface estimated per-analysis cost in the AI panel footer, and optionally cap monthly spend with a local counter.
 - Streaming parity — Anthropic and OpenAI both support streaming; use it.
 - Fall-through: if cloud provider fails (network down, rate limit, bad key), fall back to local Ollama if available.
@@ -128,4 +128,4 @@ These came up in earlier discussions and belong in v2 rather than v1:
 
 Everything above was discussed, analyzed, and deliberately pushed out of v1 scope. When a v1 task brushes up against any of these topics, the answer is "defer to v2, see parallax-v2-roadmap." This keeps v1 shippable and prevents scope creep from eating the core feature set.
 
-How to apply: read this skill when planning v2 work, when a v1 task surfaces something that clearly belongs later, or when someone asks "why didn't we build X in v1". Do NOT add any of this content to AGENTS.md.
+How to apply: read this skill when planning v2 work, when a v1 task surfaces something that clearly belongs later, or when someone asks "why didn't we build X in v1". Do NOT add any of this content to root agent instruction files.

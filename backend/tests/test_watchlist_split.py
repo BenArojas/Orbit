@@ -76,7 +76,7 @@ def test_instruments_returns_symbol_and_company_without_snapshot():
     # Crucial: snapshot must NOT be invoked by the instruments endpoint.
     mock_ibkr.snapshot.assert_not_called()
 
-    # And we seeded the instruments cache for the Hub.
+    # And we seeded the instruments cache for Orbit.
     assert (265598, "AAPL", "Apple Inc.") in stub_db.upserts
 
 

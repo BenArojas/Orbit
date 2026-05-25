@@ -1,9 +1,11 @@
 ---
 name: parallax-backend
-description: Python FastAPI backend conventions for Parallax. Use whenever working on routers, services, models, indicators, IBKR integration, database, or any file under backend/. Covers architecture, coding patterns, indicator set, and IBKR setup. Trigger on any backend task — API endpoints, data processing, indicator computation, database queries, or Python code.
+description: Python FastAPI backend conventions for Orbit, especially the Parallax module and the shared sidecar. Use whenever working on routers, services, models, indicators, IBKR integration, database, or any file under backend/. Covers architecture, coding patterns, indicator set, and IBKR setup. Trigger on any backend task — API endpoints, data processing, indicator computation, database queries, or Python code.
 ---
 
 # Backend Conventions
+
+These conventions apply to Orbit's shared Python sidecar. Most existing backend code still serves the Parallax module, and MoonMarket/Inflect endpoints should join the same sidecar rather than creating separate services.
 
 ## Architecture
 

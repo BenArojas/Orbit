@@ -1,5 +1,5 @@
 """
-Parallax configuration — all settings in one place.
+Orbit backend configuration — all settings in one place.
 No .env file needed for v1 (everything is local).
 """
 
@@ -13,7 +13,7 @@ IBKR_GATEWAY_PORT = int(os.getenv("IBKR_GATEWAY_PORT", "5001"))
 IBKR_GATEWAY_BASE_URL = f"https://{IBKR_GATEWAY_HOST}:{IBKR_GATEWAY_PORT}"
 IBKR_API_BASE_URL = f"{IBKR_GATEWAY_BASE_URL}/v1/api"
 
-# Parallax backend
+# Orbit backend
 BACKEND_HOST = os.getenv("BACKEND_HOST", "localhost")
 BACKEND_PORT = int(os.getenv("BACKEND_PORT", "8000"))
 
@@ -30,7 +30,8 @@ TAURI_ORIGIN = "tauri://localhost"
 # Model selection is stored in SQLite settings (user picks from what they have).
 OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434")
 
-# Gateway provisioning
+# Gateway provisioning. PARALLAX_* env names are retained for compatibility
+# with the existing sidecar and user data paths.
 # Where the managed JRE + Gateway live on disk
 GATEWAY_HOME = os.path.expanduser(
     os.getenv("PARALLAX_GATEWAY_HOME", "~/.parallax/gateway")
@@ -46,7 +47,8 @@ GATEWAY_ZIP_URL = os.getenv(
 # Adoptium Temurin JRE API (resolves to platform-specific archive)
 ADOPTIUM_API_BASE = "https://api.adoptium.net/v3/binary/latest"
 
-# SQLite
+# SQLite. The default filename remains parallax.db until the storage migration
+# is handled as a release-packaging task.
 SQLITE_DB_PATH = os.getenv("SQLITE_DB_PATH", "parallax.db")
 
 # Session keep-alive interval (seconds)

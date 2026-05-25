@@ -1,6 +1,6 @@
 # -*- mode: python ; coding: utf-8 -*-
 """
-PyInstaller spec — Parallax backend sidecar.
+PyInstaller spec — Orbit backend sidecar.
 
 Build via the helper script (recommended):
     bash scripts/build-backend.sh          # macOS / Linux

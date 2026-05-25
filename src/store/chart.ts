@@ -4,7 +4,7 @@
  * Tracks which instrument is being analyzed, active timeframe,
  * and which indicators are toggled on/off.
  *
- * Hub integration: conid (IBKR contract ID) is the universal instrument key.
+ * Orbit integration: conid (IBKR contract ID) is the universal instrument key.
  * When Inflect queries /indicators for trade context, it sends the same conid
  * stored here. No special Inflect logic needed — it's a natural API consumer.
  */

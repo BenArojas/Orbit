@@ -9,14 +9,14 @@
  *   - Cyan glow line below nav
  *   - Full viewport height below nav for page content
  *
- * Hub integration: When Parallax moves into the IBKR Hub, this shell becomes
- * a nested route under the Hub's top-level navigation. The nav bar will be
- * replaced by the Hub's global nav, and these pills become sub-tabs.
+ * Orbit integration: When Parallax moves into the Orbit, this shell becomes
+ * a nested route under Orbit's top-level navigation. The nav bar will be
+ * replaced by Orbit's global nav, and these pills become sub-tabs.
  */
 
 import { lazy, Suspense, useEffect } from "react";
-import { QueryClientProvider } from "@tanstack/react-query";
-import { TooltipProvider } from "@/components/ui/tooltip";
+import { useNavigate } from "react-router-dom";
+import { LayoutGrid } from "lucide-react";
 import { queryClient } from "@/lib/query";
 import { initNetworkMonitor } from "@/lib/network";
 import {
@@ -28,11 +28,10 @@ import {
 import { useSidecar } from "@/hooks/useSidecar";
 import { useWebSocket } from "@/hooks/useWebSocket";
 import { useTriggerAlerts } from "@/hooks/useTriggerAlerts";
-import { GatewayProvider, useGatewayContext } from "@/context/GatewayContext";
+import { useGatewayContext } from "@/context/GatewayContext";
 import { IbkrReconnectBanner } from "@/components/gateway/IbkrReconnectBanner";
 import { HealthStrip } from "@/components/ui/HealthStrip";
 import { ThemeToggle } from "@/components/ui/ThemeToggle";
-import { Toaster } from "@/components/ui/Toaster";
 import { AuthGuard } from "@/components/shell/AuthGuard";
 // Connection + Settings are small — keep eager so the shell feels instant.
 import { SettingsPage } from "@/pages";
@@ -207,6 +206,7 @@ function NavLogoutButton() {
  */
 function AppShell() {
   const { activeScreen, navigate } = useNavigationStore();
+  const toLauncher = useNavigate();
   const { addHandler } = useGlobalEffects();
 
   return (
@@ -215,6 +215,17 @@ function AppShell() {
       <nav className="relative z-10 flex min-h-11 items-center border-b border-border bg-gradient-to-b from-[var(--bg-1)]/95 to-[var(--bg-1)] px-5 py-2">
         {/* Cyan glow line */}
         <div className="absolute bottom-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-[var(--clr-cyan)] to-transparent opacity-30" />
+
+        {/* Back to Orbit launcher */}
+        <button
+          type="button"
+          onClick={() => toLauncher("/")}
+          title="Back to Orbit launcher"
+          className="mr-4 flex items-center gap-1.5 rounded-md border border-border px-2.5 py-[3px] text-[10px] font-medium text-[var(--text-3)] transition-colors hover:border-[var(--clr-cyan)] hover:text-[var(--clr-cyan)]"
+        >
+          <LayoutGrid className="h-3 w-3" />
+          Orbit
+        </button>
 
         {/* Logo */}
         <span className="text-[15px] font-extrabold tracking-[3px] text-gradient-brand">
@@ -268,18 +279,5 @@ function AppShell() {
 }
 
 export default function App() {
-  return (
-    <QueryClientProvider client={queryClient}>
-      {/* GatewayProvider must be inside QueryClientProvider so useGateway
-          can use TanStack Query internally if needed, and so all child
-          components can call useIbkrReady() to gate IBKR queries. */}
-      <GatewayProvider>
-        <TooltipProvider>
-          <AppShell />
-          {/* Global toast overlay — rendered outside AppShell so it's always on top */}
-          <Toaster />
-        </TooltipProvider>
-      </GatewayProvider>
-    </QueryClientProvider>
-  );
+  return <AppShell />;
 }

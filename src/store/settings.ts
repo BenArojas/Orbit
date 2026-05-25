@@ -9,7 +9,7 @@
  *   GET  /settings         → { key: value, ... }   (plain object)
  *   PUT  /settings/{key}   → body { value: "..." }
  *
- * Hub integration: Settings are per-module. When Parallax runs inside the Hub,
+ * Orbit integration: Settings are per-module. When Parallax runs inside Orbit,
  * its settings keys are namespaced (e.g. "parallax.scan_interval").
  * MoonMarket and Inflect have their own settings.
  */

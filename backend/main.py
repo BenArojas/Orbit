@@ -1,5 +1,5 @@
 """
-Parallax backend — FastAPI application entrypoint.
+Orbit backend — FastAPI application entrypoint.
 
 This is the Python sidecar that Tauri launches automatically.
 It owns all communication with IBKR, Ollama, and SQLite.
@@ -61,7 +61,7 @@ async def lifespan(app: FastAPI):
     Creates the IBKR service singleton on startup.
     Cleans everything up on shutdown.
     """
-    log.info("Parallax backend starting (v%s)...", APP_VERSION)
+    log.info("Orbit backend starting (v%s)...", APP_VERSION)
 
     # Gateway lifecycle — provision JRE + IBKR Gateway, manage process
     # Must start before IBKRService since IBKR talks to the running Gateway.
@@ -160,7 +160,7 @@ async def lifespan(app: FastAPI):
     yield
 
     # Shutdown
-    log.info("Parallax backend shutting down...")
+    log.info("Orbit backend shutting down...")
     await scanner.stop()
     await ai.shutdown()
     await ollama.shutdown()
@@ -173,7 +173,7 @@ async def lifespan(app: FastAPI):
 # ── FastAPI app ──────────────────────────────────────────────
 
 app = FastAPI(
-    title="Parallax",
+    title="Orbit",
     version=APP_VERSION,
     lifespan=lifespan,
 )
@@ -366,6 +366,9 @@ app.include_router(instruments_router)
 
 from routers.drawings import router as drawings_router
 app.include_router(drawings_router)
+
+from routers.moonmarket import router as moonmarket_router
+app.include_router(moonmarket_router)
 
 
 # ── Health endpoint ──────────────────────────────────────────

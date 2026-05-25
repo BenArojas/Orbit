@@ -91,7 +91,7 @@ src/components/ai/AiConfigPanel.tsx           # add "ATR"
 - [ ] **Step 1: Cut feature branch from `dev`**
 
 ```bash
-cd /Users/ofekarojas/Desktop/Projects/Parallax
+cd /Users/benarojasmac/Desktop/Projects/Orbit
 git checkout dev
 git pull --ff-only
 git checkout -b feature/ai-prompt-context-facts
@@ -110,7 +110,7 @@ Expected: green. If anything fails before we change anything, stop and report â€
 - [ ] **Step 3: Verify frontend tests baseline pass**
 
 ```bash
-cd /Users/ofekarojas/Desktop/Projects/Parallax
+cd /Users/benarojasmac/Desktop/Projects/Orbit
 npm test -- --run
 ```
 
@@ -4683,7 +4683,7 @@ Expected: all tests pass. Triage any failures task-by-task.
 - [ ] **Step 2: Run the frontend type-check**
 
 ```bash
-cd /Users/ofekarojas/Desktop/Projects/Parallax && pnpm tsc --noEmit
+cd /Users/benarojasmac/Desktop/Projects/Orbit && pnpm tsc --noEmit
 ```
 
 - [ ] **Step 3: Manual smoke â€” start the backend**

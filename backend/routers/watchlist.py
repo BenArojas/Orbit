@@ -225,7 +225,7 @@ async def get_watchlist_instruments(
             "companyName": company_name,
         })
 
-        # Cache in instruments table (Hub sharing). Doesn't block — upsert
+        # Cache in instruments table (Orbit sharing). Doesn't block — upsert
         # is fire-and-go; a failed row doesn't prevent us returning the list.
         if symbol:
             try:

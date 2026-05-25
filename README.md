@@ -1,8 +1,16 @@
-# Parallax
+# Orbit
 
-Local desktop trading decision-support tool. Connects to Interactive Brokers
-via the Client Portal Web API for live market data. Supports any instrument
-IBKR provides — stocks, ETFs, futures, forex, options.
+Local desktop trading decision-support platform. Orbit unifies Parallax
+(technical analysis), MoonMarket (portfolio/trading), and Inflect (future
+trading journal) in one Tauri app with one Python sidecar and one SQLite
+database.
+
+Orbit was previously called **IBKR Hub** during planning. That name is kept
+only as historical context; Orbit is not affiliated with IBKR.
+
+Orbit connects to Interactive Brokers via the Client Portal Web API for live
+market data. It supports any instrument IBKR provides — stocks, ETFs, futures,
+forex, options.
 
 **Not a trading bot** — technical analysis, screening, and watchlists with
 trigger-based alerts to help make better trading decisions.
@@ -16,7 +24,8 @@ If you're looking for something specific, this is where it lives.
 | File | What it covers |
 |------|----------------|
 | [`PROJECT_PLAN.md`](PROJECT_PLAN.md) | Phase-by-phase task tracker, locked decisions, owner assignments, "what shipped where". The canonical source of truth for "what's done and what's next." |
-| [`CLAUDE.md`](CLAUDE.md) | Project rules (Polars only, typed errors, conid as universal key, etc.) and pointers to the skill files below. Loaded automatically by Claude Code. |
+| [`AGENTS.md`](AGENTS.md) | Codex project rules and skill pointers. |
+| [`CLAUDE.md`](CLAUDE.md) | Claude Code project rules and skill pointers. Keep aligned with `AGENTS.md`. |
 
 ### Setup & how-to
 
@@ -31,18 +40,22 @@ If you're looking for something specific, this is where it lives.
 |------|----------------|
 | [`backend/docs/gateway-lifecycle.md`](backend/docs/gateway-lifecycle.md) | How the IBKR Gateway lifecycle actually works — process trees, signals, the cleanup chain, pid-file recovery, the three recovery levels in the UI. Read this when you want to understand *why* the gateway code is the way it is. |
 | [`backend/docs/ibkr_market_data_fields.md`](backend/docs/ibkr_market_data_fields.md) | IBKR Client Portal market-data field IDs (e.g. `31` = last price, `7762` = volume). Reference when adding new fields to snapshot endpoints. |
+| [`reference/moonmarket/README.md`](reference/moonmarket/README.md) | Legacy MoonMarket source staged as read-only reference for the Orbit port. Not part of the app build. |
 
-### Claude skills (loaded on demand by Claude Code)
+### Agent skills
 
-These are not meant to be read top-to-bottom. Claude loads them when a task matches their trigger. Listed here so you know what context is available.
+These are not meant to be read top-to-bottom. Codex and Claude Code load them when a task matches their trigger. The two folders should stay mirrored:
+
+- Codex: `.agents/skills/`
+- Claude Code: `.claude/skills/`
 
 | Skill | Triggers on |
 |-------|-------------|
-| [`.claude/skills/parallax-backend/SKILL.md`](.claude/skills/parallax-backend/SKILL.md) | Any backend task — routers, services, models, indicators, IBKR, DB. |
-| [`.claude/skills/parallax-frontend/SKILL.md`](.claude/skills/parallax-frontend/SKILL.md) | Any frontend task — components, hooks, pages, stores, charts, styling. |
-| [`.claude/skills/parallax-git/SKILL.md`](.claude/skills/parallax-git/SKILL.md) | Branching, commit messages, PR workflow, merge policy. |
-| [`.claude/skills/parallax-hub/SKILL.md`](.claude/skills/parallax-hub/SKILL.md) | Cross-module concerns: instruments table, conid lookups, MoonMarket/Inflect boundaries. |
-| [`.claude/skills/parallax-v2-roadmap/SKILL.md`](.claude/skills/parallax-v2-roadmap/SKILL.md) | Future features, deferred work, "is this v1 or v2?" decisions. |
+| [`parallax-backend`](.agents/skills/parallax-backend/SKILL.md) | Any backend task — routers, services, models, indicators, IBKR, DB. |
+| [`parallax-frontend`](.agents/skills/parallax-frontend/SKILL.md) | Any frontend task — components, hooks, pages, stores, charts, styling. |
+| [`parallax-git`](.agents/skills/parallax-git/SKILL.md) | Branching, commit messages, PR workflow, merge policy. |
+| [`parallax-hub`](.agents/skills/parallax-hub/SKILL.md) | Orbit module boundaries: instruments table, conid lookups, MoonMarket/Inflect boundaries. |
+| [`parallax-v2-roadmap`](.agents/skills/parallax-v2-roadmap/SKILL.md) | Future features, deferred work, "is this v1 or v2?" decisions. |
 
 ---
 
@@ -89,7 +102,7 @@ or Ollama directly.
 
 ### IBKR Gateway Setup
 
-Parallax communicates with IBKR through the Client Portal Gateway on
+Orbit communicates with IBKR through the Client Portal Gateway on
 `localhost:5001`. On first launch, click **"Set Up Gateway"** in the sidebar
 — the app downloads a portable Java 17 runtime and the Gateway automatically
 into `~/.parallax/gateway/`. No system Java required.

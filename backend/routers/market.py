@@ -13,7 +13,7 @@ Endpoints:
 See also:
   GET  /instruments/{conid}      — Read cached instrument metadata (see routers/instruments.py)
 
-Hub integration:
+Orbit integration:
   Both /search and /conid/{symbol} auto-populate the `instruments` cache table.
   This means every instrument Parallax touches gets cached locally.
   MoonMarket and Inflect will read from this cache (by conid) without
@@ -267,7 +267,7 @@ async def search_securities(
     Search for securities by symbol or name.
     Returns a list of matches with conid, symbol, company name, and type.
 
-    Hub integration: Every result is cached in the instruments table
+    Orbit integration: Every result is cached in the instruments table
     so MoonMarket and Inflect can resolve conid → symbol locally.
     """
     results = await ibkr.search(symbol=q)
@@ -321,7 +321,7 @@ async def resolve_conid(
     Resolve a ticker symbol to an IBKR conid.
     Used when the frontend needs to translate a symbol into an ID.
 
-    Hub integration: Result is cached in the instruments table.
+    Orbit integration: Result is cached in the instruments table.
     """
     hint = sec_type.upper()
     if hint not in _ALLOWED_CONID_SEC_TYPES:

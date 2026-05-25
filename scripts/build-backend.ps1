@@ -3,7 +3,7 @@
 # Outputs:
 #   src-tauri\binaries\parallax-backend-x86_64-pc-windows-msvc.exe
 #
-# Requires the Parallax uv environment to be set up:
+# Requires the Orbit backend uv environment to be set up:
 #   cd backend; uv sync
 #
 # Run from repo root:

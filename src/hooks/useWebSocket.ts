@@ -29,9 +29,9 @@
  *   subscribe(265598);                       // live data for AAPL
  *   addHandler((msg) => { ... });            // returns an unsubscribe fn
  *
- * Hub integration:
- *   When the Hub consolidates Parallax + MoonMarket, this singleton stays
- *   as-is — Hub modules just register their own handlers for their types.
+ * Orbit integration:
+ *   When Orbit consolidates Parallax + MoonMarket, this singleton stays
+ *   as-is — Orbit modules just register their own handlers for their types.
  */
 
 import { useEffect, useState, useCallback } from "react";

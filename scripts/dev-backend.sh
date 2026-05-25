@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Parallax dev-mode backend launcher.
+# Orbit dev-mode backend launcher.
 #
 # Why this exists:
 #   `uvicorn --reload` runs as a parent watcher that doesn't always propagate

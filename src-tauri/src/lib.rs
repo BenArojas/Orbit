@@ -1,11 +1,11 @@
-// Parallax — Tauri shell
+// Orbit — Tauri shell
 //
 // Keep this minimal. All business logic lives in the Python sidecar.
 // Rust only handles: app lifecycle, sidecar process management, and
 // Tauri plugin registration.
 //
-// Hub integration:
-//   When the Hub launches, this file will be replaced by the Hub's
+// Orbit integration:
+//   When Orbit launches, this file will be replaced by Orbit's
 //   src-tauri/src/lib.rs which manages one consolidated sidecar
 //   serving both Parallax and MoonMarket routes.
 

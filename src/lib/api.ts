@@ -1,5 +1,5 @@
 /**
- * API client for the Parallax Python sidecar.
+ * API client for the Orbit Python sidecar.
  *
  * All HTTP requests to the backend go through this module.
  * Components never call fetch() directly — they use TanStack Query
@@ -9,10 +9,9 @@
  * In dev mode the frontend runs on :1420 (Vite) and proxies to :8000.
  * In production, Tauri launches the sidecar automatically.
  *
- * Hub integration:
- *   These types and endpoints will be shared when the Hub consolidates
- *   Parallax + MoonMarket into one sidecar. The base URL stays the same;
- *   MoonMarket endpoints will live under /moonmarket/* prefix.
+ * Orbit integration:
+ *   These types and endpoints are shared by Orbit modules. The base URL stays
+ *   the same; MoonMarket endpoints live under the /moonmarket/* prefix.
  */
 
 // ── Base URL ────────────────────────────────────────────────
@@ -124,7 +123,7 @@ export interface InstrumentCacheResponse {
   cached_at: string;
 }
 
-/** Hub integration: shared instrument cache — used by all Hub modules */
+/** Orbit integration: shared instrument cache — used by all Orbit modules */
 export interface Instrument {
   conid: number;
   symbol: string;

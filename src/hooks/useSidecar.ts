@@ -10,8 +10,8 @@
  * The hook polls /health until the backend responds, so the UI can
  * show a "connecting..." state during startup.
  *
- * Hub integration:
- *   When the Hub launches, this hook moves to the Hub's App.tsx.
+ * Orbit integration:
+ *   When Orbit launches, this hook moves to Orbit's App.tsx.
  *   The sidecar command changes to serve both Parallax and MoonMarket
  *   from one consolidated FastAPI app. The health check stays the same.
  */

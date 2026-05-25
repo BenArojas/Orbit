@@ -1,9 +1,11 @@
 ---
 name: parallax-frontend
-description: React/TypeScript frontend conventions for Parallax. Use whenever working on components, hooks, pages, stores, charts, or any file under src/. Covers component patterns, state management, data fetching, styling, and project structure. Trigger on any frontend task — UI changes, new components, chart work, styling, or React code.
+description: React/TypeScript frontend conventions for Orbit, especially the Parallax module. Use whenever working on components, hooks, pages, stores, charts, or any file under src/. Covers component patterns, state management, data fetching, styling, and project structure. Trigger on any frontend task — UI changes, new components, chart work, styling, or React code.
 ---
 
 # Frontend Conventions
+
+These conventions apply to Orbit's React app. Parallax is currently the mature module; MoonMarket and Inflect should reuse the same provider, query, styling, and component patterns as they are ported into Orbit.
 
 ## Project Structure
 

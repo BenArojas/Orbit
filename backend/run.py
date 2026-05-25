@@ -1,5 +1,5 @@
 """
-Parallax backend — PyInstaller entry point.
+Orbit backend — PyInstaller entry point.
 
 This script is used when the backend is bundled as a standalone
 executable by PyInstaller (the packaged Tauri app's externalBin).

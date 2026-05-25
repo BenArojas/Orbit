@@ -1,9 +1,9 @@
 """
-In-memory TTL cache for Parallax.
+In-memory TTL cache for the Orbit sidecar.
 Replaces MoonMarket's Redis-backed cache with a simple dict + asyncio.
 
 No external dependencies. Data lives in memory and dies with the process.
-That's perfect for Parallax — we're a local desktop app, not a server.
+That's perfect for Orbit — we're a local desktop app, not a server.
 
 Usage:
     from cache import cached

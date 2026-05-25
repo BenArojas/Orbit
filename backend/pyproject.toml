@@ -1,7 +1,7 @@
 [project]
 name = "parallax-backend"
 version = "0.1.0"
-description = "Parallax trading analysis tool — Python sidecar backend"
+description = "Orbit trading decision-support platform — Python sidecar backend"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [

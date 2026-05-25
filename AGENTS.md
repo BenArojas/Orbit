@@ -1,6 +1,14 @@
-# Parallax
+# Orbit
 
-Local desktop trading decision-support tool. Connects to Interactive Brokers Client Portal Web API. Supports any instrument IBKR provides data for (stocks, ETFs, futures, forex, etc.) — primary focus is US equities/ETFs but nothing is restricted. Not a trading bot — technical analysis, screening, and watchlists with trigger-based alerts.
+Orbit is the local desktop trading decision-support platform. It unifies:
+
+- **Parallax** — technical analysis, screening, watchlists, and alerts.
+- **MoonMarket** — portfolio, account, and trading workflows.
+- **Inflect** — trading journal, planned after Parallax and MoonMarket.
+
+Orbit was previously called **IBKR Hub** during planning. Keep that name only as historical context; do not use it as the product name because it sounds official/affiliated with IBKR.
+
+Orbit connects to Interactive Brokers through the Client Portal Web API. It supports any instrument IBKR provides data for (stocks, ETFs, futures, forex, options, etc.). It is not a trading bot.
 
 **Stack**: Tauri v2 + React 19/TS + Tailwind/shadcn | Python FastAPI sidecar (httpx + websockets for IBKR) + Polars + pandas-ta bridge + Ollama | SQLite
 
@@ -10,14 +18,27 @@ Local desktop trading decision-support tool. Connects to Interactive Brokers Cli
 2. **Polars, never Pandas.** All dataframe operations use Polars. pandas-ta is the only exception (bridged).
 3. **No cloud dependencies.** This is a 100% local app. No external servers, subscriptions, or cloud services.
 4. **Typed errors only.** Never bare `except Exception`. Distinguish auth, network, rate-limit, and data errors.
-5. **All data flows through Python.** Frontend never talks to IBKR or Ollama directly — everything goes through the FastAPI sidecar.
-6. **conid is the universal key.** Never store or link instruments by ticker string — always by IBKR contract ID (conid).
-7.**Always create a new branch for each feature/fix**
+5. **All data flows through Python.** Frontend never talks to IBKR or Ollama directly; everything goes through the FastAPI sidecar.
+6. **conid is the universal key.** Never store or link instruments by ticker string across module boundaries; always use IBKR contract ID (`conid`).
+7. **Always create a new branch for each feature/fix.**
 
-## Skills
+## Agent Support
 
-Detailed conventions are in `.Codex/skills/` — loaded on demand, not every message:
-- `parallax-frontend` — React/TS component patterns, state management, chart wrappers
-- `parallax-backend` — FastAPI conventions, indicator set, IBKR service patterns, architecture
-- `parallax-git` — Branch structure, commit format, PR workflow, merge policy
-- `parallax-hub` — IBKR Hub multi-module context (Parallax, MoonMarket, Inflect)
+This repo supports both Codex and Claude Code:
+
+- Codex reads this `AGENTS.md`.
+- Claude Code reads `CLAUDE.md`.
+- Keep both files aligned when changing project rules.
+
+Detailed conventions live in both agent folders and should remain mirrored:
+
+- `.agents/skills/` — Codex skills.
+- `.claude/skills/` — Claude Code skills.
+
+Skill names are still `parallax-*` because most conventions currently target the Parallax module and its backend/frontend patterns:
+
+- `parallax-frontend` — React/TS component patterns, state management, chart wrappers.
+- `parallax-backend` — FastAPI conventions, indicator set, IBKR service patterns, architecture.
+- `parallax-git` — branch structure, commit format, PR workflow, merge policy.
+- `parallax-hub` — Orbit module boundaries, shared database concerns, Parallax/MoonMarket/Inflect relationships.
+- `parallax-v2-roadmap` — deferred work and v2 scope.

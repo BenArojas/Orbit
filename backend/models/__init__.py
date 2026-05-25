@@ -1,5 +1,8 @@
 """
-Pydantic models for all request/response types in the Parallax API.
+Pydantic models for all request/response types in the Orbit sidecar API.
+
+Most contracts currently serve the Parallax module; MoonMarket and Inflect
+should add their contracts here as they join the shared sidecar.
 
 These models are "contracts" — they define the exact shape of data
 flowing between frontend and backend. If data doesn't match the
@@ -108,7 +111,7 @@ class ConidResponse(BaseModel):
 # ═══════════════════════════════════════════════════════════════
 #  Instruments Cache
 #
-#  Hub integration: This is the shared instrument lookup table.
+#  Orbit integration: This is the shared instrument lookup table.
 #  Parallax writes to it (via market search/conid resolution).
 #  MoonMarket and Inflect read from it to resolve conid → symbol.
 # ═══════════════════════════════════════════════════════════════
@@ -117,7 +120,7 @@ class ConidResponse(BaseModel):
 class InstrumentResponse(BaseModel):
     """
     A cached instrument from the local instruments table.
-    conid is the universal key across the entire IBKR Hub.
+    conid is the universal key across the entire Orbit.
     """
     conid: int                   # IBKR's unique contract ID — the universal key
     symbol: str                  # Ticker (AAPL, SPY, QQQ)
@@ -621,7 +624,7 @@ class WatchlistInfo(BaseModel):
 class WatchlistItemResponse(BaseModel):
     """
     One instrument in a watchlist, enriched with live quote data.
-    conid is the universal key — same as everywhere else in the Hub.
+    conid is the universal key — same as everywhere else in Orbit.
     """
     conid: int
     symbol: str = ""

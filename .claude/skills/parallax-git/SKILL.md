@@ -1,6 +1,6 @@
 ---
 name: parallax-git
-description: Git workflow and conventions for Parallax. Use whenever committing, creating branches, opening PRs, merging, or discussing git strategy. Covers branch structure, naming, commit message format, PR workflow, and merge policy. Trigger on any git-related task.
+description: Git workflow and conventions for Orbit. Use whenever committing, creating branches, opening PRs, merging, or discussing git strategy. Covers branch structure, naming, commit message format, PR workflow, and merge policy. Trigger on any git-related task.
 ---
 
 # Git Policy

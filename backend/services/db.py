@@ -1,5 +1,5 @@
 """
-SQLite database service for Parallax.
+SQLite database service for Orbit.
 
 This is the app's local "memory" — it stores data that IBKR doesn't
 store for us and that needs to survive app restarts:
@@ -12,9 +12,9 @@ What we do NOT store locally:
   - Watchlists — managed inside IBKR itself. The app reads them
     live from IBKR's API. No local copy needed.
 
-── Hub integration ──────────────────────────────────────────────
-The `instruments` table is the one piece of Parallax's database that
-other Hub modules will read from:
+── Orbit integration ──────────────────────────────────────────────
+The `instruments` table is the one piece of the current Parallax-owned
+schema that other Orbit modules will read from:
 
   MoonMarket  → reads instruments to display symbol/name in portfolio
   Inflect     → reads instruments to display symbol/name in journal entries
@@ -27,7 +27,7 @@ write to this table.
 All database access goes through this module. No other file should
 write raw SQL — they call these functions instead.
 
-The database is a single file (parallax.db) that lives next to the app.
+The database is a single file (currently parallax.db) that lives next to the app.
 It's never deleted unless you manually remove it. Closing the app,
 restarting your computer — the data stays.
 """
@@ -272,7 +272,7 @@ class DatabaseService:
             -- Avoids hitting IBKR's search API repeatedly for the same stock.
             --
             -- conid is the primary key — IBKR's unique integer for each security.
-            -- This is the UNIVERSAL KEY across the entire Hub:
+            -- This is the UNIVERSAL KEY across the entire Orbit:
             --   Parallax uses conid in trigger_rules, trigger_hits, indicators
             --   MoonMarket will use conid in fills, positions, orders
             --   Inflect will use conid in journal_entries
@@ -281,7 +281,7 @@ class DatabaseService:
             -- time (via /market/search or /market/conid), it writes a row here.
             -- If the row already exists, it updates the timestamp.
             --
-            -- Other Hub modules read from this table but never write to it.
+            -- Other Orbit modules read from this table but never write to it.
             -- IBKR is the source of truth — this is just a local cache.
             CREATE TABLE IF NOT EXISTS instruments (
                 conid          INTEGER PRIMARY KEY,    -- IBKR's unique contract ID
@@ -1060,7 +1060,7 @@ class DatabaseService:
 
     # ── Instrument Cache Operations ────────────────────────────
     #
-    # Hub integration: This is the ONLY table that other Hub modules
+    # Orbit integration: This is the ONLY table that other Orbit modules
     # (MoonMarket, Inflect) will read from. Parallax is the sole writer.
     # The market router auto-populates this on every search/conid resolution.
 
@@ -1100,7 +1100,7 @@ class DatabaseService:
         Cache an instrument. If it already exists, refresh the timestamp.
         Called automatically by the market router when resolving conids.
 
-        This is the ONLY write path — other Hub modules don't call this.
+        This is the ONLY write path — other Orbit modules don't call this.
         """
         def _upsert() -> None:
             self._execute(

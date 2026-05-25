@@ -1,7 +1,7 @@
 import { Toaster as Sonner, type ToasterProps } from "sonner"
 import { CircleCheckIcon, InfoIcon, TriangleAlertIcon, OctagonXIcon, Loader2Icon } from "lucide-react"
 
-// Parallax is a dark-only app — no next-themes provider needed.
+// Orbit is currently dark-only — no next-themes provider needed.
 const Toaster = ({ ...props }: ToasterProps) => {
   return (
     <Sonner
