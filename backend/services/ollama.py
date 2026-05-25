@@ -348,6 +348,25 @@ class OllamaLifecycle:
             self.state = OllamaState.RUNNING
             log.info("Multiple models available — waiting for user to select one")
 
+    async def show_model(self, model: str) -> dict | None:
+        """Fetch model metadata via /api/show. Returns model_info dict or None.
+
+        The payload key must be "model" (per Ollama docs). Returns None on
+        network failure, 404, or missing model_info.
+        """
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                resp = await client.post(
+                    f"{OLLAMA_HOST}/api/show",
+                    json={"model": model},
+                )
+            if resp.status_code != 200:
+                return None
+            body = resp.json()
+            return body.get("model_info")
+        except (httpx.ConnectError, httpx.TimeoutException, httpx.HTTPError):
+            return None
+
     def select_model(self, model_name: str) -> None:
         """
         Set the active model for AI analysis.
