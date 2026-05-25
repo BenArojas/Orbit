@@ -26,4 +26,9 @@ describe("AppIcon", () => {
     render(<AppIcon label="Inflect" icon={Activity} enabled={false} badge="Coming soon" />);
     expect(screen.getByText(/coming soon/i)).toBeInTheDocument();
   });
+
+  it("renders a description when provided", () => {
+    render(<AppIcon label="Parallax" icon={Activity} enabled description="Technical analysis" />);
+    expect(screen.getByText(/technical analysis/i)).toBeInTheDocument();
+  });
 });
