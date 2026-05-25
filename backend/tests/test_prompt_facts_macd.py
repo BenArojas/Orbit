@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 
 from models import IndicatorResult, IndicatorValue
-from services.prompt_facts.macd import build_facts
+from services.prompt_facts.macd import build_macd_facts
 
 
 def _macd(line: list[float], signal: list[float], hist: list[float]) -> IndicatorResult:
@@ -19,30 +19,36 @@ def _macd(line: list[float], signal: list[float], hist: list[float]) -> Indicato
 
 class TestMacd:
     def test_line_bullish_impulse(self):
-        facts = build_facts(_macd([0.5]*4, [0.2]*4, [0.3]*4), timeframe="D")
+        facts = build_macd_facts(symbol="TEST", timeframe="D",
+                                 macd=_macd([0.5]*4, [0.2]*4, [0.3]*4))
         f = next(x for x in facts if x.id == "D.macd.line_bullish_impulse")
         assert f.polarity == "bullish"
 
     def test_line_bearish_improving_is_neutral(self):
-        facts = build_facts(_macd([-0.2]*4, [-0.5]*4, [0.3]*4), timeframe="D")
+        facts = build_macd_facts(symbol="TEST", timeframe="D",
+                                 macd=_macd([-0.2]*4, [-0.5]*4, [0.3]*4))
         f = next(x for x in facts if x.id == "D.macd.line_bearish_improving")
         assert f.polarity == "neutral"
 
     def test_hist_above_rising(self):
-        facts = build_facts(_macd([0.5]*4, [0.4]*4, [0.10, 0.15, 0.20, 0.25]), timeframe="D")
+        facts = build_macd_facts(symbol="TEST", timeframe="D",
+                                 macd=_macd([0.5]*4, [0.4]*4, [0.10, 0.15, 0.20, 0.25]))
         ids = {f.id for f in facts}
         assert "D.macd.hist_above_rising" in ids
 
     def test_hist_skips_when_near_zero(self):
-        facts = build_facts(_macd([0.0]*4, [0.0]*4, [0.0, 0.0, 0.0, 0.00005]), timeframe="D")
+        facts = build_macd_facts(symbol="TEST", timeframe="D",
+                                 macd=_macd([0.0]*4, [0.0]*4, [0.0, 0.0, 0.0, 0.00005]))
         ids = {f.id for f in facts}
         assert not any("hist_" in i for i in ids)
 
     def test_recent_cross_emits(self):
-        facts = build_facts(_macd([-0.1, -0.05, 0.0, 0.10],
-                                  [0.1, 0.1, 0.05, 0.05],
-                                  [-0.2, -0.15, -0.05, 0.05]),
-                            timeframe="D")
+        facts = build_macd_facts(
+            symbol="TEST", timeframe="D",
+            macd=_macd([-0.1, -0.05, 0.0, 0.10],
+                       [0.1, 0.1, 0.05, 0.05],
+                       [-0.2, -0.15, -0.05, 0.05]),
+        )
         ids = {f.id for f in facts}
         assert "D.macd.cross_recent" in ids
         f = next(x for x in facts if x.id == "D.macd.cross_recent")
@@ -50,4 +56,4 @@ class TestMacd:
 
     def test_empty_returns_empty(self):
         ir = IndicatorResult(name="macd", type="oscillator", values=[], params={})
-        assert build_facts(ir, timeframe="D") == []
+        assert build_macd_facts(symbol="TEST", timeframe="D", macd=ir) == []

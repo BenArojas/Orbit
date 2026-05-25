@@ -19,12 +19,12 @@ def _make(tf: str, condition: str, text: str, polarity: str,
     )
 
 
-def build_facts(ind: Optional[IndicatorResult], *, timeframe: str) -> list[PromptFact]:
-    if ind is None or not ind.values:
+def build_macd_facts(*, symbol: str, timeframe: str, macd: Optional[IndicatorResult]) -> list[PromptFact]:
+    if macd is None or not macd.values:
         return []
-    line_series = [iv.value for iv in ind.values]
-    sig_series = [iv.signal for iv in ind.values]
-    hist_series = [iv.histogram for iv in ind.values]
+    line_series = [iv.value for iv in macd.values]
+    sig_series = [iv.signal for iv in macd.values]
+    hist_series = [iv.histogram for iv in macd.values]
     if not line_series or line_series[-1] is None or sig_series[-1] is None:
         return []
     line = line_series[-1]

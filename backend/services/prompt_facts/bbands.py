@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from models import IndicatorResult
+from models import CandleData, IndicatorResult
 from services.prompt_facts._common import percentile_rank
 from services.prompt_facts.types import PromptFact
 
@@ -17,28 +17,30 @@ def _make(tf: str, condition: str, text: str, polarity: str,
     )
 
 
-def build_facts(
-    ind: Optional[IndicatorResult],
+def build_bbands_facts(
     *,
-    last_close: float,
-    candle_closes: list[float],
+    symbol: str,
     timeframe: str,
+    bbands: Optional[IndicatorResult],
+    last_close: float,
+    candles: Optional[list[CandleData]] = None,
 ) -> list[PromptFact]:
-    if ind is None or not ind.values:
+    if bbands is None or not bbands.values:
         return []
-    last = ind.values[-1]
+    last = bbands.values[-1]
     if last.value is None or last.upper is None or last.lower is None:
         return []
     upper, lower, mid = last.upper, last.lower, last.value
     width = upper - lower
     if width <= 0:
         return []
+    candle_closes = [c.close for c in candles] if candles else []
     facts: list[PromptFact] = []
 
     # Squeeze — band-width percentile rank
     widths = [
         iv.upper - iv.lower
-        for iv in ind.values
+        for iv in bbands.values
         if iv.upper is not None and iv.lower is not None
     ]
     if len(widths) >= 20:

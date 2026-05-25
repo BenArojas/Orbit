@@ -116,12 +116,13 @@ def _make_fact(*, tf, condition, text, polarity, strength, priority, data) -> Pr
     )
 
 
-def build_facts(
-    fib: Union[FibonacciResult, FibonacciSnapshot, None],
+def build_fibonacci_facts(
     *,
-    last_close: float,
-    atr: Optional[float],
+    symbol: str,
     timeframe: str,
+    fib: Union[FibonacciResult, FibonacciSnapshot, None],
+    last_close: float,
+    atr: Optional[float] = None,
 ) -> list[PromptFact]:
     norm = _normalize(fib)
     if norm is None:

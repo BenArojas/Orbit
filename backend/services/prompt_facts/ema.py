@@ -23,17 +23,26 @@ def _make(tf: str, condition: str, text: str, polarity: str,
     )
 
 
-def build_facts(
-    emas: dict[int, IndicatorResult],
+def build_ema_facts(
     *,
-    last_close: float,
-    atr: Optional[float],
+    symbol: str,
     timeframe: str,
+    emas: list[IndicatorResult],
+    last_close: float,
+    atr: Optional[float] = None,
 ) -> list[PromptFact]:
     if not emas:
         return []
+    emas_by_period: dict[int, IndicatorResult] = {}
+    for ir in emas:
+        period = ir.params.get("period") if ir.params else None
+        if period is None:
+            continue
+        emas_by_period[int(period)] = ir
+    if not emas_by_period:
+        return []
     values: dict[int, float] = {}
-    for period, ir in emas.items():
+    for period, ir in emas_by_period.items():
         v = _last_val(ir)
         if v is None:
             continue
@@ -122,10 +131,10 @@ def build_facts(
     # Cross detection between adjacent EMAs (golden/death cross signals)
     cross_pairs = [(9, 21), (21, 50), (50, 200)]
     for short, long in cross_pairs:
-        if short not in emas or long not in emas:
+        if short not in emas_by_period or long not in emas_by_period:
             continue
-        a = [iv.value for iv in emas[short].values]
-        b = [iv.value for iv in emas[long].values]
+        a = [iv.value for iv in emas_by_period[short].values]
+        b = [iv.value for iv in emas_by_period[long].values]
         if len(a) != len(b):
             # recent_cross requires aligned series; skip mismatched lengths.
             continue
