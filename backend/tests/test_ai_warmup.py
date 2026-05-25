@@ -28,6 +28,7 @@ class TestAiServiceWarmup:
         svc = AiService.__new__(AiService)
         svc._http = MagicMock()
         svc.sessions = {}
+        svc._context_service = None
         return svc
 
     async def test_warmup_sends_correct_payload(self, ai_service):
