@@ -1,7 +1,7 @@
 # Parallax — Project Plan
 
-> Last updated: 2026-05-19
-> Status: Phase 1–7 complete. Phase 8 (E2E testing) in progress — 8.1, 8.3, 8.9, 8.10 done. Phase 9 (Dashboard request-fan-out optimization) complete — all 22 tasks shipped, pending empirical verification. **Phase 10 (Compare Mode + WebSocket reliability) complete** — all 29 commits merged to dev.
+> Last updated: 2026-05-25
+> Status: Phase 1–7 complete. Phase 8 (E2E testing) in progress — 8.1, 8.3, 8.9, 8.10 done. Phase 9 (Dashboard request-fan-out optimization) complete — all 22 tasks shipped, pending empirical verification. **Phase 10 (Compare Mode + WebSocket reliability) complete** — all 29 commits merged to dev. **Phase 11 (AI Prompt Fact Layer) complete** — merged to dev.
 ---
 
 ## IBKR Gateway — What We Learned (2026-04-14)
@@ -387,6 +387,56 @@ The Compare button on the Analysis toolbar replaces the chart area with a stack 
 4. **Color customization** for compare-mode line colors — currently hardcoded white (stock) + green (reference). Settings panel addition is straightforward (`STOCK_LINE_COLOR` + `REF_LINE_COLOR` constants in `CompareChart.tsx`).
 
 5. **Backend cancellation awareness** — TanStack Query now cancels frontend fetches on route change, but the backend doesn't read `request.is_disconnected()` so the Python side keeps doing work + retrying 503s for queries the user has already navigated away from. Worth wiring in long-running routes.
+
+---
+
+### Phase 11: AI Prompt Fact Layer — COMPLETE
+
+> Goal: Replace the legacy string-format prompt builder with a structured, priority-sorted fact pipeline. Each market signal becomes a typed `PromptFact` with a bracketed ID the LLM can cite in its narrative (e.g. `[D.ema.stack_bullish]`), making the analysis traceable from raw data → fact → model conclusion. Dynamic per-model context budgeting replaces static tier table.
+> Branch: `feature/ai-prompt-context-facts` — merged to dev 2026-05-25.
+> Plan: [`docs/superpowers/plans/2026-05-24-ai-prompt-fact-layer.md`](docs/superpowers/plans/2026-05-24-ai-prompt-fact-layer.md)
+
+**Core fact layer (Tasks 0–17)**
+
+| # | Task | Status | Notes |
+|---|---|---|---|
+| 11.1 | `PromptFact` + `PromptContextBlock` types (`services/prompt_facts/types.py`) | DONE | `id`, `polarity`, `strength`, `priority`, `text`, `data` fields |
+| 11.2 | Threshold helpers (`thresholds.py`) | DONE | Shared RSI/EMA/ATR boundary constants |
+| 11.3 | 11 fact builders | DONE | EMA, RSI, MACD, Fibonacci, BBands, VWAP, ATR, Stochastic, OBV, ADX, Volume — each in `services/prompt_facts/` |
+| 11.4 | Dispatcher (`build_prompt_facts`) | DONE | Priority boost by `indicator_priority`; canonical sort (strength → priority → id); multi-timeframe aware |
+| 11.5 | Renderer (`render_prompt_facts`) | DONE | Deterministic text: `=== TF (close=$X) ===`, `Verified Facts:` / `Cautions:` sections |
+| 11.6 | Truncator (`truncate_by_value`) | DONE | Drops lowest-priority facts first; protects caution/high-tf facts; leaves budget headroom for system + chat history |
+| 11.7 | 109 unit tests | DONE | Full coverage of all builders, dispatcher, renderer, truncator |
+
+**Integration (Tasks 18–24)**
+
+| # | Task | Status | Notes |
+|---|---|---|---|
+| 11.8 | `OllamaLifecycle.show_model()` | DONE | Queries `/api/show`; returns `model_info` dict or `None` on failure |
+| 11.9 | `OllamaContextService` | DONE | Budget = `min(static_tier, model_max × 0.7)`, cached with `asyncio.Lock` |
+| 11.10 | `AiService` refactor | DONE | `_prepare_analysis_session` → async; `indicators_display`/`indicator_names` split; accepts `OllamaContextService` |
+| 11.11 | `prompt_builder.py` refactor | DONE | Thin orchestrator over fact pipeline; `_CANONICAL_HINT_ORDER`; legacy formatters left as dead code |
+| 11.12 | Router update (`routers/ai.py`) | DONE | Passes `indicators_display`/`indicator_names`/`indicator_priority` to both `analyze` and `analyze_stream`; dropped `context_mode`/`context_bars` |
+| 11.13 | `main.py` wiring | DONE | `OllamaContextService(ollama)` constructed and passed to `AiService` |
+| 11.14 | Frontend: ATR added | DONE | `AiIndicator` union + `INDICATORS` array + `CHART_TO_AI_INDICATOR` map in `AiConfigPanel.tsx` |
+
+**Test updates (Tasks 25–27)**
+
+| # | Task | Status | Notes |
+|---|---|---|---|
+| 11.15 | `test_ai_with_fibs.py` | DONE | Legacy `"Primary fib"`/`"Source: MANUAL"` → `D.fibonacci.*` fact-ID assertions |
+| 11.16 | `test_prompt_budget.py` | DONE | Migrated to `_static_budget_for_model` + async `OllamaContextService` tests |
+| 11.17 | Eval harness (`test_prompt_facts_eval.py`) | DONE | syrupy snapshots for TSM extension, AAPL in-swing, NVDA EMA stack; structural guards (no legacy labels, `Verified Facts` header present) |
+
+**Final count: 966 backend tests, 0 failures.**
+
+**Cross-cutting invariants introduced:**
+
+- `PromptFact.id` format is `{tf}.{indicator}.{condition}` — never change this structure; the renderer, truncator, and system prompt hint all key off it.
+- Fact builders are pure functions: `(symbol, timeframe, candles, indicator_result) → list[PromptFact]`. No I/O, no side effects.
+- `build_system_prompt` hint section must come **before** the `"Indicators provided:"` line so the canonical hint order isn't broken by an early `indicators_display` occurrence.
+- `OllamaContextService` is the single source of truth for prompt budgets in production. The static `get_budget_for_model` in `prompt_builder.py` is legacy — use `_static_budget_for_model` from `ollama_context.py` for tests.
+- To update eval snapshots after an intentional prompt change: `pytest tests/test_prompt_facts_eval.py --snapshot-update`
 
 ---
 
