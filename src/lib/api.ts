@@ -132,6 +132,63 @@ export interface Instrument {
   cached_at: string;
 }
 
+export interface MoonMarketAccount {
+  account_id: string;
+  label: string;
+  selected: boolean;
+}
+
+export interface MoonMarketAccountsResponse {
+  accounts: MoonMarketAccount[];
+  selected_account_id: string | null;
+}
+
+export interface MoonMarketPosition {
+  conid: number;
+  symbol: string;
+  description: string;
+  asset_class: string;
+  quantity: number;
+  last_price: number | null;
+  average_cost: number | null;
+  market_value: number;
+  unrealized_pnl: number;
+  daily_pnl: number | null;
+  currency: string;
+}
+
+export interface MoonMarketAllocationItem {
+  conid: number;
+  symbol: string;
+  label: string;
+  value: number;
+  percent: number;
+  asset_class: string;
+  unrealized_pnl: number;
+  daily_pnl: number | null;
+}
+
+export interface MoonMarketPortfolioResponse {
+  account_id: string;
+  total_market_value: number;
+  total_unrealized_pnl: number;
+  positions: MoonMarketPosition[];
+  allocation: MoonMarketAllocationItem[];
+}
+
+export interface MoonMarketSeries {
+  dates: string[];
+  values: number[];
+}
+
+export interface MoonMarketPerformanceResponse {
+  account_id: string;
+  period: string;
+  nav: MoonMarketSeries;
+  cumulative_return: MoonMarketSeries;
+  period_return: MoonMarketSeries;
+}
+
 /**
  * news_candle detection methods (Phase 6.6). Only meaningful when
  * `indicator === "news_candle"`.
@@ -1029,6 +1086,23 @@ export const api = {
   /** Fetch a cached instrument record by conid. Returns null if not cached. */
   getInstrument: (conid: number, signal?: AbortSignal) =>
     request<InstrumentCacheResponse | null>("GET", `/instruments/${conid}`, undefined, signal),
+
+  // MoonMarket
+  moonmarketAccounts: (signal?: AbortSignal) =>
+    request<MoonMarketAccountsResponse>("GET", "/moonmarket/accounts", undefined, signal),
+
+  moonmarketPortfolio: (accountId?: string, signal?: AbortSignal) => {
+    const qs = accountId ? `?account_id=${encodeURIComponent(accountId)}` : "";
+    return request<MoonMarketPortfolioResponse>("GET", `/moonmarket/portfolio${qs}`, undefined, signal);
+  },
+
+  moonmarketPerformance: (accountId: string, period = "1Y", signal?: AbortSignal) =>
+    request<MoonMarketPerformanceResponse>(
+      "GET",
+      `/moonmarket/performance?account_id=${encodeURIComponent(accountId)}&period=${encodeURIComponent(period)}`,
+      undefined,
+      signal,
+    ),
 
   // Indicators
   computeIndicators: (req: IndicatorRequest, signal?: AbortSignal) =>

@@ -130,6 +130,75 @@ class InstrumentResponse(BaseModel):
 
 
 # ═══════════════════════════════════════════════════════════════
+#  MoonMarket Portfolio
+# ═══════════════════════════════════════════════════════════════
+
+
+class MoonMarketAccount(BaseModel):
+    """One IBKR account available to MoonMarket."""
+    account_id: str
+    label: str
+    selected: bool = False
+
+
+class MoonMarketAccountsResponse(BaseModel):
+    """Response from GET /moonmarket/accounts."""
+    accounts: list[MoonMarketAccount]
+    selected_account_id: Optional[str] = None
+
+
+class MoonMarketPosition(BaseModel):
+    """One normalized portfolio position keyed by IBKR conid."""
+    conid: int
+    symbol: str
+    description: str = ""
+    asset_class: str = ""
+    quantity: float = 0.0
+    last_price: Optional[float] = None
+    average_cost: Optional[float] = None
+    market_value: float = 0.0
+    unrealized_pnl: float = 0.0
+    daily_pnl: Optional[float] = None
+    currency: str = "USD"
+
+
+class MoonMarketAllocationItem(BaseModel):
+    """One chart allocation row derived from a position."""
+    conid: int
+    symbol: str
+    label: str
+    value: float
+    percent: float
+    asset_class: str = ""
+    unrealized_pnl: float = 0.0
+    daily_pnl: Optional[float] = None
+
+
+class MoonMarketPortfolioResponse(BaseModel):
+    """Response from GET /moonmarket/portfolio."""
+    account_id: str
+    total_market_value: float
+    total_unrealized_pnl: float
+    positions: list[MoonMarketPosition]
+    allocation: list[MoonMarketAllocationItem]
+
+
+class MoonMarketSeries(BaseModel):
+    """A dated numeric series normalized from IBKR performance payloads."""
+    dates: list[str]
+    values: list[float]
+
+
+class MoonMarketPerformanceResponse(BaseModel):
+    """Response from GET /moonmarket/performance."""
+    account_id: str
+    period: str
+    nav: MoonMarketSeries
+    cumulative_return: MoonMarketSeries
+    period_return: MoonMarketSeries
+
+
+# ═══════════════════════════════════════════════════════════════
 #  Trigger Rules
 # ═══════════════════════════════════════════════════════════════
 
