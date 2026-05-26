@@ -9,6 +9,7 @@ import { queryClient } from "@/lib/query";
 import { GatewayProvider } from "@/context/GatewayContext";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Toaster } from "@/components/ui/Toaster";
+import { OrderTicket } from "@/orbit/OrderTicket";
 
 export function OrbitProviders({ children }: { children: ReactNode }) {
   return (
@@ -16,6 +17,7 @@ export function OrbitProviders({ children }: { children: ReactNode }) {
       <GatewayProvider>
         <TooltipProvider>
           {children}
+          <OrderTicket />
           <Toaster />
         </TooltipProvider>
       </GatewayProvider>
