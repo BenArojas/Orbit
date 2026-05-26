@@ -2,12 +2,15 @@
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
-from deps import require_ibkr_auth
+from deps import get_db, require_ibkr_auth
 from models import (
     MoonMarketAccountsResponse,
+    MoonMarketLiveOrdersResponse,
     MoonMarketPerformanceResponse,
     MoonMarketPortfolioResponse,
+    MoonMarketTradesResponse,
 )
+from services.db import DatabaseService
 from services.ibkr import IBKRService
 from services.moonmarket import MoonMarketAccountNotFoundError, MoonMarketService
 
@@ -48,6 +51,40 @@ async def moonmarket_performance(
 ) -> MoonMarketPerformanceResponse:
     try:
         return await MoonMarketService(ibkr).performance(account_id=account_id, period=period)
+    except MoonMarketAccountNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"error": "moonmarket_account_not_found", "message": str(exc)},
+        ) from exc
+
+
+@router.get("/trades", response_model=MoonMarketTradesResponse)
+async def moonmarket_trades(
+    account_id: str | None = Query(default=None),
+    days: int = Query(default=7, ge=1, le=7),
+    ibkr: IBKRService = Depends(require_ibkr_auth),
+    db: DatabaseService = Depends(get_db),
+) -> MoonMarketTradesResponse:
+    try:
+        return await MoonMarketService(ibkr).trades(
+            account_id=account_id,
+            days=days,
+            db=db,
+        )
+    except MoonMarketAccountNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"error": "moonmarket_account_not_found", "message": str(exc)},
+        ) from exc
+
+
+@router.get("/live-orders", response_model=MoonMarketLiveOrdersResponse)
+async def moonmarket_live_orders(
+    account_id: str | None = Query(default=None),
+    ibkr: IBKRService = Depends(require_ibkr_auth),
+) -> MoonMarketLiveOrdersResponse:
+    try:
+        return await MoonMarketService(ibkr).live_orders(account_id=account_id)
     except MoonMarketAccountNotFoundError as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

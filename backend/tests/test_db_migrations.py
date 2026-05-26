@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from services.db import DatabaseService
 
 
@@ -24,4 +26,99 @@ def test_migrate_normalizes_legacy_crypto_pulse_symbols():
     assert rows == [
         {"label": "BTC", "resolve": "BTC", "sec_type": ""},
         {"label": "ETH", "resolve": "ETH", "sec_type": ""},
+    ]
+
+
+@pytest.mark.asyncio
+async def test_fills_table_upserts_and_lists_recent_fills():
+    svc = DatabaseService(db_path=":memory:")
+    svc._conn = svc._connect()
+    svc._create_tables()
+    svc._migrate()
+
+    columns = svc._fetchall("PRAGMA table_info(fills)")
+    assert {column["name"] for column in columns} >= {
+        "execution_id",
+        "account_id",
+        "conid",
+        "side",
+        "quantity",
+        "trade_time",
+        "trade_time_ms",
+        "raw_json",
+    }
+
+    inserted = await svc.upsert_fills(
+        [
+            {
+                "execution_id": "E-OLD",
+                "account_id": "DU12345",
+                "conid": 265598,
+                "symbol": "AAPL",
+                "description": "BOT 1 AAPL",
+                "side": "BUY",
+                "quantity": 1.0,
+                "price": 180.0,
+                "net_amount": -180.0,
+                "commission": 1.0,
+                "sec_type": "STK",
+                "trade_time": "2026-05-25T10:00:00+00:00",
+                "trade_time_ms": 1779703200000,
+                "raw_json": {"source": "old"},
+            },
+            {
+                "execution_id": "E-NEW",
+                "account_id": "DU12345",
+                "conid": 756733,
+                "symbol": "SPY",
+                "description": "SLD 2 SPY",
+                "side": "SELL",
+                "quantity": 2.0,
+                "price": 550.0,
+                "net_amount": 1100.0,
+                "commission": 1.25,
+                "sec_type": "ETF",
+                "trade_time": "2026-05-26T10:00:00+00:00",
+                "trade_time_ms": 1779789600000,
+                "raw_json": {"source": "new"},
+            },
+            {
+                "execution_id": "BAD-NO-CONID",
+                "account_id": "DU12345",
+                "side": "BUY",
+                "quantity": 1.0,
+                "trade_time": "2026-05-26T11:00:00+00:00",
+            },
+        ]
+    )
+    assert inserted == 2
+
+    updated = await svc.upsert_fills(
+        [
+            {
+                "execution_id": "E-OLD",
+                "account_id": "DU12345",
+                "conid": 265598,
+                "symbol": "AAPL",
+                "description": "BOT 3 AAPL",
+                "side": "BUY",
+                "quantity": 3.0,
+                "price": 181.0,
+                "net_amount": -543.0,
+                "commission": 1.5,
+                "sec_type": "STK",
+                "trade_time": "2026-05-25T10:00:00+00:00",
+                "trade_time_ms": 1779703200000,
+                "raw_json": {"source": "updated"},
+            }
+        ]
+    )
+    assert updated == 1
+
+    rows = await svc.list_fills("DU12345", days=7)
+    assert [row["execution_id"] for row in rows] == ["E-NEW", "E-OLD"]
+    assert rows[1]["quantity"] == 3.0
+    assert svc._fetchall("SELECT execution_id FROM fills ORDER BY execution_id ASC") == [
+        {"execution_id": "E-NEW"},
+        {"execution_id": "E-OLD"},
     ]

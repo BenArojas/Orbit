@@ -33,9 +33,10 @@ restarting your computer — the data stays.
 """
 
 import asyncio
+import json
 import logging
 import sqlite3
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 from typing import Any
 
@@ -291,6 +292,30 @@ class DatabaseService:
                 cached_at      TEXT DEFAULT (datetime('now'))
             );
 
+            -- ─── MoonMarket Fills ─────────────────────────────────
+            -- Local execution/fill store for MoonMarket and future
+            -- Inflect journal reads. IBKR remains the source of truth;
+            -- this table is an idempotent local projection keyed by
+            -- execution_id. conid is the Orbit-wide instrument key.
+            CREATE TABLE IF NOT EXISTS fills (
+                execution_id  TEXT PRIMARY KEY,
+                account_id    TEXT NOT NULL,
+                conid         INTEGER NOT NULL,
+                symbol        TEXT,
+                description   TEXT,
+                side          TEXT NOT NULL,
+                quantity      REAL NOT NULL,
+                price         REAL,
+                net_amount    REAL,
+                commission    REAL,
+                sec_type      TEXT,
+                trade_time    TEXT NOT NULL,
+                trade_time_ms INTEGER,
+                raw_json      TEXT,
+                created_at    TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at    TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+
             -- ─── Conid Cache (Phase 8 / Task 1.5) ──────────────────
             -- Lookup-direction cache for conid resolution. The
             -- `instruments` table above is a result-direction cache
@@ -349,6 +374,10 @@ class DatabaseService:
 
             CREATE INDEX IF NOT EXISTS idx_instruments_symbol
                 ON instruments(symbol);
+            CREATE INDEX IF NOT EXISTS idx_fills_account_time
+                ON fills(account_id, trade_time_ms DESC);
+            CREATE INDEX IF NOT EXISTS idx_fills_conid_time
+                ON fills(conid, trade_time_ms DESC);
 
             -- ─── Watchlist Config (Phase 6.8) ──────────────────────
             -- Per-target-watchlist override for auto-expire.
@@ -525,6 +554,96 @@ class DatabaseService:
         the same Connection object corrupt cursor state."""
         async with self._write_lock:
             return await asyncio.to_thread(fn)
+
+    # ── MoonMarket Fills ─────────────────────────────────────
+
+    async def upsert_fills(self, rows: list[dict[str, Any]]) -> int:
+        """Insert or update normalized MoonMarket fills by execution id."""
+        accepted = [row for row in rows if self._valid_fill_row(row)]
+
+        def _do() -> int:
+            assert self._conn is not None
+            with self._conn:
+                for row in accepted:
+                    self._conn.execute(
+                        """
+                        INSERT INTO fills (
+                            execution_id, account_id, conid, symbol, description,
+                            side, quantity, price, net_amount, commission, sec_type,
+                            trade_time, trade_time_ms, raw_json
+                        )
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        ON CONFLICT(execution_id) DO UPDATE SET
+                            account_id = excluded.account_id,
+                            conid = excluded.conid,
+                            symbol = excluded.symbol,
+                            description = excluded.description,
+                            side = excluded.side,
+                            quantity = excluded.quantity,
+                            price = excluded.price,
+                            net_amount = excluded.net_amount,
+                            commission = excluded.commission,
+                            sec_type = excluded.sec_type,
+                            trade_time = excluded.trade_time,
+                            trade_time_ms = excluded.trade_time_ms,
+                            raw_json = excluded.raw_json,
+                            updated_at = CURRENT_TIMESTAMP
+                        """,
+                        (
+                            row["execution_id"],
+                            row["account_id"],
+                            int(row["conid"]),
+                            row.get("symbol"),
+                            row.get("description"),
+                            row["side"],
+                            float(row["quantity"]),
+                            row.get("price"),
+                            row.get("net_amount"),
+                            row.get("commission"),
+                            row.get("sec_type"),
+                            row["trade_time"],
+                            row.get("trade_time_ms"),
+                            self._encode_raw_json(row.get("raw_json")),
+                        ),
+                    )
+            return len(accepted)
+
+        return await self._run_write(_do)
+
+    async def list_fills(self, account_id: str, days: int = 7) -> list[dict[str, Any]]:
+        """Return recent fills for an account, newest first."""
+        bounded_days = max(1, min(int(days), 7))
+        cutoff_ms = int((datetime.now(timezone.utc) - timedelta(days=bounded_days)).timestamp() * 1000)
+
+        def _do() -> list[dict[str, Any]]:
+            assert self._conn is not None
+            cur = self._conn.execute(
+                """
+                SELECT *
+                FROM fills
+                WHERE account_id = ?
+                  AND (trade_time_ms IS NULL OR trade_time_ms >= ?)
+                ORDER BY trade_time_ms DESC, trade_time DESC
+                """,
+                (account_id, cutoff_ms),
+            )
+            cols = [d[0] for d in cur.description]
+            return [dict(zip(cols, row)) for row in cur.fetchall()]
+
+        return await self._run_read(_do)
+
+    @staticmethod
+    def _valid_fill_row(row: dict[str, Any]) -> bool:
+        required = ("execution_id", "account_id", "conid", "side", "quantity", "trade_time")
+        return all(row.get(key) not in (None, "") for key in required)
+
+    @staticmethod
+    def _encode_raw_json(value: Any) -> str | None:
+        if value is None:
+            return None
+        if isinstance(value, str):
+            return value
+        return json.dumps(value, sort_keys=True)
 
     # ── Trigger Rules ─────────────────────────────────────
 

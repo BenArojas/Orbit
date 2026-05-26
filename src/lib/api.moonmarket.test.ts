@@ -35,4 +35,15 @@ describe("MoonMarket API client", () => {
     expect(portfolioUrl).toContain("/moonmarket/portfolio?account_id=DU%20123");
     expect(performanceUrl).toContain("/moonmarket/performance?account_id=DU%20123&period=YTD");
   });
+
+  it("encodes account ids and days for trades and live orders endpoints", async () => {
+    await api.moonmarketTrades("DU 123", 7);
+    await api.moonmarketLiveOrders("DU 123");
+
+    const tradesUrl = String(vi.mocked(fetch).mock.calls[0][0]);
+    const liveOrdersUrl = String(vi.mocked(fetch).mock.calls[1][0]);
+
+    expect(tradesUrl).toContain("/moonmarket/trades?account_id=DU%20123&days=7");
+    expect(liveOrdersUrl).toContain("/moonmarket/live-orders?account_id=DU%20123");
+  });
 });

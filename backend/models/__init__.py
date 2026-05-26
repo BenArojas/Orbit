@@ -198,6 +198,61 @@ class MoonMarketPerformanceResponse(BaseModel):
     period_return: MoonMarketSeries
 
 
+class MoonMarketTrade(BaseModel):
+    """One normalized execution/fill from IBKR, keyed by execution id and conid."""
+    execution_id: str
+    account_id: str
+    conid: int
+    symbol: Optional[str] = None
+    description: Optional[str] = None
+    side: Literal["BUY", "SELL"]
+    quantity: float
+    price: Optional[float] = None
+    net_amount: Optional[float] = None
+    commission: Optional[float] = None
+    sec_type: Optional[str] = None
+    trade_time: str
+    trade_time_ms: Optional[int] = None
+
+
+class MoonMarketTradeSummary(BaseModel):
+    """Derived summary for the selected recent trade window."""
+    total_trades: int
+    total_volume: float
+    total_commissions: float
+    net_cash: float
+    buy_count: int
+    sell_count: int
+
+
+class MoonMarketTradesResponse(BaseModel):
+    """Response from GET /moonmarket/trades."""
+    account_id: str
+    days: int
+    trades: list[MoonMarketTrade]
+    summary: MoonMarketTradeSummary
+
+
+class MoonMarketLiveOrder(BaseModel):
+    """One normalized read-only live order row from IBKR."""
+    order_id: str
+    conid: Optional[int] = None
+    symbol: Optional[str] = None
+    description: Optional[str] = None
+    side: str
+    order_type: Optional[str] = None
+    quantity: Optional[float] = None
+    remaining_quantity: Optional[float] = None
+    limit_price: Optional[float] = None
+    status: Optional[str] = None
+
+
+class MoonMarketLiveOrdersResponse(BaseModel):
+    """Response from GET /moonmarket/live-orders."""
+    account_id: str
+    orders: list[MoonMarketLiveOrder]
+
+
 # ═══════════════════════════════════════════════════════════════
 #  Trigger Rules
 # ═══════════════════════════════════════════════════════════════

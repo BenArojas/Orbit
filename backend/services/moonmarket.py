@@ -7,17 +7,24 @@ using IBKRService as the only gateway to Interactive Brokers.
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Any
 
 from models import (
     MoonMarketAccount,
     MoonMarketAccountsResponse,
     MoonMarketAllocationItem,
+    MoonMarketLiveOrder,
+    MoonMarketLiveOrdersResponse,
     MoonMarketPerformanceResponse,
     MoonMarketPortfolioResponse,
     MoonMarketPosition,
     MoonMarketSeries,
+    MoonMarketTrade,
+    MoonMarketTradeSummary,
+    MoonMarketTradesResponse,
 )
+from services.db import DatabaseService
 from services.ibkr import IBKRService
 
 
@@ -49,6 +56,14 @@ def _first_text(row: dict[str, Any], keys: tuple[str, ...], default: str = "") -
         if value is not None and str(value).strip():
             return str(value).strip()
     return default
+
+
+def _first_value(row: dict[str, Any], keys: tuple[str, ...]) -> Any:
+    for key in keys:
+        value = row.get(key)
+        if value is not None and value != "":
+            return value
+    return None
 
 
 class MoonMarketService:
@@ -121,6 +136,51 @@ class MoonMarketService:
             period_return=self._series_from_payload(payload, "tpps", ("values", "returns", "data")),
         )
 
+    async def trades(
+        self,
+        account_id: str | None = None,
+        days: int = 7,
+        db: DatabaseService | None = None,
+    ) -> MoonMarketTradesResponse:
+        resolved_account_id = await self._resolve_account_id(account_id)
+        bounded_days = max(1, min(int(days), 7))
+        payload = await self.ibkr._request("GET", "/iserver/account/trades")
+        trade_rows = [
+            (row, trade)
+            for row in self._trade_rows(payload)
+            if (trade := self._trade_from_row(row, resolved_account_id)) is not None
+            and self._within_days(trade.trade_time_ms, bounded_days)
+        ]
+        trades = [trade for _, trade in trade_rows]
+        trades.sort(key=lambda trade: trade.trade_time_ms or 0, reverse=True)
+        if db is not None:
+            await db.upsert_fills(
+                [
+                    {
+                        **trade.model_dump(),
+                        "raw_json": row,
+                    }
+                    for row, trade in trade_rows
+                ]
+            )
+        return MoonMarketTradesResponse(
+            account_id=resolved_account_id,
+            days=bounded_days,
+            trades=trades,
+            summary=self._trade_summary(trades),
+        )
+
+    async def live_orders(self, account_id: str | None = None) -> MoonMarketLiveOrdersResponse:
+        resolved_account_id = await self._resolve_account_id(account_id)
+        await self.ibkr._request("GET", "/iserver/account/orders", params={"force": "true"})
+        payload = await self.ibkr._request("GET", "/iserver/account/orders")
+        orders = [
+            order
+            for row in self._order_rows(payload)
+            if (order := self._live_order_from_row(row)) is not None
+        ]
+        return MoonMarketLiveOrdersResponse(account_id=resolved_account_id, orders=orders)
+
     async def _resolve_account_id(self, account_id: str | None) -> str:
         raw_accounts = await self.ibkr.ensure_accounts()
         account_ids = [item for row in raw_accounts if (item := self._account_id(row))]
@@ -170,6 +230,55 @@ class MoonMarketService:
             currency=_first_text(row, ("currency",), "USD"),
         )
 
+    def _trade_from_row(self, row: dict[str, Any], account_id: str) -> MoonMarketTrade | None:
+        row_account_id = _first_text(row, ("account_id", "accountId", "acctId", "acct_id"), account_id)
+        if row_account_id != account_id:
+            return None
+
+        execution_id = _first_text(row, ("execution_id", "executionId", "execId", "executionID"))
+        conid = _safe_int(_first_value(row, ("conid", "contractId", "contract_id")))
+        side = self._normalize_side(_first_value(row, ("side", "buySell", "transactionType")))
+        quantity = self._optional_float(_first_value(row, ("size", "quantity", "qty")))
+        trade_time_ms = self._timestamp_ms(_first_value(row, ("trade_time_r", "tradeTimeR", "time", "trade_time")))
+        if not execution_id or conid is None or side is None or quantity is None:
+            return None
+
+        return MoonMarketTrade(
+            execution_id=execution_id,
+            account_id=account_id,
+            conid=conid,
+            symbol=_first_text(row, ("symbol", "ticker"), f"#{conid}") or None,
+            description=_first_text(row, ("order_description", "orderDescription", "description", "orderDesc")) or None,
+            side=side,
+            quantity=quantity,
+            price=self._optional_float(_first_value(row, ("price", "tradePrice"))),
+            net_amount=self._optional_float(_first_value(row, ("net_amount", "netAmount"))),
+            commission=self._optional_float(_first_value(row, ("commission", "commissions"))),
+            sec_type=_first_text(row, ("sec_type", "secType", "assetClass")) or None,
+            trade_time=self._timestamp_iso(trade_time_ms),
+            trade_time_ms=trade_time_ms,
+        )
+
+    def _live_order_from_row(self, row: dict[str, Any]) -> MoonMarketLiveOrder | None:
+        order_id = _first_text(row, ("order_id", "orderId", "id"))
+        if not order_id:
+            return None
+        conid = _safe_int(_first_value(row, ("conid", "contractId", "contract_id")))
+        return MoonMarketLiveOrder(
+            order_id=order_id,
+            conid=conid,
+            symbol=_first_text(row, ("symbol", "ticker"), f"#{conid}" if conid is not None else "") or None,
+            description=_first_text(row, ("description", "orderDesc", "order_description", "orderDescription")) or None,
+            side=_first_text(row, ("side", "buySell"), "UNKNOWN"),
+            order_type=_first_text(row, ("order_type", "orderType", "type")) or None,
+            quantity=self._optional_float(_first_value(row, ("quantity", "totalQuantity", "total_quantity"))),
+            remaining_quantity=self._optional_float(
+                _first_value(row, ("remaining_quantity", "remainingQuantity", "remaining"))
+            ),
+            limit_price=self._optional_float(_first_value(row, ("limit_price", "limitPrice", "price"))),
+            status=_first_text(row, ("status", "orderStatus")) or None,
+        )
+
     @staticmethod
     def _account_id(row: dict[str, Any]) -> str | None:
         value = row.get("accountId") or row.get("account_id") or row.get("id") or row.get("acctId")
@@ -202,6 +311,28 @@ class MoonMarketService:
         return []
 
     @staticmethod
+    def _trade_rows(payload: Any) -> list[dict[str, Any]]:
+        if isinstance(payload, list):
+            return [row for row in payload if isinstance(row, dict)]
+        if isinstance(payload, dict):
+            for key in ("trades", "executions", "data", "items"):
+                value = payload.get(key)
+                if isinstance(value, list):
+                    return [row for row in value if isinstance(row, dict)]
+        return []
+
+    @staticmethod
+    def _order_rows(payload: Any) -> list[dict[str, Any]]:
+        if isinstance(payload, list):
+            return [row for row in payload if isinstance(row, dict)]
+        if isinstance(payload, dict):
+            for key in ("orders", "data", "items"):
+                value = payload.get(key)
+                if isinstance(value, list):
+                    return [row for row in value if isinstance(row, dict)]
+        return []
+
+    @staticmethod
     def _optional_float(value: Any) -> float | None:
         if value is None or value == "":
             return None
@@ -209,6 +340,60 @@ class MoonMarketService:
             return round(float(value), 2)
         except (TypeError, ValueError):
             return None
+
+    @staticmethod
+    def _normalize_side(value: Any) -> str | None:
+        text = str(value or "").upper().strip()
+        if text in {"B", "BOT", "BUY"}:
+            return "BUY"
+        if text in {"S", "SLD", "SELL"}:
+            return "SELL"
+        return None
+
+    @staticmethod
+    def _timestamp_ms(value: Any) -> int | None:
+        if value is None or value == "":
+            return None
+        if isinstance(value, (int, float)):
+            timestamp = int(value)
+            return timestamp * 1000 if timestamp < 10_000_000_000 else timestamp
+        text = str(value).strip()
+        try:
+            timestamp = int(float(text))
+            return timestamp * 1000 if timestamp < 10_000_000_000 else timestamp
+        except ValueError:
+            pass
+        try:
+            parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return int(parsed.timestamp() * 1000)
+
+    @staticmethod
+    def _timestamp_iso(timestamp_ms: int | None) -> str:
+        if timestamp_ms is None:
+            return datetime.now(timezone.utc).isoformat(timespec="seconds")
+        return datetime.fromtimestamp(timestamp_ms / 1000, timezone.utc).isoformat(timespec="seconds")
+
+    @staticmethod
+    def _within_days(timestamp_ms: int | None, days: int) -> bool:
+        if timestamp_ms is None:
+            return True
+        cutoff_ms = int(datetime.now(timezone.utc).timestamp() * 1000) - days * 24 * 60 * 60 * 1000
+        return timestamp_ms >= cutoff_ms
+
+    @staticmethod
+    def _trade_summary(trades: list[MoonMarketTrade]) -> MoonMarketTradeSummary:
+        return MoonMarketTradeSummary(
+            total_trades=len(trades),
+            total_volume=round(sum(trade.quantity for trade in trades), 2),
+            total_commissions=round(sum(trade.commission or 0.0 for trade in trades), 2),
+            net_cash=round(sum(trade.net_amount or 0.0 for trade in trades), 2),
+            buy_count=sum(1 for trade in trades if trade.side == "BUY"),
+            sell_count=sum(1 for trade in trades if trade.side == "SELL"),
+        )
 
     def _series_from_payload(
         self,

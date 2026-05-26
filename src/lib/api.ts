@@ -189,6 +189,56 @@ export interface MoonMarketPerformanceResponse {
   period_return: MoonMarketSeries;
 }
 
+export interface MoonMarketTrade {
+  execution_id: string;
+  account_id: string;
+  conid: number;
+  symbol: string | null;
+  description: string | null;
+  side: "BUY" | "SELL";
+  quantity: number;
+  price: number | null;
+  net_amount: number | null;
+  commission: number | null;
+  sec_type: string | null;
+  trade_time: string;
+  trade_time_ms: number | null;
+}
+
+export interface MoonMarketTradeSummary {
+  total_trades: number;
+  total_volume: number;
+  total_commissions: number;
+  net_cash: number;
+  buy_count: number;
+  sell_count: number;
+}
+
+export interface MoonMarketTradesResponse {
+  account_id: string;
+  days: number;
+  trades: MoonMarketTrade[];
+  summary: MoonMarketTradeSummary;
+}
+
+export interface MoonMarketLiveOrder {
+  order_id: string;
+  conid: number | null;
+  symbol: string | null;
+  description: string | null;
+  side: string;
+  order_type: string | null;
+  quantity: number | null;
+  remaining_quantity: number | null;
+  limit_price: number | null;
+  status: string | null;
+}
+
+export interface MoonMarketLiveOrdersResponse {
+  account_id: string;
+  orders: MoonMarketLiveOrder[];
+}
+
 /**
  * news_candle detection methods (Phase 6.6). Only meaningful when
  * `indicator === "news_candle"`.
@@ -1100,6 +1150,22 @@ export const api = {
     request<MoonMarketPerformanceResponse>(
       "GET",
       `/moonmarket/performance?account_id=${encodeURIComponent(accountId)}&period=${encodeURIComponent(period)}`,
+      undefined,
+      signal,
+    ),
+
+  moonmarketTrades: (accountId: string, days = 7, signal?: AbortSignal) =>
+    request<MoonMarketTradesResponse>(
+      "GET",
+      `/moonmarket/trades?account_id=${encodeURIComponent(accountId)}&days=${encodeURIComponent(days)}`,
+      undefined,
+      signal,
+    ),
+
+  moonmarketLiveOrders: (accountId: string, signal?: AbortSignal) =>
+    request<MoonMarketLiveOrdersResponse>(
+      "GET",
+      `/moonmarket/live-orders?account_id=${encodeURIComponent(accountId)}`,
       undefined,
       signal,
     ),

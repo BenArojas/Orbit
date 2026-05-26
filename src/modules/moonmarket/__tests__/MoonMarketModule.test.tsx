@@ -2,13 +2,22 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, within } from "@testing-library/react";
 
-const navigate = vi.fn();
-vi.mock("react-router-dom", () => ({ useNavigate: () => navigate }));
+const routerState = vi.hoisted(() => ({
+  navigate: vi.fn(),
+  pathname: "/moonmarket",
+}));
+
+vi.mock("react-router-dom", () => ({
+  useNavigate: () => routerState.navigate,
+  useLocation: () => ({ pathname: routerState.pathname }),
+}));
 
 const mockApi = vi.hoisted(() => ({
   moonmarketAccounts: vi.fn(),
   moonmarketPortfolio: vi.fn(),
   moonmarketPerformance: vi.fn(),
+  moonmarketTrades: vi.fn(),
+  moonmarketLiveOrders: vi.fn(),
 }));
 
 vi.mock("@/lib/api", () => ({
@@ -17,7 +26,8 @@ vi.mock("@/lib/api", () => ({
 
 import { MoonMarketModule } from "@/modules/moonmarket/MoonMarketModule";
 
-function renderMoonMarket() {
+function renderMoonMarket(pathname = "/moonmarket") {
+  routerState.pathname = pathname;
   const client = new QueryClient({
     defaultOptions: {
       queries: { retry: false },
@@ -32,7 +42,8 @@ function renderMoonMarket() {
 
 describe("MoonMarketModule", () => {
   beforeEach(() => {
-    navigate.mockClear();
+    routerState.navigate.mockClear();
+    routerState.pathname = "/moonmarket";
     mockApi.moonmarketAccounts.mockResolvedValue({
       selected_account_id: "DU12345",
       accounts: [{ account_id: "DU12345", label: "Paper Trading", selected: true }],
@@ -99,6 +110,67 @@ describe("MoonMarketModule", () => {
       cumulative_return: { dates: ["2026-01-01", "2026-01-02"], values: [0, 1.25] },
       period_return: { dates: ["2026-01-01", "2026-01-02"], values: [0, 0.7] },
     });
+    mockApi.moonmarketTrades.mockResolvedValue({
+      account_id: "DU12345",
+      days: 7,
+      summary: {
+        total_trades: 2,
+        total_volume: 7,
+        total_commissions: 2.25,
+        net_cash: 175.4,
+        buy_count: 1,
+        sell_count: 1,
+      },
+      trades: [
+        {
+          execution_id: "E-SELL-1",
+          account_id: "DU12345",
+          conid: 756733,
+          symbol: "SPY",
+          description: "SLD 2 SPY",
+          side: "SELL",
+          quantity: 2,
+          price: 550.5,
+          net_amount: 1101,
+          commission: 1.25,
+          sec_type: "ETF",
+          trade_time: "2026-05-26T15:32:00+00:00",
+          trade_time_ms: 1779809520000,
+        },
+        {
+          execution_id: "E-BUY-1",
+          account_id: "DU12345",
+          conid: 265598,
+          symbol: "AAPL",
+          description: "BOT 5 AAPL",
+          side: "BUY",
+          quantity: 5,
+          price: 185.12,
+          net_amount: -925.6,
+          commission: 1,
+          sec_type: "STK",
+          trade_time: "2026-05-26T14:32:00+00:00",
+          trade_time_ms: 1779805920000,
+        },
+      ],
+    });
+    mockApi.moonmarketLiveOrders.mockResolvedValue({
+      account_id: "DU12345",
+      orders: [
+        {
+          order_id: "123456789",
+          conid: 265598,
+          symbol: "AAPL",
+          description: "BUY 5 AAPL LIMIT 180.00",
+          side: "BUY",
+          order_type: "LMT",
+          quantity: 5,
+          remaining_quantity: 5,
+          limit_price: 180,
+          status: "Submitted",
+        },
+      ],
+    });
   });
 
   it("renders the portfolio chart deck and stacked performance cards", async () => {
@@ -125,7 +197,7 @@ describe("MoonMarketModule", () => {
     expect(await screen.findByTestId("moonmarket-chart-donut")).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: /back to orbit/i }));
-    expect(navigate).toHaveBeenCalledWith("/");
+    expect(routerState.navigate).toHaveBeenCalledWith("/");
   });
 
   it("uses the bottom area as a contextual inspector instead of a duplicate holdings table", async () => {
@@ -143,5 +215,32 @@ describe("MoonMarketModule", () => {
     fireEvent.click(screen.getByRole("button", { name: /leaders/i }));
     expect(await screen.findByTestId("moonmarket-chart-leaders")).toBeInTheDocument();
     expect(screen.queryByText(/position inspector/i)).not.toBeInTheDocument();
+  });
+
+  it("navigates from portfolio to transactions", async () => {
+    renderMoonMarket();
+
+    expect(await screen.findByText(/portfolio allocation/i)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /^transactions$/i }));
+
+    expect(routerState.navigate).toHaveBeenCalledWith("/moonmarket/transactions");
+  });
+
+  it("renders the transactions route with trades and read-only live orders", async () => {
+    renderMoonMarket("/moonmarket/transactions");
+
+    expect(await screen.findByRole("heading", { name: /transactions ledger/i })).toBeInTheDocument();
+    expect(await screen.findByText(/2 trades/i)).toBeInTheDocument();
+    expect(screen.getByText(/\$175/i)).toBeInTheDocument();
+    expect(screen.getByText(/symbol activity/i)).toBeInTheDocument();
+    expect(screen.getByText(/volume by symbol/i)).toBeInTheDocument();
+    expect(screen.getByText(/BOT 5 AAPL/i)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /live orders/i }));
+
+    expect(await screen.findByText(/BUY 5 AAPL LIMIT 180.00/i)).toBeInTheDocument();
+    expect(screen.getByText(/submitted/i)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /cancel/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /modify/i })).not.toBeInTheDocument();
   });
 });
