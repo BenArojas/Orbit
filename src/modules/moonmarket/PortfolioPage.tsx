@@ -1,6 +1,10 @@
 import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { BarChart3, ShoppingCart } from "lucide-react";
+import { useNavigate } from "react-router-dom";
 import { api } from "@/lib/api";
+import { useOrderTicketStore } from "@/orbit/OrderTicket/useOrderTicketStore";
+import { useNavigationStore } from "@/store/navigation";
 import { GraphSwitcher } from "./GraphSwitcher";
 import { PerformanceCards } from "./PerformanceCards";
 import { PortfolioChart } from "./PortfolioChart";
@@ -10,9 +14,13 @@ import type { GraphType, MoonMarketAllocationItem, MoonMarketPosition } from "./
 function PositionInspector({
   position,
   allocation,
+  onTrade,
+  onAnalyze,
 }: {
   position?: MoonMarketPosition;
   allocation?: MoonMarketAllocationItem;
+  onTrade: (position: MoonMarketPosition) => void;
+  onAnalyze: (position: MoonMarketPosition) => void;
 }) {
   if (!position) {
     return (
@@ -37,8 +45,30 @@ function PositionInspector({
           </div>
           <p className="mt-1 truncate text-[11px] text-[var(--text-3)]">{position.description}</p>
         </div>
-        <div className={pnlPositive ? "font-data text-[20px] text-[var(--clr-green)]" : "font-data text-[20px] text-[var(--clr-red)]"}>
-          {formatMoney(position.unrealized_pnl, position.currency)}
+        <div className="flex flex-col items-end gap-2">
+          <div className="flex flex-wrap justify-end gap-2">
+            <button
+              type="button"
+              aria-label={`Trade ${position.symbol}`}
+              onClick={() => onTrade(position)}
+              className="inline-flex h-8 items-center gap-1.5 rounded-md border border-[var(--clr-cyan)]/60 px-2.5 text-[11px] text-[var(--clr-cyan)] hover:bg-[var(--clr-cyan)]/10"
+            >
+              <ShoppingCart className="h-3.5 w-3.5" />
+              Trade
+            </button>
+            <button
+              type="button"
+              aria-label={`Analyze ${position.symbol}`}
+              onClick={() => onAnalyze(position)}
+              className="inline-flex h-8 items-center gap-1.5 rounded-md border border-border px-2.5 text-[11px] text-[var(--text-2)] hover:border-[var(--clr-green)] hover:text-[var(--clr-green)]"
+            >
+              <BarChart3 className="h-3.5 w-3.5" />
+              Analyze
+            </button>
+          </div>
+          <div className={pnlPositive ? "font-data text-[20px] text-[var(--clr-green)]" : "font-data text-[20px] text-[var(--clr-red)]"}>
+            {formatMoney(position.unrealized_pnl, position.currency)}
+          </div>
         </div>
       </div>
 
@@ -65,6 +95,9 @@ function PositionInspector({
 }
 
 export function PortfolioPage({ accountId, accountsLoading }: { accountId: string | null; accountsLoading?: boolean }) {
+  const navigate = useNavigate();
+  const openOrderTicket = useOrderTicketStore((state) => state.open);
+  const navigateToAnalysis = useNavigationStore((state) => state.navigateToAnalysis);
   const [graphType, setGraphType] = useState<GraphType>("treemap");
   const [period, setPeriod] = useState("1Y");
   const [selectedConid, setSelectedConid] = useState<number | null>(null);
@@ -105,6 +138,15 @@ export function PortfolioPage({ accountId, accountsLoading }: { accountId: strin
     }
   }, [positions, selectedConid]);
 
+  const handleTrade = (position: MoonMarketPosition) => {
+    openOrderTicket({ conid: position.conid, symbol: position.symbol, side: "SELL" });
+  };
+
+  const handleAnalyze = (position: MoonMarketPosition) => {
+    navigateToAnalysis(position.conid, position.symbol);
+    navigate("/parallax");
+  };
+
   return (
     <main className="grid gap-4 p-4 xl:grid-cols-[minmax(0,1fr)_360px]">
       <section className="min-w-0">
@@ -132,7 +174,12 @@ export function PortfolioPage({ accountId, accountsLoading }: { accountId: strin
         )}
 
         {!portfolioError && !isLoading && graphType !== "leaders" && (
-          <PositionInspector position={selectedPosition} allocation={selectedAllocation} />
+          <PositionInspector
+            position={selectedPosition}
+            allocation={selectedAllocation}
+            onTrade={handleTrade}
+            onAnalyze={handleAnalyze}
+          />
         )}
       </section>
 

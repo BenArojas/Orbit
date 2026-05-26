@@ -6,10 +6,20 @@ const routerState = vi.hoisted(() => ({
   navigate: vi.fn(),
   pathname: "/moonmarket",
 }));
+const orderTicketState = vi.hoisted(() => ({ open: vi.fn() }));
+const navigationState = vi.hoisted(() => ({ navigateToAnalysis: vi.fn() }));
 
 vi.mock("react-router-dom", () => ({
   useNavigate: () => routerState.navigate,
   useLocation: () => ({ pathname: routerState.pathname }),
+}));
+
+vi.mock("@/orbit/OrderTicket/useOrderTicketStore", () => ({
+  useOrderTicketStore: (selector: (state: typeof orderTicketState) => unknown) => selector(orderTicketState),
+}));
+
+vi.mock("@/store/navigation", () => ({
+  useNavigationStore: (selector: (state: typeof navigationState) => unknown) => selector(navigationState),
 }));
 
 const mockApi = vi.hoisted(() => ({
@@ -45,6 +55,8 @@ describe("MoonMarketModule", () => {
   beforeEach(() => {
     useAccountStore.setState({ accounts: [], selectedAccountId: null });
     routerState.navigate.mockClear();
+    orderTicketState.open.mockClear();
+    navigationState.navigateToAnalysis.mockClear();
     routerState.pathname = "/moonmarket";
     mockApi.moonmarketAccounts.mockResolvedValue({
       selected_account_id: "DU12345",
@@ -220,6 +232,20 @@ describe("MoonMarketModule", () => {
     fireEvent.click(screen.getByRole("button", { name: /leaders/i }));
     expect(await screen.findByTestId("moonmarket-chart-leaders")).toBeInTheDocument();
     expect(screen.queryByText(/position inspector/i)).not.toBeInTheDocument();
+  });
+
+  it("opens the ticket and Parallax analysis from the selected position inspector", async () => {
+    renderMoonMarket();
+
+    await screen.findByTestId("moonmarket-chart-treemap");
+    fireEvent.click(screen.getByRole("button", { name: /select apple/i }));
+    fireEvent.click(screen.getByRole("button", { name: /trade aapl/i }));
+
+    expect(orderTicketState.open).toHaveBeenCalledWith({ conid: 265598, symbol: "AAPL", side: "SELL" });
+
+    fireEvent.click(screen.getByRole("button", { name: /analyze aapl/i }));
+    expect(navigationState.navigateToAnalysis).toHaveBeenCalledWith(265598, "AAPL");
+    expect(routerState.navigate).toHaveBeenCalledWith("/parallax");
   });
 
   it("navigates from portfolio to transactions", async () => {
