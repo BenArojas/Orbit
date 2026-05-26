@@ -1,6 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent, within } from "@testing-library/react";
+import { render, screen, fireEvent, within, waitFor } from "@testing-library/react";
 
 const routerState = vi.hoisted(() => ({
   navigate: vi.fn(),
@@ -25,6 +25,7 @@ vi.mock("@/lib/api", () => ({
 }));
 
 import { MoonMarketModule } from "@/modules/moonmarket/MoonMarketModule";
+import { useAccountStore } from "@/orbit/OrderTicket/useAccountStore";
 
 function renderMoonMarket(pathname = "/moonmarket") {
   routerState.pathname = pathname;
@@ -42,11 +43,15 @@ function renderMoonMarket(pathname = "/moonmarket") {
 
 describe("MoonMarketModule", () => {
   beforeEach(() => {
+    useAccountStore.setState({ accounts: [], selectedAccountId: null });
     routerState.navigate.mockClear();
     routerState.pathname = "/moonmarket";
     mockApi.moonmarketAccounts.mockResolvedValue({
       selected_account_id: "DU12345",
-      accounts: [{ account_id: "DU12345", label: "Paper Trading", selected: true }],
+      accounts: [
+        { account_id: "DU12345", label: "Paper Trading", selected: true, is_paper: true },
+        { account_id: "U12345", label: "Live Trading", selected: false, is_paper: false },
+      ],
     });
     mockApi.moonmarketPortfolio.mockResolvedValue({
       account_id: "DU12345",
@@ -224,6 +229,16 @@ describe("MoonMarketModule", () => {
     fireEvent.click(screen.getByRole("button", { name: /^transactions$/i }));
 
     expect(routerState.navigate).toHaveBeenCalledWith("/moonmarket/transactions");
+  });
+
+  it("hydrates and updates the shared account store from the selector", async () => {
+    renderMoonMarket();
+
+    await waitFor(() => expect(useAccountStore.getState().selectedAccountId).toBe("DU12345"));
+
+    fireEvent.change(screen.getByRole("combobox", { name: /account/i }), { target: { value: "U12345" } });
+
+    expect(useAccountStore.getState().selectedAccountId).toBe("U12345");
   });
 
   it("renders the transactions route with trades and read-only live orders", async () => {

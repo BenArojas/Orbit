@@ -68,6 +68,7 @@ export function MoonMarketLayout({
         </div>
 
         <select
+          aria-label="Account"
           value={accountId ?? ""}
           onChange={(event) => onAccountChange(event.target.value)}
           disabled={!accounts.length}

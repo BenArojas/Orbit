@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect } from "react";
 import { useLocation } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
+import { useAccountStore } from "@/orbit/OrderTicket/useAccountStore";
 import { MoonMarketLayout } from "./MoonMarketLayout";
 import { PortfolioPage } from "./PortfolioPage";
 import { TransactionsPage } from "./TransactionsPage";
@@ -13,25 +14,22 @@ function activePageFromPath(pathname: string): "portfolio" | "transactions" {
 export function MoonMarketModule() {
   const location = useLocation();
   const activePage = activePageFromPath(location.pathname);
-  const [selectedAccountId, setSelectedAccountId] = useState<string | null>(null);
+  const selectedAccountId = useAccountStore((state) => state.selectedAccountId);
+  const setAccounts = useAccountStore((state) => state.setAccounts);
+  const setSelectedAccountId = useAccountStore((state) => state.setSelectedAccountId);
 
   const accountsQuery = useQuery({
     queryKey: ["moonmarket", "accounts"],
     queryFn: ({ signal }) => api.moonmarketAccounts(signal),
   });
 
-  const defaultAccountId = useMemo(() => {
-    const data = accountsQuery.data;
-    return data?.selected_account_id ?? data?.accounts[0]?.account_id ?? null;
-  }, [accountsQuery.data]);
-
   useEffect(() => {
-    if (!selectedAccountId && defaultAccountId) {
-      setSelectedAccountId(defaultAccountId);
+    if (accountsQuery.data) {
+      setAccounts(accountsQuery.data.accounts, accountsQuery.data.selected_account_id);
     }
-  }, [defaultAccountId, selectedAccountId]);
+  }, [accountsQuery.data, setAccounts]);
 
-  const accountId = selectedAccountId ?? defaultAccountId;
+  const accountId = selectedAccountId;
   const accounts = accountsQuery.data?.accounts ?? [];
 
   return (
