@@ -22,7 +22,8 @@
  */
 
 import { useState, useMemo, useEffect, useRef, useCallback, type KeyboardEvent } from "react";
-import { RotateCcw, ChevronLeft, GitCompare } from "lucide-react";
+import { BriefcaseBusiness, RotateCcw, ChevronLeft, GitCompare, ShoppingCart } from "lucide-react";
+import { useNavigate } from "react-router-dom";
 import { useMutation } from "@tanstack/react-query";
 import { useChartStore, useAiStore, type Timeframe, type IndicatorId } from "@/store";
 import { useDrawingsStore } from "@/store/drawings";
@@ -37,6 +38,7 @@ import { RightSidebar } from "@/components/ai";
 import { SHORTCUT_MAP } from "@/components/charts/drawingsRegistry";
 import { useCompareStore } from "@/store/compare";
 import { CompareView } from "@/components/compare";
+import { useOrderTicketStore } from "@/orbit/OrderTicket";
 
 // ── Constants ────────────────────────────────────────────────
 
@@ -59,6 +61,8 @@ const SUB_CHART_IDS: { id: IndicatorId; type: SubChartType }[] = [
 // ── Component ────────────────────────────────────────────────
 
 export default function AnalysisPage() {
+  const navigate = useNavigate();
+  const openOrderTicket = useOrderTicketStore((state) => state.open);
   const {
     activeConid,
     activeSymbol,
@@ -82,6 +86,17 @@ export default function AnalysisPage() {
 
   const [symbolInput, setSymbolInput] = useState(activeSymbol || "");
   const [inputFocused, setInputFocused] = useState(false);
+
+  const handleTrade = () => {
+    if (!activeConid) {
+      return;
+    }
+    openOrderTicket({ conid: activeConid, symbol: activeSymbol || undefined });
+  };
+
+  const handleViewPortfolio = () => {
+    navigate("/moonmarket/portfolio");
+  };
 
   // Sync symbol input whenever the store's activeSymbol changes externally
   // (e.g. navigateToAnalysis called from watchlist or screener).
@@ -334,6 +349,23 @@ export default function AnalysisPage() {
                 {companyName}
               </span>
             )}
+
+            <div className="mx-1 h-5 w-px bg-[var(--border)]" />
+            <button
+              type="button"
+              onClick={handleTrade}
+              disabled={!activeConid}
+              className="flex items-center gap-1 rounded-full border border-[var(--clr-cyan)]/60 px-2.5 py-1 font-data text-[10px] font-medium text-[var(--clr-cyan)] transition-all hover:bg-[var(--clr-cyan)]/10 disabled:opacity-40"
+            >
+              <ShoppingCart size={12} /> Trade
+            </button>
+            <button
+              type="button"
+              onClick={handleViewPortfolio}
+              className="flex items-center gap-1 rounded-full border border-[var(--border)] px-2.5 py-1 font-data text-[10px] font-medium text-[var(--text-3)] transition-all hover:border-[var(--clr-green)] hover:text-[var(--clr-green)]"
+            >
+              <BriefcaseBusiness size={12} /> View Portfolio
+            </button>
 
             {/* Indicator pills (task 4.6 — Ofek's IndicatorToolbar) */}
             <IndicatorToolbar />

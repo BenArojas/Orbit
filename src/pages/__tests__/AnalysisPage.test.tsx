@@ -13,6 +13,21 @@ import AnalysisPage from "../AnalysisPage";
 
 // ── Mocks ─────────────────────────────────────────────────────
 
+const orderTicketState = vi.hoisted(() => ({ open: vi.fn() }));
+const routerState = vi.hoisted(() => ({ navigate: vi.fn() }));
+
+vi.mock("@/orbit/OrderTicket", () => ({
+  useOrderTicketStore: (selector: (state: typeof orderTicketState) => unknown) => selector(orderTicketState),
+}));
+
+vi.mock("@/orbit/OrderTicket/useOrderTicketStore", () => ({
+  useOrderTicketStore: (selector: (state: typeof orderTicketState) => unknown) => selector(orderTicketState),
+}));
+
+vi.mock("react-router-dom", () => ({
+  useNavigate: () => routerState.navigate,
+}));
+
 // Mutable reference the tests update before each render so we can
 // flip useChartData's return value (e.g., simulate "candles arrive →
 // candles disappear → candles arrive again" during an indicator
@@ -130,6 +145,34 @@ describe("AnalysisPage symbol input sync", () => {
 
     // The mock useInstrument returns "Apple Inc."
     expect(screen.getByText("Apple Inc.")).toBeInTheDocument();
+  });
+});
+
+describe("AnalysisPage order entry points", () => {
+  beforeEach(() => {
+    resetChartDataMock();
+    orderTicketState.open.mockClear();
+    routerState.navigate.mockClear();
+    useCompareStore.getState().__resetForTests();
+    useChartStore.setState({
+      activeSymbol: "AAPL",
+      activeConid: 265598,
+      timeframe: "1D",
+      activeIndicators: new Set(),
+      fibDrawMode: null,
+      fibDrawPointA: null,
+      rightPanelCollapsed: false,
+    });
+  });
+
+  it("opens the shared order ticket and navigates to MoonMarket portfolio", () => {
+    renderPage();
+
+    fireEvent.click(screen.getByRole("button", { name: /trade/i }));
+    expect(orderTicketState.open).toHaveBeenCalledWith({ conid: 265598, symbol: "AAPL" });
+
+    fireEvent.click(screen.getByRole("button", { name: /view portfolio/i }));
+    expect(routerState.navigate).toHaveBeenCalledWith("/moonmarket/portfolio");
   });
 });
 
@@ -325,7 +368,9 @@ describe("AnalysisPage — Compare Mode integration", () => {
 
   it("auto-collapses the right panel on compare entry", () => {
     renderPage();
-    useChartStore.setState({ rightPanelCollapsed: false });
+    act(() => {
+      useChartStore.setState({ rightPanelCollapsed: false });
+    });
 
     act(() => {
       fireEvent.click(screen.getByRole("button", { name: /compare/i }));
