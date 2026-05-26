@@ -136,6 +136,7 @@ export interface MoonMarketAccount {
   account_id: string;
   label: string;
   selected: boolean;
+  is_paper: boolean;
 }
 
 export interface MoonMarketAccountsResponse {
@@ -237,6 +238,38 @@ export interface MoonMarketLiveOrder {
 export interface MoonMarketLiveOrdersResponse {
   account_id: string;
   orders: MoonMarketLiveOrder[];
+}
+
+export type MoonMarketOrderSide = "BUY" | "SELL";
+export type MoonMarketOrderType = "MKT" | "LMT" | "STP" | "STP_LIMIT" | "TRAIL";
+export type MoonMarketTimeInForce = "DAY" | "GTC" | "IOC";
+
+export interface MoonMarketOrderDraft {
+  conid: number;
+  side: MoonMarketOrderSide;
+  quantity: number;
+  orderType: MoonMarketOrderType;
+  tif: MoonMarketTimeInForce;
+  price?: number;
+  auxPrice?: number;
+  cOID?: string;
+  parentId?: string;
+  isSingleGroup?: boolean;
+}
+
+export interface MoonMarketOrderPreviewRequest {
+  account_id: string;
+  order: MoonMarketOrderDraft;
+}
+
+export interface MoonMarketOrdersRequest {
+  account_id: string;
+  orders: MoonMarketOrderDraft[];
+}
+
+export interface MoonMarketOrderActionResponse {
+  account_id: string;
+  result: Record<string, unknown> | Array<Record<string, unknown>>;
 }
 
 /**
@@ -1167,6 +1200,36 @@ export const api = {
       "GET",
       `/moonmarket/live-orders?account_id=${encodeURIComponent(accountId)}`,
       undefined,
+      signal,
+    ),
+
+  moonmarketPreviewOrder: (body: MoonMarketOrderPreviewRequest, signal?: AbortSignal) =>
+    request<MoonMarketOrderActionResponse>("POST", "/moonmarket/orders/preview", body, signal),
+
+  moonmarketPlaceOrders: (body: MoonMarketOrdersRequest, signal?: AbortSignal) =>
+    request<MoonMarketOrderActionResponse>("POST", "/moonmarket/orders", body, signal),
+
+  moonmarketReplyOrder: (accountId: string, replyId: string, confirmed: boolean, signal?: AbortSignal) =>
+    request<MoonMarketOrderActionResponse>(
+      "POST",
+      `/moonmarket/orders/${encodeURIComponent(accountId)}/reply/${encodeURIComponent(replyId)}`,
+      { confirmed },
+      signal,
+    ),
+
+  moonmarketCancelOrder: (accountId: string, orderId: string, signal?: AbortSignal) =>
+    request<MoonMarketOrderActionResponse>(
+      "DELETE",
+      `/moonmarket/orders/${encodeURIComponent(accountId)}/${encodeURIComponent(orderId)}`,
+      undefined,
+      signal,
+    ),
+
+  moonmarketModifyOrder: (accountId: string, orderId: string, order: MoonMarketOrderDraft, signal?: AbortSignal) =>
+    request<MoonMarketOrderActionResponse>(
+      "PATCH",
+      `/moonmarket/orders/${encodeURIComponent(accountId)}/${encodeURIComponent(orderId)}`,
+      order,
       signal,
     ),
 

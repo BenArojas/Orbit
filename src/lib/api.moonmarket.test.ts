@@ -46,4 +46,36 @@ describe("MoonMarket API client", () => {
     expect(tradesUrl).toContain("/moonmarket/trades?account_id=DU%20123&days=7");
     expect(liveOrdersUrl).toContain("/moonmarket/live-orders?account_id=DU%20123");
   });
+
+  it("calls MoonMarket order preview and placement endpoints", async () => {
+    const order = { conid: 265598, side: "BUY" as const, quantity: 5, orderType: "LMT" as const, tif: "DAY" as const, price: 180 };
+
+    await api.moonmarketPreviewOrder({ account_id: "DU 123", order });
+    await api.moonmarketPlaceOrders({ account_id: "DU 123", orders: [order] });
+
+    const previewUrl = String(vi.mocked(fetch).mock.calls[0][0]);
+    const previewOptions = vi.mocked(fetch).mock.calls[0][1];
+    const placeUrl = String(vi.mocked(fetch).mock.calls[1][0]);
+    const placeOptions = vi.mocked(fetch).mock.calls[1][1];
+
+    expect(previewUrl).toContain("/moonmarket/orders/preview");
+    expect(previewOptions).toMatchObject({ method: "POST" });
+    expect(JSON.parse(String(previewOptions?.body))).toEqual({ account_id: "DU 123", order });
+    expect(placeUrl).toContain("/moonmarket/orders");
+    expect(placeOptions).toMatchObject({ method: "POST" });
+  });
+
+  it("encodes MoonMarket order reply, cancel, and modify endpoints", async () => {
+    const order = { conid: 265598, side: "BUY" as const, quantity: 5, orderType: "LMT" as const, tif: "DAY" as const, price: 181 };
+
+    await api.moonmarketReplyOrder("DU 123", "reply/1", true);
+    await api.moonmarketCancelOrder("DU 123", "order/1");
+    await api.moonmarketModifyOrder("DU 123", "order/1", order);
+
+    expect(String(vi.mocked(fetch).mock.calls[0][0])).toContain("/moonmarket/orders/DU%20123/reply/reply%2F1");
+    expect(JSON.parse(String(vi.mocked(fetch).mock.calls[0][1]?.body))).toEqual({ confirmed: true });
+    expect(String(vi.mocked(fetch).mock.calls[1][0])).toContain("/moonmarket/orders/DU%20123/order%2F1");
+    expect(vi.mocked(fetch).mock.calls[1][1]).toMatchObject({ method: "DELETE" });
+    expect(vi.mocked(fetch).mock.calls[2][1]).toMatchObject({ method: "PATCH" });
+  });
 });
