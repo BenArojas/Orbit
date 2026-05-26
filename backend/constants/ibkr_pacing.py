@@ -70,9 +70,11 @@ ENDPOINT_LIMITS: dict[str, EndpointLimit] = {
     "/iserver/marketdata/history": EndpointLimit("concurrent", 5, 0),
 
     # 1 req / 5 sec — account + portfolio reads
+    "/iserver/account/": EndpointLimit("per_sec", 1, 5),
     "/iserver/account/orders": EndpointLimit("per_sec", 1, 5),
     "/iserver/account/pnl/partitioned": EndpointLimit("per_sec", 1, 5),
     "/iserver/account/trades": EndpointLimit("per_sec", 1, 5),
+    "/iserver/reply": EndpointLimit("per_sec", 1, 5),
     "/portfolio/accounts": EndpointLimit("per_sec", 1, 5),
     "/portfolio/subaccounts": EndpointLimit("per_sec", 1, 5),
 

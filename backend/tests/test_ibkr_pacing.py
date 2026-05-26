@@ -48,9 +48,11 @@ def test_pacing_table_is_complete():
     assert GLOBAL_LIMIT_PER_SEC == 10
     assert ENDPOINT_LIMITS["/iserver/marketdata/snapshot"] == EndpointLimit("per_sec", 10, 1)
     assert ENDPOINT_LIMITS["/iserver/marketdata/history"] == EndpointLimit("concurrent", 5, 0)
+    assert ENDPOINT_LIMITS["/iserver/account/"] == EndpointLimit("per_sec", 1, 5)
     assert ENDPOINT_LIMITS["/iserver/account/orders"] == EndpointLimit("per_sec", 1, 5)
     assert ENDPOINT_LIMITS["/iserver/account/pnl/partitioned"] == EndpointLimit("per_sec", 1, 5)
     assert ENDPOINT_LIMITS["/iserver/account/trades"] == EndpointLimit("per_sec", 1, 5)
+    assert ENDPOINT_LIMITS["/iserver/reply"] == EndpointLimit("per_sec", 1, 5)
     assert ENDPOINT_LIMITS["/portfolio/accounts"] == EndpointLimit("per_sec", 1, 5)
     assert ENDPOINT_LIMITS["/portfolio/subaccounts"] == EndpointLimit("per_sec", 1, 5)
     assert ENDPOINT_LIMITS["/sso/validate"] == EndpointLimit("per_sec", 1, 60)
@@ -88,6 +90,12 @@ def test_lookup_uses_longest_prefix():
     assert snap is not None
     assert snap.kind == "per_sec"
     assert snap.count == 10
+
+    order_mutation = lookup_limit("/iserver/account/DU12345/order/order-1")
+    assert order_mutation == EndpointLimit("per_sec", 1, 5)
+
+    reply = lookup_limit("/iserver/reply/reply-1")
+    assert reply == EndpointLimit("per_sec", 1, 5)
 
     # Unmapped path → None (caller falls through to global cap)
     assert lookup_limit("/iserver/marketdata/regsnapshot") is None

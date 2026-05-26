@@ -21,7 +21,7 @@ Note: Watchlists are managed in IBKR — no local models needed.
 
 from __future__ import annotations
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from typing import Literal, Optional
 
 
@@ -252,6 +252,50 @@ class MoonMarketLiveOrdersResponse(BaseModel):
     """Response from GET /moonmarket/live-orders."""
     account_id: str
     orders: list[MoonMarketLiveOrder]
+
+
+OrderSide = Literal["BUY", "SELL"]
+OrderType = Literal["MKT", "LMT", "STP", "STP_LIMIT", "TRAIL"]
+TimeInForce = Literal["DAY", "GTC", "IOC"]
+
+
+class MoonMarketOrderDraft(BaseModel):
+    """One normalized stock order request accepted by Orbit."""
+    conid: int
+    side: OrderSide
+    quantity: float = Field(gt=0)
+    order_type: OrderType = Field(alias="orderType")
+    tif: TimeInForce = "DAY"
+    price: Optional[float] = Field(default=None, gt=0)
+    aux_price: Optional[float] = Field(default=None, alias="auxPrice", gt=0)
+    client_order_id: Optional[str] = Field(default=None, alias="cOID")
+    parent_id: Optional[str] = Field(default=None, alias="parentId")
+    is_single_group: bool = Field(default=False, alias="isSingleGroup")
+
+    model_config = ConfigDict(populate_by_name=True)
+
+
+class MoonMarketOrderPreviewRequest(BaseModel):
+    """Request body for POST /moonmarket/orders/preview."""
+    account_id: str
+    order: MoonMarketOrderDraft
+
+
+class MoonMarketOrdersRequest(BaseModel):
+    """Request body for POST /moonmarket/orders."""
+    account_id: str
+    orders: list[MoonMarketOrderDraft] = Field(min_length=1, max_length=3)
+
+
+class MoonMarketOrderReplyRequest(BaseModel):
+    """Request body for POST /moonmarket/orders/{account_id}/reply/{reply_id}."""
+    confirmed: bool
+
+
+class MoonMarketOrderActionResponse(BaseModel):
+    """Normalized wrapper around an IBKR order mutation response."""
+    account_id: str
+    result: dict[str, object] | list[dict[str, object]]
 
 
 # ═══════════════════════════════════════════════════════════════
