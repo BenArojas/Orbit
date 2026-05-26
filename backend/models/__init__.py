@@ -139,6 +139,7 @@ class MoonMarketAccount(BaseModel):
     account_id: str
     label: str
     selected: bool = False
+    is_paper: bool = False
 
 
 class MoonMarketAccountsResponse(BaseModel):

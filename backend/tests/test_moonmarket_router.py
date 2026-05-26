@@ -12,8 +12,9 @@ class _FakeState:
 
     def __init__(self) -> None:
         self.accounts = [
-            {"id": "DU12345", "accountId": "DU12345", "accountTitle": "Paper Trading"},
-            {"id": "DU99999", "accountId": "DU99999", "accountTitle": "Second Account"},
+            {"id": "DU12345", "accountId": "DU12345", "accountTitle": "Paper Trading", "type": "DEMO"},
+            {"id": "U12345", "accountId": "U12345", "accountTitle": "Live Trading", "isPaper": False},
+            {"id": "DU99999", "accountId": "DU99999", "accountTitle": "Second Paper Account"},
         ]
 
 
@@ -177,9 +178,25 @@ def test_moonmarket_accounts_returns_available_accounts_and_selected_account():
     body = resp.json()
     assert body["selected_account_id"] == "DU12345"
     assert body["accounts"] == [
-        {"account_id": "DU12345", "label": "Paper Trading", "selected": True},
-        {"account_id": "DU99999", "label": "Second Account", "selected": False},
+        {"account_id": "DU12345", "label": "Paper Trading", "selected": True, "is_paper": True},
+        {"account_id": "U12345", "label": "Live Trading", "selected": False, "is_paper": False},
+        {"account_id": "DU99999", "label": "Second Paper Account", "selected": False, "is_paper": True},
     ]
+
+
+def test_moonmarket_accounts_prefers_explicit_paper_flag_over_prefix():
+    fake = _FakeIbkr()
+    fake.state.accounts = [
+        {"id": "DU-LIVE", "accountId": "DU-LIVE", "accountTitle": "Explicit Live", "isPaper": False},
+        {"id": "U-PAPER", "accountId": "U-PAPER", "accountTitle": "Explicit Paper", "isPaper": True},
+    ]
+
+    resp = _client(fake).get("/moonmarket/accounts")
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["accounts"][0]["is_paper"] is False
+    assert body["accounts"][1]["is_paper"] is True
 
 
 def test_moonmarket_portfolio_pages_positions_and_computes_allocation():

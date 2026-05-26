@@ -66,6 +66,18 @@ def _first_value(row: dict[str, Any], keys: tuple[str, ...]) -> Any:
     return None
 
 
+def _bool_value(value: Any) -> bool | None:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"true", "1", "yes", "paper", "demo", "simulated"}:
+            return True
+        if normalized in {"false", "0", "no", "live"}:
+            return False
+    return None
+
+
 class MoonMarketService:
     """Normalize MoonMarket data from IBKR Client Portal payloads."""
 
@@ -80,6 +92,7 @@ class MoonMarketService:
                 account_id=account_id,
                 label=self._account_label(row, account_id),
                 selected=account_id == selected_id,
+                is_paper=self._account_is_paper(row, account_id),
             )
             for row in raw_accounts
             if (account_id := self._account_id(row))
@@ -229,6 +242,24 @@ class MoonMarketService:
             daily_pnl=self._optional_float(row.get("dailyPnl") or row.get("daily_pnl")),
             currency=_first_text(row, ("currency",), "USD"),
         )
+
+    def _account_is_paper(self, row: dict[str, Any], account_id: str) -> bool:
+        for key in ("isPaper", "is_paper", "paper", "paperTrading", "isPaperTrading"):
+            if key in row:
+                explicit = _bool_value(row.get(key))
+                if explicit is not None:
+                    return explicit
+
+        account_type = _first_text(
+            row,
+            ("type", "accountType", "tradingType", "acctType", "category"),
+        ).lower()
+        if any(token in account_type for token in ("paper", "demo", "simulated")):
+            return True
+        if "live" in account_type:
+            return False
+
+        return account_id.upper().startswith("DU")
 
     def _trade_from_row(self, row: dict[str, Any], account_id: str) -> MoonMarketTrade | None:
         row_account_id = _first_text(row, ("account_id", "accountId", "acctId", "acct_id"), account_id)
