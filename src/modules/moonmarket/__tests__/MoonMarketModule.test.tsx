@@ -28,6 +28,8 @@ const mockApi = vi.hoisted(() => ({
   moonmarketPerformance: vi.fn(),
   moonmarketTrades: vi.fn(),
   moonmarketLiveOrders: vi.fn(),
+  moonmarketCancelOrder: vi.fn(),
+  moonmarketModifyOrder: vi.fn(),
 }));
 
 vi.mock("@/lib/api", () => ({
@@ -188,6 +190,8 @@ describe("MoonMarketModule", () => {
         },
       ],
     });
+    mockApi.moonmarketCancelOrder.mockResolvedValue({ account_id: "DU12345", result: { status: "cancelled" } });
+    mockApi.moonmarketModifyOrder.mockResolvedValue({ account_id: "DU12345", result: { status: "modified" } });
   });
 
   it("renders the portfolio chart deck and stacked performance cards", async () => {
@@ -267,7 +271,7 @@ describe("MoonMarketModule", () => {
     expect(useAccountStore.getState().selectedAccountId).toBe("U12345");
   });
 
-  it("renders the transactions route with trades and read-only live orders", async () => {
+  it("renders the transactions route with trades and actionable live orders", async () => {
     renderMoonMarket("/moonmarket/transactions");
 
     expect(await screen.findByRole("heading", { name: /transactions ledger/i })).toBeInTheDocument();
@@ -281,7 +285,26 @@ describe("MoonMarketModule", () => {
 
     expect(await screen.findByText(/BUY 5 AAPL LIMIT 180.00/i)).toBeInTheDocument();
     expect(screen.getByText(/submitted/i)).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /cancel/i })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /modify/i })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /modify aapl order/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /cancel aapl order/i })).toBeInTheDocument();
+  });
+
+  it("cancels and opens modify mode from the live orders table", async () => {
+    renderMoonMarket("/moonmarket/transactions");
+
+    fireEvent.click(await screen.findByRole("button", { name: /live orders/i }));
+    fireEvent.click(await screen.findByRole("button", { name: /modify aapl order/i }));
+
+    expect(orderTicketState.open).toHaveBeenCalledWith({
+      mode: "modify",
+      orderId: "123456789",
+      conid: 265598,
+      symbol: "AAPL",
+      side: "BUY",
+      draft: { conid: 265598, side: "BUY", quantity: 5, orderType: "LMT", tif: "DAY", price: 180 },
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /cancel aapl order/i }));
+    await waitFor(() => expect(mockApi.moonmarketCancelOrder).toHaveBeenCalledWith("DU12345", "123456789"));
   });
 });

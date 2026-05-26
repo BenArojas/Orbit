@@ -75,7 +75,7 @@ export function TransactionsPage({ accountId }: { accountId: string | null }) {
         <div>
           <h2 className="text-[16px] font-semibold">Transactions Ledger</h2>
           <p className="text-[11px] text-[var(--text-3)]">
-            Recent executions and read-only working orders for the selected account.
+            Recent executions and working orders for the selected account.
           </p>
         </div>
         <div className="rounded-md border border-border bg-[var(--bg-2)] px-3 py-2 text-[11px] text-[var(--text-3)]">
@@ -157,7 +157,11 @@ export function TransactionsPage({ accountId }: { accountId: string | null }) {
                     Live Orders
                   </button>
                 </div>
-                {tab === "trades" ? <TransactionsTable trades={trades} /> : <LiveOrdersTable orders={orders} />}
+                {tab === "trades" ? (
+                  <TransactionsTable trades={trades} />
+                ) : (
+                  <LiveOrdersTable accountId={accountId} orders={orders} />
+                )}
               </section>
             </>
           )}
