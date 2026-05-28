@@ -373,6 +373,9 @@ app.include_router(moonmarket_router)
 from routers.orders import router as orders_router
 app.include_router(orders_router)
 
+from routers.options import router as options_router
+app.include_router(options_router)
+
 
 # ── Health endpoint ──────────────────────────────────────────
 

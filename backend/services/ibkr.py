@@ -619,6 +619,56 @@ class IBKRService:
             params["secType"] = sec_type
         return await self._request("GET", "/iserver/secdef/search", params=params)
 
+    async def option_expirations(self, symbol: str, underlying_conid: int) -> list[str]:
+        """Return available IBKR option months for an underlying conid."""
+        rows = await self.search(symbol=symbol, sec_type="STK")
+        for row in rows:
+            try:
+                if int(row.get("conid")) != underlying_conid:
+                    continue
+            except (TypeError, ValueError):
+                continue
+            for section in row.get("sections") or []:
+                if not isinstance(section, dict):
+                    continue
+                if str(section.get("secType", "")).upper() != "OPT":
+                    continue
+                months = str(section.get("months") or "")
+                return [month for month in months.split(";") if month]
+        return []
+
+    async def option_strikes(
+        self,
+        underlying_conid: int,
+        month: str,
+    ) -> dict[str, list[float]]:
+        """Return IBKR option strikes for one underlying and option month."""
+        return await self._request(
+            "GET",
+            "/iserver/secdef/strikes",
+            params={"conid": underlying_conid, "secType": "OPT", "month": month},
+        )
+
+    async def option_contract_info(
+        self,
+        underlying_conid: int,
+        month: str,
+        strike: float,
+        right: str,
+    ) -> list[dict[str, object]]:
+        """Return IBKR secdef info for one option side at one strike."""
+        return await self._request(
+            "GET",
+            "/iserver/secdef/info",
+            params={
+                "conid": underlying_conid,
+                "secType": "OPT",
+                "month": month,
+                "strike": strike,
+                "right": right,
+            },
+        )
+
     async def get_conid(
         self,
         symbol: str,

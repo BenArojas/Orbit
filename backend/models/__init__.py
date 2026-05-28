@@ -254,6 +254,51 @@ class MoonMarketLiveOrdersResponse(BaseModel):
     orders: list[MoonMarketLiveOrder]
 
 
+OptionRight = Literal["C", "P"]
+OptionType = Literal["call", "put"]
+
+
+class MoonMarketOptionContract(BaseModel):
+    """One option contract returned by MoonMarket's lazy chain loader."""
+    contract_id: int = Field(alias="contractId")
+    underlying_conid: int = Field(alias="underlyingConid")
+    expiration: str
+    strike: float
+    right: OptionRight
+    type: OptionType
+    symbol: str = ""
+    last_price: Optional[float] = Field(default=None, alias="lastPrice")
+    bid: Optional[float] = None
+    ask: Optional[float] = None
+    volume: Optional[float] = None
+    delta: Optional[float] = None
+    bid_size: Optional[float] = Field(default=None, alias="bidSize")
+    ask_size: Optional[float] = Field(default=None, alias="askSize")
+
+    model_config = ConfigDict(populate_by_name=True)
+
+
+class MoonMarketOptionExpirationsResponse(BaseModel):
+    """Available option expirations for one underlying conid."""
+    underlying_conid: int
+    symbol: str
+    expirations: list[str]
+
+
+class MoonMarketOptionChainResponse(BaseModel):
+    """Strike skeleton for one underlying and expiration."""
+    underlying_conid: int
+    expiration: str
+    all_strikes: list[float]
+    chain: dict[str, dict[str, MoonMarketOptionContract]] = Field(default_factory=dict)
+
+
+class MoonMarketSingleOptionStrikeResponse(BaseModel):
+    """Lazy-loaded call/put contracts for one strike."""
+    strike: float
+    data: dict[str, MoonMarketOptionContract]
+
+
 OrderSide = Literal["BUY", "SELL"]
 OrderType = Literal["MKT", "LMT", "STP", "STP_LIMIT", "TRAIL"]
 TimeInForce = Literal["DAY", "GTC", "IOC"]
