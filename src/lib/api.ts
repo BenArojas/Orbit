@@ -243,9 +243,11 @@ export interface MoonMarketLiveOrdersResponse {
 export type MoonMarketOrderSide = "BUY" | "SELL";
 export type MoonMarketOrderType = "MKT" | "LMT" | "STP" | "STP_LIMIT" | "TRAIL";
 export type MoonMarketTimeInForce = "DAY" | "GTC" | "IOC";
+export type MoonMarketOrderAssetClass = "STK" | "OPT";
 
 export interface MoonMarketOrderDraft {
   conid: number;
+  assetClass?: MoonMarketOrderAssetClass;
   side: MoonMarketOrderSide;
   quantity: number;
   orderType: MoonMarketOrderType;
@@ -270,6 +272,46 @@ export interface MoonMarketOrdersRequest {
 export interface MoonMarketOrderActionResponse {
   account_id: string;
   result: Record<string, unknown> | Array<Record<string, unknown>>;
+}
+
+export interface MoonMarketOptionContract {
+  contractId: number;
+  underlyingConid: number;
+  expiration: string;
+  strike: number;
+  right: "C" | "P";
+  type: "call" | "put";
+  symbol: string;
+  lastPrice: number | null;
+  bid: number | null;
+  ask: number | null;
+  volume: number | null;
+  delta: number | null;
+  bidSize: number | null;
+  askSize: number | null;
+}
+
+export type MoonMarketOptionsChainData = Record<
+  string,
+  { call?: MoonMarketOptionContract; put?: MoonMarketOptionContract }
+>;
+
+export interface MoonMarketOptionExpirationsResponse {
+  underlying_conid: number;
+  symbol: string;
+  expirations: string[];
+}
+
+export interface MoonMarketOptionChainResponse {
+  underlying_conid: number;
+  expiration: string;
+  all_strikes: number[];
+  chain: MoonMarketOptionsChainData;
+}
+
+export interface MoonMarketSingleOptionStrikeResponse {
+  strike: number;
+  data: { call?: MoonMarketOptionContract; put?: MoonMarketOptionContract };
 }
 
 /**
@@ -1230,6 +1272,30 @@ export const api = {
       "PATCH",
       `/moonmarket/orders/${encodeURIComponent(accountId)}/${encodeURIComponent(orderId)}`,
       order,
+      signal,
+    ),
+
+  moonmarketOptionExpirations: (underlyingConid: number, symbol: string, signal?: AbortSignal) =>
+    request<MoonMarketOptionExpirationsResponse>(
+      "GET",
+      `/moonmarket/options/expirations/${underlyingConid}?symbol=${encodeURIComponent(symbol)}`,
+      undefined,
+      signal,
+    ),
+
+  moonmarketOptionChain: (underlyingConid: number, expiration: string, signal?: AbortSignal) =>
+    request<MoonMarketOptionChainResponse>(
+      "GET",
+      `/moonmarket/options/chain/${underlyingConid}?expiration=${encodeURIComponent(expiration)}`,
+      undefined,
+      signal,
+    ),
+
+  moonmarketOptionContract: (underlyingConid: number, expiration: string, strike: number, signal?: AbortSignal) =>
+    request<MoonMarketSingleOptionStrikeResponse>(
+      "GET",
+      `/moonmarket/options/contract/${underlyingConid}?expiration=${encodeURIComponent(expiration)}&strike=${encodeURIComponent(String(strike))}`,
+      undefined,
       signal,
     ),
 

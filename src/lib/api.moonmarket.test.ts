@@ -78,4 +78,20 @@ describe("MoonMarket API client", () => {
     expect(vi.mocked(fetch).mock.calls[1][1]).toMatchObject({ method: "DELETE" });
     expect(vi.mocked(fetch).mock.calls[2][1]).toMatchObject({ method: "PATCH" });
   });
+
+  it("encodes MoonMarket options chain endpoints", async () => {
+    await api.moonmarketOptionExpirations(265598, "AAPL Class A");
+    await api.moonmarketOptionChain(265598, "JUN24");
+    await api.moonmarketOptionContract(265598, "JUN24", 180);
+
+    expect(String(vi.mocked(fetch).mock.calls[0][0])).toContain(
+      "/moonmarket/options/expirations/265598?symbol=AAPL%20Class%20A",
+    );
+    expect(String(vi.mocked(fetch).mock.calls[1][0])).toContain(
+      "/moonmarket/options/chain/265598?expiration=JUN24",
+    );
+    expect(String(vi.mocked(fetch).mock.calls[2][0])).toContain(
+      "/moonmarket/options/contract/265598?expiration=JUN24&strike=180",
+    );
+  });
 });
