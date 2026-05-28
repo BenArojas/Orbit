@@ -12,6 +12,7 @@ const navigationState = vi.hoisted(() => ({ navigateToAnalysis: vi.fn() }));
 vi.mock("react-router-dom", () => ({
   useNavigate: () => routerState.navigate,
   useLocation: () => ({ pathname: routerState.pathname }),
+  useSearchParams: () => [new URLSearchParams(routerState.pathname.split("?")[1] ?? "")],
 }));
 
 vi.mock("@/orbit/OrderTicket/useOrderTicketStore", () => ({
@@ -30,6 +31,9 @@ const mockApi = vi.hoisted(() => ({
   moonmarketLiveOrders: vi.fn(),
   moonmarketCancelOrder: vi.fn(),
   moonmarketModifyOrder: vi.fn(),
+  moonmarketOptionExpirations: vi.fn(),
+  moonmarketOptionChain: vi.fn(),
+  moonmarketOptionContract: vi.fn(),
 }));
 
 vi.mock("@/lib/api", () => ({
@@ -192,6 +196,18 @@ describe("MoonMarketModule", () => {
     });
     mockApi.moonmarketCancelOrder.mockResolvedValue({ account_id: "DU12345", result: { status: "cancelled" } });
     mockApi.moonmarketModifyOrder.mockResolvedValue({ account_id: "DU12345", result: { status: "modified" } });
+    mockApi.moonmarketOptionExpirations.mockResolvedValue({
+      underlying_conid: 265598,
+      symbol: "AAPL",
+      expirations: ["JUN24"],
+    });
+    mockApi.moonmarketOptionChain.mockResolvedValue({
+      underlying_conid: 265598,
+      expiration: "JUN24",
+      all_strikes: [180],
+      chain: {},
+    });
+    mockApi.moonmarketOptionContract.mockResolvedValue({ strike: 180, data: {} });
   });
 
   it("renders the portfolio chart deck and stacked performance cards", async () => {
@@ -259,6 +275,13 @@ describe("MoonMarketModule", () => {
     fireEvent.click(screen.getByRole("button", { name: /^transactions$/i }));
 
     expect(routerState.navigate).toHaveBeenCalledWith("/moonmarket/transactions");
+  });
+
+  it("renders the options route and exposes the Options nav tab", async () => {
+    renderMoonMarket("/moonmarket/options?conid=265598&symbol=AAPL");
+
+    expect(await screen.findByRole("heading", { name: /aapl options/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^options$/i })).toHaveAttribute("aria-pressed", "true");
   });
 
   it("hydrates and updates the shared account store from the selector", async () => {

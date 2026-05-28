@@ -1,14 +1,15 @@
 import type { ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
-import { ArrowLeft, BriefcaseBusiness, ClipboardList, PieChart } from "lucide-react";
+import { ArrowLeft, BriefcaseBusiness, ClipboardList, ListTree, PieChart } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { MoonMarketAccount } from "./types";
 
-type MoonMarketPage = "portfolio" | "transactions";
+type MoonMarketPage = "portfolio" | "transactions" | "options";
 
 const NAV_ITEMS: { page: MoonMarketPage; label: string; path: string; icon: typeof PieChart }[] = [
   { page: "portfolio", label: "Portfolio", path: "/moonmarket/portfolio", icon: PieChart },
   { page: "transactions", label: "Transactions", path: "/moonmarket/transactions", icon: ClipboardList },
+  { page: "options", label: "Options", path: "/moonmarket/options", icon: ListTree },
 ];
 
 export function MoonMarketLayout({
@@ -25,7 +26,12 @@ export function MoonMarketLayout({
   children: ReactNode;
 }) {
   const navigate = useNavigate();
-  const subtitle = activePage === "transactions" ? "Transactions ledger" : "Portfolio command deck";
+  const subtitle =
+    activePage === "transactions"
+      ? "Transactions ledger"
+      : activePage === "options"
+        ? "Options chain"
+        : "Portfolio command deck";
 
   return (
     <div className="min-h-screen bg-[var(--bg-1)] text-foreground">

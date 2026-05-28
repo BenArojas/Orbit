@@ -4,11 +4,16 @@ import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { useAccountStore } from "@/orbit/OrderTicket/useAccountStore";
 import { MoonMarketLayout } from "./MoonMarketLayout";
+import { OptionsChainPage } from "./options/OptionsChainPage";
 import { PortfolioPage } from "./PortfolioPage";
 import { TransactionsPage } from "./TransactionsPage";
 
-function activePageFromPath(pathname: string): "portfolio" | "transactions" {
-  return pathname.startsWith("/moonmarket/transactions") ? "transactions" : "portfolio";
+type MoonMarketPage = "portfolio" | "transactions" | "options";
+
+function activePageFromPath(pathname: string): MoonMarketPage {
+  if (pathname.startsWith("/moonmarket/transactions")) return "transactions";
+  if (pathname.startsWith("/moonmarket/options")) return "options";
+  return "portfolio";
 }
 
 export function MoonMarketModule() {
@@ -39,7 +44,9 @@ export function MoonMarketModule() {
       accountId={accountId}
       onAccountChange={setSelectedAccountId}
     >
-      {activePage === "transactions" ? (
+      {activePage === "options" ? (
+        <OptionsChainPage />
+      ) : activePage === "transactions" ? (
         <TransactionsPage accountId={accountId} />
       ) : (
         <PortfolioPage accountId={accountId} accountsLoading={accountsQuery.isLoading} />
