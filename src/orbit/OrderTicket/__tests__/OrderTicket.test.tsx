@@ -71,6 +71,27 @@ describe("OrderTicket", () => {
     expect(screen.getByLabelText(/stop loss price/i)).toBeInTheDocument();
   });
 
+  it("renders option metadata and hides bracket controls for option targets", () => {
+    useOrderTicketStore.getState().open({
+      conid: 7001,
+      symbol: "AAPL JUN24 180 CALL",
+      description: "AAPL JUN24 180 CALL",
+      assetClass: "OPT",
+    });
+    renderTicket();
+
+    expect(screen.getByText("OPTION")).toBeInTheDocument();
+    expect(screen.getByText("AAPL JUN24 180 CALL")).toBeInTheDocument();
+    expect(screen.queryByLabelText(/bracket order/i)).not.toBeInTheDocument();
+  });
+
+  it("keeps bracket controls for stock targets", () => {
+    useOrderTicketStore.getState().open({ conid: 265598, symbol: "AAPL", assetClass: "STK" });
+    renderTicket();
+
+    expect(screen.getByLabelText(/bracket order/i)).toBeInTheDocument();
+  });
+
   it("disables order mutations on a live account but leaves preview available", () => {
     useAccountStore.setState({
       accounts: [{ account_id: "U12345", label: "Live", selected: true, is_paper: false }],

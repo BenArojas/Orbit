@@ -43,6 +43,8 @@ type OrderFormProps = {
 export function OrderForm({ target }: OrderFormProps) {
   const selectedAccountId = useAccountStore((state) => state.selectedAccountId);
   const selectedAccount = useAccountStore((state) => state.selectedAccount());
+  const assetClass = target.assetClass ?? "STK";
+  const optionTarget = assetClass === "OPT";
   const [side, setSide] = useState<MoonMarketOrderSide>(target.side ?? "BUY");
   const [quantity, setQuantity] = useState("1");
   const [orderType, setOrderType] = useState<MoonMarketOrderType>("LMT");
@@ -69,6 +71,7 @@ export function OrderForm({ target }: OrderFormProps) {
     setTif(target.draft?.tif ?? "DAY");
     setPrice(target.draft?.price ? String(target.draft.price) : "");
     setAuxPrice(target.draft?.auxPrice ? String(target.draft.auxPrice) : "");
+    setBracket(false);
     setPreviewResult(null);
     setActionResult(null);
     setReplyId(null);
@@ -76,16 +79,17 @@ export function OrderForm({ target }: OrderFormProps) {
 
   const baseOrder = useMemo<MoonMarketOrderDraft>(() => ({
     conid: target.conid,
+    assetClass,
     side,
     quantity: Number(quantity) || 0,
     orderType,
     tif,
     price: numberOrUndefined(price),
     auxPrice: numberOrUndefined(auxPrice),
-  }), [auxPrice, orderType, price, quantity, side, target.conid, tif]);
+  }), [assetClass, auxPrice, orderType, price, quantity, side, target.conid, tif]);
 
   const buildOrders = (): MoonMarketOrderDraft[] => {
-    if (!bracket) return [baseOrder];
+    if (optionTarget || !bracket) return [baseOrder];
     const profitPrice = numberOrUndefined(profitTakerPrice);
     const stopPrice = numberOrUndefined(stopLossPrice);
     if (!profitPrice || !stopPrice) {
@@ -98,6 +102,7 @@ export function OrderForm({ target }: OrderFormProps) {
       { ...baseOrder, cOID: parentId },
       {
         conid: target.conid,
+        assetClass: "STK",
         parentId,
         side: oppositeSide,
         quantity: baseOrder.quantity,
@@ -108,6 +113,7 @@ export function OrderForm({ target }: OrderFormProps) {
       },
       {
         conid: target.conid,
+        assetClass: "STK",
         parentId,
         side: oppositeSide,
         quantity: baseOrder.quantity,
@@ -207,10 +213,16 @@ export function OrderForm({ target }: OrderFormProps) {
           Aux Price
           <input aria-label="Aux Price" value={auxPrice} onChange={(event) => setAuxPrice(event.target.value)} className="mt-1 h-9 w-full rounded-md border border-border bg-[var(--bg-1)] px-2 text-[12px]" />
         </label>
-        <label className="flex items-center gap-2 text-[12px]">
-          <input aria-label="Bracket Order" type="checkbox" checked={bracket} onChange={(event) => setBracket(event.target.checked)} />
-          Bracket order
-        </label>
+        {optionTarget ? (
+          <div className="rounded-md border border-border bg-[var(--bg-1)] px-3 py-2 text-[11px] text-[var(--text-3)]">
+            Option bracket orders are deferred until after single-leg paper validation.
+          </div>
+        ) : (
+          <label className="flex items-center gap-2 text-[12px]">
+            <input aria-label="Bracket Order" type="checkbox" checked={bracket} onChange={(event) => setBracket(event.target.checked)} />
+            Bracket order
+          </label>
+        )}
         {bracket ? (
           <div className="grid gap-3">
             <label className="block text-[11px] text-[var(--text-3)]">

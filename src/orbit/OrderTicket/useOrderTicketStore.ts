@@ -1,10 +1,14 @@
 import { create } from "zustand";
 import type { MoonMarketOrderDraft, MoonMarketOrderSide } from "@/lib/api";
 
+export type OrderTicketAssetClass = "STK" | "OPT";
+
 export type OrderTicketTarget = {
   mode?: "create" | "modify";
   conid: number;
   symbol?: string;
+  description?: string;
+  assetClass?: OrderTicketAssetClass;
   side?: MoonMarketOrderSide;
   orderId?: string;
   draft?: Partial<MoonMarketOrderDraft>;
