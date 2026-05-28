@@ -73,6 +73,18 @@ def _single_order(conid: int = 265598) -> dict:
     }
 
 
+def _option_order(conid: int = 7001) -> dict:
+    return {
+        "conid": conid,
+        "assetClass": "OPT",
+        "side": "BUY",
+        "quantity": 1,
+        "orderType": "LMT",
+        "tif": "DAY",
+        "price": 4.2,
+    }
+
+
 def test_preview_order_posts_whatif_and_allows_live_accounts():
     fake = _FakeIbkr()
     resp = _client(fake).post(
@@ -138,6 +150,37 @@ def test_place_order_preserves_bracket_payload_for_paper_account():
 
     assert resp.status_code == 200
     assert fake.requests[-1][2] == {"json": {"orders": bracket}}
+
+
+def test_place_single_option_order_posts_one_order_for_paper_account():
+    fake = _FakeIbkr()
+    resp = _client(fake).post(
+        "/moonmarket/orders",
+        json={"account_id": "DU12345", "orders": [_option_order()]},
+    )
+
+    expected_payload = {key: value for key, value in _option_order().items() if key != "assetClass"}
+    assert resp.status_code == 200
+    assert fake.requests[-1] == (
+        "POST",
+        "/iserver/account/DU12345/orders",
+        {"json": {"orders": [expected_payload]}},
+    )
+
+
+def test_option_bracket_payload_is_rejected_before_ibkr_call():
+    fake = _FakeIbkr()
+    orders = [
+        {**_option_order(), "cOID": "opt-brkt-1"},
+        {**_option_order(), "parentId": "opt-brkt-1", "side": "SELL", "orderType": "LMT", "price": 6.0},
+        {**_option_order(), "parentId": "opt-brkt-1", "side": "SELL", "orderType": "STP", "price": 3.0},
+    ]
+
+    resp = _client(fake).post("/moonmarket/orders", json={"account_id": "DU12345", "orders": orders})
+
+    assert resp.status_code == 400
+    assert resp.json()["detail"]["error"] == "option_bracket_not_supported"
+    assert not any(endpoint.endswith("/orders") for _, endpoint, _ in fake.requests)
 
 
 def test_reply_requires_account_id_for_paper_guard():

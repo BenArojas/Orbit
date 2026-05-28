@@ -12,7 +12,12 @@ from models import (
 )
 from services.ibkr import IBKRService
 from services.moonmarket import MoonMarketAccountNotFoundError
-from services.orders import LiveTradingBlockedError, OrderResult, OrderService
+from services.orders import (
+    LiveTradingBlockedError,
+    OptionBracketNotSupportedError,
+    OrderResult,
+    OrderService,
+)
 
 router = APIRouter(prefix="/moonmarket/orders", tags=["moonmarket-orders"])
 
@@ -43,6 +48,13 @@ def _live_blocked(exc: LiveTradingBlockedError) -> HTTPException:
     )
 
 
+def _option_bracket_not_supported(exc: OptionBracketNotSupportedError) -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail={"error": "option_bracket_not_supported", "message": str(exc)},
+    )
+
+
 @router.post("/preview", response_model=MoonMarketOrderActionResponse)
 async def preview_order(
     request: MoonMarketOrderPreviewRequest,
@@ -67,6 +79,8 @@ async def place_orders(
         raise _account_not_found(exc) from exc
     except LiveTradingBlockedError as exc:
         raise _live_blocked(exc) from exc
+    except OptionBracketNotSupportedError as exc:
+        raise _option_bracket_not_supported(exc) from exc
 
 
 @router.post("/{account_id}/reply/{reply_id}", response_model=MoonMarketOrderActionResponse)

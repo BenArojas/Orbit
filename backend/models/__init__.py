@@ -302,11 +302,13 @@ class MoonMarketSingleOptionStrikeResponse(BaseModel):
 OrderSide = Literal["BUY", "SELL"]
 OrderType = Literal["MKT", "LMT", "STP", "STP_LIMIT", "TRAIL"]
 TimeInForce = Literal["DAY", "GTC", "IOC"]
+OrderAssetClass = Literal["STK", "OPT"]
 
 
 class MoonMarketOrderDraft(BaseModel):
-    """One normalized stock order request accepted by Orbit."""
+    """One normalized order request accepted by Orbit."""
     conid: int
+    asset_class: OrderAssetClass = Field(default="STK", alias="assetClass")
     side: OrderSide
     quantity: float = Field(gt=0)
     order_type: OrderType = Field(alias="orderType")

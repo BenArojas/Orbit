@@ -21,6 +21,10 @@ class MoonMarketOrderNotFoundError(LookupError):
     """Raised when a modify request targets an order not present in live orders."""
 
 
+class OptionBracketNotSupportedError(ValueError):
+    """Raised when an option order tries to submit a bracket group."""
+
+
 class OrderService:
     """Order preview and paper-only order mutations through IBKR Client Portal."""
 
@@ -38,6 +42,10 @@ class OrderService:
 
     async def place(self, account_id: str, orders: list[MoonMarketOrderDraft]) -> OrderResult:
         await self._assert_paper_account(account_id)
+        if len(orders) > 1 and any(order.asset_class == "OPT" for order in orders):
+            raise OptionBracketNotSupportedError(
+                "Option bracket orders are deferred until after single-leg paper validation"
+            )
         return await self.ibkr._request(
             "POST",
             f"/iserver/account/{account_id}/orders",
