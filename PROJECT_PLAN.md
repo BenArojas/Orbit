@@ -1,7 +1,7 @@
 # Orbit — Project Plan
 
 > Last updated: 2026-05-28
-> Status: Phase 1–7 complete. Phase 8 (E2E testing) in progress — 8.1, 8.3, 8.9, 8.10 done. Phase 9 (Dashboard request-fan-out optimization) complete — all 22 tasks shipped, pending empirical verification. **Phase 10 (Compare Mode + WebSocket reliability) complete** — all 29 commits merged to dev. **Phase 11 (AI Prompt Fact Layer) complete** — merged to dev.
+> Status: Parallax Phase 1–7 complete. Phase 8 E2E remains partially open. Phase 9, Phase 10, and Phase 11 are merged to `dev`. Orbit consolidation Plans #1–#5 are merged to `dev`; Plan #6 (MoonMarket options chain + single-leg option orders) is implemented on `feature/moonmarket-options`, pending merge and IBKR paper-account smoke testing.
 ---
 
 ## IBKR Gateway — What We Learned (2026-04-14)
@@ -61,6 +61,27 @@ These notes are intentionally tracked in the project plan because they affect th
 
 - **Plan #6: MoonMarket Options Chain** ships single-leg option orders first. Selecting a call/put contract opens the shared OrderTicket as `OPTION`, but option brackets are disabled in the UI and rejected server-side if an option order payload tries to submit a multi-order group.
 - **Deferred but required follow-up:** option bracket orders belong in a later MoonMarket trading-depth pass after single-leg option orders are validated against the IBKR paper account. Revisit this before any options trading polish or "bracket parity" work.
+
+---
+
+## Orbit Consolidation Progress (2026-05-28)
+
+This section tracks the newer Orbit work that renamed the former IBKR Hub concept and started combining Parallax + MoonMarket into one desktop product.
+
+| Plan | Status | Current implementation notes |
+|---|---|---|
+| Plan #1 — Orbit foundation | DONE on `dev` | One React/Tauri app shell, route groups for `/parallax/*` and `/moonmarket/*`, Orbit launcher at `/`, shared FastAPI sidecar. Key commit: `4e55bf3`. |
+| Plan #2 — Auth + launcher polish | DONE on `dev` | Combined single-screen Orbit launcher with gateway/connect surface, hero tiles, top-bar polish, disabled modules while unauthenticated, Inflect visible as future module. Key commits: `f8be5f7`, `6e2e0a4`, `75bc72b`; docs: `025e416`, `77e0c98`. |
+| Plan #3 — MoonMarket Portfolio | DONE on `dev` | Re-stacked MoonMarket portfolio using the Orbit visual system. Left chart area keeps graph switching, right side keeps `PerformanceCards`, bottom duplicate holdings table replaced by selected-position inspector, `HistoricalDataCard` dropped. Key commit: `d88609b`. |
+| Plan #4 — MoonMarket Transactions | DONE on `dev` | Transactions ledger, transaction charts, live orders tab, and shared account selector integration. Key commit: `18c8f61`. |
+| Plan #5 — OrderTicket + conid nav bridge | DONE on `dev` | Paper-only MoonMarket order API, shared account store, shared right-side `OrderTicket`, stock single/bracket orders, live-order cancel/modify actions, MoonMarket↔Parallax conid navigation, Parallax trade entry. Key commits: `102826e`, `b5f06cd`, `ed4115f`, `19aa10b`, `2e994e5`, `4cd45c2`, `42bc9d5`, `90952cc`, `db76757`. |
+| Plan #6 — MoonMarket Options Chain | CODE COMPLETE on `feature/moonmarket-options` | Adds `/moonmarket/options/*` backend read API, option-chain client/types/hooks, MoonMarket Options route/tab, lazy per-strike call/put loading, Parallax and Portfolio options entry points, and shared OrderTicket option metadata. Single-leg option orders only; option brackets are blocked server-side and hidden in the UI. Needs merge to `dev` and IBKR paper-account smoke testing. Key branch commits: `4e90495`, `6841e68`, `1a923eb`, `e256554`, `782184f`, `b589364`, `7fd8c0a`. |
+
+**Next Orbit work after Plan #6 merge:**
+
+- Manual IBKR paper validation for options chain data and single-leg option preview/place.
+- Option bracket order design/implementation after single-leg validation.
+- Remaining Orbit polish pass: shared settings, visual consistency, build/distribution checks, and any unmerged roadmap cleanup.
 
 ---
 
