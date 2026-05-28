@@ -4,7 +4,7 @@ import { cn } from "@/lib/utils";
 import { formatMoney, formatPercent } from "./format";
 import type { MoonMarketPerformanceResponse, MoonMarketSeries } from "./types";
 
-const PERIODS = ["1M", "3M", "6M", "1Y", "YTD"];
+const PERIODS = ["1D", "7D", "MTD", "1M", "YTD", "1Y"];
 
 function lastValue(series?: MoonMarketSeries): number | null {
   if (!series?.values.length) return null;
@@ -101,6 +101,8 @@ export function PerformanceCards({
   const navDelta = navLatest != null && navStart != null ? navLatest - navStart : null;
   const cumulative = lastValue(data?.cumulative_return);
   const periodReturn = lastValue(data?.period_return);
+  const cumulativePercent = cumulative == null ? null : cumulative * 100;
+  const periodReturnPercent = periodReturn == null ? null : periodReturn * 100;
 
   return (
     <aside className="space-y-3">
@@ -141,7 +143,7 @@ export function PerformanceCards({
 
           <MetricCard
             title="Cumulative Return"
-            value={formatPercent(cumulative)}
+            value={formatPercent(cumulativePercent)}
             detail={`Cumulative performance over ${period}`}
             icon={TrendingUp}
             tone="green"
@@ -151,7 +153,7 @@ export function PerformanceCards({
 
           <MetricCard
             title="Period Return"
-            value={formatPercent(periodReturn)}
+            value={formatPercent(periodReturnPercent)}
             detail="Time weighted period performance"
             icon={Activity}
             tone="orange"

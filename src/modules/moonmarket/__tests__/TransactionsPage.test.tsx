@@ -94,6 +94,16 @@ describe("TransactionsPage", () => {
     expect(screen.queryByText(/SLD 2 SPY/i)).not.toBeInTheDocument();
   });
 
+  it("expands the recent trades table for full-screen scanning", async () => {
+    renderTransactions();
+
+    expect(await screen.findByText(/BOT 5 AAPL/i)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /expand recent trades table/i }));
+
+    expect(screen.getByRole("button", { name: /collapse recent trades table/i })).toBeInTheDocument();
+    expect(screen.getByText(/SLD 2 SPY/i)).toBeInTheDocument();
+  });
+
   it("shows empty states for no trades and no live orders", async () => {
     mockApi.moonmarketTrades.mockResolvedValueOnce({
       account_id: "DU12345",

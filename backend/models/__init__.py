@@ -160,6 +160,8 @@ class MoonMarketPosition(BaseModel):
     market_value: float = 0.0
     unrealized_pnl: float = 0.0
     daily_pnl: Optional[float] = None
+    pnl_percent: Optional[float] = None
+    daily_pnl_percent: Optional[float] = None
     currency: str = "USD"
 
 
@@ -173,6 +175,8 @@ class MoonMarketAllocationItem(BaseModel):
     asset_class: str = ""
     unrealized_pnl: float = 0.0
     daily_pnl: Optional[float] = None
+    pnl_percent: Optional[float] = None
+    daily_pnl_percent: Optional[float] = None
 
 
 class MoonMarketPortfolioResponse(BaseModel):

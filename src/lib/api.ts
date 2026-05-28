@@ -155,6 +155,8 @@ export interface MoonMarketPosition {
   market_value: number;
   unrealized_pnl: number;
   daily_pnl: number | null;
+  pnl_percent: number | null;
+  daily_pnl_percent: number | null;
   currency: string;
 }
 
@@ -167,6 +169,8 @@ export interface MoonMarketAllocationItem {
   asset_class: string;
   unrealized_pnl: number;
   daily_pnl: number | null;
+  pnl_percent: number | null;
+  daily_pnl_percent: number | null;
 }
 
 export interface MoonMarketPortfolioResponse {

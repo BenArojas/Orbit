@@ -165,7 +165,31 @@ class _FakeIbkr:
             ]
         if endpoint == "/portfolio/DU12345/positions/1":
             return []
+        if endpoint == "/portfolio/DU12345/ledger":
+            return {
+                "BASE": {
+                    "currency": "USD",
+                    "secondkey": "BASE",
+                    "cashbalance": 100.0,
+                    "netliquidationvalue": 2200.0,
+                }
+            }
         if endpoint == "/pa/performance":
+            if kwargs.get("json", {}).get("period") == "1M":
+                return {
+                    "nav": {
+                        "data": [{"id": "DU12345", "navs": [100000.0, 101250.0]}],
+                        "dates": ["2026-01-01", "2026-01-02"],
+                    },
+                    "cps": {
+                        "data": [{"id": "DU12345", "returns": [0.0, 0.0125]}],
+                        "dates": ["2026-01-01", "2026-01-02"],
+                    },
+                    "tpps": {
+                        "data": [{"id": "DU12345", "returns": [0.0, 0.007]}],
+                        "dates": ["2026-01-01", "2026-01-02"],
+                    },
+                }
             return {
                 "nav": {"dates": ["2026-01-01", "2026-01-02"], "navs": [100000.0, 101250.0]},
                 "cps": {"dates": ["2026-01-01", "2026-01-02"], "returns": [0.0, 1.25]},
@@ -250,15 +274,20 @@ def test_moonmarket_portfolio_pages_positions_and_computes_allocation():
     assert resp.status_code == 200
     body = resp.json()
     assert body["account_id"] == "DU12345"
-    assert body["total_market_value"] == 2100.0
+    assert body["total_market_value"] == 2200.0
     assert body["total_unrealized_pnl"] == 135.0
     assert body["positions"][0]["conid"] == 756733
     assert body["positions"][0]["symbol"] == "SPY"
     assert body["positions"][1]["conid"] == 265598
-    assert body["allocation"][0]["percent"] == 52.38
-    assert body["allocation"][1]["percent"] == 47.62
+    assert body["positions"][2]["asset_class"] == "CASH"
+    assert body["positions"][2]["symbol"] == "CASH"
+    assert body["allocation"][0]["percent"] == 50.0
+    assert body["allocation"][1]["percent"] == 45.45
+    assert body["allocation"][2]["percent"] == 4.55
+    assert body["allocation"][2]["asset_class"] == "CASH"
     assert ("GET", "/portfolio/DU12345/positions/0", {}) in fake.requests
     assert ("GET", "/portfolio/DU12345/positions/1", {}) in fake.requests
+    assert ("GET", "/portfolio/DU12345/ledger", {}) in fake.requests
 
 
 def test_moonmarket_performance_posts_to_ibkr_and_normalizes_series():
@@ -277,6 +306,17 @@ def test_moonmarket_performance_posts_to_ibkr_and_normalizes_series():
         "/pa/performance",
         {"json": {"acctIds": ["DU12345"], "period": "1Y"}},
     )
+
+
+def test_moonmarket_performance_normalizes_nested_ibkr_series():
+    fake = _FakeIbkr()
+    resp = _client(fake).get("/moonmarket/performance?account_id=DU12345&period=1M")
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["nav"] == {"dates": ["2026-01-01", "2026-01-02"], "values": [100000.0, 101250.0]}
+    assert body["cumulative_return"]["values"] == [0.0, 0.0125]
+    assert body["period_return"]["values"] == [0.0, 0.007]
 
 
 def test_moonmarket_trades_normalizes_summary_and_upserts_fills():

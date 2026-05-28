@@ -87,6 +87,8 @@ describe("MoonMarketModule", () => {
           market_value: 1100,
           unrealized_pnl: 10,
           daily_pnl: -2,
+          pnl_percent: 0.92,
+          daily_pnl_percent: -0.18,
           currency: "USD",
         },
         {
@@ -100,6 +102,8 @@ describe("MoonMarketModule", () => {
           market_value: 1000,
           unrealized_pnl: 125,
           daily_pnl: 10,
+          pnl_percent: 14.29,
+          daily_pnl_percent: 1,
           currency: "USD",
         },
       ],
@@ -113,6 +117,8 @@ describe("MoonMarketModule", () => {
           asset_class: "ETF",
           unrealized_pnl: 10,
           daily_pnl: -2,
+          pnl_percent: 0.92,
+          daily_pnl_percent: -0.18,
         },
         {
           conid: 265598,
@@ -123,6 +129,8 @@ describe("MoonMarketModule", () => {
           asset_class: "STK",
           unrealized_pnl: 125,
           daily_pnl: 10,
+          pnl_percent: 14.29,
+          daily_pnl_percent: 1,
         },
       ],
     });
@@ -130,8 +138,8 @@ describe("MoonMarketModule", () => {
       account_id: "DU12345",
       period: "1Y",
       nav: { dates: ["2026-01-01", "2026-01-02"], values: [100000, 101250] },
-      cumulative_return: { dates: ["2026-01-01", "2026-01-02"], values: [0, 1.25] },
-      period_return: { dates: ["2026-01-01", "2026-01-02"], values: [0, 0.7] },
+      cumulative_return: { dates: ["2026-01-01", "2026-01-02"], values: [0, 0.0125] },
+      period_return: { dates: ["2026-01-01", "2026-01-02"], values: [0, 0.007] },
     });
     mockApi.moonmarketTrades.mockResolvedValue({
       account_id: "DU12345",
@@ -218,6 +226,8 @@ describe("MoonMarketModule", () => {
     expect(screen.getByRole("button", { name: /treemap/i })).toHaveAttribute("aria-pressed", "true");
     expect(screen.getByRole("button", { name: /donut/i })).toBeInTheDocument();
     expect(screen.getByText(/net liquidation/i)).toBeInTheDocument();
+    expect(await screen.findByText(/\$101,250/i)).toBeInTheDocument();
+    expect(screen.getByText(/\+1\.25%/i)).toBeInTheDocument();
     expect(screen.getByText(/cumulative return/i)).toBeInTheDocument();
     expect(screen.getByText(/period return/i)).toBeInTheDocument();
     expect(screen.queryByText(/historical data/i)).not.toBeInTheDocument();
@@ -241,7 +251,7 @@ describe("MoonMarketModule", () => {
     renderMoonMarket();
 
     await screen.findByTestId("moonmarket-chart-treemap");
-    fireEvent.click(screen.getByRole("button", { name: /select apple/i }));
+    fireEvent.click(screen.getByRole("button", { name: /select aapl/i }));
 
     const inspector = within(screen.getByTestId("moonmarket-position-inspector"));
     expect(inspector.getByText(/position inspector/i)).toBeInTheDocument();
@@ -251,17 +261,19 @@ describe("MoonMarketModule", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /leaders/i }));
     expect(await screen.findByTestId("moonmarket-chart-leaders")).toBeInTheDocument();
-    expect(screen.queryByText(/position inspector/i)).not.toBeInTheDocument();
+    expect(screen.getByTestId("moonmarket-position-inspector")).toBeInTheDocument();
   });
 
   it("opens the ticket and Parallax analysis from the selected position inspector", async () => {
     renderMoonMarket();
 
     await screen.findByTestId("moonmarket-chart-treemap");
-    fireEvent.click(screen.getByRole("button", { name: /select apple/i }));
+    fireEvent.click(screen.getByRole("button", { name: /select aapl/i }));
     fireEvent.click(screen.getByRole("button", { name: /trade aapl/i }));
 
-    expect(orderTicketState.open).toHaveBeenCalledWith({ conid: 265598, symbol: "AAPL", side: "SELL" });
+    expect(orderTicketState.open).toHaveBeenCalledWith(
+      expect.objectContaining({ conid: 265598, symbol: "AAPL", side: "SELL", assetClass: "STK" }),
+    );
 
     fireEvent.click(screen.getByRole("button", { name: /analyze aapl/i }));
     expect(navigationState.navigateToAnalysis).toHaveBeenCalledWith(265598, "AAPL");
@@ -269,6 +281,55 @@ describe("MoonMarketModule", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /options aapl/i }));
     expect(routerState.navigate).toHaveBeenCalledWith("/moonmarket/options?conid=265598&symbol=AAPL");
+  });
+
+  it("opens option holdings in the ticket as options with compact labels", async () => {
+    mockApi.moonmarketPortfolio.mockResolvedValueOnce({
+      account_id: "DU12345",
+      total_market_value: 1386,
+      total_unrealized_pnl: 55,
+      positions: [
+        {
+          conid: 778899,
+          symbol: "IBKR DEC2026 90 C [IBKR 261218C00090000 100]",
+          description: "IBKR DEC2026 90 C [IBKR 261218C00090000 100]",
+          asset_class: "OPT",
+          quantity: 1,
+          last_price: 13.86,
+          average_cost: 13.31,
+          market_value: 1386,
+          unrealized_pnl: 55,
+          daily_pnl: 8,
+          pnl_percent: 4.13,
+          daily_pnl_percent: 0.58,
+          currency: "USD",
+        },
+      ],
+      allocation: [
+        {
+          conid: 778899,
+          symbol: "IBKR DEC2026 90 C [IBKR 261218C00090000 100]",
+          label: "IBKR DEC2026 90 C [IBKR 261218C00090000 100]",
+          value: 1386,
+          percent: 100,
+          asset_class: "OPT",
+          unrealized_pnl: 55,
+          daily_pnl: 8,
+          pnl_percent: 4.13,
+          daily_pnl_percent: 0.58,
+        },
+      ],
+    });
+
+    renderMoonMarket();
+
+    await screen.findByTestId("moonmarket-chart-treemap");
+    fireEvent.click(screen.getByRole("button", { name: /select ibkr dec2026 90c/i }));
+    fireEvent.click(screen.getByRole("button", { name: /trade ibkr dec2026 90c/i }));
+
+    expect(orderTicketState.open).toHaveBeenCalledWith(
+      expect.objectContaining({ conid: 778899, symbol: "IBKR DEC2026 90C", side: "SELL", assetClass: "OPT" }),
+    );
   });
 
   it("navigates from portfolio to transactions", async () => {
@@ -312,7 +373,7 @@ describe("MoonMarketModule", () => {
     expect(await screen.findByText(/2 trades/i)).toBeInTheDocument();
     expect(screen.getByText(/\$175/i)).toBeInTheDocument();
     expect(screen.getByText(/symbol activity/i)).toBeInTheDocument();
-    expect(screen.getByText(/volume by symbol/i)).toBeInTheDocument();
+    expect(screen.getByText(/volume mix/i)).toBeInTheDocument();
     expect(screen.getByText(/BOT 5 AAPL/i)).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: /live orders/i }));

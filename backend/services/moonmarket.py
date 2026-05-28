@@ -7,9 +7,11 @@ using IBKRService as the only gateway to Interactive Brokers.
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 from typing import Any
 
+from exceptions import IBKRError
 from models import (
     MoonMarketAccount,
     MoonMarketAccountsResponse,
@@ -26,6 +28,9 @@ from models import (
 )
 from services.db import DatabaseService
 from services.ibkr import IBKRService
+
+log = logging.getLogger("parallax.moonmarket")
+CASH_CONID = 0
 
 
 class MoonMarketAccountNotFoundError(ValueError):
@@ -106,6 +111,8 @@ class MoonMarketService:
         resolved_account_id = await self._resolve_account_id(account_id)
         rows = await self._fetch_position_rows(resolved_account_id)
         positions = [position for row in rows if (position := self._position_from_row(row))]
+        if cash_position := await self._fetch_cash_position(resolved_account_id):
+            positions.append(cash_position)
         positions.sort(key=lambda position: abs(position.market_value), reverse=True)
 
         total_market_value = round(sum(abs(position.market_value) for position in positions), 2)
@@ -122,6 +129,8 @@ class MoonMarketService:
                 asset_class=position.asset_class,
                 unrealized_pnl=position.unrealized_pnl,
                 daily_pnl=position.daily_pnl,
+                pnl_percent=position.pnl_percent,
+                daily_pnl_percent=position.daily_pnl_percent,
             )
             for position in positions
         ]
@@ -221,6 +230,43 @@ class MoonMarketService:
             page += 1
         return rows
 
+    async def _fetch_cash_position(self, account_id: str) -> MoonMarketPosition | None:
+        try:
+            payload = await self.ibkr._request("GET", f"/portfolio/{account_id}/ledger")
+        except IBKRError as exc:
+            log.warning("MoonMarket cash ledger unavailable for %s: %s", account_id, exc)
+            return None
+
+        ledger = self._base_ledger(payload)
+        if not ledger:
+            return None
+
+        cash_balance = self._optional_float(
+            _first_value(ledger, ("cashbalance", "cashBalance", "settledCash", "cash", "cashBalanceFXSegment"))
+        )
+        if cash_balance is None or cash_balance <= 0:
+            return None
+
+        currency = _first_text(ledger, ("currency", "secondkey", "secondKey"), "USD")
+        if currency.upper() == "BASE":
+            currency = "USD"
+
+        return MoonMarketPosition(
+            conid=CASH_CONID,
+            symbol="CASH",
+            description=f"{currency.upper()} cash",
+            asset_class="CASH",
+            quantity=round(cash_balance, 2),
+            last_price=1.0,
+            average_cost=1.0,
+            market_value=round(cash_balance, 2),
+            unrealized_pnl=0.0,
+            daily_pnl=0.0,
+            pnl_percent=0.0,
+            daily_pnl_percent=0.0,
+            currency=currency.upper(),
+        )
+
     def _position_from_row(self, row: dict[str, Any]) -> MoonMarketPosition | None:
         conid = _safe_int(row.get("conid") or row.get("contractId"))
         if conid is None:
@@ -229,6 +275,8 @@ class MoonMarketService:
         symbol = _first_text(row, ("ticker", "symbol", "contractDesc", "fullName"), f"#{conid}")
         description = _first_text(row, ("name", "companyName", "description", "fullName"), symbol)
         market_value = _safe_float(row.get("mktValue") or row.get("marketValue") or row.get("value"))
+        unrealized_pnl = round(_safe_float(row.get("unrealizedPnl") or row.get("unrealized_pnl")), 2)
+        daily_pnl = self._optional_float(row.get("dailyPnl") or row.get("daily_pnl"))
         return MoonMarketPosition(
             conid=conid,
             symbol=symbol,
@@ -238,8 +286,12 @@ class MoonMarketService:
             last_price=self._optional_float(row.get("mktPrice") or row.get("last_price") or row.get("lastPrice")),
             average_cost=self._optional_float(row.get("avgCost") or row.get("avgPrice") or row.get("average_cost")),
             market_value=round(market_value, 2),
-            unrealized_pnl=round(_safe_float(row.get("unrealizedPnl") or row.get("unrealized_pnl")), 2),
-            daily_pnl=self._optional_float(row.get("dailyPnl") or row.get("daily_pnl")),
+            unrealized_pnl=unrealized_pnl,
+            daily_pnl=daily_pnl,
+            pnl_percent=self._percent_change(unrealized_pnl, abs(market_value) - unrealized_pnl),
+            daily_pnl_percent=self._percent_change(daily_pnl, abs(market_value) - (daily_pnl or 0.0))
+            if daily_pnl is not None
+            else None,
             currency=_first_text(row, ("currency",), "USD"),
         )
 
@@ -437,7 +489,15 @@ class MoonMarketService:
             return MoonMarketSeries(dates=[], values=[])
 
         dates = self._string_list(section.get("dates") or section.get("date"))
-        values = self._numeric_list(self._first_present(section, value_keys))
+        source = self._first_present(section, value_keys)
+        if source is section.get("data"):
+            nested = self._series_from_data_rows(source, value_keys)
+            if nested:
+                values = nested
+            else:
+                values = self._numeric_list(source)
+        else:
+            values = self._numeric_list(source)
         if dates or values:
             return MoonMarketSeries(dates=dates[: len(values)], values=values[: len(dates)] if dates else values)
 
@@ -453,6 +513,45 @@ class MoonMarketService:
             return MoonMarketSeries(dates=point_dates, values=point_values)
 
         return MoonMarketSeries(dates=[], values=[])
+
+    @staticmethod
+    def _base_ledger(payload: Any) -> dict[str, Any] | None:
+        if not isinstance(payload, dict):
+            return None
+
+        for key in ("BASE", "LedgerListBASE"):
+            value = payload.get(key)
+            if isinstance(value, dict):
+                return value
+
+        result = payload.get("result")
+        if isinstance(result, list):
+            for row in result:
+                if not isinstance(row, dict):
+                    continue
+                key = str(row.get("key") or "").upper()
+                second_key = str(row.get("secondKey") or row.get("secondkey") or "").upper()
+                if key == "LEDGERLISTBASE" or second_key == "BASE":
+                    return row
+
+        return None
+
+    @staticmethod
+    def _percent_change(numerator: float | None, basis: float | None) -> float | None:
+        if numerator is None or basis is None or basis <= 0:
+            return None
+        return round((numerator / basis) * 100, 2)
+
+    def _series_from_data_rows(self, rows: Any, value_keys: tuple[str, ...]) -> list[float]:
+        if not isinstance(rows, list):
+            return []
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            values = self._numeric_list(self._first_present(row, value_keys))
+            if values:
+                return values
+        return []
 
     @staticmethod
     def _first_present(row: dict[str, Any], keys: tuple[str, ...]) -> Any:

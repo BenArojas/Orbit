@@ -9,6 +9,15 @@ import { GraphSwitcher } from "./GraphSwitcher";
 import { PerformanceCards } from "./PerformanceCards";
 import { PortfolioChart } from "./PortfolioChart";
 import { formatMoney, formatNumber, formatPercent } from "./format";
+import {
+  displayAssetClass,
+  displayHoldingName,
+  displayHoldingSubtitle,
+  isCashAssetClass,
+  optionOrderAssetClass,
+  type AllocationDisplayMode,
+  type DisplayAllocationItem,
+} from "./portfolioData";
 import type { GraphType, MoonMarketAllocationItem, MoonMarketPosition } from "./types";
 
 function PositionInspector({
@@ -36,42 +45,46 @@ function PositionInspector({
   }
 
   const pnlPositive = position.unrealized_pnl >= 0;
+  const disabledActions = isCashAssetClass(position.asset_class);
   return (
     <section data-testid="moonmarket-position-inspector" className="mt-4 rounded-md border border-border bg-[var(--bg-2)] p-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
           <div className="text-[11px] uppercase tracking-wide text-[var(--text-3)]">Position Inspector</div>
           <div className="mt-1 flex items-baseline gap-2">
-            <h3 className="text-[18px] font-semibold">{position.symbol}</h3>
-            <span className="text-[11px] text-[var(--text-3)]">{position.asset_class || "Instrument"}</span>
+            <h3 className="text-[18px] font-semibold">{displayHoldingName(position)}</h3>
+            <span className="text-[11px] text-[var(--text-3)]">{displayAssetClass(position)}</span>
           </div>
-          <p className="mt-1 truncate text-[11px] text-[var(--text-3)]">{position.description}</p>
+          <p className="mt-1 truncate text-[11px] text-[var(--text-3)]">{displayHoldingSubtitle(position)}</p>
         </div>
         <div className="flex flex-col items-end gap-2">
           <div className="flex flex-wrap justify-end gap-2">
             <button
               type="button"
-              aria-label={`Trade ${position.symbol}`}
+              aria-label={`Trade ${displayHoldingName(position)}`}
               onClick={() => onTrade(position)}
-              className="inline-flex h-8 items-center gap-1.5 rounded-md border border-[var(--clr-cyan)]/60 px-2.5 text-[11px] text-[var(--clr-cyan)] hover:bg-[var(--clr-cyan)]/10"
+              disabled={disabledActions}
+              className="inline-flex h-8 items-center gap-1.5 rounded-md border border-[var(--clr-cyan)]/60 px-2.5 text-[11px] text-[var(--clr-cyan)] hover:bg-[var(--clr-cyan)]/10 disabled:opacity-40"
             >
               <ShoppingCart className="h-3.5 w-3.5" />
               Trade
             </button>
             <button
               type="button"
-              aria-label={`Analyze ${position.symbol}`}
+              aria-label={`Analyze ${displayHoldingName(position)}`}
               onClick={() => onAnalyze(position)}
-              className="inline-flex h-8 items-center gap-1.5 rounded-md border border-border px-2.5 text-[11px] text-[var(--text-2)] hover:border-[var(--clr-green)] hover:text-[var(--clr-green)]"
+              disabled={disabledActions}
+              className="inline-flex h-8 items-center gap-1.5 rounded-md border border-border px-2.5 text-[11px] text-[var(--text-2)] hover:border-[var(--clr-green)] hover:text-[var(--clr-green)] disabled:opacity-40"
             >
               <BarChart3 className="h-3.5 w-3.5" />
               Analyze
             </button>
             <button
               type="button"
-              aria-label={`Options ${position.symbol}`}
+              aria-label={`Options ${displayHoldingName(position)}`}
               onClick={() => onOptions(position)}
-              className="inline-flex h-8 items-center gap-1.5 rounded-md border border-border px-2.5 text-[11px] text-[var(--text-2)] hover:border-[var(--clr-cyan)] hover:text-[var(--clr-cyan)]"
+              disabled={disabledActions}
+              className="inline-flex h-8 items-center gap-1.5 rounded-md border border-border px-2.5 text-[11px] text-[var(--text-2)] hover:border-[var(--clr-cyan)] hover:text-[var(--clr-cyan)] disabled:opacity-40"
             >
               <ListTree className="h-3.5 w-3.5" />
               Options
@@ -105,13 +118,48 @@ function PositionInspector({
   );
 }
 
+function GroupInspector({ group, onSelect }: { group: DisplayAllocationItem; onSelect: (item: MoonMarketAllocationItem) => void }) {
+  const children = group.grouped_children ?? [];
+  return (
+    <section data-testid="moonmarket-group-inspector" className="mt-4 rounded-md border border-border bg-[var(--bg-2)] p-4">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <div className="text-[11px] uppercase tracking-wide text-[var(--text-3)]">Grouped Holdings</div>
+          <h3 className="mt-1 text-[18px] font-semibold">Others</h3>
+          <p className="text-[11px] text-[var(--text-3)]">{children.length} smaller positions represented in this box.</p>
+        </div>
+        <div className="text-right font-data text-[18px]">{formatMoney(group.value)}</div>
+      </div>
+      <div className="mt-3 max-h-52 overflow-y-auto rounded border border-border">
+        {children.map((item) => (
+          <button
+            key={item.conid}
+            type="button"
+            onClick={() => onSelect(item)}
+            className="grid w-full grid-cols-[minmax(0,1fr)_80px_82px] items-center gap-3 border-b border-border/70 px-3 py-2 text-left text-[11px] last:border-0 hover:bg-[var(--bg-3)]"
+          >
+            <span className="min-w-0">
+              <span className="block truncate font-semibold">{displayHoldingName(item)}</span>
+              <span className="block truncate text-[10px] text-[var(--text-3)]">{displayAssetClass(item)}</span>
+            </span>
+            <span className="text-right font-data">{formatMoney(item.value)}</span>
+            <span className="text-right font-data text-[var(--text-3)]">{formatPercent(item.percent)}</span>
+          </button>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 export function PortfolioPage({ accountId, accountsLoading }: { accountId: string | null; accountsLoading?: boolean }) {
   const navigate = useNavigate();
   const openOrderTicket = useOrderTicketStore((state) => state.open);
   const navigateToAnalysis = useNavigationStore((state) => state.navigateToAnalysis);
   const [graphType, setGraphType] = useState<GraphType>("treemap");
+  const [displayMode, setDisplayMode] = useState<AllocationDisplayMode>("total");
   const [period, setPeriod] = useState("1Y");
   const [selectedConid, setSelectedConid] = useState<number | null>(null);
+  const [selectedGroup, setSelectedGroup] = useState<DisplayAllocationItem | null>(null);
 
   const portfolioQuery = useQuery({
     queryKey: ["moonmarket", "portfolio", accountId],
@@ -137,40 +185,81 @@ export function PortfolioPage({ accountId, accountsLoading }: { accountId: strin
       ? "Portfolio data unavailable"
       : "Loading portfolio positions";
   const selectedPosition = selectedConid
+    != null
     ? positions.find((position) => position.conid === selectedConid)
     : undefined;
   const selectedAllocation = selectedConid
+    != null
     ? allocation.find((item) => item.conid === selectedConid)
     : undefined;
 
   useEffect(() => {
-    if (selectedConid && positions.length && !positions.some((position) => position.conid === selectedConid)) {
+    if (selectedConid != null && positions.length && !positions.some((position) => position.conid === selectedConid)) {
       setSelectedConid(null);
     }
   }, [positions, selectedConid]);
 
   const handleTrade = (position: MoonMarketPosition) => {
-    openOrderTicket({ conid: position.conid, symbol: position.symbol, side: "SELL" });
+    if (isCashAssetClass(position.asset_class)) return;
+    openOrderTicket({
+      conid: position.conid,
+      symbol: displayHoldingName(position),
+      description: displayHoldingSubtitle(position),
+      assetClass: optionOrderAssetClass(position),
+      side: "SELL",
+    });
   };
 
   const handleAnalyze = (position: MoonMarketPosition) => {
+    if (isCashAssetClass(position.asset_class)) return;
     navigateToAnalysis(position.conid, position.symbol);
     navigate("/parallax");
   };
 
   const handleOptions = (position: MoonMarketPosition) => {
+    if (isCashAssetClass(position.asset_class)) return;
     navigate(`/moonmarket/options?conid=${position.conid}&symbol=${encodeURIComponent(position.symbol)}`);
   };
 
+  const handleSelectAllocation = (item: DisplayAllocationItem) => {
+    if (item.grouped_children?.length) {
+      setSelectedConid(null);
+      setSelectedGroup(item);
+      return;
+    }
+    setSelectedGroup(null);
+    setSelectedConid(item.conid);
+  };
+
   return (
-    <main className="grid gap-4 p-4 xl:grid-cols-[minmax(0,1fr)_360px]">
-      <section className="min-w-0">
+    <main className="grid h-[calc(100vh-3.5rem)] gap-4 overflow-hidden p-4 xl:grid-cols-[minmax(0,1fr)_360px]">
+      <section className="min-h-0 min-w-0 overflow-y-auto pr-1">
         <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
           <div>
             <h2 className="text-[16px] font-semibold">Portfolio Allocation</h2>
             <p className="text-[11px] text-[var(--text-3)]">{portfolioSummary}</p>
           </div>
-          <GraphSwitcher value={graphType} onChange={setGraphType} />
+          <div className="flex flex-wrap justify-end gap-2">
+            <div className="flex h-9 items-center gap-1 rounded-md border border-border bg-[var(--bg-2)] p-1">
+              <button
+                type="button"
+                aria-pressed={displayMode === "total"}
+                onClick={() => setDisplayMode("total")}
+                className={displayMode === "total" ? "h-7 rounded bg-[var(--clr-cyan)]/15 px-2 text-[11px] text-[var(--clr-cyan)]" : "h-7 rounded px-2 text-[11px] text-[var(--text-3)]"}
+              >
+                Since Buy
+              </button>
+              <button
+                type="button"
+                aria-pressed={displayMode === "daily"}
+                onClick={() => setDisplayMode("daily")}
+                className={displayMode === "daily" ? "h-7 rounded bg-[var(--clr-cyan)]/15 px-2 text-[11px] text-[var(--clr-cyan)]" : "h-7 rounded px-2 text-[11px] text-[var(--text-3)]"}
+              >
+                Today
+              </button>
+            </div>
+            <GraphSwitcher value={graphType} onChange={setGraphType} />
+          </div>
         </div>
 
         {portfolioError ? (
@@ -184,11 +273,22 @@ export function PortfolioPage({ accountId, accountsLoading }: { accountId: strin
             type={graphType}
             allocation={allocation}
             selectedConid={selectedConid}
-            onSelect={(item) => setSelectedConid(item.conid)}
+            displayMode={displayMode}
+            onSelect={handleSelectAllocation}
           />
         )}
 
-        {!portfolioError && !isLoading && graphType !== "leaders" && (
+        {!portfolioError && !isLoading && selectedGroup ? (
+          <GroupInspector
+            group={selectedGroup}
+            onSelect={(item) => {
+              setSelectedGroup(null);
+              setSelectedConid(item.conid);
+            }}
+          />
+        ) : null}
+
+        {!portfolioError && !isLoading && !selectedGroup && (
           <PositionInspector
             position={selectedPosition}
             allocation={selectedAllocation}
@@ -199,7 +299,7 @@ export function PortfolioPage({ accountId, accountsLoading }: { accountId: strin
         )}
       </section>
 
-      <section className="min-w-0">
+      <section className="min-h-0 min-w-0 overflow-y-auto">
         <div className="mb-3 grid grid-cols-2 gap-3">
           <div className="rounded-md border border-border bg-[var(--bg-2)] p-3">
             <div className="text-[10px] uppercase text-[var(--text-3)]">Unrealized P&L</div>
@@ -208,10 +308,11 @@ export function PortfolioPage({ accountId, accountsLoading }: { accountId: strin
             </div>
           </div>
           <div className="rounded-md border border-border bg-[var(--bg-2)] p-3">
-            <div className="text-[10px] uppercase text-[var(--text-3)]">Largest Weight</div>
-            <div className="mt-1 font-data text-[18px] text-[var(--text-1)]">
-              {allocation[0] ? formatPercent(allocation[0].percent) : "--"}
+            <div className="text-[10px] uppercase text-[var(--text-3)]">Total Value</div>
+            <div className="mt-1 font-data text-[20px] text-[var(--text-1)]">
+              {portfolio ? formatMoney(portfolio.total_market_value, currency) : "--"}
             </div>
+            <div className="mt-1 text-[10px] text-[var(--text-3)]">{allocation[0] ? `${displayHoldingName(allocation[0])} largest` : "Positions + cash"}</div>
           </div>
         </div>
         <PerformanceCards

@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { Search } from "lucide-react";
+import { Maximize2, Minimize2, Search } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { formatMoney, formatNumber } from "./format";
 import type { MoonMarketTrade } from "./types";
@@ -20,6 +20,7 @@ function formatTradeTime(value: string): string {
 export function TransactionsTable({ trades }: { trades: MoonMarketTrade[] }) {
   const [side, setSide] = useState<SideFilter>("all");
   const [filter, setFilter] = useState("");
+  const [expanded, setExpanded] = useState(false);
   const filteredTrades = useMemo(() => {
     const query = filter.trim().toUpperCase();
     return trades.filter((trade) => {
@@ -28,15 +29,29 @@ export function TransactionsTable({ trades }: { trades: MoonMarketTrade[] }) {
       return sideMatch && symbolMatch;
     });
   }, [filter, side, trades]);
+  const ExpandIcon = expanded ? Minimize2 : Maximize2;
 
   return (
-    <section className="rounded-md border border-border bg-[var(--bg-2)]">
+    <section
+      className={cn(
+        "rounded-md border border-border bg-[var(--bg-2)]",
+        expanded && "fixed inset-4 z-50 flex flex-col shadow-2xl",
+      )}
+    >
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border p-3">
         <div>
           <h3 className="text-[13px] font-semibold">Recent Trades</h3>
           <p className="text-[11px] text-[var(--text-3)]">{filteredTrades.length} visible executions</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            aria-label={expanded ? "Collapse recent trades table" : "Expand recent trades table"}
+            onClick={() => setExpanded((current) => !current)}
+            className="flex h-8 w-8 items-center justify-center rounded-md border border-border text-[var(--text-3)] hover:border-[var(--clr-cyan)] hover:text-[var(--clr-cyan)]"
+          >
+            <ExpandIcon className="h-3.5 w-3.5" strokeWidth={1.8} />
+          </button>
           <div className="flex h-8 items-center gap-1 rounded-md border border-border bg-[var(--bg-1)] p-1">
             {(["all", "buy", "sell"] as const).map((item) => (
               <button
@@ -64,9 +79,9 @@ export function TransactionsTable({ trades }: { trades: MoonMarketTrade[] }) {
           </label>
         </div>
       </div>
-      <div className="overflow-x-auto">
+      <div className={cn("overflow-auto", expanded ? "min-h-0 flex-1" : "max-h-[340px]")}>
         <table className="w-full min-w-[760px] text-left text-[11px]">
-          <thead className="border-b border-border text-[10px] uppercase text-[var(--text-3)]">
+          <thead className="sticky top-0 border-b border-border bg-[var(--bg-2)] text-[10px] uppercase text-[var(--text-3)]">
             <tr>
               <th className="px-3 py-2 font-medium">Time</th>
               <th className="px-3 py-2 font-medium">Symbol</th>
