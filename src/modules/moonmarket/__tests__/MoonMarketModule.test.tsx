@@ -266,6 +266,9 @@ describe("MoonMarketModule", () => {
     fireEvent.click(screen.getByRole("button", { name: /analyze aapl/i }));
     expect(navigationState.navigateToAnalysis).toHaveBeenCalledWith(265598, "AAPL");
     expect(routerState.navigate).toHaveBeenCalledWith("/parallax");
+
+    fireEvent.click(screen.getByRole("button", { name: /options aapl/i }));
+    expect(routerState.navigate).toHaveBeenCalledWith("/moonmarket/options?conid=265598&symbol=AAPL");
   });
 
   it("navigates from portfolio to transactions", async () => {

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { BarChart3, ShoppingCart } from "lucide-react";
+import { BarChart3, ListTree, ShoppingCart } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { api } from "@/lib/api";
 import { useOrderTicketStore } from "@/orbit/OrderTicket/useOrderTicketStore";
@@ -16,11 +16,13 @@ function PositionInspector({
   allocation,
   onTrade,
   onAnalyze,
+  onOptions,
 }: {
   position?: MoonMarketPosition;
   allocation?: MoonMarketAllocationItem;
   onTrade: (position: MoonMarketPosition) => void;
   onAnalyze: (position: MoonMarketPosition) => void;
+  onOptions: (position: MoonMarketPosition) => void;
 }) {
   if (!position) {
     return (
@@ -64,6 +66,15 @@ function PositionInspector({
             >
               <BarChart3 className="h-3.5 w-3.5" />
               Analyze
+            </button>
+            <button
+              type="button"
+              aria-label={`Options ${position.symbol}`}
+              onClick={() => onOptions(position)}
+              className="inline-flex h-8 items-center gap-1.5 rounded-md border border-border px-2.5 text-[11px] text-[var(--text-2)] hover:border-[var(--clr-cyan)] hover:text-[var(--clr-cyan)]"
+            >
+              <ListTree className="h-3.5 w-3.5" />
+              Options
             </button>
           </div>
           <div className={pnlPositive ? "font-data text-[20px] text-[var(--clr-green)]" : "font-data text-[20px] text-[var(--clr-red)]"}>
@@ -147,6 +158,10 @@ export function PortfolioPage({ accountId, accountsLoading }: { accountId: strin
     navigate("/parallax");
   };
 
+  const handleOptions = (position: MoonMarketPosition) => {
+    navigate(`/moonmarket/options?conid=${position.conid}&symbol=${encodeURIComponent(position.symbol)}`);
+  };
+
   return (
     <main className="grid gap-4 p-4 xl:grid-cols-[minmax(0,1fr)_360px]">
       <section className="min-w-0">
@@ -179,6 +194,7 @@ export function PortfolioPage({ accountId, accountsLoading }: { accountId: strin
             allocation={selectedAllocation}
             onTrade={handleTrade}
             onAnalyze={handleAnalyze}
+            onOptions={handleOptions}
           />
         )}
       </section>

@@ -22,7 +22,7 @@
  */
 
 import { useState, useMemo, useEffect, useRef, useCallback, type KeyboardEvent } from "react";
-import { BriefcaseBusiness, RotateCcw, ChevronLeft, GitCompare, ShoppingCart } from "lucide-react";
+import { BriefcaseBusiness, RotateCcw, ChevronLeft, GitCompare, ListTree, ShoppingCart } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { useMutation } from "@tanstack/react-query";
 import { useChartStore, useAiStore, type Timeframe, type IndicatorId } from "@/store";
@@ -96,6 +96,13 @@ export default function AnalysisPage() {
 
   const handleViewPortfolio = () => {
     navigate("/moonmarket/portfolio");
+  };
+
+  const handleOptions = () => {
+    if (!activeConid || !activeSymbol) {
+      return;
+    }
+    navigate(`/moonmarket/options?conid=${activeConid}&symbol=${encodeURIComponent(activeSymbol)}`);
   };
 
   // Sync symbol input whenever the store's activeSymbol changes externally
@@ -365,6 +372,14 @@ export default function AnalysisPage() {
               className="flex items-center gap-1 rounded-full border border-[var(--border)] px-2.5 py-1 font-data text-[10px] font-medium text-[var(--text-3)] transition-all hover:border-[var(--clr-green)] hover:text-[var(--clr-green)]"
             >
               <BriefcaseBusiness size={12} /> View Portfolio
+            </button>
+            <button
+              type="button"
+              onClick={handleOptions}
+              disabled={!activeConid || !activeSymbol}
+              className="flex items-center gap-1 rounded-full border border-[var(--border)] px-2.5 py-1 font-data text-[10px] font-medium text-[var(--text-3)] transition-all hover:border-[var(--clr-cyan)] hover:text-[var(--clr-cyan)] disabled:opacity-40"
+            >
+              <ListTree size={12} /> Options
             </button>
 
             {/* Indicator pills (task 4.6 — Ofek's IndicatorToolbar) */}

@@ -174,6 +174,14 @@ describe("AnalysisPage order entry points", () => {
     fireEvent.click(screen.getByRole("button", { name: /view portfolio/i }));
     expect(routerState.navigate).toHaveBeenCalledWith("/moonmarket/portfolio");
   });
+
+  it("navigates to MoonMarket options with the active conid and symbol", () => {
+    renderPage();
+
+    fireEvent.click(screen.getByRole("button", { name: /options/i }));
+
+    expect(routerState.navigate).toHaveBeenCalledWith("/moonmarket/options?conid=265598&symbol=AAPL");
+  });
 });
 
 // ── no_active_fib guard (locked-fib override) ────────────────
