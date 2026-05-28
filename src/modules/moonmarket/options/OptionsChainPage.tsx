@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import type { MoonMarketOptionContract, MoonMarketOptionsChainData } from "@/lib/api";
+import type { MoonMarketOptionContract } from "@/lib/api";
 import { useOrderTicketStore } from "@/orbit/OrderTicket";
 import { OptionsChainTable } from "./OptionsChainTable";
 import { useOptionChain, useOptionExpirations } from "./useOptionsChain";
@@ -15,7 +15,6 @@ export function OptionsChainPage() {
   const [selectedExpiration, setSelectedExpiration] = useState<string | null>(null);
   const expiration = selectedExpiration ?? expirationsQuery.data?.expirations[0] ?? null;
   const chainQuery = useOptionChain(underlyingConid, expiration);
-  const [chainData, setChainData] = useState<MoonMarketOptionsChainData>({});
   const title = useMemo(() => symbol || "Options", [symbol]);
 
   if (!underlyingConid || !symbol) {
@@ -48,11 +47,8 @@ export function OptionsChainPage() {
         selectedExpiration={expiration}
         onExpirationChange={(next) => {
           setSelectedExpiration(next);
-          setChainData({});
         }}
         allStrikes={chainQuery.data?.all_strikes ?? []}
-        chainData={chainData}
-        setChainData={setChainData}
         loading={expirationsQuery.isLoading || chainQuery.isLoading}
         error={expirationsQuery.error || chainQuery.error}
         onSelect={handleSelect}

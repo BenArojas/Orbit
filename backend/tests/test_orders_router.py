@@ -10,10 +10,13 @@ class _FakeState:
     selected_account = "DU12345"
 
     def __init__(self) -> None:
-        self.accounts = [
-            {"id": "DU12345", "accountId": "DU12345", "accountTitle": "Paper", "isPaper": True},
-            {"id": "U12345", "accountId": "U12345", "accountTitle": "Live", "isPaper": False},
-        ]
+        self.accounts = ["DU12345", "U12345"]
+        self.accounts_payload = {
+            "accounts": ["DU12345", "U12345"],
+            "selectedAccount": "DU12345",
+            "aliases": {"DU12345": "Paper", "U12345": "Live"},
+            "acctProps": {"DU12345": {"isPaper": True}, "U12345": {"isPaper": False}},
+        }
 
 
 class _FakeIbkr:
@@ -21,8 +24,26 @@ class _FakeIbkr:
         self.state = _FakeState()
         self.requests: list[tuple[str, str, dict]] = []
 
-    async def ensure_accounts(self) -> list[dict]:
-        return self.state.accounts
+    async def ensure_accounts(self) -> None:
+        return None
+
+    async def brokerage_accounts(self) -> list[dict]:
+        payload = self.state.accounts_payload
+        rows = []
+        for account_id in self.state.accounts:
+            props = payload.get("acctProps", {}).get(account_id, {})
+            alias = payload.get("aliases", {}).get(account_id, account_id)
+            rows.append(
+                {
+                    "id": account_id,
+                    "accountId": account_id,
+                    "accountTitle": alias,
+                    "alias": alias,
+                    "selected": account_id == self.state.selected_account,
+                    **props,
+                }
+            )
+        return rows
 
     async def _request(self, method: str, endpoint: str, **kwargs):
         self.requests.append((method, endpoint, dict(kwargs)))

@@ -11,11 +11,22 @@ class _FakeState:
     selected_account = "DU12345"
 
     def __init__(self) -> None:
-        self.accounts = [
-            {"id": "DU12345", "accountId": "DU12345", "accountTitle": "Paper Trading", "type": "DEMO"},
-            {"id": "U12345", "accountId": "U12345", "accountTitle": "Live Trading", "isPaper": False},
-            {"id": "DU99999", "accountId": "DU99999", "accountTitle": "Second Paper Account"},
-        ]
+        self.accounts = ["DU12345", "U12345", "DU99999"]
+        self.accounts_payload = {
+            "accounts": ["DU12345", "U12345", "DU99999"],
+            "selectedAccount": "DU12345",
+            "aliases": {
+                "DU12345": "Paper Trading",
+                "U12345": "Live Trading",
+                "DU99999": "Second Paper Account",
+            },
+            "acctProps": {
+                "DU12345": {},
+                "U12345": {"isPaper": False},
+                "DU99999": {},
+            },
+            "isPaper": True,
+        }
 
 
 class _FakeIbkr:
@@ -23,8 +34,31 @@ class _FakeIbkr:
         self.state = _FakeState()
         self.requests: list[tuple[str, str, dict | None]] = []
 
-    async def ensure_accounts(self) -> list[dict]:
-        return self.state.accounts
+    async def ensure_accounts(self) -> None:
+        return None
+
+    async def brokerage_accounts(self) -> list[dict]:
+        payload = self.state.accounts_payload
+        rows = []
+        for account_id in self.state.accounts:
+            props = payload.get("acctProps", {}).get(account_id, {})
+            alias = payload.get("aliases", {}).get(account_id, account_id)
+            row = {
+                "id": account_id,
+                "accountId": account_id,
+                "accountTitle": alias,
+                "alias": alias,
+                "selected": account_id == self.state.selected_account,
+                **props,
+            }
+            if (
+                "isPaper" not in row
+                and payload.get("isPaper") is not None
+                and account_id == self.state.selected_account
+            ):
+                row["isPaper"] = payload["isPaper"]
+            rows.append(row)
+        return rows
 
     async def _request(self, method: str, endpoint: str, **kwargs):
         self.requests.append((method, endpoint, dict(kwargs)))
@@ -186,10 +220,20 @@ def test_moonmarket_accounts_returns_available_accounts_and_selected_account():
 
 def test_moonmarket_accounts_prefers_explicit_paper_flag_over_prefix():
     fake = _FakeIbkr()
-    fake.state.accounts = [
-        {"id": "DU-LIVE", "accountId": "DU-LIVE", "accountTitle": "Explicit Live", "isPaper": False},
-        {"id": "U-PAPER", "accountId": "U-PAPER", "accountTitle": "Explicit Paper", "isPaper": True},
-    ]
+    fake.state.accounts = ["DU-LIVE", "U-PAPER"]
+    fake.state.selected_account = "DU-LIVE"
+    fake.state.accounts_payload = {
+        "accounts": ["DU-LIVE", "U-PAPER"],
+        "selectedAccount": "DU-LIVE",
+        "aliases": {
+            "DU-LIVE": "Explicit Live",
+            "U-PAPER": "Explicit Paper",
+        },
+        "acctProps": {
+            "DU-LIVE": {"isPaper": False},
+            "U-PAPER": {"isPaper": True},
+        },
+    }
 
     resp = _client(fake).get("/moonmarket/accounts")
 

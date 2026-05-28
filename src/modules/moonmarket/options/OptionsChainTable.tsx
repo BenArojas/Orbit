@@ -1,7 +1,7 @@
-import type { Dispatch, SetStateAction } from "react";
-import type { MoonMarketOptionContract, MoonMarketOptionsChainData } from "@/lib/api";
-import { useLazyOptionStrike } from "./useOptionsChain";
+import type { MoonMarketOptionContract } from "@/lib/api";
 import { StrikeRow } from "./StrikeRow";
+
+const AUTO_LOAD_STRIKE_COUNT = 6;
 
 export function OptionsChainTable({
   title,
@@ -10,8 +10,6 @@ export function OptionsChainTable({
   selectedExpiration,
   onExpirationChange,
   allStrikes,
-  chainData,
-  setChainData,
   loading,
   error,
   onSelect,
@@ -22,16 +20,10 @@ export function OptionsChainTable({
   selectedExpiration: string | null;
   onExpirationChange: (expiration: string) => void;
   allStrikes: number[];
-  chainData: MoonMarketOptionsChainData;
-  setChainData: Dispatch<SetStateAction<MoonMarketOptionsChainData>>;
   loading: boolean;
   error: unknown;
   onSelect: (option: MoonMarketOptionContract) => void;
 }) {
-  const lazyStrike = useLazyOptionStrike((next) => {
-    setChainData((current) => ({ ...current, ...next }));
-  });
-
   return (
     <section className="min-h-0 rounded-md border border-border bg-[var(--bg-2)]">
       <header className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-4 py-3">
@@ -83,15 +75,13 @@ export function OptionsChainTable({
         <div className="p-4 text-[12px] text-[var(--text-3)]">Loading chain data...</div>
       ) : allStrikes.length ? (
         <div className="max-h-[calc(100vh-220px)] overflow-y-auto">
-          {allStrikes.map((strike) => (
+          {allStrikes.map((strike, index) => (
             <StrikeRow
-              key={strike}
+              key={`${selectedExpiration ?? "none"}-${strike}`}
               underlyingConid={underlyingConid}
               expiration={selectedExpiration ?? ""}
               strike={strike}
-              chainData={chainData}
-              loading={lazyStrike.isPending && lazyStrike.variables?.strike === strike}
-              onLoad={lazyStrike.mutate}
+              autoLoad={index < AUTO_LOAD_STRIKE_COUNT}
               onSelect={onSelect}
             />
           ))}

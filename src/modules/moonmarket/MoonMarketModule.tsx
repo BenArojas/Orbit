@@ -36,6 +36,7 @@ export function MoonMarketModule() {
 
   const accountId = selectedAccountId;
   const accounts = accountsQuery.data?.accounts ?? [];
+  const accountError = accountsQuery.error;
 
   return (
     <MoonMarketLayout
@@ -44,6 +45,14 @@ export function MoonMarketModule() {
       accountId={accountId}
       onAccountChange={setSelectedAccountId}
     >
+      {accountError ? (
+        <div
+          role="alert"
+          className="mx-4 mt-4 rounded-md border border-[var(--clr-red)]/50 bg-[var(--clr-red)]/10 p-3 text-[12px] text-[var(--clr-red)]"
+        >
+          MoonMarket account data is unavailable.
+        </div>
+      ) : null}
       {activePage === "options" ? (
         <OptionsChainPage />
       ) : activePage === "transactions" ? (

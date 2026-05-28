@@ -47,6 +47,7 @@ class IBKRState(BaseModel):
     accounts_fetched: bool = False
     accounts: list[str] = Field(default_factory=list)
     selected_account: Optional[str] = None
+    accounts_payload: dict[str, Any] = Field(default_factory=dict)
 
     # Snapshot pre-flight bookkeeping (Phase 8 / Task 1.3).
     # IBKR's first /iserver/marketdata/snapshot for a fresh conid returns
@@ -94,6 +95,7 @@ class IBKRState(BaseModel):
         self.accounts_fetched = False
         self.accounts.clear()
         self.selected_account = None
+        self.accounts_payload.clear()
         self.warmed_conids.clear()
         self.preflight_locks.clear()
         self.conid_asset_class.clear()

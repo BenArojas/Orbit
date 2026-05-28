@@ -85,7 +85,7 @@ class MoonMarketService:
         self.ibkr = ibkr
 
     async def accounts(self) -> MoonMarketAccountsResponse:
-        raw_accounts = await self.ibkr.ensure_accounts()
+        raw_accounts = await self.ibkr.brokerage_accounts()
         selected_id = self._selected_account_id(raw_accounts)
         accounts = [
             MoonMarketAccount(
@@ -195,7 +195,7 @@ class MoonMarketService:
         return MoonMarketLiveOrdersResponse(account_id=resolved_account_id, orders=orders)
 
     async def _resolve_account_id(self, account_id: str | None) -> str:
-        raw_accounts = await self.ibkr.ensure_accounts()
+        raw_accounts = await self.ibkr.brokerage_accounts()
         account_ids = [item for row in raw_accounts if (item := self._account_id(row))]
         if account_id:
             if account_id in account_ids:

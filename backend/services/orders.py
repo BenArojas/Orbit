@@ -81,7 +81,7 @@ class OrderService:
         )
 
     async def _assert_paper_account(self, account_id: str) -> None:
-        raw_accounts = await self.ibkr.ensure_accounts()
+        raw_accounts = await self.ibkr.brokerage_accounts()
         for row in raw_accounts:
             resolved = self.moonmarket._account_id(row)
             if resolved == account_id:

@@ -1,5 +1,5 @@
-import { useMutation, useQuery } from "@tanstack/react-query";
-import { api, type MoonMarketOptionsChainData } from "@/lib/api";
+import { useQuery } from "@tanstack/react-query";
+import { api } from "@/lib/api";
 
 export function useOptionExpirations(underlyingConid: number | null, symbol: string | null) {
   return useQuery({
@@ -17,19 +17,15 @@ export function useOptionChain(underlyingConid: number | null, expiration: strin
   });
 }
 
-export function useLazyOptionStrike(onLoaded: (chain: MoonMarketOptionsChainData, strike: number) => void) {
-  return useMutation({
-    mutationFn: ({
-      underlyingConid,
-      expiration,
-      strike,
-    }: {
-      underlyingConid: number;
-      expiration: string;
-      strike: number;
-    }) => api.moonmarketOptionContract(underlyingConid, expiration, strike),
-    onSuccess: (response) => {
-      onLoaded({ [response.strike.toFixed(2)]: response.data }, response.strike);
-    },
+export function useOptionStrike(
+  underlyingConid: number,
+  expiration: string,
+  strike: number,
+  enabled: boolean,
+) {
+  return useQuery({
+    queryKey: ["moonmarket", "options", "contract", underlyingConid, expiration, strike],
+    enabled: Boolean(underlyingConid && expiration && strike && enabled),
+    queryFn: ({ signal }) => api.moonmarketOptionContract(underlyingConid, expiration, strike, signal),
   });
 }

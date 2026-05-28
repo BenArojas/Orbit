@@ -95,6 +95,48 @@ async def test_auth_status_populates_accounts_on_first_success():
 
 
 @pytest.mark.asyncio
+async def test_brokerage_accounts_normalizes_client_portal_payload():
+    svc, _ = _make_ibkr(
+        accounts_payload={
+            "accounts": ["DU1234567", "U7654321"],
+            "selectedAccount": "DU1234567",
+            "aliases": {
+                "DU1234567": "Paper Trading",
+                "U7654321": "Live Trading",
+            },
+            "acctProps": {
+                "DU1234567": {"supportsCashQty": True},
+                "U7654321": {"supportsCashQty": False, "isPaper": False},
+            },
+            "isPaper": True,
+        },
+    )
+
+    accounts = await svc.brokerage_accounts()
+
+    assert accounts == [
+        {
+            "accountId": "DU1234567",
+            "id": "DU1234567",
+            "alias": "Paper Trading",
+            "accountTitle": "Paper Trading",
+            "selected": True,
+            "isPaper": True,
+            "supportsCashQty": True,
+        },
+        {
+            "accountId": "U7654321",
+            "id": "U7654321",
+            "alias": "Live Trading",
+            "accountTitle": "Live Trading",
+            "selected": False,
+            "isPaper": False,
+            "supportsCashQty": False,
+        },
+    ]
+
+
+@pytest.mark.asyncio
 async def test_repeated_auth_status_calls_only_one_accounts_fetch():
     """5 calls to auth_status() must result in exactly 1 /iserver/accounts.
 

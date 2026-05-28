@@ -502,12 +502,62 @@ class IBKRService:
             return
         self.state.accounts = accounts
         self.state.selected_account = selected
+        self.state.accounts_payload = dict(data)
         self.state.accounts_fetched = True
         log.info(
             "Fetched %d IBKR account(s); selected=%s",
             len(accounts),
             self.state.selected_account,
         )
+
+    async def brokerage_accounts(self) -> list[dict[str, Any]]:
+        """Return normalized brokerage accounts from the cached IBKR account payload.
+
+        `ensure_accounts()` is intentionally a side-effect bootstrapper: it
+        fetches `/iserver/accounts`, warms IBKR's brokerage context, and caches
+        state. MoonMarket needs iterable account rows, so this method translates
+        the real Client Portal response shape (`accounts` id list plus sibling
+        `aliases` / `acctProps` maps) into the dict-row shape MoonMarket uses.
+        """
+        await self.ensure_accounts()
+        return self._brokerage_account_rows()
+
+    def _brokerage_account_rows(self) -> list[dict[str, Any]]:
+        raw_accounts = getattr(self.state, "accounts", []) or []
+        if raw_accounts and isinstance(raw_accounts[0], dict):
+            return [row for row in raw_accounts if isinstance(row, dict)]
+
+        payload = getattr(self.state, "accounts_payload", {}) or {}
+        if not isinstance(payload, dict):
+            payload = {}
+
+        account_ids = [str(account_id).strip() for account_id in raw_accounts if str(account_id).strip()]
+        aliases = payload.get("aliases") if isinstance(payload.get("aliases"), dict) else {}
+        acct_props = payload.get("acctProps") if isinstance(payload.get("acctProps"), dict) else {}
+        selected = getattr(self.state, "selected_account", None) or payload.get("selectedAccount")
+        top_level_is_paper = payload.get("isPaper")
+
+        rows: list[dict[str, Any]] = []
+        for account_id in account_ids:
+            props = acct_props.get(account_id) if isinstance(acct_props.get(account_id), dict) else {}
+            alias = aliases.get(account_id) if isinstance(aliases, dict) else None
+            label = str(alias or account_id)
+            row: dict[str, Any] = {
+                "accountId": account_id,
+                "id": account_id,
+                "alias": label,
+                "accountTitle": label,
+                "selected": account_id == selected,
+            }
+            row.update({key: value for key, value in props.items() if key not in {"accountId", "id"}})
+            if (
+                "isPaper" not in row
+                and isinstance(top_level_is_paper, bool)
+                and (len(account_ids) == 1 or account_id == selected)
+            ):
+                row["isPaper"] = top_level_is_paper
+            rows.append(row)
+        return rows
 
     async def logout(self) -> dict:
         """Log out of the IBKR session and clean up state."""

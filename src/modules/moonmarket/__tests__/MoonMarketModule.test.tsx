@@ -297,6 +297,14 @@ describe("MoonMarketModule", () => {
     expect(useAccountStore.getState().selectedAccountId).toBe("U12345");
   });
 
+  it("shows an account data error when MoonMarket account hydration fails", async () => {
+    mockApi.moonmarketAccounts.mockRejectedValue(new Error("accounts failed"));
+
+    renderMoonMarket();
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(/moonmarket account data is unavailable/i);
+  });
+
   it("renders the transactions route with trades and actionable live orders", async () => {
     renderMoonMarket("/moonmarket/transactions");
 
