@@ -1,6 +1,6 @@
 # Orbit — Project Plan
 
-> Last updated: 2026-05-25
+> Last updated: 2026-05-28
 > Status: Phase 1–7 complete. Phase 8 (E2E testing) in progress — 8.1, 8.3, 8.9, 8.10 done. Phase 9 (Dashboard request-fan-out optimization) complete — all 22 tasks shipped, pending empirical verification. **Phase 10 (Compare Mode + WebSocket reliability) complete** — all 29 commits merged to dev. **Phase 11 (AI Prompt Fact Layer) complete** — merged to dev.
 ---
 
@@ -52,6 +52,15 @@ These are locked in. Don't revisit unless something breaks.
 | Fibonacci | Primary tool — auto swing + manual override | Ofek's core trading method |
 | Trigger watchlist moves | Real IBKR watchlist manipulation | Stocks show in TWS/mobile too, not just Parallax |
 | News candle detection | All 4 methods, user selects per rule | Evaluate which works best in practice |
+
+---
+
+## Orbit Active Roadmap Notes
+
+These notes are intentionally tracked in the project plan because they affect the next Orbit/MoonMarket implementation passes.
+
+- **Plan #6: MoonMarket Options Chain** ships single-leg option orders first. Selecting a call/put contract opens the shared OrderTicket as `OPTION`, but option brackets are disabled in the UI and rejected server-side if an option order payload tries to submit a multi-order group.
+- **Deferred but required follow-up:** option bracket orders belong in a later MoonMarket trading-depth pass after single-leg option orders are validated against the IBKR paper account. Revisit this before any options trading polish or "bracket parity" work.
 
 ---
 

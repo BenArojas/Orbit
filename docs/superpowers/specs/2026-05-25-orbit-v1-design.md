@@ -111,6 +111,8 @@ Keep the existing chain (`frontend/src/pages/StockItem/options/OptionsChain.tsx`
 
 **Deferred to Phase 2** because live chain data (greeks, bid/ask across strikes) is heavy on IBKR's pacing limits and hard to test reliably. When implemented: verify on the paper account first; if live data is flaky, ship with snapshot/delayed data rather than cutting the feature.
 
+**Plan #6 decision (2026-05-28):** options ship as **single-leg orders only** first. Option bracket orders are explicitly deferred until after single-leg option orders are validated on an IBKR paper account. Keep the follow-up visible in `PROJECT_PLAN.md` before any options trading-depth pass.
+
 ---
 
 ## 6. MoonMarket v1 scope
