@@ -247,6 +247,19 @@ describe("MoonMarketModule", () => {
     expect(routerState.navigate).toHaveBeenCalledWith("/");
   });
 
+  it("keeps the return toggle scoped to treemap and exposes leaders sorting", async () => {
+    renderMoonMarket();
+
+    await screen.findByTestId("moonmarket-chart-treemap");
+    expect(screen.getByRole("button", { name: /today/i })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /leaders/i }));
+
+    expect(await screen.findByTestId("moonmarket-chart-leaders")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /today/i })).not.toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: /leader sort/i })).toBeInTheDocument();
+  });
+
   it("uses the bottom area as a contextual inspector instead of a duplicate holdings table", async () => {
     renderMoonMarket();
 

@@ -7,7 +7,7 @@ import { useOrderTicketStore } from "@/orbit/OrderTicket/useOrderTicketStore";
 import { useNavigationStore } from "@/store/navigation";
 import { GraphSwitcher } from "./GraphSwitcher";
 import { PerformanceCards } from "./PerformanceCards";
-import { PortfolioChart } from "./PortfolioChart";
+import { PortfolioChart, type LeaderSortMode } from "./PortfolioChart";
 import { formatMoney, formatNumber, formatPercent } from "./format";
 import {
   displayAssetClass,
@@ -157,6 +157,7 @@ export function PortfolioPage({ accountId, accountsLoading }: { accountId: strin
   const navigateToAnalysis = useNavigationStore((state) => state.navigateToAnalysis);
   const [graphType, setGraphType] = useState<GraphType>("treemap");
   const [displayMode, setDisplayMode] = useState<AllocationDisplayMode>("total");
+  const [leaderSortMode, setLeaderSortMode] = useState<LeaderSortMode>("percent");
   const [period, setPeriod] = useState("1Y");
   const [selectedConid, setSelectedConid] = useState<number | null>(null);
   const [selectedGroup, setSelectedGroup] = useState<DisplayAllocationItem | null>(null);
@@ -165,12 +166,15 @@ export function PortfolioPage({ accountId, accountsLoading }: { accountId: strin
     queryKey: ["moonmarket", "portfolio", accountId],
     enabled: Boolean(accountId),
     queryFn: ({ signal }) => api.moonmarketPortfolio(accountId ?? undefined, signal),
+    refetchInterval: 10_000,
+    refetchIntervalInBackground: false,
   });
 
   const performanceQuery = useQuery({
     queryKey: ["moonmarket", "performance", accountId, period],
     enabled: Boolean(accountId),
     queryFn: ({ signal }) => api.moonmarketPerformance(accountId as string, period, signal),
+    staleTime: 15 * 60 * 1000,
   });
 
   const portfolio = portfolioQuery.data;
@@ -240,7 +244,8 @@ export function PortfolioPage({ accountId, accountsLoading }: { accountId: strin
             <p className="text-[11px] text-[var(--text-3)]">{portfolioSummary}</p>
           </div>
           <div className="flex flex-wrap justify-end gap-2">
-            <div className="flex h-9 items-center gap-1 rounded-md border border-border bg-[var(--bg-2)] p-1">
+            {graphType === "treemap" ? (
+              <div className="flex h-9 items-center gap-1 rounded-md border border-border bg-[var(--bg-2)] p-1">
               <button
                 type="button"
                 aria-pressed={displayMode === "total"}
@@ -257,7 +262,23 @@ export function PortfolioPage({ accountId, accountsLoading }: { accountId: strin
               >
                 Today
               </button>
-            </div>
+              </div>
+            ) : null}
+            {graphType === "leaders" ? (
+              <label className="flex h-9 items-center gap-2 rounded-md border border-border bg-[var(--bg-2)] px-2 text-[11px] text-[var(--text-3)]">
+                Sort
+                <select
+                  aria-label="Leader sort"
+                  value={leaderSortMode}
+                  onChange={(event) => setLeaderSortMode(event.target.value as LeaderSortMode)}
+                  className="h-7 rounded border border-border bg-[var(--bg-1)] px-2 text-[11px] text-[var(--text-2)] outline-none"
+                >
+                  <option value="percent">% Gain</option>
+                  <option value="gain">$ Gain</option>
+                  <option value="size">Size</option>
+                </select>
+              </label>
+            ) : null}
             <GraphSwitcher value={graphType} onChange={setGraphType} />
           </div>
         </div>
@@ -273,7 +294,8 @@ export function PortfolioPage({ accountId, accountsLoading }: { accountId: strin
             type={graphType}
             allocation={allocation}
             selectedConid={selectedConid}
-            displayMode={displayMode}
+            displayMode={graphType === "treemap" ? displayMode : "total"}
+            leaderSortMode={leaderSortMode}
             onSelect={handleSelectAllocation}
           />
         )}

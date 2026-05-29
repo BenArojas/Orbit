@@ -59,6 +59,7 @@ def test_pacing_table_is_complete():
     assert ENDPOINT_LIMITS["/tickle"] == EndpointLimit("per_sec", 1, 1)
     assert ENDPOINT_LIMITS["/iserver/scanner/run"] == EndpointLimit("per_sec", 1, 1)
     assert ENDPOINT_LIMITS["/iserver/scanner/params"] == EndpointLimit("per_minutes", 1, 900)
+    assert ENDPOINT_LIMITS["/pa/allperiods"] == EndpointLimit("per_minutes", 1, 900)
     assert ENDPOINT_LIMITS["/pa/performance"] == EndpointLimit("per_minutes", 1, 900)
     assert ENDPOINT_LIMITS["/pa/summary"] == EndpointLimit("per_minutes", 1, 900)
     assert ENDPOINT_LIMITS["/pa/transactions"] == EndpointLimit("per_minutes", 1, 900)

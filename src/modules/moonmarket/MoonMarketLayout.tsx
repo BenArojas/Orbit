@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
 import { ArrowLeft, BriefcaseBusiness, ClipboardList, ListTree, PieChart } from "lucide-react";
+import { ThemeToggle } from "@/components/ui/ThemeToggle";
 import { cn } from "@/lib/utils";
 import type { MoonMarketAccount } from "./types";
 
@@ -35,8 +36,8 @@ export function MoonMarketLayout({
 
   return (
     <div className="min-h-screen bg-[var(--bg-1)] text-foreground">
-      <header className="flex min-h-14 flex-wrap items-center justify-between gap-3 border-b border-border px-4 py-2">
-        <div className="flex min-w-0 flex-wrap items-center gap-3">
+      <header className="flex min-h-14 flex-wrap items-center justify-between gap-4 border-b border-border px-4 py-2">
+        <div className="flex min-w-0 flex-wrap items-center gap-4 lg:gap-6">
           <button
             type="button"
             onClick={() => navigate("/")}
@@ -73,19 +74,22 @@ export function MoonMarketLayout({
           </nav>
         </div>
 
-        <select
-          aria-label="Account"
-          value={accountId ?? ""}
-          onChange={(event) => onAccountChange(event.target.value)}
-          disabled={!accounts.length}
-          className="h-8 min-w-36 rounded-md border border-border bg-[var(--bg-2)] px-2 text-[11px] text-[var(--text-2)] outline-none disabled:opacity-50"
-        >
-          {accounts.map((account) => (
-            <option key={account.account_id} value={account.account_id}>
-              {account.label}
-            </option>
-          ))}
-        </select>
+        <div className="flex items-center gap-2">
+          <ThemeToggle />
+          <select
+            aria-label="Account"
+            value={accountId ?? ""}
+            onChange={(event) => onAccountChange(event.target.value)}
+            disabled={!accounts.length}
+            className="h-8 min-w-36 rounded-md border border-border bg-[var(--bg-2)] px-2 text-[11px] text-[var(--text-2)] outline-none disabled:opacity-50"
+          >
+            {accounts.map((account) => (
+              <option key={account.account_id} value={account.account_id}>
+                {account.label}
+              </option>
+            ))}
+          </select>
+        </div>
       </header>
       {children}
     </div>

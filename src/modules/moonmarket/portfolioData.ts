@@ -40,7 +40,8 @@ export function displayHoldingSubtitle(item: MoonMarketAllocationItem | MoonMark
   if (isCashAssetClass(item.asset_class)) return itemDescription(item) || "Cash balance";
   const raw = "label" in item ? item.label : itemDescription(item);
   if (isOptionAssetClass(item.asset_class)) return compactOptionLabel(raw || item.symbol);
-  return raw || item.symbol;
+  const subtitle = raw || item.symbol;
+  return subtitle.trim().toUpperCase() === displayHoldingName(item).trim().toUpperCase() ? "" : subtitle;
 }
 
 export function displayAssetClass(item: MoonMarketAllocationItem | MoonMarketPosition): string {
@@ -64,13 +65,17 @@ export function groupAllocationItems(
   const positive = allocation.filter((item) => item.value > 0);
   if (positive.length <= maxTiles) return positive;
 
-  const headCount = Math.max(1, maxTiles - 1);
-  const head = positive.slice(0, headCount);
-  const tail = positive.slice(headCount);
+  const cashItems = positive.filter((item) => isCashAssetClass(item.asset_class));
+  const nonCashItems = positive.filter((item) => !isCashAssetClass(item.asset_class));
+  const headCount = Math.max(1, maxTiles - 1 - cashItems.length);
+  const head = nonCashItems.slice(0, headCount);
+  const tail = nonCashItems.slice(headCount);
   const value = tail.reduce((sum, item) => sum + item.value, 0);
   const percent = tail.reduce((sum, item) => sum + item.percent, 0);
   const unrealizedPnl = tail.reduce((sum, item) => sum + item.unrealized_pnl, 0);
   const dailyPnl = tail.reduce((sum, item) => sum + (item.daily_pnl ?? 0), 0);
+  const pnlBasis = tail.reduce((sum, item) => sum + Math.max(0, item.value - item.unrealized_pnl), 0);
+  const dailyPnlBasis = tail.reduce((sum, item) => sum + Math.max(0, item.value - (item.daily_pnl ?? 0)), 0);
 
   const others: DisplayAllocationItem = {
     conid: -1,
@@ -81,10 +86,10 @@ export function groupAllocationItems(
     asset_class: "GROUP",
     unrealized_pnl: Math.round(unrealizedPnl * 100) / 100,
     daily_pnl: Math.round(dailyPnl * 100) / 100,
-    pnl_percent: null,
-    daily_pnl_percent: null,
+    pnl_percent: pnlBasis > 0 ? Math.round((unrealizedPnl / pnlBasis) * 10000) / 100 : null,
+    daily_pnl_percent: dailyPnlBasis > 0 ? Math.round((dailyPnl / dailyPnlBasis) * 10000) / 100 : null,
     grouped_children: tail,
   };
 
-  return [...head, others];
+  return [...head, ...cashItems, others];
 }

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Activity, Banknote, ListChecks, ReceiptText, Scale } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -9,6 +9,8 @@ import { TransactionCharts } from "./TransactionCharts";
 import { TransactionsTable } from "./TransactionsTable";
 
 type TransactionsTab = "trades" | "orders";
+const EMPTY_TRADES_WARMUP_MS = 30_000;
+const EMPTY_TRADES_REFETCH_MS = 6_000;
 
 function SummaryCard({
   title,
@@ -49,11 +51,23 @@ function SummaryCard({
 
 export function TransactionsPage({ accountId }: { accountId: string | null }) {
   const [tab, setTab] = useState<TransactionsTab>("trades");
+  const tradesWarmupStartedAt = useRef(Date.now());
+
+  useEffect(() => {
+    tradesWarmupStartedAt.current = Date.now();
+  }, [accountId]);
 
   const tradesQuery = useQuery({
     queryKey: ["moonmarket", "trades", accountId, 7],
     enabled: Boolean(accountId),
     queryFn: ({ signal }) => api.moonmarketTrades(accountId as string, 7, signal),
+    refetchInterval: (query) => {
+      const data = query.state.data;
+      if (!accountId || data?.trades.length) return false;
+      return Date.now() - tradesWarmupStartedAt.current < EMPTY_TRADES_WARMUP_MS
+        ? EMPTY_TRADES_REFETCH_MS
+        : false;
+    },
   });
 
   const ordersQuery = useQuery({

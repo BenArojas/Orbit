@@ -4,6 +4,7 @@ import {
   allocationMetricValue,
   displayAssetClass,
   displayHoldingName,
+  displayHoldingSubtitle,
   groupAllocationItems,
   optionOrderAssetClass,
 } from "./portfolioData";
@@ -61,5 +62,9 @@ describe("portfolioData", () => {
 
     expect(allocationMetricValue(stock, "total")).toBe(18.75);
     expect(allocationMetricValue(stock, "daily")).toBe(-2.5);
+  });
+
+  it("drops duplicate subtitles when IBKR repeats the ticker as the label", () => {
+    expect(displayHoldingSubtitle(item({ symbol: "CLS", label: "CLS" }))).toBe("");
   });
 });

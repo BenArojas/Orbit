@@ -195,6 +195,25 @@ class _FakeIbkr:
                 "cps": {"dates": ["2026-01-01", "2026-01-02"], "returns": [0.0, 1.25]},
                 "tpps": {"dates": ["2026-01-01", "2026-01-02"], "returns": [0.0, 0.7]},
             }
+        if endpoint == "/pa/allperiods":
+            return {
+                "currencyType": "base",
+                "included": ["DU12345"],
+                "DU12345": {
+                    "1Y": {
+                        "nav": [100000.0, 101250.0],
+                        "cps": [0.0, 0.0125],
+                        "dates": ["2026-01-01", "2026-01-02"],
+                    },
+                    "YTD": {
+                        "nav": [101000.0, 103000.0],
+                        "cps": [0.0, 0.0198],
+                        "dates": ["2026-02-01", "2026-02-02"],
+                    },
+                    "periods": ["1Y", "YTD"],
+                    "baseCurrency": "USD",
+                },
+            }
         raise AssertionError(f"Unexpected IBKR request: {method} {endpoint}")
 
 
@@ -290,7 +309,7 @@ def test_moonmarket_portfolio_pages_positions_and_computes_allocation():
     assert ("GET", "/portfolio/DU12345/ledger", {}) in fake.requests
 
 
-def test_moonmarket_performance_posts_to_ibkr_and_normalizes_series():
+def test_moonmarket_performance_posts_all_periods_and_normalizes_series():
     fake = _FakeIbkr()
     resp = _client(fake).get("/moonmarket/performance?account_id=DU12345&period=1Y")
 
@@ -299,24 +318,42 @@ def test_moonmarket_performance_posts_to_ibkr_and_normalizes_series():
     assert body["account_id"] == "DU12345"
     assert body["period"] == "1Y"
     assert body["nav"] == {"dates": ["2026-01-01", "2026-01-02"], "values": [100000.0, 101250.0]}
-    assert body["cumulative_return"]["values"] == [0.0, 1.25]
-    assert body["period_return"]["values"] == [0.0, 0.7]
+    assert body["cumulative_return"]["values"] == [0.0, 0.0125]
+    assert body["period_return"]["values"] == [0.0, 0.0125]
     assert fake.requests[-1] == (
         "POST",
-        "/pa/performance",
-        {"json": {"acctIds": ["DU12345"], "period": "1Y"}},
+        "/pa/allperiods",
+        {"json": {"acctIds": ["DU12345"]}},
     )
 
 
-def test_moonmarket_performance_normalizes_nested_ibkr_series():
+def test_moonmarket_performance_selects_requested_period_from_all_periods_payload():
     fake = _FakeIbkr()
-    resp = _client(fake).get("/moonmarket/performance?account_id=DU12345&period=1M")
+    resp = _client(fake).get("/moonmarket/performance?account_id=DU12345&period=YTD")
 
     assert resp.status_code == 200
     body = resp.json()
-    assert body["nav"] == {"dates": ["2026-01-01", "2026-01-02"], "values": [100000.0, 101250.0]}
-    assert body["cumulative_return"]["values"] == [0.0, 0.0125]
-    assert body["period_return"]["values"] == [0.0, 0.007]
+    assert body["nav"] == {"dates": ["2026-02-01", "2026-02-02"], "values": [101000.0, 103000.0]}
+    assert body["cumulative_return"]["values"] == [0.0, 0.0198]
+    assert body["period_return"]["values"] == [0.0, 0.0198]
+
+
+def test_moonmarket_performance_reuses_all_periods_payload_for_picker_changes():
+    fake = _FakeIbkr()
+    client = _client(fake)
+
+    first = client.get("/moonmarket/performance?account_id=DU12345&period=1Y")
+    second = client.get("/moonmarket/performance?account_id=DU12345&period=YTD")
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert first.json()["nav"]["values"] == [100000.0, 101250.0]
+    assert second.json()["nav"]["values"] == [101000.0, 103000.0]
+    assert second.json()["cumulative_return"]["values"] == [0.0, 0.0198]
+    all_period_requests = [request for request in fake.requests if request[1] == "/pa/allperiods"]
+    assert all_period_requests == [
+        ("POST", "/pa/allperiods", {"json": {"acctIds": ["DU12345"]}})
+    ]
 
 
 def test_moonmarket_trades_normalizes_summary_and_upserts_fills():
@@ -357,7 +394,7 @@ def test_moonmarket_trades_normalizes_summary_and_upserts_fills():
         "E-SELL-1",
         "E-BUY-1",
     ]
-    assert ("GET", "/iserver/account/trades", {}) in fake.requests
+    assert ("GET", "/iserver/account/trades", {"params": {"days": 7}}) in fake.requests
 
 
 def test_moonmarket_live_orders_warms_and_returns_read_only_orders():

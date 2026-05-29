@@ -81,6 +81,7 @@ ENDPOINT_LIMITS: dict[str, EndpointLimit] = {
     # 1 req / 15 min — performance/summary/transactions and scanner params.
     # Marked "per_minutes" so the decorator fails fast instead of blocking
     # the request handler for up to 15 minutes.
+    "/pa/allperiods": EndpointLimit("per_minutes", 1, 900),
     "/pa/performance": EndpointLimit("per_minutes", 1, 900),
     "/pa/summary": EndpointLimit("per_minutes", 1, 900),
     "/pa/transactions": EndpointLimit("per_minutes", 1, 900),

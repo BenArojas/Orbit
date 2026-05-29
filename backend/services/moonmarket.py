@@ -8,6 +8,7 @@ using IBKRService as the only gateway to Interactive Brokers.
 from __future__ import annotations
 
 import logging
+import time
 from datetime import datetime, timezone
 from typing import Any
 
@@ -31,6 +32,8 @@ from services.ibkr import IBKRService
 
 log = logging.getLogger("parallax.moonmarket")
 CASH_CONID = 0
+PERFORMANCE_CACHE_TTL_SECONDS = 15 * 60
+_PERFORMANCE_ALL_PERIODS_CACHE: dict[tuple[int, str], tuple[float, Any]] = {}
 
 
 class MoonMarketAccountNotFoundError(ValueError):
@@ -145,17 +148,18 @@ class MoonMarketService:
 
     async def performance(self, account_id: str | None = None, period: str = "1Y") -> MoonMarketPerformanceResponse:
         resolved_account_id = await self._resolve_account_id(account_id)
-        payload = await self.ibkr._request(
-            "POST",
-            "/pa/performance",
-            json={"acctIds": [resolved_account_id], "period": period},
-        )
+        all_periods = await self._fetch_all_periods(resolved_account_id)
+        period_payload = self._all_period_payload(all_periods, resolved_account_id, period)
+        cumulative_return = self._series_from_all_periods_payload(period_payload, "cps")
+        period_return = self._series_from_all_periods_payload(period_payload, "tpps")
+        if not period_return.values:
+            period_return = self._delta_series(cumulative_return)
         return MoonMarketPerformanceResponse(
             account_id=resolved_account_id,
             period=period,
-            nav=self._series_from_payload(payload, "nav", ("values", "navs", "data")),
-            cumulative_return=self._series_from_payload(payload, "cps", ("values", "returns", "data")),
-            period_return=self._series_from_payload(payload, "tpps", ("values", "returns", "data")),
+            nav=self._series_from_all_periods_payload(period_payload, "nav"),
+            cumulative_return=cumulative_return,
+            period_return=period_return,
         )
 
     async def trades(
@@ -166,7 +170,7 @@ class MoonMarketService:
     ) -> MoonMarketTradesResponse:
         resolved_account_id = await self._resolve_account_id(account_id)
         bounded_days = max(1, min(int(days), 7))
-        payload = await self.ibkr._request("GET", "/iserver/account/trades")
+        payload = await self.ibkr._request("GET", "/iserver/account/trades", params={"days": bounded_days})
         trade_rows = [
             (row, trade)
             for row in self._trade_rows(payload)
@@ -266,6 +270,23 @@ class MoonMarketService:
             daily_pnl_percent=0.0,
             currency=currency.upper(),
         )
+
+    async def _fetch_all_periods(self, account_id: str) -> Any:
+        cache_key = (id(self.ibkr), account_id)
+        now = time.monotonic()
+        cached = _PERFORMANCE_ALL_PERIODS_CACHE.get(cache_key)
+        if cached is not None:
+            cached_at, payload = cached
+            if now - cached_at < PERFORMANCE_CACHE_TTL_SECONDS:
+                return payload
+
+        payload = await self.ibkr._request(
+            "POST",
+            "/pa/allperiods",
+            json={"acctIds": [account_id]},
+        )
+        _PERFORMANCE_ALL_PERIODS_CACHE[cache_key] = (now, payload)
+        return payload
 
     def _position_from_row(self, row: dict[str, Any]) -> MoonMarketPosition | None:
         conid = _safe_int(row.get("conid") or row.get("contractId"))
@@ -513,6 +534,47 @@ class MoonMarketService:
             return MoonMarketSeries(dates=point_dates, values=point_values)
 
         return MoonMarketSeries(dates=[], values=[])
+
+    def _all_period_payload(self, payload: Any, account_id: str, period: str) -> dict[str, Any]:
+        if not isinstance(payload, dict):
+            return {}
+
+        account_payload = payload.get(account_id)
+        if isinstance(account_payload, dict):
+            period_payload = account_payload.get(period)
+            return period_payload if isinstance(period_payload, dict) else {}
+
+        included = payload.get("included")
+        if isinstance(included, list):
+            for included_account in included:
+                account_payload = payload.get(str(included_account))
+                if isinstance(account_payload, dict):
+                    period_payload = account_payload.get(period)
+                    if isinstance(period_payload, dict):
+                        return period_payload
+
+        return {}
+
+    def _series_from_all_periods_payload(self, period_payload: dict[str, Any], key: str) -> MoonMarketSeries:
+        if not isinstance(period_payload, dict):
+            return MoonMarketSeries(dates=[], values=[])
+
+        dates = self._string_list(period_payload.get("dates") or period_payload.get("date"))
+        values = self._numeric_list(period_payload.get(key))
+        if dates or values:
+            return MoonMarketSeries(dates=dates[: len(values)], values=values[: len(dates)] if dates else values)
+        return MoonMarketSeries(dates=[], values=[])
+
+    @staticmethod
+    def _delta_series(series: MoonMarketSeries) -> MoonMarketSeries:
+        if not series.values:
+            return MoonMarketSeries(dates=series.dates, values=[])
+        previous = 0.0
+        values: list[float] = []
+        for value in series.values:
+            values.append(round(value - previous, 6))
+            previous = value
+        return MoonMarketSeries(dates=series.dates, values=values)
 
     @staticmethod
     def _base_ledger(payload: Any) -> dict[str, Any] | None:

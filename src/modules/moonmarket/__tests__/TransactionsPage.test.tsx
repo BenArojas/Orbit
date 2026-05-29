@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mockApi = vi.hoisted(() => ({
@@ -128,5 +128,62 @@ describe("TransactionsPage", () => {
     expect(await screen.findAllByText(/no recent executions/i)).toHaveLength(2);
     fireEvent.click(screen.getByRole("button", { name: /live orders/i }));
     expect(screen.getByText(/no live orders/i)).toBeInTheDocument();
+  });
+
+  it("refetches an initial empty trades response while IBKR warms up", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    mockApi.moonmarketTrades
+      .mockResolvedValueOnce({
+        account_id: "DU12345",
+        days: 7,
+        summary: {
+          total_trades: 0,
+          total_volume: 0,
+          total_commissions: 0,
+          net_cash: 0,
+          buy_count: 0,
+          sell_count: 0,
+        },
+        trades: [],
+      })
+      .mockResolvedValueOnce({
+        account_id: "DU12345",
+        days: 7,
+        summary: {
+          total_trades: 2,
+          total_volume: 7,
+          total_commissions: 2.25,
+          net_cash: 175.4,
+          buy_count: 1,
+          sell_count: 1,
+        },
+        trades: [
+          {
+            execution_id: "E-BUY-1",
+            account_id: "DU12345",
+            conid: 265598,
+            symbol: "AAPL",
+            description: "BOT 5 AAPL",
+            side: "BUY",
+            quantity: 5,
+            price: 185.12,
+            net_amount: -925.6,
+            commission: 1,
+            sec_type: "STK",
+            trade_time: "2026-05-26T14:32:00+00:00",
+            trade_time_ms: 1779805920000,
+          },
+        ],
+      });
+
+    renderTransactions();
+
+    expect(await screen.findByText(/0 trades/i)).toBeInTheDocument();
+    await act(async () => {
+      vi.advanceTimersByTime(6000);
+    });
+
+    expect(await screen.findByText(/2 trades/i)).toBeInTheDocument();
+    vi.useRealTimers();
   });
 });
