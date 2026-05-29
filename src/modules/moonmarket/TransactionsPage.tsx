@@ -84,7 +84,7 @@ export function TransactionsPage({ accountId }: { accountId: string | null }) {
   const loading = tradesQuery.isLoading || ordersQuery.isLoading;
 
   return (
-    <main className="space-y-4 p-4">
+    <main className="space-y-4 p-4 pb-8">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h2 className="text-[16px] font-semibold">Transactions Ledger</h2>

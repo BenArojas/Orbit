@@ -1,14 +1,16 @@
 /**
  * ThemeToggle — navbar top-right light/dark switch (Phase 8.9+)
  *
- * Flips `useSettingsStore.themeMode` between "dark" and "light". The
- * actual class swap on <html> is done by the global effect in App.tsx
- * (see `useThemeClass`), which keeps this component purely presentational.
+ * Flips `useSettingsStore.themeMode` between "dark" and "light" and keeps
+ * `<html>` in sync. Parallax also runs a shell-level sync effect; doing it
+ * here makes the same control work in Orbit routes that do not mount
+ * Parallax's AppShell, such as MoonMarket.
  *
  * Icon: sun when in dark mode (click to go light), moon when in light
  * mode (click to go dark).
  */
 
+import { useEffect } from "react";
 import { Moon, Sun } from "lucide-react";
 import { useSettingsStore } from "@/store";
 
@@ -16,6 +18,12 @@ export function ThemeToggle() {
   const themeMode = useSettingsStore((s) => s.themeMode);
   const setThemeMode = useSettingsStore((s) => s.setThemeMode);
   const isDark = themeMode === "dark";
+
+  useEffect(() => {
+    const html = document.documentElement;
+    html.classList.remove("dark", "light");
+    html.classList.add(themeMode);
+  }, [themeMode]);
 
   return (
     <button

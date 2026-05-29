@@ -1,8 +1,9 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { BarChart3, ListTree, ShoppingCart } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { api } from "@/lib/api";
+import { useLiveQuotes } from "@/hooks/useLiveQuotes";
 import { useOrderTicketStore } from "@/orbit/OrderTicket/useOrderTicketStore";
 import { useNavigationStore } from "@/store/navigation";
 import { GraphSwitcher } from "./GraphSwitcher";
@@ -14,6 +15,7 @@ import {
   displayHoldingName,
   displayHoldingSubtitle,
   isCashAssetClass,
+  mergeLivePortfolioTicks,
   optionOrderAssetClass,
   type AllocationDisplayMode,
   type DisplayAllocationItem,
@@ -175,9 +177,21 @@ export function PortfolioPage({ accountId, accountsLoading }: { accountId: strin
     enabled: Boolean(accountId),
     queryFn: ({ signal }) => api.moonmarketPerformance(accountId as string, period, signal),
     staleTime: 15 * 60 * 1000,
+    refetchInterval: 15 * 60 * 1000,
+    refetchIntervalInBackground: false,
   });
 
-  const portfolio = portfolioQuery.data;
+  const portfolioConids = useMemo(
+    () => portfolioQuery.data?.positions
+      .filter((position) => !isCashAssetClass(position.asset_class))
+      .map((position) => position.conid) ?? [],
+    [portfolioQuery.data?.positions],
+  );
+  const liveTicks = useLiveQuotes(portfolioConids);
+  const portfolio = useMemo(
+    () => (portfolioQuery.data ? mergeLivePortfolioTicks(portfolioQuery.data, liveTicks) : undefined),
+    [portfolioQuery.data, liveTicks],
+  );
   const positions = portfolio?.positions ?? [];
   const allocation = portfolio?.allocation ?? [];
   const currency = positions[0]?.currency ?? "USD";
@@ -297,6 +311,10 @@ export function PortfolioPage({ accountId, accountsLoading }: { accountId: strin
             displayMode={graphType === "treemap" ? displayMode : "total"}
             leaderSortMode={leaderSortMode}
             onSelect={handleSelectAllocation}
+            onClear={() => {
+              setSelectedConid(null);
+              setSelectedGroup(null);
+            }}
           />
         )}
 

@@ -104,6 +104,31 @@ describe("TransactionsPage", () => {
     expect(screen.getByText(/SLD 2 SPY/i)).toBeInTheDocument();
   });
 
+  it("keeps live orders inside a scrollable table body", async () => {
+    mockApi.moonmarketLiveOrders.mockResolvedValueOnce({
+      account_id: "DU12345",
+      orders: Array.from({ length: 12 }, (_, index) => ({
+        order_id: `ORDER-${index}`,
+        conid: 265598 + index,
+        symbol: `T${index}`,
+        description: `Order ${index}`,
+        side: index % 2 === 0 ? "BUY" : "SELL",
+        order_type: "LMT",
+        quantity: 1,
+        remaining_quantity: 1,
+        limit_price: 100 + index,
+        status: "Submitted",
+      })),
+    });
+
+    renderTransactions();
+
+    fireEvent.click(await screen.findByRole("button", { name: /live orders/i }));
+
+    expect(screen.getByTestId("moonmarket-live-orders-scroll")).toHaveClass("overflow-auto");
+    expect(screen.getByText(/Order 11/i)).toBeInTheDocument();
+  });
+
   it("shows empty states for no trades and no live orders", async () => {
     mockApi.moonmarketTrades.mockResolvedValueOnce({
       account_id: "DU12345",

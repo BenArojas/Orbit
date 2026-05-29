@@ -82,9 +82,9 @@ export function LiveOrdersTable({ accountId, orders }: { accountId: string | nul
         <h3 className="text-[13px] font-semibold">Live Orders</h3>
         <p className="text-[11px] text-[var(--text-3)]">{orders.length} working orders</p>
       </div>
-      <div className="overflow-x-auto">
+      <div data-testid="moonmarket-live-orders-scroll" className="max-h-[300px] overflow-auto">
         <table className="w-full min-w-[760px] text-left text-[11px]">
-          <thead className="border-b border-border text-[10px] uppercase text-[var(--text-3)]">
+          <thead className="sticky top-0 border-b border-border bg-[var(--bg-2)] text-[10px] uppercase text-[var(--text-3)]">
             <tr>
               <th className="px-3 py-2 font-medium">Symbol</th>
               <th className="px-3 py-2 font-medium">Description</th>

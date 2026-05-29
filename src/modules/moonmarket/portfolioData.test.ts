@@ -6,6 +6,7 @@ import {
   displayHoldingName,
   displayHoldingSubtitle,
   groupAllocationItems,
+  mergeLivePortfolioTicks,
   optionOrderAssetClass,
 } from "./portfolioData";
 
@@ -32,9 +33,19 @@ describe("portfolioData", () => {
       asset_class: "OPT",
     });
 
-    expect(displayHoldingName(option)).toBe("IBKR DEC2026 90C");
+    expect(displayHoldingName(option)).toBe("IBKR DEC2026 90call");
     expect(displayAssetClass(option)).toBe("OPTION");
     expect(optionOrderAssetClass(option)).toBe("OPT");
+  });
+
+  it("uses the option description before the underlying-only ticker", () => {
+    const option = item({
+      symbol: "IREN",
+      label: "IREN DEC2026 90 C [IREN 261218C00090000 100]",
+      asset_class: "OPT",
+    });
+
+    expect(displayHoldingName(option)).toBe("IREN DEC2026 90call");
   });
 
   it("groups the tail of the portfolio into a clickable Others item", () => {
@@ -66,5 +77,54 @@ describe("portfolioData", () => {
 
   it("drops duplicate subtitles when IBKR repeats the ticker as the label", () => {
     expect(displayHoldingSubtitle(item({ symbol: "CLS", label: "CLS" }))).toBe("");
+  });
+
+  it("merges live websocket ticks into portfolio position values", () => {
+    const portfolio = {
+      account_id: "DU12345",
+      total_market_value: 1000,
+      total_unrealized_pnl: 125,
+      positions: [
+        {
+          conid: 265598,
+          symbol: "AAPL",
+          description: "Apple Inc",
+          asset_class: "STK",
+          quantity: 5,
+          last_price: 200,
+          average_cost: 175,
+          market_value: 1000,
+          unrealized_pnl: 125,
+          daily_pnl: 10,
+          pnl_percent: 14.29,
+          daily_pnl_percent: 1,
+          currency: "USD",
+        },
+      ],
+      allocation: [
+        item({
+          conid: 265598,
+          symbol: "AAPL",
+          label: "Apple Inc",
+          value: 1000,
+          percent: 100,
+          unrealized_pnl: 125,
+          daily_pnl: 10,
+          pnl_percent: 14.29,
+          daily_pnl_percent: 1,
+        }),
+      ],
+    };
+
+    const merged = mergeLivePortfolioTicks(
+      portfolio,
+      new Map([[265598, { last: 210, changePct: 2 }]]),
+    );
+
+    expect(merged.positions[0].last_price).toBe(210);
+    expect(merged.positions[0].market_value).toBe(1050);
+    expect(merged.positions[0].unrealized_pnl).toBe(175);
+    expect(merged.allocation[0].value).toBe(1050);
+    expect(merged.allocation[0].daily_pnl_percent).toBe(2);
   });
 });

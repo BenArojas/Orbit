@@ -8,6 +8,9 @@ const routerState = vi.hoisted(() => ({
 }));
 const orderTicketState = vi.hoisted(() => ({ open: vi.fn() }));
 const navigationState = vi.hoisted(() => ({ navigateToAnalysis: vi.fn() }));
+const liveQuotesState = vi.hoisted(() => ({
+  ticks: new Map<number, { last: number; changePct?: number }>(),
+}));
 
 vi.mock("react-router-dom", () => ({
   useNavigate: () => routerState.navigate,
@@ -21,6 +24,10 @@ vi.mock("@/orbit/OrderTicket/useOrderTicketStore", () => ({
 
 vi.mock("@/store/navigation", () => ({
   useNavigationStore: (selector: (state: typeof navigationState) => unknown) => selector(navigationState),
+}));
+
+vi.mock("@/hooks/useLiveQuotes", () => ({
+  useLiveQuotes: () => liveQuotesState.ticks,
 }));
 
 const mockApi = vi.hoisted(() => ({
@@ -42,6 +49,7 @@ vi.mock("@/lib/api", () => ({
 
 import { MoonMarketModule } from "@/modules/moonmarket/MoonMarketModule";
 import { useAccountStore } from "@/orbit/OrderTicket/useAccountStore";
+import { useSettingsStore } from "@/store";
 
 function renderMoonMarket(pathname = "/moonmarket") {
   routerState.pathname = pathname;
@@ -63,6 +71,10 @@ describe("MoonMarketModule", () => {
     routerState.navigate.mockClear();
     orderTicketState.open.mockClear();
     navigationState.navigateToAnalysis.mockClear();
+    liveQuotesState.ticks = new Map();
+    useSettingsStore.setState({ themeMode: "dark", isLoaded: true });
+    document.documentElement.classList.remove("dark", "light");
+    document.documentElement.classList.add("dark");
     routerState.pathname = "/moonmarket";
     mockApi.moonmarketAccounts.mockResolvedValue({
       selected_account_id: "DU12345",
@@ -337,11 +349,11 @@ describe("MoonMarketModule", () => {
     renderMoonMarket();
 
     await screen.findByTestId("moonmarket-chart-treemap");
-    fireEvent.click(screen.getByRole("button", { name: /select ibkr dec2026 90c/i }));
-    fireEvent.click(screen.getByRole("button", { name: /trade ibkr dec2026 90c/i }));
+    fireEvent.click(screen.getByRole("button", { name: /select ibkr dec2026 90call/i }));
+    fireEvent.click(screen.getByRole("button", { name: /trade ibkr dec2026 90call/i }));
 
     expect(orderTicketState.open).toHaveBeenCalledWith(
-      expect.objectContaining({ conid: 778899, symbol: "IBKR DEC2026 90C", side: "SELL", assetClass: "OPT" }),
+      expect.objectContaining({ conid: 778899, symbol: "IBKR DEC2026 90call", side: "SELL", assetClass: "OPT" }),
     );
   });
 
@@ -395,6 +407,39 @@ describe("MoonMarketModule", () => {
     expect(screen.getByText(/submitted/i)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /modify aapl order/i })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /cancel aapl order/i })).toBeInTheDocument();
+  });
+
+  it("applies the global theme class when toggled from MoonMarket", async () => {
+    renderMoonMarket();
+
+    await screen.findByText(/portfolio allocation/i);
+    fireEvent.click(screen.getByRole("button", { name: /switch to light mode/i }));
+
+    await waitFor(() => expect(document.documentElement.classList.contains("light")).toBe(true));
+    expect(document.documentElement.classList.contains("dark")).toBe(false);
+  });
+
+  it("clears donut selection from the donut center", async () => {
+    renderMoonMarket();
+
+    await screen.findByTestId("moonmarket-chart-treemap");
+    fireEvent.click(screen.getByRole("button", { name: /donut/i }));
+    fireEvent.click(await screen.findByRole("button", { name: /select aapl/i }));
+    expect(screen.getByTestId("moonmarket-position-inspector")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /clear selected holding/i }));
+
+    expect(screen.getByText(/select a holding in the chart/i)).toBeInTheDocument();
+  });
+
+  it("uses websocket ticks to update portfolio values without waiting for REST polling", async () => {
+    liveQuotesState.ticks = new Map([[265598, { last: 210, changePct: 2 }]]);
+
+    renderMoonMarket();
+
+    expect(await screen.findByText(/\$2,150 total value/i)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /select aapl/i }));
+    expect(screen.getAllByText(/\$1,050/i).length).toBeGreaterThan(0);
   });
 
   it("cancels and opens modify mode from the live orders table", async () => {

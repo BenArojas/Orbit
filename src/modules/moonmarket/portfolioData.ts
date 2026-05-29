@@ -1,7 +1,11 @@
-import type { MoonMarketAllocationItem, MoonMarketPosition } from "./types";
+import type { MoonMarketAllocationItem, MoonMarketPortfolioResponse, MoonMarketPosition } from "./types";
 import type { OrderTicketAssetClass } from "@/orbit/OrderTicket";
 
 export type AllocationDisplayMode = "total" | "daily";
+export type PortfolioLiveTick = {
+  last: number;
+  changePct?: number;
+};
 
 export type DisplayAllocationItem = MoonMarketAllocationItem & {
   grouped_children?: MoonMarketAllocationItem[];
@@ -26,20 +30,27 @@ export function compactOptionLabel(raw: string): string {
   if (!match) return raw.trim();
   const [, symbol, expiration, strike, right] = match;
   const normalizedStrike = Number.isFinite(Number(strike)) ? String(Number(strike)) : strike;
-  return `${symbol.toUpperCase()} ${expiration.toUpperCase()} ${normalizedStrike}${right.toUpperCase()}`;
+  const side = right.toUpperCase() === "P" ? "put" : "call";
+  return `${symbol.toUpperCase()} ${expiration.toUpperCase()} ${normalizedStrike}${side}`;
 }
 
 export function displayHoldingName(item: MoonMarketAllocationItem | MoonMarketPosition): string {
   if (isCashAssetClass(item.asset_class)) return "CASH";
+  if (isOptionAssetClass(item.asset_class)) {
+    const raw = itemDescription(item) || ("label" in item ? item.label : "") || item.symbol;
+    return compactOptionLabel(raw);
+  }
   const raw = item.symbol || itemDescription(item) || ("label" in item ? item.label : "");
-  if (isOptionAssetClass(item.asset_class)) return compactOptionLabel(raw);
   return raw;
 }
 
 export function displayHoldingSubtitle(item: MoonMarketAllocationItem | MoonMarketPosition): string {
   if (isCashAssetClass(item.asset_class)) return itemDescription(item) || "Cash balance";
   const raw = "label" in item ? item.label : itemDescription(item);
-  if (isOptionAssetClass(item.asset_class)) return compactOptionLabel(raw || item.symbol);
+  if (isOptionAssetClass(item.asset_class)) {
+    const subtitle = compactOptionLabel(raw || item.symbol);
+    return subtitle.trim().toUpperCase() === displayHoldingName(item).trim().toUpperCase() ? "" : subtitle;
+  }
   const subtitle = raw || item.symbol;
   return subtitle.trim().toUpperCase() === displayHoldingName(item).trim().toUpperCase() ? "" : subtitle;
 }
@@ -92,4 +103,83 @@ export function groupAllocationItems(
   };
 
   return [...head, ...cashItems, others];
+}
+
+function valueMultiplier(position: MoonMarketPosition): number {
+  const quantity = Math.abs(position.quantity);
+  const last = position.last_price ?? 0;
+  if (quantity > 0 && last > 0 && position.market_value !== 0) {
+    return Math.max(1, Math.abs(position.market_value) / (quantity * last));
+  }
+  return isOptionAssetClass(position.asset_class) ? 100 : 1;
+}
+
+function percentChange(value: number | null | undefined, basis: number): number | null {
+  if (value == null || basis <= 0) return null;
+  return Math.round((value / basis) * 10000) / 100;
+}
+
+export function mergeLivePortfolioTicks(
+  portfolio: MoonMarketPortfolioResponse,
+  ticks: Map<number, PortfolioLiveTick>,
+): MoonMarketPortfolioResponse {
+  if (!ticks.size) return portfolio;
+
+  let changed = false;
+  const positions = portfolio.positions.map((position) => {
+    const tick = ticks.get(position.conid);
+    if (!tick?.last || isCashAssetClass(position.asset_class)) return position;
+
+    const previousAbsValue = Math.abs(position.market_value);
+    const sign = position.market_value < 0 ? -1 : 1;
+    const multiplier = valueMultiplier(position);
+    const nextAbsValue = Math.round(Math.abs(position.quantity) * tick.last * multiplier * 100) / 100;
+    if (nextAbsValue <= 0 || nextAbsValue === previousAbsValue) return position;
+
+    const valueDelta = nextAbsValue - previousAbsValue;
+    const unrealizedPnl = Math.round((position.unrealized_pnl + valueDelta * sign) * 100) / 100;
+    const dailyPnl = tick.changePct == null
+      ? position.daily_pnl
+      : Math.round((nextAbsValue - nextAbsValue / (1 + tick.changePct / 100)) * 100) / 100;
+    const marketValue = Math.round(nextAbsValue * sign * 100) / 100;
+    changed = true;
+
+    return {
+      ...position,
+      last_price: tick.last,
+      market_value: marketValue,
+      unrealized_pnl: unrealizedPnl,
+      daily_pnl: dailyPnl,
+      pnl_percent: percentChange(unrealizedPnl, nextAbsValue - unrealizedPnl),
+      daily_pnl_percent: tick.changePct ?? position.daily_pnl_percent,
+    };
+  });
+
+  if (!changed) return portfolio;
+
+  const totalMarketValue = Math.round(positions.reduce((sum, position) => sum + Math.abs(position.market_value), 0) * 100) / 100;
+  const totalUnrealizedPnl = Math.round(positions.reduce((sum, position) => sum + position.unrealized_pnl, 0) * 100) / 100;
+  const positionByConid = new Map(positions.map((position) => [position.conid, position]));
+  const allocation = portfolio.allocation.map((item) => {
+    const position = positionByConid.get(item.conid);
+    if (!position) return item;
+    const value = Math.round(Math.abs(position.market_value) * 100) / 100;
+    return {
+      ...item,
+      value,
+      percent: totalMarketValue ? Math.round((value / totalMarketValue) * 10000) / 100 : 0,
+      unrealized_pnl: position.unrealized_pnl,
+      daily_pnl: position.daily_pnl,
+      pnl_percent: position.pnl_percent,
+      daily_pnl_percent: position.daily_pnl_percent,
+    };
+  });
+
+  return {
+    ...portfolio,
+    total_market_value: totalMarketValue,
+    total_unrealized_pnl: totalUnrealizedPnl,
+    positions,
+    allocation,
+  };
 }

@@ -12,6 +12,7 @@ import {
   displayHoldingSubtitle,
   groupAllocationItems,
   isCashAssetClass,
+  isOptionAssetClass,
   type AllocationDisplayMode,
   type DisplayAllocationItem,
 } from "./portfolioData";
@@ -63,6 +64,7 @@ type ChartViewProps = {
   displayMode: AllocationDisplayMode;
   leaderSortMode: LeaderSortMode;
   onSelect?: (item: DisplayAllocationItem) => void;
+  onClear?: () => void;
 };
 
 function colorAt(index: number): string {
@@ -158,16 +160,16 @@ function metricTone(item: MoonMarketAllocationItem, displayMode: AllocationDispl
 }
 
 function metricIntensity(value: number | null, displayMode: AllocationDisplayMode): number {
-  if (value == null) return 18;
+  if (value == null) return 12;
   const magnitude = Math.abs(value);
   if (displayMode === "daily") {
-    if (magnitude > 5) return 52;
-    if (magnitude > 2) return 42;
-    return 30;
+    if (magnitude > 5) return 30;
+    if (magnitude > 2) return 24;
+    return 18;
   }
-  if (magnitude > 40) return 54;
-  if (magnitude > 15) return 44;
-  return 32;
+  if (magnitude > 40) return 32;
+  if (magnitude > 15) return 26;
+  return 20;
 }
 
 function returnFill(item: MoonMarketAllocationItem, displayMode: AllocationDisplayMode): string {
@@ -184,8 +186,8 @@ function returnFill(item: MoonMarketAllocationItem, displayMode: AllocationDispl
 
 function returnStroke(item: MoonMarketAllocationItem, displayMode: AllocationDisplayMode): string {
   const tone = metricTone(item, displayMode);
-  if (tone === "positive") return "var(--clr-green)";
-  if (tone === "negative") return "var(--clr-red)";
+  if (tone === "positive") return "color-mix(in srgb, var(--clr-green) 72%, var(--text-1))";
+  if (tone === "negative") return "color-mix(in srgb, var(--clr-red) 72%, var(--text-1))";
   return "var(--text-3)";
 }
 
@@ -199,6 +201,13 @@ function returnTextClass(item: MoonMarketAllocationItem, displayMode: Allocation
 function truncateText(value: string, maxChars: number): string {
   if (value.length <= maxChars) return value;
   return `${value.slice(0, Math.max(1, maxChars - 1))}...`;
+}
+
+function titleLines(item: MoonMarketAllocationItem): string[] {
+  const name = displayHoldingName(item);
+  if (!isOptionAssetClass(item.asset_class)) return [name];
+  const [symbol, expiration, strikeSide] = name.split(" ");
+  return [symbol, expiration, strikeSide].filter(Boolean);
 }
 
 function TreemapChart({ items, selectedConid, displayMode, onSelect }: ChartViewProps) {
@@ -228,10 +237,11 @@ function TreemapChart({ items, selectedConid, displayMode, onSelect }: ChartView
               const tileHeight = Math.max(0, leaf.y1 - leaf.y0);
               const roomy = tileWidth > 150 && tileHeight > 108;
               const compact = tileWidth > 78 && tileHeight > 56;
-              const titleSize = roomy ? Math.min(22, Math.max(15, tileWidth / 16)) : 13;
+              const titleSize = roomy ? Math.min(20, Math.max(14, tileWidth / 18)) : 12;
               const metricSize = roomy ? Math.min(30, Math.max(20, tileWidth / 13)) : 12;
               const titleChars = Math.max(3, Math.floor((tileWidth - 26) / (titleSize * 0.58)));
               const subtitle = displayHoldingSubtitle(item);
+              const lines = titleLines(item);
               const clipId = `moonmarket-tile-${item.conid}`;
 
               return (
@@ -270,10 +280,14 @@ function TreemapChart({ items, selectedConid, displayMode, onSelect }: ChartView
                           fontSize={titleSize}
                           fontWeight={800}
                         >
-                          {truncateText(displayHoldingName(item), titleChars)}
+                          {lines.map((line, index) => (
+                            <tspan key={`${item.conid}-${index}-${line}`} x={leaf.x0 + 14} dy={index === 0 ? 0 : titleSize + 2}>
+                              {truncateText(line, titleChars)}
+                            </tspan>
+                          ))}
                         </text>
-                        {roomy && subtitle ? (
-                          <text x={leaf.x0 + 14} y={leaf.y0 + 56} fill="var(--text-3)" fontSize={11}>
+                        {roomy && subtitle && !isOptionAssetClass(item.asset_class) ? (
+                          <text x={leaf.x0 + 14} y={leaf.y0 + 56} fill="var(--text-2)" fontSize={11}>
                             {truncateText(subtitle, Math.max(8, Math.floor((tileWidth - 26) / 6)))}
                           </text>
                         ) : null}
@@ -288,7 +302,7 @@ function TreemapChart({ items, selectedConid, displayMode, onSelect }: ChartView
                           {displayMetric(item, displayMode)}
                         </text>
                         {roomy ? (
-                          <text x={leaf.x0 + 14} y={leaf.y1 - 18} fill="var(--text-3)" fontSize={12} className="font-data">
+                          <text x={leaf.x0 + 14} y={leaf.y1 - 18} fill="var(--text-2)" fontSize={12} className="font-data">
                             {formatMoney(item.value)}
                           </text>
                         ) : null}
@@ -309,7 +323,7 @@ function TreemapChart({ items, selectedConid, displayMode, onSelect }: ChartView
   );
 }
 
-function DonutChart({ items, selectedConid, displayMode, onSelect }: ChartViewProps) {
+function DonutChart({ items, selectedConid, displayMode, onSelect, onClear }: ChartViewProps) {
   if (!items.length) return <EmptyChart />;
   const radius = 42;
   const circumference = 2 * Math.PI * radius;
@@ -341,6 +355,20 @@ function DonutChart({ items, selectedConid, displayMode, onSelect }: ChartViewPr
           offset += dash;
           return segment;
         })}
+        <circle
+          role="button"
+          aria-label="Clear selected holding"
+          tabIndex={0}
+          cx="60"
+          cy="60"
+          r="28"
+          fill="transparent"
+          onClick={() => onClear?.()}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" || event.key === " ") onClear?.();
+          }}
+          className="cursor-pointer"
+        />
       </svg>
       <div className="space-y-2">
         {items.map((item, index) => (
@@ -637,6 +665,7 @@ function FlowChart({ items, selectedConid, displayMode, onSelect }: ChartViewPro
               const y1 = node.y1 ?? 0;
               const centerY = (y0 + y1) / 2;
               const labelX = x1 + 12;
+              const valueX = Math.min(width - 14, x1 + labelColumnWidth - 10);
               const name = item ? displayHoldingName(item) : "Portfolio";
               const value = item
                 ? `${formatMoney(item.value)}   ${displayMetric(item, displayMode)}`
@@ -669,18 +698,19 @@ function FlowChart({ items, selectedConid, displayMode, onSelect }: ChartViewPro
                   />
                   <text
                     x={labelX}
-                    y={centerY - 5}
+                    y={centerY + 4}
                     fill="var(--text-1)"
                     fontSize={isPortfolio ? 16 : 13}
                     fontWeight={800}
                     className="pointer-events-none"
                   >
-                    {truncateText(name, isPortfolio ? 22 : 18)}
+                    {truncateText(name, isPortfolio ? 16 : 14)}
                   </text>
                   <text
-                    x={labelX}
-                    y={centerY + 13}
-                    fill={item ? "var(--text-2)" : "var(--text-3)"}
+                    x={valueX}
+                    y={centerY + 4}
+                    textAnchor="end"
+                    fill={item ? "var(--text-2)" : "var(--text-2)"}
                     fontSize={isPortfolio ? 12 : 11}
                     fontWeight={600}
                     className="pointer-events-none font-data"
@@ -704,6 +734,7 @@ export function PortfolioChart({
   displayMode,
   leaderSortMode,
   onSelect,
+  onClear,
 }: {
   type: GraphType;
   allocation: MoonMarketAllocationItem[];
@@ -711,6 +742,7 @@ export function PortfolioChart({
   displayMode: AllocationDisplayMode;
   leaderSortMode?: LeaderSortMode;
   onSelect?: (item: DisplayAllocationItem) => void;
+  onClear?: () => void;
 }) {
   const items = groupAllocationItems(visibleItems(allocation), 12);
   const props = {
@@ -719,6 +751,7 @@ export function PortfolioChart({
     displayMode,
     leaderSortMode: leaderSortMode ?? "percent",
     onSelect,
+    onClear,
   };
   if (type === "donut") return <DonutChart {...props} />;
   if (type === "bubbles") return <BubbleChart {...props} />;
