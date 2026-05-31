@@ -70,14 +70,14 @@ export function TransactionCharts({ trades }: { trades: MoonMarketTrade[] }) {
 
   return (
     <div className="grid gap-4 lg:grid-cols-2">
-      <section className="min-h-44 rounded-md border border-border bg-[var(--bg-2)] p-4">
-        <div className="mb-4 flex items-start justify-between gap-3">
+      <section className="rounded-md border border-border bg-[var(--bg-2)] p-3.5">
+        <div className="mb-3 flex items-start justify-between gap-3">
           <div>
             <h3 className="text-[13px] font-semibold">Symbol Activity</h3>
             <p className="text-[11px] text-[var(--text-3)]">Net cash impact by symbol</p>
           </div>
         </div>
-        <div className="space-y-2.5">
+        <div className="space-y-2">
           {rows.map((row) => (
             <div key={row.symbol} className="grid grid-cols-[64px_minmax(0,1fr)_92px] items-center gap-3 text-[11px]">
               <div className="truncate font-semibold">{row.symbol}</div>
@@ -95,14 +95,14 @@ export function TransactionCharts({ trades }: { trades: MoonMarketTrade[] }) {
         </div>
       </section>
 
-      <section className="min-h-44 rounded-md border border-border bg-[var(--bg-2)] p-4">
-        <div className="mb-4 flex items-start justify-between gap-3">
+      <section className="rounded-md border border-border bg-[var(--bg-2)] p-3.5">
+        <div className="mb-3 flex items-start justify-between gap-3">
           <div>
             <h3 className="text-[13px] font-semibold">Volume Mix</h3>
             <p className="text-[11px] text-[var(--text-3)]">Buy and sell quantity by symbol</p>
           </div>
         </div>
-        <div className="space-y-2.5">
+        <div className="space-y-2">
           {rows.map((row) => (
             <div key={row.symbol} className="grid grid-cols-[64px_minmax(0,1fr)_74px] items-center gap-3 text-[11px]">
               <div className="truncate font-semibold">{row.symbol}</div>

@@ -79,7 +79,7 @@ export function TransactionsTable({ trades }: { trades: MoonMarketTrade[] }) {
           </label>
         </div>
       </div>
-      <div data-testid="moonmarket-trades-scroll" className={cn("overflow-auto", expanded ? "min-h-0 flex-1" : "max-h-[300px]")}>
+      <div data-testid="moonmarket-trades-scroll" className={cn("overflow-x-auto pb-2", expanded ? "min-h-0 flex-1 overflow-y-auto" : "")}>
         <table className="w-full min-w-[760px] text-left text-[11px]">
           <thead className="sticky top-0 border-b border-border bg-[var(--bg-2)] text-[10px] uppercase text-[var(--text-3)]">
             <tr>

@@ -125,6 +125,7 @@ class MoonMarketService:
                 conid=position.conid,
                 symbol=position.symbol,
                 label=position.description or position.symbol,
+                contract_desc=position.contract_desc,
                 value=round(abs(position.market_value), 2),
                 percent=round((abs(position.market_value) / total_market_value) * 100, 2)
                 if total_market_value
@@ -295,6 +296,15 @@ class MoonMarketService:
 
         symbol = _first_text(row, ("ticker", "symbol", "contractDesc", "fullName"), f"#{conid}")
         description = _first_text(row, ("name", "companyName", "description", "fullName"), symbol)
+        asset_class = _first_text(row, ("assetClass", "asset_class", "secType", "sectype"))
+        # For options IBKR ships the full contract string in contractDesc while
+        # ticker/name only carry the underlying + company name. Capture it so the
+        # frontend can render strike/expiry/right.
+        contract_desc = (
+            _first_text(row, ("contractDesc", "contract_desc", "fullName"), "") or None
+            if asset_class.upper() == "OPT"
+            else None
+        )
         market_value = _safe_float(row.get("mktValue") or row.get("marketValue") or row.get("value"))
         unrealized_pnl = round(_safe_float(row.get("unrealizedPnl") or row.get("unrealized_pnl")), 2)
         daily_pnl = self._optional_float(row.get("dailyPnl") or row.get("daily_pnl"))
@@ -302,7 +312,8 @@ class MoonMarketService:
             conid=conid,
             symbol=symbol,
             description=description,
-            asset_class=_first_text(row, ("assetClass", "asset_class", "secType", "sectype")),
+            contract_desc=contract_desc,
+            asset_class=asset_class,
             quantity=_safe_float(row.get("position") or row.get("quantity")),
             last_price=self._optional_float(row.get("mktPrice") or row.get("last_price") or row.get("lastPrice")),
             average_cost=self._optional_float(row.get("avgCost") or row.get("avgPrice") or row.get("average_cost")),

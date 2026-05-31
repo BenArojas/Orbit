@@ -255,7 +255,7 @@ describe("MoonMarketModule", () => {
     expect(screen.getByRole("button", { name: /donut/i })).toHaveAttribute("aria-pressed", "true");
     expect(await screen.findByTestId("moonmarket-chart-donut")).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: /back to orbit/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^orbit$/i }));
     expect(routerState.navigate).toHaveBeenCalledWith("/");
   });
 

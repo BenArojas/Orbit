@@ -34,14 +34,42 @@ export function compactOptionLabel(raw: string): string {
   return `${symbol.toUpperCase()} ${expiration.toUpperCase()} ${normalizedStrike}${side}`;
 }
 
+function optionLabelCandidates(item: MoonMarketAllocationItem | MoonMarketPosition): string[] {
+  // contract_desc is the authoritative IBKR contract string for options; try it
+  // first, then fall back to the fields that older payloads scattered it across.
+  const candidates = [
+    item.contract_desc,
+    itemDescription(item),
+    "label" in item ? item.label : undefined,
+    item.symbol,
+  ];
+  return candidates.filter((value): value is string => Boolean(value && value.trim()));
+}
+
 export function displayHoldingName(item: MoonMarketAllocationItem | MoonMarketPosition): string {
   if (isCashAssetClass(item.asset_class)) return "CASH";
   if (isOptionAssetClass(item.asset_class)) {
-    const raw = itemDescription(item) || ("label" in item ? item.label : "") || item.symbol;
-    return compactOptionLabel(raw);
+    // IBKR scatters the option contract string across symbol/label/description
+    // depending on the endpoint, so pick whichever field actually parses as a
+    // contract and fall back to the underlying ticker (never the company name).
+    const candidates = optionLabelCandidates(item);
+    const contract = candidates.find((value) => OPTION_RE.test(value.trim()));
+    if (contract) return compactOptionLabel(contract);
+    return (item.symbol || candidates[0] || "").trim();
   }
   const raw = item.symbol || itemDescription(item) || ("label" in item ? item.label : "");
   return raw;
+}
+
+export function holdingTitleParts(
+  item: MoonMarketAllocationItem | MoonMarketPosition,
+): { primary: string; secondary: string } {
+  const name = displayHoldingName(item);
+  if (isOptionAssetClass(item.asset_class)) {
+    const [symbol, ...rest] = name.split(" ");
+    return { primary: symbol || name, secondary: rest.join(" ") || "OPTION" };
+  }
+  return { primary: name, secondary: displayHoldingSubtitle(item) };
 }
 
 export function displayHoldingSubtitle(item: MoonMarketAllocationItem | MoonMarketPosition): string {
