@@ -6,6 +6,7 @@ import {
   displayHoldingName,
   displayHoldingSubtitle,
   groupAllocationItems,
+  holdingTitleParts,
   mergeLivePortfolioTicks,
   optionOrderAssetClass,
 } from "./portfolioData";
@@ -15,6 +16,7 @@ function item(overrides: Partial<MoonMarketAllocationItem>): MoonMarketAllocatio
     conid: overrides.conid ?? 1,
     symbol: overrides.symbol ?? "AAPL",
     label: overrides.label ?? "Apple Inc",
+    contract_desc: overrides.contract_desc ?? null,
     value: overrides.value ?? 100,
     percent: overrides.percent ?? 10,
     asset_class: overrides.asset_class ?? "STK",
@@ -46,6 +48,55 @@ describe("portfolioData", () => {
     });
 
     expect(displayHoldingName(option)).toBe("IREN DEC2026 90call");
+  });
+
+  it("prefers the contract field over a company-name label for options", () => {
+    // Real IBKR allocation shape: label is the underlying company name and the
+    // contract string only lives in symbol — the option label must still win.
+    const option = item({
+      symbol: "ORCL NOV2026 270 C [ORCL 261120C00270000 100]",
+      label: "ORACLE CORP",
+      asset_class: "OPT",
+    });
+
+    expect(displayHoldingName(option)).toBe("ORCL NOV2026 270call");
+  });
+
+  it("prefers contract_desc over the underlying-only symbol and company label", () => {
+    // The backend now ships the full IBKR contract string in contract_desc while
+    // symbol/label may only carry the underlying + company name. contract_desc wins.
+    const option = item({
+      symbol: "ORCL",
+      label: "ORACLE CORP",
+      contract_desc: "ORCL NOV2026 270 C [ORCL 261120C00270000 100]",
+      asset_class: "OPT",
+    });
+
+    expect(displayHoldingName(option)).toBe("ORCL NOV2026 270call");
+    expect(holdingTitleParts(option)).toEqual({ primary: "ORCL", secondary: "NOV2026 270call" });
+  });
+
+  it("falls back to the underlying ticker, never the company name, for options", () => {
+    const option = item({ symbol: "ORCL", label: "ORACLE CORP", asset_class: "OPT" });
+
+    expect(displayHoldingName(option)).toBe("ORCL");
+  });
+
+  it("splits an option label into ticker + contract detail for the treemap", () => {
+    const option = item({
+      symbol: "IREN OCT2026 60 C [IREN 261016C00060000 100]",
+      label: "IREN OCT2026 60 C [IREN 261016C00060000 100]",
+      asset_class: "OPT",
+    });
+
+    expect(holdingTitleParts(option)).toEqual({ primary: "IREN", secondary: "OCT2026 60call" });
+  });
+
+  it("uses the company name as the treemap subtitle for stocks", () => {
+    expect(holdingTitleParts(item({ symbol: "AAPL", label: "Apple Inc" }))).toEqual({
+      primary: "AAPL",
+      secondary: "Apple Inc",
+    });
   });
 
   it("groups the tail of the portfolio into a clickable Others item", () => {

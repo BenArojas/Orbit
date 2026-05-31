@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Activity, Banknote, ListChecks, ReceiptText, Scale } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { Pulse } from "@/components/dashboard/skeletons";
 import { api } from "@/lib/api";
 import { formatMoney, formatNumber } from "./format";
 import { LiveOrdersTable } from "./LiveOrdersTable";
@@ -18,20 +19,31 @@ function SummaryCard({
   detail,
   icon: Icon,
   tone = "cyan",
+  loading = false,
 }: {
   title: string;
   value: string;
   detail: string;
   icon: typeof Activity;
   tone?: "cyan" | "green" | "orange" | "red";
+  loading?: boolean;
 }) {
   return (
     <section className="rounded-md border border-border bg-[var(--bg-2)] p-3">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <div className="text-[10px] uppercase text-[var(--text-3)]">{title}</div>
-          <div className="mt-1 truncate font-data text-[18px]">{value}</div>
-          <div className="mt-1 truncate text-[11px] text-[var(--text-3)]">{detail}</div>
+          {loading ? (
+            <>
+              <Pulse className="mt-1.5 h-[18px] w-[72px]" />
+              <Pulse className="mt-1.5 h-3 w-[88px]" />
+            </>
+          ) : (
+            <>
+              <div className="mt-1 truncate font-data text-[18px]">{value}</div>
+              <div className="mt-1 truncate text-[11px] text-[var(--text-3)]">{detail}</div>
+            </>
+          )}
         </div>
         <div
           className={cn(
@@ -82,6 +94,7 @@ export function TransactionsPage({ accountId }: { accountId: string | null }) {
   const orders = ordersQuery.data?.orders ?? [];
   const error = tradesQuery.error ?? ordersQuery.error;
   const loading = tradesQuery.isLoading || ordersQuery.isLoading;
+  const summaryLoading = tradesQuery.isLoading && !summary;
 
   return (
     <main className="space-y-4 p-4 pb-8">
@@ -109,6 +122,7 @@ export function TransactionsPage({ accountId }: { accountId: string | null }) {
               value={`${summary?.total_trades ?? 0} trades`}
               detail="Recent executions"
               icon={ReceiptText}
+              loading={summaryLoading}
             />
             <SummaryCard
               title="Volume"
@@ -116,6 +130,7 @@ export function TransactionsPage({ accountId }: { accountId: string | null }) {
               detail="Shares/contracts"
               icon={Scale}
               tone="orange"
+              loading={summaryLoading}
             />
             <SummaryCard
               title="Commissions"
@@ -123,6 +138,7 @@ export function TransactionsPage({ accountId }: { accountId: string | null }) {
               detail="Execution costs"
               icon={Banknote}
               tone="red"
+              loading={summaryLoading}
             />
             <SummaryCard
               title="Net Cash"
@@ -130,6 +146,7 @@ export function TransactionsPage({ accountId }: { accountId: string | null }) {
               detail="Buys and sells"
               icon={Activity}
               tone={(summary?.net_cash ?? 0) >= 0 ? "green" : "red"}
+              loading={summaryLoading}
             />
             <SummaryCard
               title="Buy / Sell"
@@ -137,6 +154,7 @@ export function TransactionsPage({ accountId }: { accountId: string | null }) {
               detail="Execution mix"
               icon={ListChecks}
               tone="green"
+              loading={summaryLoading}
             />
           </div>
 

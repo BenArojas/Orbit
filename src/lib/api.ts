@@ -148,6 +148,7 @@ export interface MoonMarketPosition {
   conid: number;
   symbol: string;
   description: string;
+  contract_desc?: string | null;
   asset_class: string;
   quantity: number;
   last_price: number | null;
@@ -164,6 +165,7 @@ export interface MoonMarketAllocationItem {
   conid: number;
   symbol: string;
   label: string;
+  contract_desc?: string | null;
   value: number;
   percent: number;
   asset_class: string;

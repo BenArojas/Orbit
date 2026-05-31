@@ -4,6 +4,7 @@ from fastapi.testclient import TestClient
 from deps import get_db, require_ibkr_auth
 from routers.moonmarket import router as moonmarket_router
 from services.db import DatabaseService
+from services.moonmarket import MoonMarketService
 
 
 class _FakeState:
@@ -307,6 +308,51 @@ def test_moonmarket_portfolio_pages_positions_and_computes_allocation():
     assert ("GET", "/portfolio/DU12345/positions/0", {}) in fake.requests
     assert ("GET", "/portfolio/DU12345/positions/1", {}) in fake.requests
     assert ("GET", "/portfolio/DU12345/ledger", {}) in fake.requests
+
+
+def test_position_from_row_captures_option_contract_desc():
+    service = MoonMarketService(_FakeIbkr())
+    position = service._position_from_row(
+        {
+            "conid": 729711266,
+            "ticker": "ORCL",
+            "name": "ORACLE CORP",
+            "contractDesc": "ORCL NOV2026 270 C [ORCL 261120C00270000 100]",
+            "assetClass": "OPT",
+            "position": 1,
+            "mktPrice": 25.34,
+            "mktValue": 2534.0,
+            "unrealizedPnl": 1634.0,
+            "currency": "USD",
+        }
+    )
+
+    assert position is not None
+    assert position.symbol == "ORCL"
+    assert position.asset_class == "OPT"
+    # The full contract string must survive so the frontend can render strike/date.
+    assert position.contract_desc == "ORCL NOV2026 270 C [ORCL 261120C00270000 100]"
+
+
+def test_position_from_row_leaves_contract_desc_empty_for_stocks():
+    service = MoonMarketService(_FakeIbkr())
+    position = service._position_from_row(
+        {
+            "conid": 265598,
+            "ticker": "AAPL",
+            "name": "Apple Inc",
+            "contractDesc": "AAPL",
+            "assetClass": "STK",
+            "position": 5,
+            "mktPrice": 200.0,
+            "mktValue": 1000.0,
+            "unrealizedPnl": 125.0,
+            "currency": "USD",
+        }
+    )
+
+    assert position is not None
+    assert position.contract_desc is None
 
 
 def test_moonmarket_performance_posts_all_periods_and_normalizes_series():

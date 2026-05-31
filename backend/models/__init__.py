@@ -153,6 +153,10 @@ class MoonMarketPosition(BaseModel):
     conid: int
     symbol: str
     description: str = ""
+    # Full IBKR contract descriptor for options (e.g.
+    # "ORCL NOV2026 270 C [ORCL 261120C00270000 100]"). Only populated for
+    # OPT positions; lets the frontend render strike/expiry/right.
+    contract_desc: Optional[str] = None
     asset_class: str = ""
     quantity: float = 0.0
     last_price: Optional[float] = None
@@ -170,6 +174,9 @@ class MoonMarketAllocationItem(BaseModel):
     conid: int
     symbol: str
     label: str
+    # Full IBKR contract descriptor for options, mirrored from the position so
+    # charts can render the strike/expiry/right without a second lookup.
+    contract_desc: Optional[str] = None
     value: float
     percent: float
     asset_class: str = ""

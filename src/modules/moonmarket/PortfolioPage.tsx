@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { BarChart3, ListTree, ShoppingCart } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { api } from "@/lib/api";
+import { Pulse } from "@/components/dashboard/skeletons";
 import { useLiveQuotes } from "@/hooks/useLiveQuotes";
 import { useOrderTicketStore } from "@/orbit/OrderTicket/useOrderTicketStore";
 import { useNavigationStore } from "@/store/navigation";
@@ -250,34 +251,36 @@ export function PortfolioPage({ accountId, accountsLoading }: { accountId: strin
   };
 
   return (
-    <main className="grid h-[calc(100vh-3.5rem)] gap-4 overflow-hidden p-4 xl:grid-cols-[minmax(0,1fr)_360px]">
+    <main className="grid h-full gap-4 overflow-hidden p-4 xl:grid-cols-[minmax(0,1fr)_360px]">
       <section className="min-h-0 min-w-0 overflow-y-auto pr-1">
         <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <h2 className="text-[16px] font-semibold">Portfolio Allocation</h2>
-            <p className="text-[11px] text-[var(--text-3)]">{portfolioSummary}</p>
-          </div>
-          <div className="flex flex-wrap justify-end gap-2">
+          <div className="flex flex-wrap items-center gap-4">
+            <div>
+              <h2 className="text-[16px] font-semibold">Portfolio Allocation</h2>
+              <p className="text-[11px] text-[var(--text-3)]">{portfolioSummary}</p>
+            </div>
             {graphType === "treemap" ? (
               <div className="flex h-9 items-center gap-1 rounded-md border border-border bg-[var(--bg-2)] p-1">
-              <button
-                type="button"
-                aria-pressed={displayMode === "total"}
-                onClick={() => setDisplayMode("total")}
-                className={displayMode === "total" ? "h-7 rounded bg-[var(--clr-cyan)]/15 px-2 text-[11px] text-[var(--clr-cyan)]" : "h-7 rounded px-2 text-[11px] text-[var(--text-3)]"}
-              >
-                Since Buy
-              </button>
-              <button
-                type="button"
-                aria-pressed={displayMode === "daily"}
-                onClick={() => setDisplayMode("daily")}
-                className={displayMode === "daily" ? "h-7 rounded bg-[var(--clr-cyan)]/15 px-2 text-[11px] text-[var(--clr-cyan)]" : "h-7 rounded px-2 text-[11px] text-[var(--text-3)]"}
-              >
-                Today
-              </button>
+                <button
+                  type="button"
+                  aria-pressed={displayMode === "total"}
+                  onClick={() => setDisplayMode("total")}
+                  className={displayMode === "total" ? "h-7 rounded bg-[var(--clr-cyan)]/15 px-2 text-[11px] text-[var(--clr-cyan)]" : "h-7 rounded px-2 text-[11px] text-[var(--text-3)]"}
+                >
+                  Since Buy
+                </button>
+                <button
+                  type="button"
+                  aria-pressed={displayMode === "daily"}
+                  onClick={() => setDisplayMode("daily")}
+                  className={displayMode === "daily" ? "h-7 rounded bg-[var(--clr-cyan)]/15 px-2 text-[11px] text-[var(--clr-cyan)]" : "h-7 rounded px-2 text-[11px] text-[var(--text-3)]"}
+                >
+                  Today
+                </button>
               </div>
             ) : null}
+          </div>
+          <div className="flex flex-wrap justify-end gap-2">
             {graphType === "leaders" ? (
               <label className="flex h-9 items-center gap-2 rounded-md border border-border bg-[var(--bg-2)] px-2 text-[11px] text-[var(--text-3)]">
                 Sort
@@ -343,16 +346,29 @@ export function PortfolioPage({ accountId, accountsLoading }: { accountId: strin
         <div className="mb-3 grid grid-cols-2 gap-3">
           <div className="rounded-md border border-border bg-[var(--bg-2)] p-3">
             <div className="text-[10px] uppercase text-[var(--text-3)]">Unrealized P&L</div>
-            <div className={portfolio && portfolio.total_unrealized_pnl >= 0 ? "mt-1 font-data text-[18px] text-[var(--clr-green)]" : "mt-1 font-data text-[18px] text-[var(--clr-red)]"}>
-              {portfolio ? formatMoney(portfolio.total_unrealized_pnl, currency) : "--"}
-            </div>
+            {isLoading && !portfolio ? (
+              <Pulse className="mt-1.5 h-[18px] w-[80px]" />
+            ) : (
+              <div className={portfolio && portfolio.total_unrealized_pnl >= 0 ? "mt-1 font-data text-[18px] text-[var(--clr-green)]" : "mt-1 font-data text-[18px] text-[var(--clr-red)]"}>
+                {portfolio ? formatMoney(portfolio.total_unrealized_pnl, currency) : "--"}
+              </div>
+            )}
           </div>
           <div className="rounded-md border border-border bg-[var(--bg-2)] p-3">
             <div className="text-[10px] uppercase text-[var(--text-3)]">Total Value</div>
-            <div className="mt-1 font-data text-[20px] text-[var(--text-1)]">
-              {portfolio ? formatMoney(portfolio.total_market_value, currency) : "--"}
-            </div>
-            <div className="mt-1 text-[10px] text-[var(--text-3)]">{allocation[0] ? `${displayHoldingName(allocation[0])} largest` : "Positions + cash"}</div>
+            {isLoading && !portfolio ? (
+              <>
+                <Pulse className="mt-1.5 h-[20px] w-[96px]" />
+                <Pulse className="mt-1.5 h-2.5 w-[84px]" />
+              </>
+            ) : (
+              <>
+                <div className="mt-1 font-data text-[20px] text-[var(--text-1)]">
+                  {portfolio ? formatMoney(portfolio.total_market_value, currency) : "--"}
+                </div>
+                <div className="mt-1 text-[10px] text-[var(--text-3)]">{allocation[0] ? `${displayHoldingName(allocation[0])} largest` : "Positions + cash"}</div>
+              </>
+            )}
           </div>
         </div>
         <PerformanceCards

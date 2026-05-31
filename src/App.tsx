@@ -15,8 +15,7 @@
  */
 
 import { lazy, Suspense, useEffect } from "react";
-import { useNavigate } from "react-router-dom";
-import { LayoutGrid } from "lucide-react";
+import { BackToOrbitButton } from "@/components/ui/BackToOrbitButton";
 import { queryClient } from "@/lib/query";
 import { initNetworkMonitor } from "@/lib/network";
 import {
@@ -206,7 +205,6 @@ function NavLogoutButton() {
  */
 function AppShell() {
   const { activeScreen, navigate } = useNavigationStore();
-  const toLauncher = useNavigate();
   const { addHandler } = useGlobalEffects();
 
   return (
@@ -217,15 +215,7 @@ function AppShell() {
         <div className="absolute bottom-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-[var(--clr-cyan)] to-transparent opacity-30" />
 
         {/* Back to Orbit launcher */}
-        <button
-          type="button"
-          onClick={() => toLauncher("/")}
-          title="Back to Orbit launcher"
-          className="mr-4 flex items-center gap-1.5 rounded-md border border-border px-2.5 py-[3px] text-[10px] font-medium text-[var(--text-3)] transition-colors hover:border-[var(--clr-cyan)] hover:text-[var(--clr-cyan)]"
-        >
-          <LayoutGrid className="h-3 w-3" />
-          Orbit
-        </button>
+        <BackToOrbitButton className="mr-4" />
 
         {/* Logo */}
         <span className="text-[15px] font-extrabold tracking-[3px] text-gradient-brand">

@@ -2,15 +2,15 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { hierarchy, pack, treemap } from "d3";
 import { sankey, sankeyCenter, sankeyLinkHorizontal } from "d3-sankey";
 import type { SankeyLink, SankeyNode } from "d3-sankey";
-import { Trophy } from "lucide-react";
+import { RotateCcw, Trophy } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { formatMoney, formatPercent } from "./format";
 import {
   allocationMetricValue,
   displayAssetClass,
   displayHoldingName,
-  displayHoldingSubtitle,
   groupAllocationItems,
+  holdingTitleParts,
   isCashAssetClass,
   isOptionAssetClass,
   type AllocationDisplayMode,
@@ -69,6 +69,14 @@ type ChartViewProps = {
 
 function colorAt(index: number): string {
   return COLORS[index % COLORS.length];
+}
+
+function OptionTag() {
+  return (
+    <span className="shrink-0 rounded bg-[var(--clr-purple)]/20 px-1 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-[var(--clr-purple)]">
+      OPT
+    </span>
+  );
 }
 
 function visibleItems(allocation: MoonMarketAllocationItem[]): MoonMarketAllocationItem[] {
@@ -203,13 +211,6 @@ function truncateText(value: string, maxChars: number): string {
   return `${value.slice(0, Math.max(1, maxChars - 1))}...`;
 }
 
-function titleLines(item: MoonMarketAllocationItem): string[] {
-  const name = displayHoldingName(item);
-  if (!isOptionAssetClass(item.asset_class)) return [name];
-  const [symbol, expiration, strikeSide] = name.split(" ");
-  return [symbol, expiration, strikeSide].filter(Boolean);
-}
-
 function TreemapChart({ items, selectedConid, displayMode, onSelect }: ChartViewProps) {
   if (!items.length) return <EmptyChart />;
   return (
@@ -240,8 +241,15 @@ function TreemapChart({ items, selectedConid, displayMode, onSelect }: ChartView
               const titleSize = roomy ? Math.min(20, Math.max(14, tileWidth / 18)) : 12;
               const metricSize = roomy ? Math.min(30, Math.max(20, tileWidth / 13)) : 12;
               const titleChars = Math.max(3, Math.floor((tileWidth - 26) / (titleSize * 0.58)));
-              const subtitle = displayHoldingSubtitle(item);
-              const lines = titleLines(item);
+              const { primary, secondary } = holdingTitleParts(item);
+              // Anchor the title to the top and the metric/value to the bottom so
+              // multi-part option labels can never collide with the percentage.
+              const primaryY = leaf.y0 + (roomy ? 30 : 22);
+              const secondaryFont = roomy ? 12 : 10;
+              const secondaryY = primaryY + (roomy ? 18 : 14);
+              const showSecondary = Boolean(secondary) && tileHeight > 84;
+              const secondaryChars = Math.max(4, Math.floor((tileWidth - 26) / (secondaryFont * 0.6)));
+              const metricY = roomy ? leaf.y1 - 40 : leaf.y1 - 14;
               const clipId = `moonmarket-tile-${item.conid}`;
 
               return (
@@ -275,25 +283,27 @@ function TreemapChart({ items, selectedConid, displayMode, onSelect }: ChartView
                       <>
                         <text
                           x={leaf.x0 + 14}
-                          y={leaf.y0 + (roomy ? 30 : 25)}
+                          y={primaryY}
                           fill="var(--text-1)"
                           fontSize={titleSize}
                           fontWeight={800}
                         >
-                          {lines.map((line, index) => (
-                            <tspan key={`${item.conid}-${index}-${line}`} x={leaf.x0 + 14} dy={index === 0 ? 0 : titleSize + 2}>
-                              {truncateText(line, titleChars)}
-                            </tspan>
-                          ))}
+                          {truncateText(primary, titleChars)}
                         </text>
-                        {roomy && subtitle && !isOptionAssetClass(item.asset_class) ? (
-                          <text x={leaf.x0 + 14} y={leaf.y0 + 56} fill="var(--text-2)" fontSize={11}>
-                            {truncateText(subtitle, Math.max(8, Math.floor((tileWidth - 26) / 6)))}
+                        {showSecondary ? (
+                          <text
+                            x={leaf.x0 + 14}
+                            y={secondaryY}
+                            fill="var(--text-2)"
+                            fontSize={secondaryFont}
+                            className={isOptionAssetClass(item.asset_class) ? "font-data" : undefined}
+                          >
+                            {truncateText(secondary, secondaryChars)}
                           </text>
                         ) : null}
                         <text
                           x={leaf.x0 + 14}
-                          y={roomy ? leaf.y1 - 42 : leaf.y0 + 45}
+                          y={metricY}
                           fill="var(--text-1)"
                           fontSize={metricSize}
                           fontWeight={800}
@@ -309,7 +319,7 @@ function TreemapChart({ items, selectedConid, displayMode, onSelect }: ChartView
                       </>
                     ) : (
                       <text x={leaf.x0 + 8} y={leaf.y0 + tileHeight / 2} fill="var(--text-1)" fontSize={10} fontWeight={700}>
-                        {truncateText(displayHoldingName(item), Math.max(2, Math.floor(tileWidth / 10)))}
+                        {truncateText(primary, Math.max(2, Math.floor(tileWidth / 10)))}
                       </text>
                     )}
                   </g>
@@ -367,7 +377,7 @@ function DonutChart({ items, selectedConid, displayMode, onSelect, onClear }: Ch
           onKeyDown={(event) => {
             if (event.key === "Enter" || event.key === " ") onClear?.();
           }}
-          className="cursor-pointer"
+          className="cursor-pointer outline-none focus-visible:outline focus-visible:outline-1 focus-visible:outline-[var(--clr-cyan)]"
         />
       </svg>
       <div className="space-y-2">
@@ -384,6 +394,7 @@ function DonutChart({ items, selectedConid, displayMode, onSelect, onClear }: Ch
           >
             <div className="flex min-w-0 items-center gap-2">
               <span className="h-2.5 w-2.5 rounded-full" style={{ background: colorAt(index) }} />
+              {isOptionAssetClass(item.asset_class) ? <OptionTag /> : null}
               <span className="truncate text-[12px] font-medium">{displayHoldingName(item)}</span>
             </div>
             <span className="font-data text-[12px]" style={{ color: returnTextClass(item, displayMode) }}>
@@ -396,11 +407,44 @@ function DonutChart({ items, selectedConid, displayMode, onSelect, onClear }: Ch
   );
 }
 
+type BubbleColorMode = "category" | "pnl";
+
 function BubbleChart({ items, selectedConid, displayMode, onSelect }: ChartViewProps) {
   const [offsets, setOffsets] = useState<Record<number, { x: number; y: number }>>({});
+  const [colorMode, setColorMode] = useState<BubbleColorMode>("category");
   if (!items.length) return <EmptyChart />;
+  const hasOffsets = Object.values(offsets).some((offset) => offset.x !== 0 || offset.y !== 0);
   return (
-    <SvgFrame testId="moonmarket-chart-bubbles">
+    <div className="relative">
+      <div className="absolute right-3 top-3 z-10 flex items-center gap-2">
+        {hasOffsets ? (
+          <button
+            type="button"
+            onClick={() => setOffsets({})}
+            className="flex h-7 items-center gap-1 rounded-md border border-border bg-[var(--bg-2)]/90 px-2 text-[10px] font-medium text-[var(--text-3)] backdrop-blur hover:border-[var(--clr-cyan)] hover:text-[var(--clr-cyan)]"
+          >
+            <RotateCcw className="h-3 w-3" strokeWidth={1.8} />
+            Reset layout
+          </button>
+        ) : null}
+        <div className="flex h-7 items-center gap-1 rounded-md border border-border bg-[var(--bg-2)]/90 p-0.5 backdrop-blur">
+          {(["category", "pnl"] as const).map((mode) => (
+            <button
+              key={mode}
+              type="button"
+              aria-pressed={colorMode === mode}
+              onClick={() => setColorMode(mode)}
+              className={cn(
+                "h-6 rounded px-2 text-[10px] font-medium",
+                colorMode === mode ? "bg-[var(--clr-cyan)]/15 text-[var(--clr-cyan)]" : "text-[var(--text-3)]",
+              )}
+            >
+              {mode === "category" ? "Category" : "P&L"}
+            </button>
+          ))}
+        </div>
+      </div>
+      <SvgFrame testId="moonmarket-chart-bubbles">
       {({ width, height }) => {
         const root = pack<HierarchyDatum>()
           .size([width, height])
@@ -419,6 +463,9 @@ function BubbleChart({ items, selectedConid, displayMode, onSelect }: ChartViewP
               const item = leaf.data.item as DisplayAllocationItem;
               const offset = offsets[item.conid] ?? { x: 0, y: 0 };
               const selected = itemSelected(item, selectedConid);
+              // P&L mode recolors bubbles green/red by return sign so the field
+              // reads as a heat map; category mode keeps the rotating palette.
+              const bubbleColor = colorMode === "pnl" ? returnTextClass(item, displayMode) : colorAt(index);
               return (
                 <g
                   key={item.conid}
@@ -426,6 +473,13 @@ function BubbleChart({ items, selectedConid, displayMode, onSelect }: ChartViewP
                   aria-label={`Select ${displayHoldingName(item)}`}
                   tabIndex={0}
                   onClick={() => onSelect?.(item)}
+                  onDoubleClick={() =>
+                    setOffsets((current) => {
+                      if (!current[item.conid]) return current;
+                      const { [item.conid]: _removed, ...rest } = current;
+                      return rest;
+                    })
+                  }
                   onPointerDown={(event) => {
                     event.currentTarget.setPointerCapture(event.pointerId);
                   }}
@@ -457,39 +511,87 @@ function BubbleChart({ items, selectedConid, displayMode, onSelect }: ChartViewP
                     cx={leaf.x}
                     cy={leaf.y}
                     r={leaf.r}
-                    fill={colorAt(index)}
+                    fill={bubbleColor}
                     fillOpacity={selected ? 0.4 : 0.2}
-                    stroke={colorAt(index)}
+                    stroke={bubbleColor}
                     strokeWidth={selected ? 3 : 1.5}
                   />
-                  <text
-                    x={leaf.x}
-                    y={leaf.y - 4}
-                    textAnchor="middle"
-                    fill="var(--text-1)"
-                    fontSize={Math.max(11, Math.min(18, leaf.r / 3))}
-                    fontWeight={700}
-                    className="pointer-events-none"
-                  >
-                    {displayHoldingName(item)}
-                  </text>
-                  <text
-                    x={leaf.x}
-                    y={leaf.y + 15}
-                    textAnchor="middle"
-                    fill={returnTextClass(item, displayMode)}
-                    fontSize={Math.max(10, Math.min(13, leaf.r / 4))}
-                    className="pointer-events-none font-data"
-                  >
-                    {displayMetric(item, displayMode)}
-                  </text>
+                  {(() => {
+                    // Bubbles are circular and space-constrained, so this is the
+                    // one chart that can't render the full option contract. Show
+                    // the ticker only; the OPT tag keeps options distinguishable
+                    // and the strike/expiry detail appears solely in bubbles big
+                    // enough to hold it. Tiny bubbles drop labels to avoid spill.
+                    const { primary, secondary } = holdingTitleParts(item);
+                    const isOption = isOptionAssetClass(item.asset_class);
+                    const r = leaf.r;
+                    if (r < 16) return null;
+                    const nameSize = Math.max(11, Math.min(18, r / 3));
+                    const showOptTag = isOption && r >= 30;
+                    const showDetail = isOption && Boolean(secondary) && r >= 52;
+                    const showMetric = r >= 24;
+                    const metricY = showDetail ? leaf.y + 27 : leaf.y + 15;
+                    return (
+                      <>
+                        {showOptTag ? (
+                          <text
+                            x={leaf.x}
+                            y={leaf.y - 6 - nameSize}
+                            textAnchor="middle"
+                            fill="var(--clr-purple)"
+                            fontSize={9}
+                            fontWeight={800}
+                            className="pointer-events-none"
+                          >
+                            OPT
+                          </text>
+                        ) : null}
+                        <text
+                          x={leaf.x}
+                          y={leaf.y - 4}
+                          textAnchor="middle"
+                          fill="var(--text-1)"
+                          fontSize={nameSize}
+                          fontWeight={700}
+                          className="pointer-events-none"
+                        >
+                          {primary}
+                        </text>
+                        {showDetail ? (
+                          <text
+                            x={leaf.x}
+                            y={leaf.y + 12}
+                            textAnchor="middle"
+                            fill="var(--text-3)"
+                            fontSize={Math.max(9, Math.min(12, r / 6))}
+                            className="pointer-events-none font-data"
+                          >
+                            {secondary}
+                          </text>
+                        ) : null}
+                        {showMetric ? (
+                          <text
+                            x={leaf.x}
+                            y={metricY}
+                            textAnchor="middle"
+                            fill={returnTextClass(item, displayMode)}
+                            fontSize={Math.max(10, Math.min(13, r / 4))}
+                            className="pointer-events-none font-data"
+                          >
+                            {displayMetric(item, displayMode)}
+                          </text>
+                        ) : null}
+                      </>
+                    );
+                  })()}
                 </g>
               );
             })}
           </>
         );
       }}
-    </SvgFrame>
+      </SvgFrame>
+    </div>
   );
 }
 
@@ -512,8 +614,11 @@ function leaderDisplay(item: MoonMarketAllocationItem, sortMode: LeaderSortMode)
 }
 
 function LeadersChart({ items, selectedConid, leaderSortMode, onSelect }: ChartViewProps) {
-  if (!items.length) return <EmptyChart />;
-  const sorted = [...items].sort((a, b) => leaderSortValue(b, leaderSortMode) - leaderSortValue(a, leaderSortMode));
+  // "Others" is a synthetic aggregate, not a real holding — it must never rank
+  // as a leader, so drop grouped rows before sorting the podium and table.
+  const ranked = items.filter((item) => !item.grouped_children?.length && item.asset_class !== "GROUP");
+  if (!ranked.length) return <EmptyChart />;
+  const sorted = [...ranked].sort((a, b) => leaderSortValue(b, leaderSortMode) - leaderSortValue(a, leaderSortMode));
   const top = sorted.slice(0, 3);
   const rest = sorted.slice(3);
   return (
@@ -555,8 +660,21 @@ function LeadersChart({ items, selectedConid, leaderSortMode, onSelect }: ChartV
                   )}
                   strokeWidth={1.7}
                 />
-                <span className="min-w-0">
-                  <span className="block truncate text-[13px] font-semibold">{displayHoldingName(item)}</span>
+                <span className="min-w-0 max-w-full">
+                  <span className="flex items-center justify-center gap-1">
+                    {isOptionAssetClass(item.asset_class) ? <OptionTag /> : null}
+                    <span className="truncate text-[13px] font-semibold">{holdingTitleParts(item).primary}</span>
+                  </span>
+                  {holdingTitleParts(item).secondary ? (
+                    <span
+                      className={cn(
+                        "mt-0.5 block truncate text-[10px] text-[var(--text-3)]",
+                        isOptionAssetClass(item.asset_class) && "font-data",
+                      )}
+                    >
+                      {holdingTitleParts(item).secondary}
+                    </span>
+                  ) : null}
                   <span className="mt-1 block font-data text-[16px]">{leaderDisplay(item, leaderSortMode)}</span>
                   <span className="mt-1 block font-data text-[11px] text-[var(--text-3)]">{formatMoney(item.value)}</span>
                 </span>
@@ -664,12 +782,15 @@ function FlowChart({ items, selectedConid, displayMode, onSelect }: ChartViewPro
               const y0 = node.y0 ?? 0;
               const y1 = node.y1 ?? 0;
               const centerY = (y0 + y1) / 2;
+              const isOption = item ? isOptionAssetClass(item.asset_class) : false;
               const labelX = x1 + 12;
-              const valueX = Math.min(width - 14, x1 + labelColumnWidth - 10);
-              const name = item ? displayHoldingName(item) : "Portfolio";
-              const value = item
-                ? `${formatMoney(item.value)}   ${displayMetric(item, displayMode)}`
-                : formatMoney(items.reduce((sum, current) => sum + current.value, 0));
+              // Reserve a fixed gutter for the OPT tag so option/stock names align.
+              const nameX = isOption ? labelX + 26 : labelX;
+              // Right-align value and %-gain into two distinct columns with a real
+              // gap so they never run together like the old single string did.
+              const percentX = Math.min(width - 14, x1 + labelColumnWidth - 10);
+              const valueX = percentX - 66;
+              const name = item ? holdingTitleParts(item).primary : "Portfolio";
 
               return (
                 <g
@@ -696,27 +817,66 @@ function FlowChart({ items, selectedConid, displayMode, onSelect }: ChartViewPro
                     stroke={node.color}
                     strokeWidth={selected ? 3 : 1.5}
                   />
+                  {isOption ? (
+                    <text
+                      x={labelX}
+                      y={centerY + 4}
+                      fill="var(--clr-purple)"
+                      fontSize={9}
+                      fontWeight={800}
+                      className="pointer-events-none"
+                    >
+                      OPT
+                    </text>
+                  ) : null}
                   <text
-                    x={labelX}
+                    x={nameX}
                     y={centerY + 4}
                     fill="var(--text-1)"
                     fontSize={isPortfolio ? 16 : 13}
                     fontWeight={800}
                     className="pointer-events-none"
                   >
-                    {truncateText(name, isPortfolio ? 16 : 14)}
+                    {truncateText(name, isPortfolio ? 16 : 12)}
                   </text>
-                  <text
-                    x={valueX}
-                    y={centerY + 4}
-                    textAnchor="end"
-                    fill={item ? "var(--text-2)" : "var(--text-2)"}
-                    fontSize={isPortfolio ? 12 : 11}
-                    fontWeight={600}
-                    className="pointer-events-none font-data"
-                  >
-                    {value}
-                  </text>
+                  {isPortfolio ? (
+                    <text
+                      x={percentX}
+                      y={centerY + 4}
+                      textAnchor="end"
+                      fill="var(--text-2)"
+                      fontSize={12}
+                      fontWeight={600}
+                      className="pointer-events-none font-data"
+                    >
+                      {formatMoney(items.reduce((sum, current) => sum + current.value, 0))}
+                    </text>
+                  ) : (
+                    <>
+                      <text
+                        x={valueX}
+                        y={centerY + 4}
+                        textAnchor="end"
+                        fill="var(--text-2)"
+                        fontSize={11}
+                        fontWeight={600}
+                        className="pointer-events-none font-data"
+                      >
+                        {formatMoney(item!.value)}
+                      </text>
+                      <text
+                        x={percentX}
+                        y={centerY + 4}
+                        textAnchor="end"
+                        fill={returnTextClass(item!, displayMode)}
+                        fontSize={11}
+                        fontWeight={700}
+                        className="pointer-events-none font-data"
+                      >
+                        {displayMetric(item!, displayMode)}
+                      </text>
+                    </>
+                  )}
                 </g>
               );
             })}
