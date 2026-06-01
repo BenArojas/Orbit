@@ -14,7 +14,7 @@ import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { readChartTheme } from "@/components/charts/chartTheme";
 import { useCrosshairStore } from "@/store";
 import type { CandleData } from "@/lib/api";
-import type { Layout } from "@/store/compare";
+import { DEFAULT_COMPARE_COLORS, type CompareColors, type Layout } from "@/store/compare";
 import type { CompareLiveTick } from "@/hooks/useCompareData";
 
 const CROSSHAIR_COLOR = "rgba(0, 212, 255, 0.4)";
@@ -22,8 +22,6 @@ const CROSSHAIR_LABEL_BG = "#0f1724";
 const STOCK_PRICE_SCALE_ID = "right";
 const REF_PRICE_SCALE_ID = "left";
 
-const STOCK_LINE_COLOR = "#ffffff";
-const REF_LINE_COLOR = "#6ee884";
 const LINE_WIDTH = 2;
 
 export interface CompareChartProps {
@@ -34,6 +32,7 @@ export interface CompareChartProps {
   refSymbol: string;
   stockLiveTick: CompareLiveTick | null;
   refLiveTick: CompareLiveTick | null;
+  colors?: CompareColors;
 }
 
 function toLineData(c: CandleData): LineData<Time> {
@@ -48,6 +47,7 @@ export default function CompareChart({
   refSymbol,
   stockLiveTick,
   refLiveTick,
+  colors = DEFAULT_COMPARE_COLORS,
 }: CompareChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
@@ -109,7 +109,7 @@ export default function CompareChart({
 
     if (showStock) {
       const stockSeries = chart.addSeries(LineSeries, {
-        color: STOCK_LINE_COLOR,
+        color: colors.stock,
         lineWidth: LINE_WIDTH,
         priceScaleId: STOCK_PRICE_SCALE_ID,
         priceLineVisible: true,
@@ -121,7 +121,7 @@ export default function CompareChart({
 
     if (showRef) {
       const refSeries = chart.addSeries(LineSeries, {
-        color: REF_LINE_COLOR,
+        color: colors.reference,
         lineWidth: LINE_WIDTH,
         priceScaleId: REF_PRICE_SCALE_ID,
         priceLineVisible: true,
@@ -171,6 +171,18 @@ export default function CompareChart({
       refSeriesRef.current = null;
     };
   }, [layout, chartId, broadcastHovered, showStock, showRef]);
+
+  // Color changes should not rebuild the chart. Rebuilding creates fresh
+  // series refs while cached candle arrays stay referentially unchanged, so
+  // setData does not re-fire and one side of the compare chart can disappear.
+  useEffect(() => {
+    if (showStock) {
+      stockSeriesRef.current?.applyOptions({ color: colors.stock });
+    }
+    if (showRef) {
+      refSeriesRef.current?.applyOptions({ color: colors.reference });
+    }
+  }, [colors.stock, colors.reference, showStock, showRef]);
 
   // Update data — layout in deps so effects re-fire when chart rebuilds on layout change (black chart fix)
   useEffect(() => {
@@ -253,7 +265,7 @@ export default function CompareChart({
           </div>
         )}
         {legend.ref && (
-          <div className="text-[#6ee884]">
+          <div style={{ color: colors.reference }}>
             <span className="font-bold">{refSymbol}</span>{" "}
             O {fmt(legend.ref.open)}  H {fmt(legend.ref.high)}  L {fmt(legend.ref.low)}  C {fmt(legend.ref.close)}
           </div>

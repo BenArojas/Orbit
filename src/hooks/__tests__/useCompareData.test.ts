@@ -79,8 +79,21 @@ describe("useCompareData — overlay layout", () => {
 
     const queryCache = client.getQueryCache();
     const keys = queryCache.getAll().map((q) => q.queryKey);
-    expect(keys).toContainEqual(["candles", 265598, "5m", "3M"]);
-    expect(keys).toContainEqual(["candles", 320227571, "5m", "3M"]);
+    expect(keys).toContainEqual(["candles", 265598, "5m", "5D"]);
+    expect(keys).toContainEqual(["candles", 320227571, "5m", "5D"]);
+  });
+
+  it("uses the same EMA-200-safe period defaults as the main chart", async () => {
+    const client = makeClient();
+    renderHook(() => useCompareData(265598, 320227571, "1D", "overlay"), {
+      wrapper: wrapper(client),
+    });
+
+    await waitFor(() => expect(mockComputeIndicators).toHaveBeenCalledTimes(2));
+
+    for (const call of mockComputeIndicators.mock.calls) {
+      expect(call[0].history_period).toBe("1Y");
+    }
   });
 
   it("subscribes to both conids via WS", async () => {

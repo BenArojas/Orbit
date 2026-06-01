@@ -27,6 +27,8 @@ function makeRows(n: number, offset = 0): ScreenerResultRow[] {
     last_price: 100 + i,
     change_percent: i % 2 === 0 ? 1.5 : -2.3,
     volume: 1_000_000 * (i + 1),
+    scan_data: null,
+    scan_data_label: null,
   }));
 }
 

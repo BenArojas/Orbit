@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
+
 import pytest
 
 from services.db import DatabaseService
@@ -48,6 +50,9 @@ async def test_fills_table_upserts_and_lists_recent_fills():
         "raw_json",
     }
 
+    old_trade_time = datetime.now(timezone.utc).replace(microsecond=0) - timedelta(days=2)
+    new_trade_time = datetime.now(timezone.utc).replace(microsecond=0) - timedelta(days=1)
+
     inserted = await svc.upsert_fills(
         [
             {
@@ -62,8 +67,8 @@ async def test_fills_table_upserts_and_lists_recent_fills():
                 "net_amount": -180.0,
                 "commission": 1.0,
                 "sec_type": "STK",
-                "trade_time": "2026-05-25T10:00:00+00:00",
-                "trade_time_ms": 1779703200000,
+                "trade_time": old_trade_time.isoformat(),
+                "trade_time_ms": int(old_trade_time.timestamp() * 1000),
                 "raw_json": {"source": "old"},
             },
             {
@@ -78,8 +83,8 @@ async def test_fills_table_upserts_and_lists_recent_fills():
                 "net_amount": 1100.0,
                 "commission": 1.25,
                 "sec_type": "ETF",
-                "trade_time": "2026-05-26T10:00:00+00:00",
-                "trade_time_ms": 1779789600000,
+                "trade_time": new_trade_time.isoformat(),
+                "trade_time_ms": int(new_trade_time.timestamp() * 1000),
                 "raw_json": {"source": "new"},
             },
             {
@@ -107,8 +112,8 @@ async def test_fills_table_upserts_and_lists_recent_fills():
                 "net_amount": -543.0,
                 "commission": 1.5,
                 "sec_type": "STK",
-                "trade_time": "2026-05-25T10:00:00+00:00",
-                "trade_time_ms": 1779703200000,
+                "trade_time": old_trade_time.isoformat(),
+                "trade_time_ms": int(old_trade_time.timestamp() * 1000),
                 "raw_json": {"source": "updated"},
             }
         ]

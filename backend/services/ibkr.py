@@ -2089,9 +2089,9 @@ class IBKRService:
 
                     # Start heartbeat
                     heartbeat_task = asyncio.create_task(self._ws_heartbeat())
-                    # Start 10-minute subscription refresh — IBKR auto-terminates
-                    # market-data streams after 15 minutes per their docs. Sending
-                    # a fresh smd+conid+{fields} every 10 minutes resets the clock.
+                    # Start 10-minute subscription refresh — IBKR terminates
+                    # smd market-data streams after 10 minutes per the current
+                    # Web API changelog. Sending a fresh smd request renews it.
                     refresh_task = asyncio.create_task(self._ws_refresh_subscriptions())
 
                     # Phase 8 / Task 2.5: subscribe to the IBKR system sts topic
@@ -2167,9 +2167,9 @@ class IBKRService:
     async def _ws_refresh_subscriptions(self) -> None:
         """Re-send active smd subscriptions every 10 minutes.
 
-        IBKR's docs state market data streams terminate after 15 minutes and
-        the client must send a new subscribe request after 10 minutes to keep
-        receiving data. Without this, live ticks silently die after ~15 min.
+        IBKR's current docs state market data streams terminate after 10
+        minutes and the client must send a new subscribe request to continue
+        receiving data. Without this, live ticks silently die.
         """
         while self.state.ws_connected:
             try:
@@ -2313,6 +2313,8 @@ class IBKRService:
             "last": _safe_float(last_price),
             "bid": _safe_float(msg.get("84")),
             "ask": _safe_float(msg.get("86")),
+            "bidSize": _safe_float(msg.get("88")),
+            "askSize": _safe_float(msg.get("85")),
             "change_pct": _safe_float(msg.get("83")),
             "change_amt": _safe_float(msg.get("82")),
             "high": _safe_float(msg.get("70")),

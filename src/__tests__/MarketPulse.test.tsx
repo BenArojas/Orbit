@@ -124,13 +124,13 @@ function renderPulse(qc: QueryClient) {
 describe("MarketPulse — Task 3.1 bundled endpoints", () => {
   beforeEach(() => {
     // Wire store mock to return the 3-item config.
-    (usePulseConfigStore as ReturnType<typeof vi.fn>).mockImplementation(
+    (usePulseConfigStore as unknown as ReturnType<typeof vi.fn>).mockImplementation(
       (selector: (s: { items: PulseItem[] }) => unknown) =>
         selector({ items: ITEMS }),
     );
 
     // Wire navigation store mock.
-    (useNavigationStore as ReturnType<typeof vi.fn>).mockImplementation(
+    (useNavigationStore as unknown as ReturnType<typeof vi.fn>).mockImplementation(
       () => vi.fn(),
     );
 
@@ -218,7 +218,7 @@ describe("MarketPulse — Task 3.1 bundled endpoints", () => {
   });
 
   it("renders nothing (empty div) when the item list is empty", () => {
-    (usePulseConfigStore as ReturnType<typeof vi.fn>).mockImplementation(
+    (usePulseConfigStore as unknown as ReturnType<typeof vi.fn>).mockImplementation(
       (selector: (s: { items: PulseItem[] }) => unknown) =>
         selector({ items: [] }),
     );

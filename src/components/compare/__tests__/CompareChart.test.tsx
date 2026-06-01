@@ -6,16 +6,18 @@ const mockApplyOptions = vi.fn();
 const mockSetData = vi.fn();
 const mockUpdate = vi.fn();
 const mockRemove = vi.fn();
-const mockAddSeries = vi.fn(() => ({
+const mockSeriesApplyOptions = vi.fn();
+const mockAddSeries = vi.fn((..._args: unknown[]) => ({
   setData: mockSetData,
   update: mockUpdate,
-  applyOptions: vi.fn(),
+  applyOptions: mockSeriesApplyOptions,
 }));
 const mockPriceScale = vi.fn(() => ({ applyOptions: mockApplyOptions }));
 const mockSubscribeCrosshairMove = vi.fn();
 const mockUnsubscribeCrosshairMove = vi.fn();
 const mockSubscribeClick = vi.fn();
 const mockUnsubscribeClick = vi.fn();
+const mockBroadcastHovered = vi.fn();
 const mockTimeScale = vi.fn(() => ({
   applyOptions: vi.fn(),
   fitContent: vi.fn(),
@@ -61,7 +63,7 @@ vi.mock("@/components/charts/chartTheme", () => ({
 // Mock the crosshair store — find the correct import path
 vi.mock("@/store", () => ({
   useCrosshairStore: (selector: (s: { setHovered: () => void; time: null; source: null }) => unknown) =>
-    selector({ setHovered: vi.fn(), time: null, source: null }),
+    selector({ setHovered: mockBroadcastHovered, time: null, source: null }),
 }));
 
 const CANDLES = [
@@ -105,6 +107,60 @@ describe("CompareChart — overlay layout", () => {
     );
     // 1 stock line + 1 ref line = 2 addSeries calls
     expect(mockAddSeries).toHaveBeenCalledTimes(2);
+  });
+
+  it("uses configurable stock and reference line colors", () => {
+    render(
+      <CompareChart
+        layout="overlay"
+        stockCandles={CANDLES}
+        refCandles={REF_CANDLES}
+        stockSymbol="AAPL"
+        refSymbol="SPY"
+        stockLiveTick={null}
+        refLiveTick={null}
+        colors={{ stock: "#38bdf8", reference: "#f97316" }}
+      />,
+    );
+
+    expect(mockAddSeries.mock.calls[0][1]).toMatchObject({ color: "#38bdf8" });
+    expect(mockAddSeries.mock.calls[1][1]).toMatchObject({ color: "#f97316" });
+  });
+
+  it("updates colors without rebuilding the chart or clearing existing series data", () => {
+    const { rerender } = render(
+      <CompareChart
+        layout="overlay"
+        stockCandles={CANDLES}
+        refCandles={REF_CANDLES}
+        stockSymbol="AAPL"
+        refSymbol="SPY"
+        stockLiveTick={null}
+        refLiveTick={null}
+        colors={{ stock: "#38bdf8", reference: "#f97316" }}
+      />,
+    );
+    expect(mockAddSeries).toHaveBeenCalledTimes(2);
+    expect(mockSetData).toHaveBeenCalledTimes(2);
+
+    rerender(
+      <CompareChart
+        layout="overlay"
+        stockCandles={CANDLES}
+        refCandles={REF_CANDLES}
+        stockSymbol="AAPL"
+        refSymbol="SPY"
+        stockLiveTick={null}
+        refLiveTick={null}
+        colors={{ stock: "#0ea5e9", reference: "#a21caf" }}
+      />,
+    );
+
+    expect(mockRemove).not.toHaveBeenCalled();
+    expect(mockAddSeries).toHaveBeenCalledTimes(2);
+    expect(mockSetData).toHaveBeenCalledTimes(2);
+    expect(mockSeriesApplyOptions).toHaveBeenCalledWith({ color: "#0ea5e9" });
+    expect(mockSeriesApplyOptions).toHaveBeenCalledWith({ color: "#a21caf" });
   });
 
   it("sets both price scales to Mode.Normal (Regular)", () => {

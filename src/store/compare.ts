@@ -31,9 +31,15 @@ export interface ComparePane {
   reference: CompareReference;
 }
 
+export interface CompareColors {
+  stock: string;
+  reference: string;
+}
+
 interface CompareState {
   active: boolean;
   panes: ComparePane[];
+  colors: CompareColors;
 
   enter: (initialTimeframe: Timeframe) => void;
   exit: () => void;
@@ -46,6 +52,7 @@ interface CompareState {
   removePane: (id: string) => void;
   setPaneLayout: (id: string, layout: Layout) => void;
   setPaneTimeframe: (id: string, tf: Timeframe) => void;
+  setColors: (colors: Partial<CompareColors>) => void;
 
   /** Test-only reset. Not part of the runtime API. */
   __resetForTests: () => void;
@@ -53,6 +60,10 @@ interface CompareState {
 
 export const MAX_PANES = 3;
 export const DEFAULT_REFERENCE: CompareReference = { symbol: "SPY", conid: null };
+export const DEFAULT_COMPARE_COLORS: CompareColors = {
+  stock: "#38bdf8",
+  reference: "#f97316",
+};
 
 function newPaneId(): string {
   // crypto.randomUUID is available in modern browsers and Tauri's webview.
@@ -62,6 +73,7 @@ function newPaneId(): string {
 const initialState = {
   active: false,
   panes: [] as ComparePane[],
+  colors: DEFAULT_COMPARE_COLORS,
 };
 
 export const useCompareStore = create<CompareState>()(
@@ -147,12 +159,17 @@ export const useCompareStore = create<CompareState>()(
           panes: state.panes.map((p) => (p.id === id ? { ...p, timeframe: tf } : p)),
         })),
 
+      setColors: (colors) =>
+        set((state) => ({
+          colors: { ...state.colors, ...colors },
+        })),
+
       __resetForTests: () => set({ ...initialState, panes: [] }),
     }),
     {
       name: "parallax-compare-store",
       storage: createJSONStorage(() => localStorage),
-      version: 3,
+      version: 4,
       // Migration history:
       //   v0/v1 → v2: single top-level reference spread per-pane
       //   v2 → v3: marker feature removed (markers/markerMode dropped silently)
@@ -163,6 +180,7 @@ export const useCompareStore = create<CompareState>()(
           panes?: Array<Partial<ComparePane>>;
           markers?: unknown;
           markerMode?: unknown;
+          colors?: Partial<CompareColors>;
         };
         if (version < 2) {
           const legacyRef = p.reference ?? { ...DEFAULT_REFERENCE };
@@ -183,6 +201,12 @@ export const useCompareStore = create<CompareState>()(
           const { markers: _m, markerMode: _mm, ...rest } = p;
           p = rest;
         }
+        if (version < 4) {
+          p = {
+            ...p,
+            colors: { ...DEFAULT_COMPARE_COLORS, ...(p.colors ?? {}) },
+          };
+        }
         return p;
       },
       partialize: (state) => ({
@@ -193,6 +217,7 @@ export const useCompareStore = create<CompareState>()(
           ...p,
           reference: { symbol: p.reference.symbol, conid: null },
         })),
+        colors: state.colors,
       }),
     },
   ),

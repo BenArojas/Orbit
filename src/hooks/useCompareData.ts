@@ -25,6 +25,7 @@ import { useIbkrReady } from "@/context/GatewayContext";
 import { useWebSocket, type WsMessage } from "./useWebSocket";
 import type { Timeframe } from "@/store/chart";
 import type { Layout } from "@/store/compare";
+import { chartHistoryPeriodForTimeframe } from "./historyPeriods";
 
 // ── Types ────────────────────────────────────────────────────
 
@@ -46,7 +47,7 @@ interface UseCompareDataResult {
 
 // ── Constants ────────────────────────────────────────────────
 
-const HISTORY_PERIOD = "3M";
+const DEFAULT_COMPARE_PERIOD = "3M";
 
 // ── Hook ─────────────────────────────────────────────────────
 
@@ -61,6 +62,7 @@ export function useCompareData(
 
   const wantsStock = layout !== "refOnly";
   const wantsRef = layout !== "stockOnly";
+  const historyPeriod = chartHistoryPeriodForTimeframe(timeframe, DEFAULT_COMPARE_PERIOD);
 
   // ── TanStack Query: fetch candles ─────────────────────────
   //
@@ -69,13 +71,13 @@ export function useCompareData(
   // with the main chart and avoid redundant network requests.
 
   const stockQuery = useQuery<IndicatorComputeResponse>({
-    queryKey: ["candles", stockConid, timeframe, HISTORY_PERIOD],
+    queryKey: ["candles", stockConid, timeframe, historyPeriod],
     queryFn: ({ signal }) =>
       api.computeIndicators({
         conid: stockConid!,
         timeframe,
         indicators: [],
-        history_period: HISTORY_PERIOD,
+        history_period: historyPeriod,
       }, signal),
     enabled: ibkrReady && wantsStock && stockConid != null,
     staleTime: 60_000,
@@ -84,13 +86,13 @@ export function useCompareData(
   });
 
   const refQuery = useQuery<IndicatorComputeResponse>({
-    queryKey: ["candles", refConid, timeframe, HISTORY_PERIOD],
+    queryKey: ["candles", refConid, timeframe, historyPeriod],
     queryFn: ({ signal }) =>
       api.computeIndicators({
         conid: refConid!,
         timeframe,
         indicators: [],
-        history_period: HISTORY_PERIOD,
+        history_period: historyPeriod,
       }, signal),
     enabled: ibkrReady && wantsRef && refConid != null,
     staleTime: 60_000,

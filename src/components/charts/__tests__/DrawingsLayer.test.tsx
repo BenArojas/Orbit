@@ -25,7 +25,7 @@
  *     (simulated by keeping same conid but re-rendering with new candle data)
  */
 
-import { describe, it, expect, vi, beforeEach, type Mock } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, act } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { createElement, createRef } from "react";
@@ -43,7 +43,9 @@ const mockRemoveDrawing = vi.fn();
 const mockSelectDrawing = vi.fn();
 const mockDeselectAll   = vi.fn();
 const mockSetActiveTool = vi.fn();
-const mockGetAllDrawings = vi.fn(() => []);
+type ManagedDrawingStub = { id: string; updateOptions: ReturnType<typeof vi.fn> };
+
+const mockGetAllDrawings = vi.fn<() => ManagedDrawingStub[]>(() => []);
 const mockOn = vi.fn((_event: string, _cb: unknown) => vi.fn()); // returns unsub fn
 
 vi.mock("@/lib/drawings", () => {
@@ -132,11 +134,6 @@ function makeDrawing(id: number): Drawing {
   };
 }
 
-function makeWrapper(client: QueryClient) {
-  return ({ children }: { children: React.ReactNode }) =>
-    createElement(QueryClientProvider, { client }, children);
-}
-
 function renderLayer(
   props: Partial<React.ComponentProps<typeof DrawingsLayer>> = {},
   client?: QueryClient,
@@ -145,7 +142,6 @@ function renderLayer(
   const series = makeSeriesStub() as unknown as Parameters<typeof DrawingsLayer>[0]["series"];
   const containerRef = createRef<HTMLDivElement>();
   const div = document.createElement("div");
-  // @ts-expect-error — assign current manually for testing
   containerRef.current = div;
 
   const qc = client ?? new QueryClient();
@@ -242,7 +238,6 @@ describe("DrawingsLayer", () => {
     const chart = makeChartStub();
     const series = makeSeriesStub(200.0);
     const containerRef = createRef<HTMLDivElement>();
-    // @ts-expect-error
     containerRef.current = document.createElement("div");
 
     const qc = new QueryClient();
@@ -279,7 +274,6 @@ describe("DrawingsLayer", () => {
     const chart = makeChartStub();
     const series = makeSeriesStub();
     const containerRef = createRef<HTMLDivElement>();
-    // @ts-expect-error
     containerRef.current = document.createElement("div");
 
     const qc = new QueryClient();
@@ -402,7 +396,6 @@ describe("DrawingsLayer", () => {
     // Price reported by series = 175.34; candle close = 175.3 → should snap to 175.3
     const series = makeSeriesStub(175.34);
     const containerRef = createRef<HTMLDivElement>();
-    // @ts-expect-error
     containerRef.current = document.createElement("div");
 
     const qc = new QueryClient();
@@ -450,7 +443,6 @@ describe("DrawingsLayer", () => {
     const chart = makeChartStub();
     const series = makeSeriesStub(200.0);
     const containerRef = createRef<HTMLDivElement>();
-    // @ts-expect-error
     containerRef.current = document.createElement("div");
 
     const qc = new QueryClient();
@@ -494,7 +486,6 @@ describe("DrawingsLayer", () => {
     const chart = makeChartStub();
     const series = makeSeriesStub(150.0);
     const containerRef = createRef<HTMLDivElement>();
-    // @ts-expect-error
     containerRef.current = document.createElement("div");
 
     const qc = new QueryClient();
@@ -535,7 +526,6 @@ describe("DrawingsLayer", () => {
     const chart = makeChartStub();
     const series = makeSeriesStub(180.0);
     const containerRef = createRef<HTMLDivElement>();
-    // @ts-expect-error
     containerRef.current = document.createElement("div");
 
     const qc = new QueryClient();
@@ -577,7 +567,6 @@ describe("DrawingsLayer", () => {
     const chart = makeChartStub();
     const series = makeSeriesStub(175.34);
     const containerRef = createRef<HTMLDivElement>();
-    // @ts-expect-error
     containerRef.current = document.createElement("div");
 
     const qc = new QueryClient();

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
 import type {
   MoonMarketOrderDraft,
@@ -6,6 +7,8 @@ import type {
   MoonMarketOrderType,
   MoonMarketTimeInForce,
 } from "@/lib/api";
+import { api } from "@/lib/api";
+import { useWebSocket, type WsMessage } from "@/hooks/useWebSocket";
 import { useAccountStore } from "./useAccountStore";
 import { useModifyOrder, usePlaceOrder, usePreviewOrder, useReplyOrder } from "./useOrderMutations";
 import type { OrderTicketTarget } from "./useOrderTicketStore";
@@ -36,8 +39,30 @@ function newClientOrderId(): string {
   return `brkt-${globalThis.crypto?.randomUUID?.() ?? Date.now().toString(36)}`;
 }
 
+function formatQuoteNumber(value: number | null | undefined, digits = 2): string {
+  return value == null ? "—" : value.toLocaleString("en-US", {
+    minimumFractionDigits: digits,
+    maximumFractionDigits: digits,
+  });
+}
+
+function formatSize(value: number | null | undefined): string {
+  return value == null ? "—" : value.toLocaleString("en-US", { maximumFractionDigits: 0 });
+}
+
+function liveNumber(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
 type OrderFormProps = {
   target: OrderTicketTarget;
+};
+
+type LiveBook = {
+  bid: number | null;
+  ask: number | null;
+  bidSize: number | null;
+  askSize: number | null;
 };
 
 export function OrderForm({ target }: OrderFormProps) {
@@ -51,9 +76,16 @@ export function OrderForm({ target }: OrderFormProps) {
   const [tif, setTif] = useState<MoonMarketTimeInForce>("DAY");
   const [price, setPrice] = useState("");
   const [auxPrice, setAuxPrice] = useState("");
-  const [bracket, setBracket] = useState(false);
+  const [takeProfitEnabled, setTakeProfitEnabled] = useState(false);
+  const [stopLossEnabled, setStopLossEnabled] = useState(false);
   const [profitTakerPrice, setProfitTakerPrice] = useState("");
   const [stopLossPrice, setStopLossPrice] = useState("");
+  const [liveBook, setLiveBook] = useState<LiveBook>({
+    bid: null,
+    ask: null,
+    bidSize: null,
+    askSize: null,
+  });
   const [previewResult, setPreviewResult] = useState<unknown>(null);
   const [actionResult, setActionResult] = useState<unknown>(null);
   const [replyId, setReplyId] = useState<string | null>(null);
@@ -62,7 +94,20 @@ export function OrderForm({ target }: OrderFormProps) {
   const placeMutation = usePlaceOrder();
   const modifyMutation = useModifyOrder();
   const replyMutation = useReplyOrder();
+  const { subscribe, unsubscribe, addHandler } = useWebSocket();
   const liveBlocked = selectedAccount ? !selectedAccount.is_paper : true;
+  const quoteQuery = useQuery({
+    queryKey: ["market", "quote", target.conid],
+    queryFn: ({ signal }) => api.quote(target.conid, signal),
+    staleTime: 10_000,
+  });
+  const quote = quoteQuery.data;
+  const book = {
+    bid: liveBook.bid ?? quote?.bid,
+    ask: liveBook.ask ?? quote?.ask,
+    bidSize: liveBook.bidSize ?? quote?.bidSize,
+    askSize: liveBook.askSize ?? quote?.askSize,
+  };
 
   useEffect(() => {
     setSide(target.side ?? "BUY");
@@ -71,11 +116,33 @@ export function OrderForm({ target }: OrderFormProps) {
     setTif(target.draft?.tif ?? "DAY");
     setPrice(target.draft?.price ? String(target.draft.price) : "");
     setAuxPrice(target.draft?.auxPrice ? String(target.draft.auxPrice) : "");
-    setBracket(false);
+    setTakeProfitEnabled(false);
+    setStopLossEnabled(false);
+    setProfitTakerPrice("");
+    setStopLossPrice("");
+    setLiveBook({ bid: null, ask: null, bidSize: null, askSize: null });
     setPreviewResult(null);
     setActionResult(null);
     setReplyId(null);
   }, [target]);
+
+  useEffect(() => {
+    subscribe(target.conid);
+    return () => unsubscribe(target.conid);
+  }, [subscribe, target.conid, unsubscribe]);
+
+  useEffect(() => {
+    const remove = addHandler((msg: WsMessage) => {
+      if (msg.type !== "market_data" || msg.conid !== target.conid) return;
+      setLiveBook((prev) => ({
+        bid: liveNumber(msg.bid) ?? prev.bid,
+        ask: liveNumber(msg.ask) ?? prev.ask,
+        bidSize: liveNumber(msg.bidSize) ?? prev.bidSize,
+        askSize: liveNumber(msg.askSize) ?? prev.askSize,
+      }));
+    });
+    return remove;
+  }, [addHandler, target.conid]);
 
   const baseOrder = useMemo<MoonMarketOrderDraft>(() => ({
     conid: target.conid,
@@ -89,18 +156,22 @@ export function OrderForm({ target }: OrderFormProps) {
   }), [assetClass, auxPrice, orderType, price, quantity, side, target.conid, tif]);
 
   const buildOrders = (): MoonMarketOrderDraft[] => {
-    if (optionTarget || !bracket) return [baseOrder];
+    if (optionTarget || (!takeProfitEnabled && !stopLossEnabled)) return [baseOrder];
     const profitPrice = numberOrUndefined(profitTakerPrice);
     const stopPrice = numberOrUndefined(stopLossPrice);
-    if (!profitPrice || !stopPrice) {
-      toast.error("Both bracket prices are required.");
+    if (takeProfitEnabled && !profitPrice) {
+      toast.error("Profit taker price is required.");
+      return [];
+    }
+    if (stopLossEnabled && !stopPrice) {
+      toast.error("Stop loss price is required.");
       return [];
     }
     const parentId = newClientOrderId();
     const oppositeSide: MoonMarketOrderSide = side === "BUY" ? "SELL" : "BUY";
-    return [
-      { ...baseOrder, cOID: parentId },
-      {
+    const orders: MoonMarketOrderDraft[] = [{ ...baseOrder, cOID: parentId }];
+    if (takeProfitEnabled && profitPrice) {
+      orders.push({
         conid: target.conid,
         assetClass: "STK",
         parentId,
@@ -110,8 +181,10 @@ export function OrderForm({ target }: OrderFormProps) {
         tif: "GTC",
         price: profitPrice,
         isSingleGroup: true,
-      },
-      {
+      });
+    }
+    if (stopLossEnabled && stopPrice) {
+      orders.push({
         conid: target.conid,
         assetClass: "STK",
         parentId,
@@ -121,8 +194,9 @@ export function OrderForm({ target }: OrderFormProps) {
         tif: "GTC",
         price: stopPrice,
         isSingleGroup: true,
-      },
-    ];
+      });
+    }
+    return orders;
   };
 
   const handlePreview = () => {
@@ -180,6 +254,32 @@ export function OrderForm({ target }: OrderFormProps) {
   return (
     <form className="flex min-h-0 flex-1 flex-col" onSubmit={(event) => event.preventDefault()}>
       <div className="flex-1 space-y-4 overflow-y-auto p-4">
+        <section className="rounded-md border border-border bg-[var(--bg-1)] p-3">
+          <div className="mb-2 flex items-center justify-between text-[10px] uppercase tracking-wide text-[var(--text-3)]">
+            <span>Bid / Ask Book</span>
+            <span>{liveBook.bid != null || liveBook.ask != null ? "Live" : quoteQuery.isFetching ? "Updating" : "Top of book"}</span>
+          </div>
+          <div className="grid grid-cols-2 gap-2 font-mono text-[11px]">
+            <div className="rounded border border-border bg-[var(--bg-2)] p-2">
+              <div className="text-[var(--text-3)]">Bid</div>
+              <div className="mt-1 text-[14px] font-semibold text-[var(--clr-green)]">
+                {formatQuoteNumber(book.bid)}
+              </div>
+              <div className="mt-1 text-[var(--text-3)]" aria-label={`Bid size ${formatSize(book.bidSize)}`}>
+                Size <span>{formatSize(book.bidSize)}</span>
+              </div>
+            </div>
+            <div className="rounded border border-border bg-[var(--bg-2)] p-2 text-right">
+              <div className="text-[var(--text-3)]">Ask</div>
+              <div className="mt-1 text-[14px] font-semibold text-[var(--clr-red)]">
+                {formatQuoteNumber(book.ask)}
+              </div>
+              <div className="mt-1 text-[var(--text-3)]" aria-label={`Ask size ${formatSize(book.askSize)}`}>
+                Size <span>{formatSize(book.askSize)}</span>
+              </div>
+            </div>
+          </div>
+        </section>
         <div className="grid grid-cols-2 gap-2">
           <button type="button" aria-pressed={side === "BUY"} onClick={() => setSide("BUY")} className="rounded-md border border-border px-3 py-2 text-[12px]">BUY</button>
           <button type="button" aria-pressed={side === "SELL"} onClick={() => setSide("SELL")} className="rounded-md border border-border px-3 py-2 text-[12px]">SELL</button>
@@ -218,21 +318,32 @@ export function OrderForm({ target }: OrderFormProps) {
             Option bracket orders are deferred until after single-leg paper validation.
           </div>
         ) : (
-          <label className="flex items-center gap-2 text-[12px]">
-            <input aria-label="Bracket Order" type="checkbox" checked={bracket} onChange={(event) => setBracket(event.target.checked)} />
-            Bracket order
-          </label>
+          <div className="grid gap-2 rounded-md border border-border bg-[var(--bg-1)] p-3">
+            <div className="text-[10px] uppercase tracking-wide text-[var(--text-3)]">Protective Orders</div>
+            <label className="flex items-center gap-2 text-[12px]">
+              <input aria-label="Take Profit" type="checkbox" checked={takeProfitEnabled} onChange={(event) => setTakeProfitEnabled(event.target.checked)} />
+              Take profit
+            </label>
+            <label className="flex items-center gap-2 text-[12px]">
+              <input aria-label="Stop Loss" type="checkbox" checked={stopLossEnabled} onChange={(event) => setStopLossEnabled(event.target.checked)} />
+              Stop loss
+            </label>
+          </div>
         )}
-        {bracket ? (
+        {takeProfitEnabled || stopLossEnabled ? (
           <div className="grid gap-3">
-            <label className="block text-[11px] text-[var(--text-3)]">
-              Profit Taker Price
-              <input aria-label="Profit Taker Price" value={profitTakerPrice} onChange={(event) => setProfitTakerPrice(event.target.value)} className="mt-1 h-9 w-full rounded-md border border-border bg-[var(--bg-1)] px-2 text-[12px]" />
-            </label>
-            <label className="block text-[11px] text-[var(--text-3)]">
-              Stop Loss Price
-              <input aria-label="Stop Loss Price" value={stopLossPrice} onChange={(event) => setStopLossPrice(event.target.value)} className="mt-1 h-9 w-full rounded-md border border-border bg-[var(--bg-1)] px-2 text-[12px]" />
-            </label>
+            {takeProfitEnabled ? (
+              <label className="block text-[11px] text-[var(--text-3)]">
+                Profit Taker Price
+                <input aria-label="Profit Taker Price" value={profitTakerPrice} onChange={(event) => setProfitTakerPrice(event.target.value)} className="mt-1 h-9 w-full rounded-md border border-border bg-[var(--bg-1)] px-2 text-[12px]" />
+              </label>
+            ) : null}
+            {stopLossEnabled ? (
+              <label className="block text-[11px] text-[var(--text-3)]">
+                Stop Loss Price
+                <input aria-label="Stop Loss Price" value={stopLossPrice} onChange={(event) => setStopLossPrice(event.target.value)} className="mt-1 h-9 w-full rounded-md border border-border bg-[var(--bg-1)] px-2 text-[12px]" />
+              </label>
+            ) : null}
           </div>
         ) : null}
       </div>

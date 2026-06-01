@@ -63,6 +63,8 @@ class QuoteResponse(BaseModel):
     lastPrice: Optional[float] = None            # Most recent trade price
     bid: Optional[float] = None                  # Highest price someone will pay right now
     ask: Optional[float] = None                  # Lowest price someone will sell for right now
+    bidSize: Optional[float] = None              # Shares/contracts bid at the best bid
+    askSize: Optional[float] = None              # Shares/contracts offered at the best ask
     open: Optional[float] = None                 # Price at market open today
     high: Optional[float] = None                 # Highest price today
     low: Optional[float] = None                  # Lowest price today

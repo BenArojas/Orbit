@@ -82,6 +82,8 @@ export interface QuoteResponse {
   lastPrice: number | null;
   bid: number | null;
   ask: number | null;
+  bidSize: number | null;
+  askSize: number | null;
   open: number | null;
   high: number | null;
   low: number | null;

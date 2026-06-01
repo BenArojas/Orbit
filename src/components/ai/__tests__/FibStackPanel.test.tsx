@@ -10,7 +10,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent, act } from "@testing-library/react";
+import { render, screen, fireEvent, act, waitFor } from "@testing-library/react";
 import { createElement, type ReactNode } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
@@ -36,6 +36,8 @@ const mockUnlockFib = vi.fn();
 const mockClearFib = vi.fn();
 const mockGetFibConfig = vi.fn();
 const mockCreateTriggerRule = vi.fn();
+const mockGetWatchlists = vi.fn();
+const mockGetRuleTemplates = vi.fn();
 
 vi.mock("@/lib/api", async (importOriginal) => {
   const mod = await importOriginal<typeof import("@/lib/api")>();
@@ -49,6 +51,8 @@ vi.mock("@/lib/api", async (importOriginal) => {
       clearLockedFibs: (conid: number) => mockClearFib(conid),
       getFibConfig: () => mockGetFibConfig(),
       createTriggerRule: (rule: TriggerRuleCreate) => mockCreateTriggerRule(rule),
+      getWatchlists: () => mockGetWatchlists(),
+      getRuleTemplates: () => mockGetRuleTemplates(),
     },
   };
 });
@@ -106,6 +110,8 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockGetFibConfig.mockResolvedValue(DEFAULT_CONFIG);
   mockGetLockedFibs.mockResolvedValue([]);
+  mockGetWatchlists.mockResolvedValue([]);
+  mockGetRuleTemplates.mockResolvedValue([]);
   mockLockFib.mockImplementation(async (req: LockFibonacciRequest) => ({
     id: 999,
     conid: req.conid,
@@ -181,7 +187,7 @@ describe("FibStackPanel — count badge", () => {
 });
 
 describe("FibStackPanel — lock + unlock", () => {
-  it("creates a stock trigger from the primary fib golden pocket", async () => {
+  it("opens a prefilled rule modal from the primary fib golden pocket", async () => {
     useChartStore.getState().setPrimaryFib(
       makeResult({
         levels: [
@@ -199,7 +205,22 @@ describe("FibStackPanel — lock + unlock", () => {
       fireEvent.click(btn);
     });
 
-    expect(mockCreateTriggerRule).toHaveBeenCalledTimes(1);
+    expect(mockCreateTriggerRule).not.toHaveBeenCalled();
+    expect(await screen.findByRole("dialog")).toBeInTheDocument();
+    expect(screen.getByDisplayValue("Fib golden pocket: AAPL 1D")).toBeInTheDocument();
+    expect(screen.getByDisplayValue("AAPL")).toBeInTheDocument();
+    expect(screen.getByText("conid: 265598")).toBeInTheDocument();
+
+    const indicators = screen.getAllByRole("combobox", { name: /indicator/i });
+    expect(indicators.map((node) => (node as HTMLSelectElement).value)).toEqual(["close", "close"]);
+    const thresholds = screen.getAllByRole("spinbutton", { name: /threshold/i });
+    expect(thresholds.map((node) => (node as HTMLInputElement).value)).toEqual(["110.5", "111.46"]);
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /create rule/i }));
+    });
+
+    await waitFor(() => expect(mockCreateTriggerRule).toHaveBeenCalledTimes(1));
     expect(mockCreateTriggerRule).toHaveBeenCalledWith({
       name: "Fib golden pocket: AAPL 1D",
       enabled: true,

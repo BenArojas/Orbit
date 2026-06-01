@@ -7,6 +7,7 @@ const numberFormatter = new Intl.NumberFormat("en-US", {
 type ConditionLike = TriggerCondition | TriggerConditionValue;
 
 export const TRIGGER_INDICATOR_LABELS: Record<string, string> = {
+  close: "Price",
   rsi: "RSI",
   macd: "MACD",
   ema_9: "Price vs EMA 9",

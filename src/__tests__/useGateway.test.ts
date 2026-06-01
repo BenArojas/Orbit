@@ -96,7 +96,7 @@ function freshClient(): QueryClient {
  * is both more reliable and a stronger guarantee.
  */
 function lastPredicate(
-  spy: ReturnType<typeof vi.spyOn>,
+  spy: { mock: { calls: unknown[][] } },
 ): ((q: { queryKey: unknown }) => boolean) | undefined {
   for (let i = spy.mock.calls.length - 1; i >= 0; i--) {
     const arg = spy.mock.calls[i][0] as

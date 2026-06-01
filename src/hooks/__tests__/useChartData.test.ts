@@ -99,6 +99,36 @@ describe("useChartData", () => {
     expect(req.period).toBeUndefined();
   });
 
+  it("requests enough default daily history to compute EMA 200", async () => {
+    const client = makeClient();
+    const indicators = new Set<never>();
+
+    renderHook(
+      () => useChartData(265598, "1D", indicators),
+      { wrapper: wrapper(client) },
+    );
+
+    await waitFor(() => expect(mockComputeIndicators).toHaveBeenCalled());
+
+    const [req] = mockComputeIndicators.mock.calls[0];
+    expect(req.history_period).toBe("1Y");
+  });
+
+  it("requests enough default monthly history to compute EMA 200", async () => {
+    const client = makeClient();
+    const indicators = new Set<never>();
+
+    renderHook(
+      () => useChartData(265598, "1M", indicators),
+      { wrapper: wrapper(client) },
+    );
+
+    await waitFor(() => expect(mockComputeIndicators).toHaveBeenCalled());
+
+    const [req] = mockComputeIndicators.mock.calls[0];
+    expect(req.history_period).toBe("15Y");
+  });
+
   it("queryKey includes timeframe so switching TF fetches fresh data", async () => {
     const client = makeClient();
     const indicators = new Set<never>();

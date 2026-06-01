@@ -72,6 +72,7 @@ describe("ConditionsList", () => {
     expect(optionTexts).toContain("Price vs EMA 9");
     expect(optionTexts).toContain("Price vs EMA 21");
     expect(optionTexts).toContain("Price vs EMA 50");
+    expect(optionTexts).toContain("Price");
     expect(optionTexts).not.toContain("Price vs EMA 20");
     expect(optionTexts).not.toContain("Fibonacci");
 

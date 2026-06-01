@@ -6,7 +6,7 @@
  */
 
 import { describe, it, expect, beforeEach } from "vitest";
-import { useCompareStore, MAX_PANES } from "../compare";
+import { useCompareStore, MAX_PANES, DEFAULT_COMPARE_COLORS } from "../compare";
 
 beforeEach(() => {
   // Reset to a clean initial state. The store exposes a test reset.
@@ -19,6 +19,30 @@ describe("compare store — initial state", () => {
     const s = useCompareStore.getState();
     expect(s.active).toBe(false);
     expect(s.panes).toEqual([]);
+    expect(s.colors).toEqual(DEFAULT_COMPARE_COLORS);
+  });
+});
+
+describe("compare store — colors", () => {
+  it("updates compare line colors independently", () => {
+    useCompareStore.getState().setColors({ stock: "#38bdf8" });
+    expect(useCompareStore.getState().colors).toEqual({
+      ...DEFAULT_COMPARE_COLORS,
+      stock: "#38bdf8",
+    });
+
+    useCompareStore.getState().setColors({ reference: "#f97316" });
+    expect(useCompareStore.getState().colors).toEqual({
+      stock: "#38bdf8",
+      reference: "#f97316",
+    });
+  });
+
+  it("persists compare line colors", () => {
+    useCompareStore.getState().setColors({ stock: "#38bdf8", reference: "#f97316" });
+    const raw = localStorage.getItem("parallax-compare-store");
+    const parsed = JSON.parse(raw!).state;
+    expect(parsed.colors).toEqual({ stock: "#38bdf8", reference: "#f97316" });
   });
 });
 

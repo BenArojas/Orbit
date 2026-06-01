@@ -10,12 +10,23 @@
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
-import { createElement } from "react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { createElement, type ReactElement } from "react";
 
 // jsdom doesn't implement scrollIntoView — the panel calls it on every
 // messages/streamingContent change. Stub once for the file.
 if (!Element.prototype.scrollIntoView) {
   Element.prototype.scrollIntoView = function () { /* no-op */ };
+}
+
+function renderAiChat(element: ReactElement) {
+  const client = new QueryClient({
+    defaultOptions: {
+      queries: { retry: false },
+      mutations: { retry: false },
+    },
+  });
+  return render(createElement(QueryClientProvider, { client }, element));
 }
 
 // ── Mocks ─────────────────────────────────────────────────────
@@ -151,7 +162,7 @@ describe("AiChatPanel — fib section gating", () => {
     });
 
     const { default: AiChatPanel } = await import("../AiChatPanel");
-    render(
+    renderAiChat(
       createElement(AiChatPanel, {
         activeConid: 265598,
         activeSymbol: "WULF",
@@ -176,7 +187,7 @@ describe("AiChatPanel — Cancel button", () => {
   it("Cancel button is NOT shown when isAnalyzing is false", async () => {
     const { default: AiChatPanel } = await import("../AiChatPanel");
 
-    render(
+    renderAiChat(
       createElement(AiChatPanel, {
         activeConid: 265598,
         activeSymbol: "AAPL",
@@ -205,7 +216,7 @@ describe("AiChatPanel — Cancel button", () => {
 
     const { default: AiChatPanel } = await import("../AiChatPanel");
 
-    render(
+    renderAiChat(
       createElement(AiChatPanel, {
         activeConid: 265598,
         activeSymbol: "AAPL",
@@ -269,7 +280,7 @@ describe("AiChatPanel — section order", () => {
       no_active_fib_reason: null,
     };
 
-    render(
+    renderAiChat(
       createElement(AiChatPanel, {
         activeConid: 265598,
         activeSymbol: "AAPL",
@@ -307,7 +318,7 @@ describe("AiChatPanel — section order", () => {
 
     const { default: AiChatPanel } = await import("../AiChatPanel");
 
-    render(
+    renderAiChat(
       createElement(AiChatPanel, {
         activeConid: 265598,
         activeSymbol: "AAPL",
@@ -346,7 +357,7 @@ describe("AiChatPanel — assistant bubble Copy button", () => {
     }));
 
     const { default: AiChatPanel } = await import("../AiChatPanel");
-    render(
+    renderAiChat(
       createElement(AiChatPanel, {
         activeConid: 265598,
         activeSymbol: "AAPL",
@@ -385,7 +396,7 @@ describe("AiChatPanel — assistant bubble Copy button", () => {
 
     const { default: AiChatPanel } = await import("../AiChatPanel");
     const { fireEvent, act } = await import("@testing-library/react");
-    render(
+    renderAiChat(
       createElement(AiChatPanel, {
         activeConid: 265598,
         activeSymbol: "AAPL",
@@ -434,7 +445,7 @@ describe("AiChatPanel — assistant bubble Copy button", () => {
     try {
       const { default: AiChatPanel } = await import("../AiChatPanel");
       const { fireEvent, act } = await import("@testing-library/react");
-      render(
+      renderAiChat(
         createElement(AiChatPanel, {
           activeConid: 265598,
           activeSymbol: "AAPL",
@@ -484,7 +495,7 @@ describe("AiChatPanel — assistant bubble Copy button", () => {
 
     const { default: AiChatPanel } = await import("../AiChatPanel");
     const { fireEvent, act } = await import("@testing-library/react");
-    render(
+    renderAiChat(
       createElement(AiChatPanel, {
         activeConid: 265598,
         activeSymbol: "AAPL",

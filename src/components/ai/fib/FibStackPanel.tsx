@@ -17,12 +17,11 @@
  */
 
 import { useMemo } from "react";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { toast } from "sonner";
 
 import { useChartStore } from "@/store/chart";
 import { FIB_STACK_SOFT_CAP, FIB_STACK_HARD_CAP } from "@/store/chart";
-import { api, type FibonacciResult, type TriggerRuleCreate } from "@/lib/api";
+import type { FibonacciResult, TriggerRuleCreate } from "@/lib/api";
+import { RuleModal } from "@/components/triggers";
 import {
   useLockedFibs,
   useLockFib,
@@ -109,7 +108,6 @@ export default function FibStackPanel() {
   const conid = useChartStore((s) => s.activeConid);
   const symbol = useChartStore((s) => s.activeSymbol);
   const timeframe = useChartStore((s) => s.timeframe);
-  const qc = useQueryClient();
 
   // Keep the lock list query mounted so its side-effect (merging
   // locked fibs into activeFibs) stays alive.
@@ -118,19 +116,6 @@ export default function FibStackPanel() {
   const lockMutation = useLockFib();
   const unlockMutation = useUnlockFib();
   const clearMutation = useClearLockedFibs();
-  const createTriggerMutation = useMutation({
-    mutationFn: (rule: TriggerRuleCreate) => api.createTriggerRule(rule),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["trigger-rules"] });
-      toast.success("Fib trigger created");
-    },
-    onError: (err) =>
-      toast.error(
-        `Could not create fib trigger: ${
-          err instanceof Error ? err.message : String(err)
-        }`,
-      ),
-  });
 
   const primary: ActiveFib | undefined = activeFibs[0]?.id === "primary"
     ? activeFibs[0]
@@ -139,6 +124,15 @@ export default function FibStackPanel() {
     () => activeFibs.filter((f) => f.source === "locked"),
     [activeFibs],
   );
+  const fibTriggerRule = useMemo(() => {
+    if (!primary || conid == null) return null;
+    return buildFibTriggerRule({
+      conid,
+      symbol,
+      timeframe,
+      result: primary.result,
+    });
+  }, [conid, primary, symbol, timeframe]);
 
   // Total stored fibs drives the lock caps (hidden fibs still occupy a
   // slot on the server). The header label, though, reports how many are
@@ -168,21 +162,6 @@ export default function FibStackPanel() {
       swing_low_time: r.swing_low_time,
       direction: r.direction,
     });
-  };
-
-  const handleCreateFibTrigger = () => {
-    if (!primary || conid == null) return;
-    const rule = buildFibTriggerRule({
-      conid,
-      symbol,
-      timeframe,
-      result: primary.result,
-    });
-    if (!rule) {
-      toast.error("This fib has no golden pocket levels to alert on");
-      return;
-    }
-    createTriggerMutation.mutate(rule);
   };
 
   const handleUnlock = (fib: ActiveFib) => {
@@ -247,20 +226,31 @@ export default function FibStackPanel() {
 
         {primary && conid != null && (
           <div className="flex items-center gap-1.5">
-            <button
-              type="button"
-              onClick={handleCreateFibTrigger}
-              disabled={
-                createTriggerMutation.isPending
-                || primary.result.no_active_fib
-                || getGoldenPocketBounds(primary.result) == null
-              }
-              data-testid="fib-create-alert-button"
-              title="Create a trigger when price enters this fib's golden pocket"
-              className="rounded border border-[var(--border)] px-2 py-0.5 font-data text-[10px] font-semibold text-[var(--text-2)] transition-colors hover:border-[var(--clr-cyan)] hover:text-[var(--clr-cyan)] disabled:opacity-40 disabled:cursor-not-allowed"
-            >
-              {createTriggerMutation.isPending ? "Creating…" : "Create alert"}
-            </button>
+            {fibTriggerRule ? (
+              <RuleModal
+                initial={fibTriggerRule}
+                trigger={
+                  <button
+                    type="button"
+                    data-testid="fib-create-alert-button"
+                    title="Review a trigger for this fib's golden pocket"
+                    className="rounded border border-[var(--border)] px-2 py-0.5 font-data text-[10px] font-semibold text-[var(--text-2)] transition-colors hover:border-[var(--clr-cyan)] hover:text-[var(--clr-cyan)]"
+                  >
+                    Create alert
+                  </button>
+                }
+              />
+            ) : (
+              <button
+                type="button"
+                disabled
+                data-testid="fib-create-alert-button"
+                title="This fib has no golden pocket levels to alert on"
+                className="rounded border border-[var(--border)] px-2 py-0.5 font-data text-[10px] font-semibold text-[var(--text-2)] opacity-40 cursor-not-allowed"
+              >
+                Create alert
+              </button>
+            )}
             <button
               type="button"
               onClick={handleLockPrimary}

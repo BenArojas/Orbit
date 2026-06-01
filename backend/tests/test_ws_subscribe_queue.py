@@ -329,3 +329,40 @@ def test_ws_ready_gate_timeout_constant():
     """The FE→BE gate timeout is exposed and matches MoonMarket's 10s."""
     from services.ibkr import IBKR_WS_READY_GATE_TIMEOUT_SECONDS
     assert IBKR_WS_READY_GATE_TIMEOUT_SECONDS == 10.0
+
+
+def test_live_stream_fields_include_bid_ask_sizes():
+    """Order tickets need live top-of-book price and size fields."""
+    from services.ibkr import LIVE_STREAM_FIELDS
+
+    assert "84" in LIVE_STREAM_FIELDS  # bid
+    assert "86" in LIVE_STREAM_FIELDS  # ask
+    assert "88" in LIVE_STREAM_FIELDS  # bid size
+    assert "85" in LIVE_STREAM_FIELDS  # ask size
+
+
+@pytest.mark.asyncio
+async def test_market_data_dispatch_includes_bid_ask_sizes():
+    """IBKR smd messages should expose top-of-book sizes to the frontend."""
+    svc = _make_svc(ws_connected=True, authenticated=True)
+    svc._broadcast = AsyncMock()
+
+    await svc._dispatch_market_data({
+        "topic": "smd+265598",
+        "31": "181.10",
+        "84": "181.00",
+        "86": "181.20",
+        "88": "300",
+        "85": "200",
+    })
+
+    svc._broadcast.assert_awaited_once_with({
+        "type": "market_data",
+        "conid": 265598,
+        "timestamp": pytest.approx(svc._broadcast.await_args.args[0]["timestamp"]),
+        "last": 181.1,
+        "bid": 181.0,
+        "ask": 181.2,
+        "bidSize": 300.0,
+        "askSize": 200.0,
+    })

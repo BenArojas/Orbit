@@ -24,6 +24,7 @@ export default function ComparePane({ pane }: ComparePaneProps) {
   const setPaneReference = useCompareStore((s) => s.setPaneReference);
   const setPaneReferenceSymbol = useCompareStore((s) => s.setPaneReferenceSymbol);
   const removePane = useCompareStore((s) => s.removePane);
+  const colors = useCompareStore((s) => s.colors);
 
   const reference = pane.reference;
 
@@ -146,6 +147,7 @@ export default function ComparePane({ pane }: ComparePaneProps) {
                   refSymbol={reference.symbol}
                   stockLiveTick={data.stockLiveTick}
                   refLiveTick={data.refLiveTick}
+                  colors={colors}
                 />
               </div>
               {data.isLoading && (
