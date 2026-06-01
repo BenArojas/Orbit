@@ -70,6 +70,18 @@ class TestExtractRowsFromRaw:
         assert {"C": 12345} in rows
         assert len(rows) == 2
 
+    def test_top_level_instruments(self):
+        raw = {
+            "id": "123",
+            "name": "My List",
+            "instruments": [
+                {"conid": 265598, "name": "AAPL"},
+                {"C": 12345, "name": "SPY"},
+            ],
+        }
+        rows = IBKRService._extract_rows_from_raw(raw)
+        assert rows == [{"C": 265598}, {"C": 12345}]
+
     def test_empty_instruments(self):
         raw = {"data": {"instruments": []}}
         rows = IBKRService._extract_rows_from_raw(raw)

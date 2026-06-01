@@ -17,13 +17,13 @@ log = logging.getLogger("parallax.templates")
 
 BUILTIN_TEMPLATES: Final[list[dict]] = [
     {
-        "name": "Golden Pocket Bounce",
-        "description": "Price tags the 0.618 fib with RSI <35 and elevated volume.",
-        "category": "fibonacci",
+        "name": "High Volume Pullback",
+        "description": "RSI <35 while trend stays above EMA 200, with elevated volume.",
+        "category": "mean_reversion",
         "default_timeframe": "1D",
         "conditions": [
             {"indicator": "rsi",        "condition": "below",         "threshold": 35.0},
-            {"indicator": "fibonacci",  "condition": "above",         "threshold": 0.618},  # within 1% — evaluator interprets
+            {"indicator": "ema_200",    "condition": "above",         "threshold": 0.0},
             {"indicator": "volume",     "condition": "above",         "threshold": 1.2},   # multiplier of 20-bar avg
         ],
     },
@@ -50,11 +50,11 @@ BUILTIN_TEMPLATES: Final[list[dict]] = [
     },
     {
         "name": "Breakout + Volume",
-        "description": "Close above 20-day high with confirming volume.",
+        "description": "Price crosses above the 21 EMA with confirming volume.",
         "category": "breakout",
         "default_timeframe": "1D",
         "conditions": [
-            {"indicator": "ema_20",  "condition": "crosses_above", "threshold": 0.0},
+            {"indicator": "ema_21",  "condition": "crosses_above", "threshold": 0.0},
             {"indicator": "volume",  "condition": "above",          "threshold": 1.5},
         ],
     },
@@ -64,7 +64,7 @@ BUILTIN_TEMPLATES: Final[list[dict]] = [
         "category": "news",
         "default_timeframe": "1D",
         "conditions": [
-            {"indicator": "news_candle", "condition": "above", "threshold": 2.0,
+            {"indicator": "news_candle", "condition": "fires", "threshold": 2.0,
              "news_candle_method": "gap"},
             {"indicator": "volume",      "condition": "above", "threshold": 1.5},
         ],
@@ -84,6 +84,12 @@ BUILTIN_TEMPLATES: Final[list[dict]] = [
 
 async def seed_builtin_templates(db: DatabaseService) -> None:
     """Idempotently seed BUILTIN_TEMPLATES into rule_templates."""
+    names = tuple(tpl["name"] for tpl in BUILTIN_TEMPLATES)
+    placeholders = ",".join("?" for _ in names)
+    await db.execute(
+        f"DELETE FROM rule_templates WHERE is_builtin=1 AND name NOT IN ({placeholders})",
+        names,
+    )
     for tpl in BUILTIN_TEMPLATES:
         await db.execute(
             """
@@ -97,6 +103,20 @@ async def seed_builtin_templates(db: DatabaseService) -> None:
                 tpl["category"],
                 tpl["default_timeframe"],
                 json.dumps(tpl["conditions"]),
+            ),
+        )
+        await db.execute(
+            """
+            UPDATE rule_templates
+            SET description=?, category=?, default_timeframe=?, conditions_json=?
+            WHERE name=? AND is_builtin=1
+            """,
+            (
+                tpl["description"],
+                tpl["category"],
+                tpl["default_timeframe"],
+                json.dumps(tpl["conditions"]),
+                tpl["name"],
             ),
         )
     log.info("Seeded %d built-in rule templates", len(BUILTIN_TEMPLATES))

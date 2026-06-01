@@ -45,7 +45,7 @@ describe("HitCard", () => {
     );
     expect(screen.getByText("AAPL")).toBeInTheDocument();
     expect(screen.getByText(/Golden Pocket Bounce/)).toBeInTheDocument();
-    expect(screen.getByText(/rsi/)).toBeInTheDocument();
+    expect(screen.getByText(/RSI below 35/)).toBeInTheDocument();
     expect(screen.getByText(/fibonacci/)).toBeInTheDocument();
   });
 
@@ -78,5 +78,51 @@ describe("HitCard", () => {
     fireEvent.click(screen.getByRole("button", { name: /snooze 1h/i }));
     expect(onDismiss).toHaveBeenCalledWith(hit);
     expect(onSnooze).toHaveBeenCalledWith(hit, 60);
+  });
+
+  it("formats volume trigger values as readable ratios", () => {
+    render(
+      <HitCard
+        hit={{
+          ...hit,
+          condition_values: [
+            {
+              indicator: "volume",
+              condition: "above",
+              threshold: 1.5,
+              actual_value: 2.42,
+            },
+          ],
+        }}
+        onOpenChart={vi.fn()}
+        onDismiss={vi.fn()}
+        onSnooze={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText("Volume above 1.5x -> 2.42x")).toBeInTheDocument();
+  });
+
+  it("hides the internal zero threshold for EMA trigger values", () => {
+    render(
+      <HitCard
+        hit={{
+          ...hit,
+          condition_values: [
+            {
+              indicator: "ema_200",
+              condition: "above",
+              threshold: 0,
+              actual_value: 4.2,
+            },
+          ],
+        }}
+        onOpenChart={vi.fn()}
+        onDismiss={vi.fn()}
+        onSnooze={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText("Price above EMA 200 -> 4.2")).toBeInTheDocument();
   });
 });

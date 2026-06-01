@@ -31,7 +31,7 @@ Indicator value semantics (what we feed into the bar dict):
   - ema_*                       → last_close − EMA value; threshold=0 → "price at EMA"
   - vwap                        → last_close − VWAP value; threshold=0 → "price at VWAP"
   - bbands                      → Bollinger %B = (close − lower) / (upper − lower)
-  - volume                      → raw volume of the last completed bar
+  - volume                      → last volume / avg(previous 20 volumes)
   - news_candle                 → 1.0 if the chosen detection method fires for the bar
 
 For crosses_above / crosses_below we also stash the previous-bar value under
@@ -46,6 +46,7 @@ import sqlite3
 import time
 from typing import Any, Awaitable, Callable
 
+from constants.ibkr_history import TIMEFRAME_SPEC
 from exceptions import IBKRAuthError, IBKRConnectionError, IBKRRateLimitError, IBKRRequestError
 from models import CandleData
 from services.db import DatabaseService
@@ -373,14 +374,15 @@ class ScannerService:
         bar into a dict the condition evaluator can consume.
 
         Returned dict (when data is sufficient) has:
-          - "open", "high", "low", "close", "volume" → last-bar OHLCV
+          - "open", "high", "low", "close" -> last-bar OHLC
+          - "volume"                        -> last volume / 20-bar average
           - "<indicator>"            → scalar value at the last bar
           - "<indicator>_prev"       → scalar value at the previous bar
             (only set if a previous indicator value is available)
 
         Returns None when there are fewer than 2 candles available.
         """
-        candles = await self._fetch_candles(conid)
+        candles = await self._fetch_candles(conid, rule.get("timeframe", "1D"))
         if len(candles) < 2:
             log.debug(
                 "Scanner: not enough bars for conid %d (got %d)",
@@ -397,14 +399,22 @@ class ScannerService:
             "high": float(last.high),
             "low": float(last.low),
             "close": last_close,
-            "volume": last_volume,
-            # Previous-bar raw fields, used for crosses_above/below on close/volume
+            # Previous-bar raw fields, used for crosses_above/below on OHLC fields
             "open_prev": float(candles[-2].open),
             "high_prev": float(candles[-2].high),
             "low_prev": float(candles[-2].low),
             "close_prev": float(candles[-2].close),
-            "volume_prev": float(candles[-2].volume),
         }
+        if len(candles) >= _NEWS_CANDLE_LOOKBACK + 1:
+            window = candles[-_NEWS_CANDLE_LOOKBACK - 1:-1]
+            avg_volume = sum(c.volume for c in window) / len(window)
+            if avg_volume > 0:
+                bar["volume"] = last_volume / avg_volume
+        if len(candles) >= _NEWS_CANDLE_LOOKBACK + 2:
+            prev_window = candles[-_NEWS_CANDLE_LOOKBACK - 2:-2]
+            prev_avg_volume = sum(c.volume for c in prev_window) / len(prev_window)
+            if prev_avg_volume > 0:
+                bar["volume_prev"] = float(candles[-2].volume) / prev_avg_volume
 
         # Collect all indicators referenced by this rule's conditions.
         needed: set[str] = set()
@@ -457,14 +467,14 @@ class ScannerService:
 
         return bar
 
-    async def _fetch_candles(self, conid: int) -> list[CandleData]:
+    async def _fetch_candles(self, conid: int, timeframe: str = "1D") -> list[CandleData]:
         """
         Fetch OHLCV history for trigger evaluation.
 
-        Always uses 3-month daily bars — enough history for all indicators
-        including the slow EMA-200.
+        Uses the same timeframe-to-history mapping as the Analysis chart.
         """
-        raw = await self.ibkr.history(conid, period="3m", bar="1d")
+        spec = TIMEFRAME_SPEC.get(timeframe, TIMEFRAME_SPEC["1D"])
+        raw = await self.ibkr.history(conid, period=spec.period, bar=spec.bar)
         bars = raw.get("data", [])
         return [
             CandleData(
@@ -664,7 +674,7 @@ def _passes(op: str, actual: float, thr: float | None, prev: float | None) -> bo
     if op == "crosses_below":
         return prev is not None and prev >= thr and actual < thr
     if op == "fires":
-        return bool(actual)
+        return actual >= thr
     return False
 
 

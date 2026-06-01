@@ -1689,16 +1689,24 @@ class IBKRService:
         if "rows" in raw:
             return list(raw["rows"])
 
-        # Older API: data.instruments
-        data = raw.get("data", {})
-        if isinstance(data, dict):
-            instruments = data.get("instruments", [])
+        def rows_from_instruments(instruments: list) -> list[dict]:
             rows = []
             for inst in instruments:
-                conid = inst.get("conid")
+                if not isinstance(inst, dict):
+                    continue
+                conid = inst.get("C", inst.get("conid"))
                 if conid is not None:
                     rows.append({"C": int(conid)})
             return rows
+
+        # Alternate API shape used by other watchlist endpoints.
+        if isinstance(raw.get("instruments"), list):
+            return rows_from_instruments(raw["instruments"])
+
+        # Older API: data.instruments
+        data = raw.get("data", {})
+        if isinstance(data, dict):
+            return rows_from_instruments(data.get("instruments", []))
 
         return []
 

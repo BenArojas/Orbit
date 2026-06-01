@@ -1,16 +1,21 @@
 import type { TriggerCondition } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-
-const INDICATOR_OPTIONS = [
-  "rsi", "macd", "ema_9", "ema_20", "ema_21", "ema_50", "ema_200",
-  "fibonacci", "volume", "bbands", "vwap", "atr", "stoch", "obv", "adx",
-  "news_candle",
-];
+import {
+  getTriggerConditionLabel,
+  TRIGGER_INDICATOR_OPTIONS,
+} from "./formatTriggerCondition";
 
 const CONDITION_OPTIONS: TriggerCondition["condition"][] = [
   "above", "below", "crosses_above", "crosses_below", "fires",
 ];
+
+const NEWS_METHOD_OPTIONS = [
+  { value: "volume_spike", label: "Volume spike" },
+  { value: "range_spike", label: "Range spike" },
+  { value: "gap", label: "Gap" },
+  { value: "long_wick", label: "Long wick" },
+] as const;
 
 interface Props {
   value: TriggerCondition[];
@@ -28,6 +33,18 @@ export function ConditionsList({ value, onChange }: Props) {
     ]);
   };
   const remove = (idx: number) => onChange(value.filter((_, i) => i !== idx));
+  const updateIndicator = (idx: number, indicator: string) => {
+    if (indicator === "news_candle") {
+      update(idx, {
+        indicator,
+        condition: "fires",
+        threshold: 2,
+        news_candle_method: "volume_spike",
+      });
+      return;
+    }
+    update(idx, { indicator, news_candle_method: null });
+  };
 
   return (
     <div className="flex flex-col gap-2">
@@ -42,11 +59,11 @@ export function ConditionsList({ value, onChange }: Props) {
           <select
             aria-label="indicator"
             value={c.indicator}
-            onChange={(e) => update(idx, { indicator: e.target.value })}
+            onChange={(e) => updateIndicator(idx, e.target.value)}
             className="h-8 rounded-md border border-border bg-[var(--bg-1)] px-2 text-[10px]"
           >
-            {INDICATOR_OPTIONS.map((i) => (
-              <option key={i} value={i}>{i}</option>
+            {TRIGGER_INDICATOR_OPTIONS.map((option) => (
+              <option key={option.value} value={option.value}>{option.label}</option>
             ))}
           </select>
           <select
@@ -56,24 +73,42 @@ export function ConditionsList({ value, onChange }: Props) {
               update(idx, { condition: e.target.value as TriggerCondition["condition"] })
             }
             className="h-8 rounded-md border border-border bg-[var(--bg-1)] px-2 text-[10px]"
+            disabled={c.indicator === "news_candle"}
           >
             {CONDITION_OPTIONS.map((cond) => (
               <option key={cond} value={cond}>
-                {cond.replace(/_/g, " ")}
+                {getTriggerConditionLabel({ ...c, condition: cond })}
               </option>
             ))}
           </select>
-          <Input
-            type="number"
-            aria-label="threshold"
-            value={c.threshold ?? ""}
-            onChange={(e) =>
-              update(idx, {
-                threshold: e.target.value === "" ? null : Number(e.target.value),
-              })
-            }
-            className="h-8 bg-[var(--bg-1)] font-data text-[10px]"
-          />
+          {c.indicator === "news_candle" ? (
+            <select
+              aria-label="news candle method"
+              value={c.news_candle_method ?? "volume_spike"}
+              onChange={(e) =>
+                update(idx, {
+                  news_candle_method: e.target.value as TriggerCondition["news_candle_method"],
+                })
+              }
+              className="h-8 rounded-md border border-border bg-[var(--bg-1)] px-2 text-[10px]"
+            >
+              {NEWS_METHOD_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>{option.label}</option>
+              ))}
+            </select>
+          ) : (
+            <Input
+              type="number"
+              aria-label="threshold"
+              value={c.threshold ?? ""}
+              onChange={(e) =>
+                update(idx, {
+                  threshold: e.target.value === "" ? null : Number(e.target.value),
+                })
+              }
+              className="h-8 bg-[var(--bg-1)] font-data text-[10px]"
+            />
+          )}
           <Button
             type="button"
             variant="ghost"

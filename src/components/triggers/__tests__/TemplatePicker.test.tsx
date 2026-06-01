@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { TemplatePicker } from "../TemplatePicker";
+import { api } from "@/lib/api";
 
 vi.mock("@/lib/api", () => ({
   api: {
@@ -18,7 +19,20 @@ vi.mock("@/lib/api", () => ({
         ],
         created_at: "2026-05-20",
       },
+      {
+        id: 2,
+        name: "My Pullback",
+        description: "custom",
+        category: "custom",
+        is_builtin: false,
+        default_timeframe: "1D",
+        conditions: [
+          { indicator: "ema_21", condition: "below", threshold: 0, news_candle_method: null },
+        ],
+        created_at: "2026-05-21",
+      },
     ]),
+    deleteRuleTemplate: vi.fn().mockResolvedValue(undefined),
   },
 }));
 
@@ -51,5 +65,27 @@ describe("TemplatePicker", () => {
         ]),
       }),
     );
+  });
+
+  it("lets custom templates be deleted without showing delete for built-ins", async () => {
+    const onPick = vi.fn();
+    render(wrap(<TemplatePicker onPick={onPick} />));
+
+    fireEvent.click(screen.getByText(/start from a template/i));
+
+    await waitFor(() =>
+      expect(screen.getByText("My Pullback")).toBeInTheDocument(),
+    );
+
+    expect(
+      screen.queryByRole("button", { name: /delete golden pocket bounce/i }),
+    ).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /delete my pullback/i }));
+
+    await waitFor(() =>
+      expect(api.deleteRuleTemplate).toHaveBeenCalledWith(2),
+    );
+    expect(onPick).not.toHaveBeenCalled();
   });
 });

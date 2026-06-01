@@ -1141,10 +1141,29 @@ async function request<T>(
 
   try {
     const res = await fetch(url, options);
-    const data = await res.json();
+    let data: unknown;
+    if (res.status !== 204) {
+      try {
+        data = await res.json();
+      } catch (err) {
+        if (res.ok) {
+          return undefined as T;
+        }
+        data = {
+          message:
+            err instanceof Error
+              ? err.message
+              : `API error ${res.status}`,
+        };
+      }
+    }
 
     if (!res.ok) {
-      throw new ApiError(res.status, data);
+      const body =
+        data && typeof data === "object" && !Array.isArray(data)
+          ? (data as Record<string, unknown>)
+          : { message: `API error ${res.status}` };
+      throw new ApiError(res.status, body);
     }
     return data as T;
   } catch (err) {

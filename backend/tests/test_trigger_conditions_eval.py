@@ -5,6 +5,7 @@ the same bar, and that condition_values is populated correctly.
 import pytest
 from unittest.mock import AsyncMock
 
+from models import CandleData
 from services.scanner import ScannerService
 
 
@@ -81,3 +82,55 @@ async def test_crosses_below_requires_prior_bar_above():
     bar2 = {"rsi": 68.0, "rsi_prev": 69.0, "close": 100.0}
     result2 = scanner._evaluate_conditions(rule, bar2)
     assert result2["fires"] is False
+
+
+@pytest.mark.asyncio
+async def test_volume_condition_uses_20_bar_average_ratio():
+    scanner = ScannerService(db=AsyncMock(), ibkr=AsyncMock())
+    candles = [
+        CandleData(time=i, open=10, high=11, low=9, close=10, volume=100)
+        for i in range(20)
+    ]
+    candles.append(CandleData(time=20, open=10, high=11, low=9, close=10, volume=250))
+    scanner._fetch_candles = AsyncMock(return_value=candles)
+    rule = {
+        "id": 1,
+        "conid": 123,
+        "symbol": "AAPL",
+        "watchlist_name": None,
+        "timeframe": "1D",
+        "conditions": [
+            {"indicator": "volume", "condition": "above", "threshold": 1.5},
+        ],
+    }
+
+    bar = await scanner._fetch_evaluation_bar(123, rule)
+
+    assert bar is not None
+    assert bar["volume"] == 2.5
+
+
+@pytest.mark.asyncio
+async def test_fetch_evaluation_bar_uses_rule_timeframe_history_spec():
+    ibkr = AsyncMock()
+    ibkr.history = AsyncMock(return_value={
+        "data": [
+            {"t": 1_000, "o": 10, "h": 11, "l": 9, "c": 10, "v": 100},
+            {"t": 2_000, "o": 10, "h": 11, "l": 9, "c": 10, "v": 110},
+        ],
+    })
+    scanner = ScannerService(db=AsyncMock(), ibkr=ibkr)
+    rule = {
+        "id": 1,
+        "conid": 123,
+        "symbol": "AAPL",
+        "watchlist_name": None,
+        "timeframe": "15m",
+        "conditions": [
+            {"indicator": "rsi", "condition": "below", "threshold": 30.0},
+        ],
+    }
+
+    await scanner._fetch_evaluation_bar(123, rule)
+
+    ibkr.history.assert_awaited_once_with(123, period="1w", bar="15min")

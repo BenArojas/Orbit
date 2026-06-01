@@ -547,6 +547,7 @@ export default function AnalysisPage() {
           activeSymbol={activeSymbol}
           fibonacci={fibonacci}
           chartIndicators={activeIndicators}
+          activeTimeframe={timeframe}
           onCollapse={toggleRightPanel}
         />
       )}

@@ -12,6 +12,7 @@ import {
   dominantFamily,
   FAMILY_COLOR,
 } from "@/components/tags/triggerColors";
+import { formatTriggerConditionValue } from "@/components/triggers/formatTriggerCondition";
 
 interface Props {
   hit: TriggerHit;
@@ -51,8 +52,7 @@ export function HitCard({ hit, onOpenChart, onDismiss, onSnooze }: Props) {
             key={i}
             className="rounded bg-[var(--bg-3)] px-1.5 py-0.5 font-data text-[8.5px] text-[var(--text-2)]"
           >
-            {v.indicator} {v.condition.replace(/_/g, " ")}{" "}
-            {v.threshold ?? ""} → {v.actual_value.toFixed(2)}
+            {formatTriggerConditionValue(v)}
           </span>
         ))}
       </div>

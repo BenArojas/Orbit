@@ -50,4 +50,36 @@ describe("ConditionsList", () => {
       expect.objectContaining({ indicator: "ema_200" }),
     ]);
   });
+
+  it("shows plain-English condition choices and only supported EMAs", () => {
+    const onChange = vi.fn();
+    render(
+      <ConditionsList
+        value={[
+          { indicator: "ema_200", condition: "above", threshold: 0, news_candle_method: null },
+        ]}
+        onChange={onChange}
+      />,
+    );
+
+    const indicator = screen.getByRole("combobox", { name: /indicator/i });
+    const optionTexts = Array.from(indicator.querySelectorAll("option")).map(
+      (option) => option.textContent,
+    );
+
+    expect(optionTexts).toContain("Price vs EMA 200");
+    expect(optionTexts).toContain("Price vs EMA 9");
+    expect(optionTexts).toContain("Price vs EMA 21");
+    expect(optionTexts).toContain("Price vs EMA 50");
+    expect(optionTexts).not.toContain("Price vs EMA 20");
+    expect(optionTexts).not.toContain("Fibonacci");
+
+    const condition = screen.getByRole("combobox", { name: /condition/i });
+    const conditionTexts = Array.from(condition.querySelectorAll("option")).map(
+      (option) => option.textContent,
+    );
+
+    expect(conditionTexts).toContain("Price above EMA 200");
+    expect(conditionTexts).toContain("Price crosses below EMA 200");
+  });
 });

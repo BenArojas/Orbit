@@ -16,25 +16,24 @@
 
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
-import type { TriggerRule, TriggerCondition } from "@/lib/api";
+import type { TriggerRule, TriggerCondition, TriggerRuleCreate } from "@/lib/api";
+import { Button } from "@/components/ui/button";
+import { RuleModal } from "@/components/triggers";
+import { formatTriggerCondition } from "@/components/triggers/formatTriggerCondition";
 
 interface TriggersTabProps {
   /** IBKR contract ID of the currently displayed instrument */
   activeConid: number | null;
   /** Display symbol — shown in empty state */
   activeSymbol: string;
+  /** Active chart timeframe used to prefill new rules from Analysis */
+  activeTimeframe?: string;
 }
 
 /** Format conditions into a one-line summary: "rsi below 30 AND ema_200 above 0". */
 function summarizeConditions(conds: TriggerCondition[]): string {
   if (!conds.length) return "(no conditions)";
-  return conds
-    .map((c) => {
-      const op = c.condition.replace(/_/g, " ");
-      const thr = c.threshold ?? "";
-      return `${c.indicator} ${op}${thr !== "" ? ` ${thr}` : ""}`;
-    })
-    .join(" AND ");
+  return conds.map(formatTriggerCondition).join(" AND ");
 }
 
 /** Compact label for a trigger rule */
@@ -108,6 +107,7 @@ function RuleRow({
 export default function TriggersTab({
   activeConid,
   activeSymbol,
+  activeTimeframe = "1D",
 }: TriggersTabProps) {
   const qc = useQueryClient();
 
@@ -132,6 +132,28 @@ export default function TriggersTab({
     ? (allRules ?? []).filter((r) => r.conid === activeConid)
     : [];
 
+  const newStockRule: TriggerRuleCreate | null = activeConid
+    ? {
+        name: "",
+        enabled: true,
+        timeframe: activeTimeframe,
+        scan_interval_seconds: 300,
+        watchlist_name: null,
+        conid: activeConid,
+        symbol: activeSymbol || null,
+        template_id: null,
+        ibkr_mirror_target: null,
+        conditions: [
+          {
+            indicator: "rsi",
+            condition: "below",
+            threshold: 30,
+            news_candle_method: null,
+          },
+        ],
+      }
+    : null;
+
   // ── Render ──
 
   if (!activeConid) {
@@ -146,9 +168,21 @@ export default function TriggersTab({
 
   return (
     <div className="flex flex-col gap-2 overflow-y-auto px-4 py-3">
-      {/* Header */}
-      <div className="text-[9px] font-semibold uppercase tracking-wider text-[var(--text-3)]">
-        {activeSymbol || "Symbol"} — Trigger Rules
+      <div className="flex items-center justify-between gap-2">
+        <div className="text-[9px] font-semibold uppercase tracking-wider text-[var(--text-3)]">
+          {activeSymbol || "Symbol"} — Trigger Rules
+        </div>
+        {newStockRule && (
+          <RuleModal
+            key={`${activeConid}-${activeTimeframe}`}
+            initial={newStockRule}
+            trigger={
+              <Button size="sm" variant="outline" className="h-7 text-[10px]">
+                + Add trigger
+              </Button>
+            }
+          />
+        )}
       </div>
 
       {isLoading && (
@@ -169,7 +203,7 @@ export default function TriggersTab({
           No per-stock rules for {activeSymbol || "this symbol"}.
           <br />
           <span className="text-[10px]">
-            Watchlist-scoped rules are managed from the Today page.
+            Add one from the chart, or manage watchlist rules on Today.
           </span>
         </div>
       )}

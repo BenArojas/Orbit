@@ -191,6 +191,10 @@ class TestPasses:
         assert _passes("fires", 1.0, 0.5, prev=None) is True
         assert _passes("fires", 0.0, 0.5, prev=None) is False
 
+    def test_fires_op_respects_threshold_when_present(self):
+        assert _passes("fires", 2.5, 2.0, prev=None) is True
+        assert _passes("fires", 1.5, 2.0, prev=None) is False
+
     # unknown op
     def test_unknown_condition_returns_false(self):
         assert _passes("explodes", 50.0, 30.0, prev=None) is False

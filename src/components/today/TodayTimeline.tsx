@@ -12,6 +12,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, type TriggerHit } from "@/lib/api";
 import { useNavigationStore } from "@/store/navigation";
 import { useWebSocket, type WsMessage } from "@/hooks/useWebSocket";
+import { formatTriggerConditionValue } from "@/components/triggers/formatTriggerCondition";
 
 const fmtTime = (iso: string) => {
   const norm = iso.includes("T") ? iso : iso.replace(" ", "T") + "Z";
@@ -71,7 +72,7 @@ export function TodayTimeline() {
             <span className="truncate text-[9.5px] text-[var(--text-2)]">
               {h.rule_name ?? "(deleted rule)"} ·{" "}
               {h.condition_values
-                .map((v) => `${v.indicator}=${v.actual_value.toFixed(2)}`)
+                .map(formatTriggerConditionValue)
                 .join(", ")}
             </span>
             <span className="truncate text-[8.5px] text-[var(--text-3)]">

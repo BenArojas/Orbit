@@ -37,6 +37,8 @@ interface RightSidebarProps {
   fibonacci?: FibonacciResult | null;
   /** Currently active indicators on the chart */
   chartIndicators?: Set<IndicatorId>;
+  /** Active chart timeframe */
+  activeTimeframe?: string;
   /** Called when the user clicks the collapse chevron. */
   onCollapse?: () => void;
 }
@@ -48,6 +50,7 @@ export default function RightSidebar({
   activeSymbol,
   fibonacci,
   chartIndicators,
+  activeTimeframe,
   onCollapse,
 }: RightSidebarProps) {
   const [activeTab, setActiveTab] = useState<Tab>("ai");
@@ -98,7 +101,11 @@ export default function RightSidebar({
         )}
 
         {activeTab === "triggers" && (
-          <TriggersTab activeConid={activeConid} activeSymbol={activeSymbol} />
+          <TriggersTab
+            activeConid={activeConid}
+            activeSymbol={activeSymbol}
+            activeTimeframe={activeTimeframe}
+          />
         )}
       </div>
     </div>
