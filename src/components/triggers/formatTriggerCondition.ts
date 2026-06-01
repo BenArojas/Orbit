@@ -73,6 +73,15 @@ function formatOperator(indicator: string, condition: string): string {
     };
     return labels[condition] ?? condition.replace(/_/g, " ");
   }
+  if (indicator === "close") {
+    const labels: Record<string, string> = {
+      above: "Price above",
+      below: "Price below",
+      crosses_above: "Price crosses above",
+      crosses_below: "Price crosses below",
+    };
+    return labels[condition] ?? condition.replace(/_/g, " ");
+  }
   if (indicator === "volume") {
     const labels: Record<string, string> = {
       above: "Volume above",

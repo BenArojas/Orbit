@@ -47,6 +47,45 @@ async def test_one_condition_fails_no_fire():
 
 
 @pytest.mark.asyncio
+async def test_close_range_conditions_support_fib_golden_pocket_alerts():
+    scanner = ScannerService(db=AsyncMock(), ibkr=AsyncMock())
+    rule = {
+        "id": 1,
+        "conid": 123,
+        "symbol": "AAPL",
+        "watchlist_name": None,
+        "timeframe": "15m",
+        "ibkr_mirror_target": None,
+        "conditions": [
+            {"indicator": "close", "condition": "above", "threshold": 110.5},
+            {"indicator": "close", "condition": "below", "threshold": 111.46},
+        ],
+    }
+
+    inside = scanner._evaluate_conditions(rule, {"close": 111.0})
+    outside = scanner._evaluate_conditions(rule, {"close": 112.0})
+
+    assert inside["fires"] is True
+    assert outside["fires"] is False
+    assert inside["values"] == [
+        {
+            "indicator": "close",
+            "condition": "above",
+            "threshold": 110.5,
+            "actual_value": 111.0,
+            "news_candle_method": None,
+        },
+        {
+            "indicator": "close",
+            "condition": "below",
+            "threshold": 111.46,
+            "actual_value": 111.0,
+            "news_candle_method": None,
+        },
+    ]
+
+
+@pytest.mark.asyncio
 async def test_crosses_above_requires_prior_bar_below():
     scanner = ScannerService(db=AsyncMock(), ibkr=AsyncMock())
     rule = {

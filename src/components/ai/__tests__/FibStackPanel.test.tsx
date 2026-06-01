@@ -25,6 +25,7 @@ import type {
   FibonacciResult,
   LockFibonacciRequest,
   LockedFibonacciResponse,
+  TriggerRuleCreate,
 } from "@/lib/api";
 
 // ── Mock the API layer ───────────────────────────────────────
@@ -34,6 +35,7 @@ const mockLockFib = vi.fn();
 const mockUnlockFib = vi.fn();
 const mockClearFib = vi.fn();
 const mockGetFibConfig = vi.fn();
+const mockCreateTriggerRule = vi.fn();
 
 vi.mock("@/lib/api", async (importOriginal) => {
   const mod = await importOriginal<typeof import("@/lib/api")>();
@@ -46,6 +48,7 @@ vi.mock("@/lib/api", async (importOriginal) => {
       unlockFibonacci: (id: number) => mockUnlockFib(id),
       clearLockedFibs: (conid: number) => mockClearFib(conid),
       getFibConfig: () => mockGetFibConfig(),
+      createTriggerRule: (rule: TriggerRuleCreate) => mockCreateTriggerRule(rule),
     },
   };
 });
@@ -118,9 +121,16 @@ beforeEach(() => {
   } as LockedFibonacciResponse));
   mockUnlockFib.mockResolvedValue({ deleted: true, id: 0 });
   mockClearFib.mockResolvedValue({ deleted: 0, conid: 0 });
+  mockCreateTriggerRule.mockImplementation(async (rule: TriggerRuleCreate) => ({
+    ...rule,
+    id: 123,
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  }));
 
   useChartStore.getState().clearChart();
   useChartStore.getState().setActiveConid(265598);
+  useChartStore.getState().setActiveSymbol("AAPL");
   useChartStore.getState().setTimeframe("1D");
 });
 
@@ -171,6 +181,52 @@ describe("FibStackPanel — count badge", () => {
 });
 
 describe("FibStackPanel — lock + unlock", () => {
+  it("creates a stock trigger from the primary fib golden pocket", async () => {
+    useChartStore.getState().setPrimaryFib(
+      makeResult({
+        levels: [
+          { level: 0.618, price: 111.46, label: "0.618 (GP)", kind: "retracement", golden_pocket: true },
+          { level: 0.65, price: 110.5, label: "0.65 (GP)", kind: "retracement", golden_pocket: true },
+          { level: 0.716, price: 108.52, label: "0.716 (GP)", kind: "retracement", golden_pocket: true },
+        ],
+      }),
+    );
+
+    render(withQueryClient(createElement(FibStackPanel)));
+
+    const btn = await screen.findByTestId("fib-create-alert-button");
+    await act(async () => {
+      fireEvent.click(btn);
+    });
+
+    expect(mockCreateTriggerRule).toHaveBeenCalledTimes(1);
+    expect(mockCreateTriggerRule).toHaveBeenCalledWith({
+      name: "Fib golden pocket: AAPL 1D",
+      enabled: true,
+      timeframe: "1D",
+      scan_interval_seconds: 300,
+      watchlist_name: null,
+      conid: 265598,
+      symbol: "AAPL",
+      template_id: null,
+      ibkr_mirror_target: null,
+      conditions: [
+        {
+          indicator: "close",
+          condition: "above",
+          threshold: 110.5,
+          news_candle_method: null,
+        },
+        {
+          indicator: "close",
+          condition: "below",
+          threshold: 111.46,
+          news_candle_method: null,
+        },
+      ],
+    });
+  });
+
   it("Lock button calls api.lockFibonacci with the primary's swing data", async () => {
     useChartStore.getState().setPrimaryFib(
       makeResult({ swing_high: 200, swing_low: 150, direction: "up" }),

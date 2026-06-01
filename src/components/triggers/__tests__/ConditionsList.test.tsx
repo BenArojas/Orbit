@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import { ConditionsList } from "../ConditionsList";
+import { formatTriggerCondition } from "../formatTriggerCondition";
 import type { TriggerCondition } from "@/lib/api";
 
 const baseCondition: TriggerCondition = {
@@ -81,5 +82,48 @@ describe("ConditionsList", () => {
 
     expect(conditionTexts).toContain("Price above EMA 200");
     expect(conditionTexts).toContain("Price crosses below EMA 200");
+  });
+
+  it("does not show a threshold input for EMA price-vs-indicator conditions", () => {
+    const onChange = vi.fn();
+    render(
+      <ConditionsList
+        value={[
+          { indicator: "ema_21", condition: "crosses_above", threshold: 0, news_candle_method: null },
+        ]}
+        onChange={onChange}
+      />,
+    );
+
+    expect(screen.queryByRole("spinbutton", { name: /threshold/i })).toBeNull();
+    expect(screen.getByText("Auto")).toBeInTheDocument();
+  });
+
+  it("sets EMA thresholds to zero when changing an existing condition to EMA", () => {
+    const onChange = vi.fn();
+    render(<ConditionsList value={[baseCondition]} onChange={onChange} />);
+
+    fireEvent.change(screen.getByRole("combobox", { name: /indicator/i }), {
+      target: { value: "ema_21" },
+    });
+
+    expect(onChange).toHaveBeenCalledWith([
+      expect.objectContaining({
+        indicator: "ema_21",
+        threshold: 0,
+        news_candle_method: null,
+      }),
+    ]);
+  });
+
+  it("formats raw close conditions as price conditions", () => {
+    expect(
+      formatTriggerCondition({
+        indicator: "close",
+        condition: "above",
+        threshold: 110.5,
+        news_candle_method: null,
+      }),
+    ).toBe("Price above 110.5");
   });
 });

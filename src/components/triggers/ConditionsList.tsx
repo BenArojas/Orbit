@@ -17,6 +17,10 @@ const NEWS_METHOD_OPTIONS = [
   { value: "long_wick", label: "Long wick" },
 ] as const;
 
+function usesAutoThreshold(indicator: string): boolean {
+  return indicator.startsWith("ema_") || indicator === "vwap";
+}
+
 interface Props {
   value: TriggerCondition[];
   onChange: (next: TriggerCondition[]) => void;
@@ -43,7 +47,11 @@ export function ConditionsList({ value, onChange }: Props) {
       });
       return;
     }
-    update(idx, { indicator, news_candle_method: null });
+    update(idx, {
+      indicator,
+      threshold: usesAutoThreshold(indicator) ? 0 : value[idx]?.threshold,
+      news_candle_method: null,
+    });
   };
 
   return (
@@ -70,7 +78,10 @@ export function ConditionsList({ value, onChange }: Props) {
             aria-label="condition"
             value={c.condition}
             onChange={(e) =>
-              update(idx, { condition: e.target.value as TriggerCondition["condition"] })
+              update(idx, {
+                condition: e.target.value as TriggerCondition["condition"],
+                threshold: usesAutoThreshold(c.indicator) ? 0 : c.threshold,
+              })
             }
             className="h-8 rounded-md border border-border bg-[var(--bg-1)] px-2 text-[10px]"
             disabled={c.indicator === "news_candle"}
@@ -96,6 +107,14 @@ export function ConditionsList({ value, onChange }: Props) {
                 <option key={option.value} value={option.value}>{option.label}</option>
               ))}
             </select>
+          ) : usesAutoThreshold(c.indicator) ? (
+            <div
+              aria-label="threshold"
+              title="The app compares price to the selected indicator automatically."
+              className="flex h-8 items-center rounded-md border border-border bg-[var(--bg-1)] px-2 font-data text-[10px] text-[var(--text-3)]"
+            >
+              Auto
+            </div>
           ) : (
             <Input
               type="number"

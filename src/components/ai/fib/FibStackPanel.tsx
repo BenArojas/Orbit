@@ -17,9 +17,12 @@
  */
 
 import { useMemo } from "react";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { toast } from "sonner";
 
 import { useChartStore } from "@/store/chart";
 import { FIB_STACK_SOFT_CAP, FIB_STACK_HARD_CAP } from "@/store/chart";
+import { api, type FibonacciResult, type TriggerRuleCreate } from "@/lib/api";
 import {
   useLockedFibs,
   useLockFib,
@@ -31,6 +34,71 @@ import type { ActiveFib } from "@/store/chart";
 import FibScoreCard from "../FibScoreCard";
 import FibLockedCard from "./FibLockedCard";
 
+const GOLDEN_POCKET_CORE_LEVELS = [0.618, 0.65];
+
+function findLevel(result: FibonacciResult, level: number) {
+  return result.levels.find((l) => Math.abs(l.level - level) < 0.0001);
+}
+
+function getGoldenPocketBounds(result: FibonacciResult) {
+  const coreLevels = GOLDEN_POCKET_CORE_LEVELS
+    .map((level) => findLevel(result, level))
+    .filter((level): level is NonNullable<typeof level> => level != null);
+  const levels = coreLevels.length === GOLDEN_POCKET_CORE_LEVELS.length
+    ? coreLevels
+    : result.levels.filter((level) => level.golden_pocket);
+
+  if (levels.length < 2) return null;
+
+  const prices = levels.map((level) => level.price);
+  return {
+    lower: Math.min(...prices),
+    upper: Math.max(...prices),
+  };
+}
+
+function buildFibTriggerRule({
+  conid,
+  symbol,
+  timeframe,
+  result,
+}: {
+  conid: number;
+  symbol: string;
+  timeframe: string;
+  result: FibonacciResult;
+}): TriggerRuleCreate | null {
+  const bounds = getGoldenPocketBounds(result);
+  if (!bounds || result.no_active_fib) return null;
+
+  const displaySymbol = symbol || `Conid ${conid}`;
+  return {
+    name: `Fib golden pocket: ${displaySymbol} ${timeframe}`,
+    enabled: true,
+    timeframe,
+    scan_interval_seconds: 300,
+    watchlist_name: null,
+    conid,
+    symbol: symbol || null,
+    template_id: null,
+    ibkr_mirror_target: null,
+    conditions: [
+      {
+        indicator: "close",
+        condition: "above",
+        threshold: bounds.lower,
+        news_candle_method: null,
+      },
+      {
+        indicator: "close",
+        condition: "below",
+        threshold: bounds.upper,
+        news_candle_method: null,
+      },
+    ],
+  };
+}
+
 /**
  * No props — FibStackPanel reads everything it needs (active conid,
  * timeframe, active fibs) from the chart store. This keeps the
@@ -39,7 +107,9 @@ import FibLockedCard from "./FibLockedCard";
 export default function FibStackPanel() {
   const activeFibs = useChartStore((s) => s.activeFibs);
   const conid = useChartStore((s) => s.activeConid);
+  const symbol = useChartStore((s) => s.activeSymbol);
   const timeframe = useChartStore((s) => s.timeframe);
+  const qc = useQueryClient();
 
   // Keep the lock list query mounted so its side-effect (merging
   // locked fibs into activeFibs) stays alive.
@@ -48,6 +118,19 @@ export default function FibStackPanel() {
   const lockMutation = useLockFib();
   const unlockMutation = useUnlockFib();
   const clearMutation = useClearLockedFibs();
+  const createTriggerMutation = useMutation({
+    mutationFn: (rule: TriggerRuleCreate) => api.createTriggerRule(rule),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["trigger-rules"] });
+      toast.success("Fib trigger created");
+    },
+    onError: (err) =>
+      toast.error(
+        `Could not create fib trigger: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      ),
+  });
 
   const primary: ActiveFib | undefined = activeFibs[0]?.id === "primary"
     ? activeFibs[0]
@@ -85,6 +168,21 @@ export default function FibStackPanel() {
       swing_low_time: r.swing_low_time,
       direction: r.direction,
     });
+  };
+
+  const handleCreateFibTrigger = () => {
+    if (!primary || conid == null) return;
+    const rule = buildFibTriggerRule({
+      conid,
+      symbol,
+      timeframe,
+      result: primary.result,
+    });
+    if (!rule) {
+      toast.error("This fib has no golden pocket levels to alert on");
+      return;
+    }
+    createTriggerMutation.mutate(rule);
   };
 
   const handleUnlock = (fib: ActiveFib) => {
@@ -147,27 +245,41 @@ export default function FibStackPanel() {
           )}
         </div>
 
-        {/* Lock-this-fib button. Visible only when a primary is shown
-            AND we're under the hard cap. Plan decision 8A. */}
         {primary && conid != null && (
-          <button
-            type="button"
-            onClick={handleLockPrimary}
-            disabled={
-              atHardCap
-              || lockMutation.isPending
-              || primary.result.no_active_fib
-            }
-            data-testid="fib-lock-primary-button"
-            title={
-              atHardCap
-                ? "Maximum number of locked fibs reached"
-                : "Lock the current primary fib so it stays on every timeframe"
-            }
-            className="rounded border border-[var(--clr-cyan)] bg-[var(--glow-cyan)] px-2 py-0.5 font-data text-[10px] font-semibold text-[var(--clr-cyan)] transition-all hover:shadow-[0_0_8px_var(--glow-cyan)] disabled:opacity-40 disabled:cursor-not-allowed"
-          >
-            {lockMutation.isPending ? "Locking…" : "Lock this fib"}
-          </button>
+          <div className="flex items-center gap-1.5">
+            <button
+              type="button"
+              onClick={handleCreateFibTrigger}
+              disabled={
+                createTriggerMutation.isPending
+                || primary.result.no_active_fib
+                || getGoldenPocketBounds(primary.result) == null
+              }
+              data-testid="fib-create-alert-button"
+              title="Create a trigger when price enters this fib's golden pocket"
+              className="rounded border border-[var(--border)] px-2 py-0.5 font-data text-[10px] font-semibold text-[var(--text-2)] transition-colors hover:border-[var(--clr-cyan)] hover:text-[var(--clr-cyan)] disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              {createTriggerMutation.isPending ? "Creating…" : "Create alert"}
+            </button>
+            <button
+              type="button"
+              onClick={handleLockPrimary}
+              disabled={
+                atHardCap
+                || lockMutation.isPending
+                || primary.result.no_active_fib
+              }
+              data-testid="fib-lock-primary-button"
+              title={
+                atHardCap
+                  ? "Maximum number of locked fibs reached"
+                  : "Lock the current primary fib so it stays on every timeframe"
+              }
+              className="rounded border border-[var(--clr-cyan)] bg-[var(--glow-cyan)] px-2 py-0.5 font-data text-[10px] font-semibold text-[var(--clr-cyan)] transition-all hover:shadow-[0_0_8px_var(--glow-cyan)] disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              {lockMutation.isPending ? "Locking…" : "Lock this fib"}
+            </button>
+          </div>
         )}
       </div>
 
