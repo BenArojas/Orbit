@@ -466,6 +466,35 @@ class DatabaseService:
 
             CREATE INDEX IF NOT EXISTS idx_chart_drawings_conid
                 ON chart_drawings(conid);
+
+            -- ─── Inflect Journal Entries ───────────────────────────
+            -- Inflect's only owned table. Stores the user's per-trade
+            -- annotations (setup label, freeform notes, freeform tags).
+            --
+            -- Keyed by a stable round-trip `trade_id`
+            -- (account_id:conid:first_open_execution_id) so an entry
+            -- survives re-derivation of trades from `fills` — Inflect
+            -- never persists the round-trip trades themselves, it
+            -- recomputes them on demand via the FIFO matcher.
+            --
+            -- conid is the Orbit-wide instrument key; the index on it
+            -- lets the trades list bulk-fetch entries for a set of
+            -- conids and join them back by trade_id in memory.
+            --
+            -- `tags` is a JSON array of freeform tag strings.
+            CREATE TABLE IF NOT EXISTS journal_entries (
+                trade_id     TEXT PRIMARY KEY,
+                account_id   TEXT NOT NULL,
+                conid        INTEGER NOT NULL,
+                setup        TEXT,
+                notes        TEXT,
+                tags         TEXT,
+                created_at   TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at   TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_journal_conid
+                ON journal_entries(conid);
         """)
         self._conn.commit()
         log.info("Database tables verified/created.")
@@ -632,6 +661,38 @@ class DatabaseService:
 
         return await self._run_read(_do)
 
+    async def list_fills_for_account_range(
+        self, account_id: str, start_ms: int, end_ms: int
+    ) -> list[dict[str, Any]]:
+        """Return an account's fills within [start_ms, end_ms], oldest first.
+
+        This is the FIFO matcher's only input. Order is chronological
+        (ascending trade_time_ms) because the matcher walks fills forward
+        maintaining a signed lot queue. Fills with NULL trade_time_ms are
+        excluded — the matcher cannot place them on the timeline, and the
+        upsert path always populates trade_time_ms for IBKR executions.
+
+        Reads bypass the write lock (see _run_read).
+        """
+        def _do() -> list[dict[str, Any]]:
+            assert self._conn is not None
+            cur = self._conn.execute(
+                """
+                SELECT *
+                FROM fills
+                WHERE account_id = ?
+                  AND trade_time_ms IS NOT NULL
+                  AND trade_time_ms >= ?
+                  AND trade_time_ms <= ?
+                ORDER BY trade_time_ms ASC, trade_time ASC
+                """,
+                (account_id, int(start_ms), int(end_ms)),
+            )
+            cols = [d[0] for d in cur.description]
+            return [dict(zip(cols, row)) for row in cur.fetchall()]
+
+        return await self._run_read(_do)
+
     @staticmethod
     def _valid_fill_row(row: dict[str, Any]) -> bool:
         required = ("execution_id", "account_id", "conid", "side", "quantity", "trade_time")
@@ -644,6 +705,107 @@ class DatabaseService:
         if isinstance(value, str):
             return value
         return json.dumps(value, sort_keys=True)
+
+    # ── Inflect Journal Entries ──────────────────────────────
+    #
+    # Inflect's only owned table. Round-trip trades are derived on demand
+    # from `fills`; these rows are the durable per-trade annotations the
+    # user writes. Keyed by the stable round-trip trade_id so an entry
+    # survives re-derivation. Writes serialise through the write lock;
+    # reads decode the `tags` JSON column into a list of strings.
+
+    async def upsert_journal_entry(
+        self,
+        *,
+        trade_id: str,
+        account_id: str,
+        conid: int,
+        setup: str | None,
+        notes: str | None,
+        tags: list[str] | None,
+    ) -> None:
+        """Insert or update a journal entry, keyed by stable trade_id.
+
+        `tags` is stored as a JSON array string. Passing None or an empty
+        list clears the stored tags. created_at is preserved on update;
+        updated_at is always refreshed.
+        """
+        tags_json = json.dumps(list(tags)) if tags else None
+
+        def _upsert() -> None:
+            assert self._conn is not None
+            with self._conn:
+                self._conn.execute(
+                    """
+                    INSERT INTO journal_entries
+                        (trade_id, account_id, conid, setup, notes, tags, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                    ON CONFLICT(trade_id) DO UPDATE SET
+                        account_id = excluded.account_id,
+                        conid = excluded.conid,
+                        setup = excluded.setup,
+                        notes = excluded.notes,
+                        tags = excluded.tags,
+                        updated_at = CURRENT_TIMESTAMP
+                    """,
+                    (trade_id, account_id, int(conid), setup, notes, tags_json),
+                )
+
+        await self._run_write(_upsert)
+
+    async def get_journal_entry(self, trade_id: str) -> dict | None:
+        """Return one journal entry by trade_id, or None. Tags decoded to a list."""
+        def _do() -> dict | None:
+            row = self._fetchone(
+                "SELECT * FROM journal_entries WHERE trade_id = ?",
+                (trade_id,),
+            )
+            if row is None:
+                return None
+            row["tags"] = self._decode_tags(row.get("tags"))
+            return row
+
+        return await self._run_read(_do)
+
+    async def get_journal_entries_for_conids(
+        self, conids: list[int]
+    ) -> list[dict]:
+        """Bulk-fetch journal entries for a set of conids (indexed lookup).
+
+        The trades list joins these back to trades by trade_id in memory.
+        Returns [] for an empty input. Tags decoded to a list.
+        """
+        if not conids:
+            return []
+
+        def _do() -> list[dict]:
+            placeholders = ",".join("?" for _ in conids)
+            rows = self._fetchall(
+                f"SELECT * FROM journal_entries WHERE conid IN ({placeholders})",
+                tuple(int(c) for c in conids),
+            )
+            for r in rows:
+                r["tags"] = self._decode_tags(r.get("tags"))
+            return rows
+
+        return await self._run_read(_do)
+
+    @staticmethod
+    def _decode_tags(value: Any) -> list[str]:
+        """Decode the stored tags JSON column into a list of strings.
+
+        Never raises — a corrupt or non-list payload degrades to []
+        rather than breaking the trades query.
+        """
+        if not value:
+            return []
+        try:
+            data = json.loads(value)
+        except (ValueError, TypeError):
+            return []
+        if not isinstance(data, list):
+            return []
+        return [str(t) for t in data]
 
     # ── Trigger Rules ─────────────────────────────────────
 

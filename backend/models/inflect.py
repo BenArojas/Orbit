@@ -1,0 +1,155 @@
+"""
+Pydantic models for the Inflect trading-journal module (`/inflect/*`).
+
+Inflect turns raw IBKR executions (the shared `fills` projection) into
+round-trip trades via a FIFO matcher, attributes realized P&L to calendar
+days, and lets the user annotate each trade with a setup, notes, and tags.
+
+Round-trip trades are derived on demand — never persisted in v1. The only
+durable Inflect-owned row is the `JournalEntry` (table `journal_entries`),
+keyed by a stable `trade_id` so annotations survive re-derivation.
+
+conid is the Orbit-wide instrument key throughout, per parallax-hub.
+"""
+
+from __future__ import annotations
+
+from pydantic import BaseModel, Field
+from typing import Literal, Optional
+
+
+# ═══════════════════════════════════════════════════════════════
+#  Journal entries (the one persisted Inflect table)
+# ═══════════════════════════════════════════════════════════════
+
+
+class JournalEntry(BaseModel):
+    """A user's annotation for one round-trip trade.
+
+    Mirrors the `journal_entries` row. `tags` is a freeform list of
+    strings; `setup` is one of the fixed setup-dropdown values (or None).
+    """
+    trade_id: str
+    account_id: str
+    conid: int
+    setup: Optional[str] = None
+    notes: Optional[str] = None
+    tags: list[str] = Field(default_factory=list)
+    created_at: Optional[str] = None
+    updated_at: Optional[str] = None
+
+
+class JournalUpsertRequest(BaseModel):
+    """Body for PUT /inflect/trades/{trade_id}/journal."""
+    setup: Optional[str] = None
+    notes: Optional[str] = None
+    tags: list[str] = Field(default_factory=list)
+
+
+class InflectSetupsResponse(BaseModel):
+    """Response from GET /inflect/setups — the fixed setup vocabulary."""
+    setups: list[str]
+
+
+# ═══════════════════════════════════════════════════════════════
+#  Round-trip trades (derived on demand from `fills`)
+# ═══════════════════════════════════════════════════════════════
+
+
+class InflectFill(BaseModel):
+    """One constituent execution of a round-trip trade.
+
+    A thin projection of the `fills` row, surfaced in the trade-detail
+    view so the user can see exactly which executions made up the trade.
+    """
+    execution_id: str
+    conid: int
+    symbol: Optional[str] = None
+    side: str                       # "BUY" or "SELL"
+    quantity: float
+    price: Optional[float] = None
+    commission: Optional[float] = None
+    net_amount: Optional[float] = None
+    sec_type: Optional[str] = None
+    trade_time: str
+    trade_time_ms: Optional[int] = None
+
+
+class InflectTrade(BaseModel):
+    """A FIFO-derived round-trip trade.
+
+    A trade spans from the first opening lot to the fill that flattens the
+    position (qty returns to 0). Partial scale-in/scale-out stays in one
+    trade until flat. Still-open positions are reported with status=OPEN,
+    no close fields, and no realized P&L (excluded from calendar totals).
+    """
+    trade_id: str
+    account_id: str
+    conid: int
+    symbol: str = ""
+    sec_type: Optional[str] = None
+    direction: Literal["LONG", "SHORT"]
+    status: Literal["OPEN", "CLOSED"]
+    open_time: str
+    open_time_ms: int
+    close_time: Optional[str] = None
+    close_time_ms: Optional[int] = None
+    qty: float                              # max absolute size reached
+    avg_entry: float
+    avg_exit: Optional[float] = None
+    gross_pnl: Optional[float] = None       # before commissions
+    commissions: float = 0.0
+    net_pnl: Optional[float] = None         # gross minus commissions
+    return_pct: Optional[float] = None
+    hold_duration_sec: Optional[int] = None
+    # R-multiple is deferred to v2 — needs a planned risk/stop we don't
+    # capture in v1. Always None; the detail view leaves a slot for it.
+    r_multiple: Optional[float] = None
+    fills: list[InflectFill] = Field(default_factory=list)
+    journal_entry: Optional[JournalEntry] = None
+
+
+class InflectTradesResponse(BaseModel):
+    """Response from GET /inflect/trades."""
+    account_id: str
+    trades: list[InflectTrade]
+
+
+# ═══════════════════════════════════════════════════════════════
+#  Calendar aggregation
+# ═══════════════════════════════════════════════════════════════
+
+
+class InflectCalendarDay(BaseModel):
+    """Net realized P&L + closed-trade count for one trading day.
+
+    `date` is an ISO YYYY-MM-DD string in US/Eastern (the trading-day
+    timezone). Only days with at least one closed trade appear.
+    """
+    date: str
+    net_pnl: float
+    trade_count: int
+
+
+class InflectWeekRollup(BaseModel):
+    """One week's rollup for the right rail of the calendar grid."""
+    week_index: int                 # 1-based, matches the mock's "Week 1..6"
+    net_pnl: float
+    trading_days: int               # number of days with closed trades
+
+
+class InflectCalendarResponse(BaseModel):
+    """Response from GET /inflect/calendar."""
+    account_id: str
+    year: int
+    month: int
+    days: list[InflectCalendarDay]
+    weeks: list[InflectWeekRollup]
+    total_net_pnl: float
+    days_traded: int
+
+
+class InflectSyncResponse(BaseModel):
+    """Response from POST /inflect/sync — how many fills were upserted."""
+    account_id: str
+    synced: int
