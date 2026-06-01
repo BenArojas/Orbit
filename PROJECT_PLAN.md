@@ -1,7 +1,7 @@
 # Orbit — Project Plan
 
-> Last updated: 2026-05-28
-> Status: Parallax Phase 1–7 complete. Phase 8 E2E remains partially open. Phase 9, Phase 10, and Phase 11 are merged to `dev`. Orbit consolidation Plans #1–#5 are merged to `dev`; Plan #6 (MoonMarket options chain + single-leg option orders) is implemented on `feature/moonmarket-options`, pending merge and IBKR paper-account smoke testing.
+> Last updated: 2026-06-01
+> Status: Parallax core v1 is code-complete on `dev` through the rules/fib-trigger closeout pass. Phase 8 E2E remains the v1 sign-off gate. Phase 9, Phase 10, Phase 11, and Phase 12 are merged to `dev`. Orbit consolidation Plans #1–#5 are merged to `dev`; Plan #6 (MoonMarket options chain + single-leg option orders) is implemented on `feature/moonmarket-options`, pending merge and IBKR paper-account smoke testing.
 ---
 
 ## IBKR Gateway — What We Learned (2026-04-14)
@@ -61,6 +61,33 @@ These notes are intentionally tracked in the project plan because they affect th
 
 - **Plan #6: MoonMarket Options Chain** ships single-leg option orders first. Selecting a call/put contract opens the shared OrderTicket as `OPTION`, but option brackets are disabled in the UI and rejected server-side if an option order payload tries to submit a multi-order group.
 - **Deferred but required follow-up:** option bracket orders belong in a later MoonMarket trading-depth pass after single-leg option orders are validated against the IBKR paper account. Revisit this before any options trading polish or "bracket parity" work.
+- **Parallax v1 done gate:** no v2 feature is required before calling Parallax v1 done. The remaining gate is live/manual E2E validation plus a short polish pass listed under "Parallax v1 Sign-off Checklist".
+- **Compare-mode color customization:** still belongs in v1 polish because the hardcoded white stock line is not visible enough in light mode.
+
+## Parallax v1 Sign-off Checklist (2026-06-01)
+
+Parallax should be considered **code-complete**, but not fully signed off, until these checks are done:
+
+| Area | Status | Required before v1 done |
+|---|---|---|
+| Today cockpit + triggers | CODE COMPLETE | Run one live trigger flow: rule fires, card appears, snooze removes card for the expected period, dismiss removes card, timeline remains readable. |
+| Rule creation UX | CODE COMPLETE | Verify stock and watchlist rules from Today and Analysis. EMA/VWAP rows should show `Auto`, not a numeric threshold. |
+| Fib chart-tied trigger | CODE COMPLETE | On Analysis, enable fib, click `Create alert`, confirm the created rule uses current chart conid/timeframe and price-range conditions for the visible golden pocket. |
+| Compare mode | POLISH OPEN | Add customizable stock/reference line colors. Current hardcoded stock white is weak in light mode. |
+| Indicator/chart accuracy | E2E OPEN | Cross-check RSI, EMA 9/21/50/200, VWAP, Bollinger, volume, and fib levels vs TradingView on 5 liquid symbols across 15m/1D/1W. |
+| Scanner/triggers live data | E2E OPEN | Validate scanner cadence, dedup, all 4 news-candle methods, watchlist move, and auto-return with IBKR watchlists. |
+| Settings + restart | E2E OPEN | Restart the app and verify theme, scan interval, model selection, watchlists, rules, locked fibs, drawings, and compare panes persist as intended. |
+| Fresh install | E2E OPEN | Clean macOS run-through and Windows run-through: gateway setup, auth, first chart, first scan, first trigger, first order preview. |
+| Typecheck baseline | KNOWN DEBT | `npm run typecheck` still fails in existing test files (`MarketPulse`, `useGateway`, `DrawingsLayer`, `screener.test`). Not caused by the trigger/fib work, but should be cleared before a strict release tag. |
+
+**v2 items intentionally not required for Parallax v1:**
+
+- Fib learning algorithm and price-outcome grading.
+- Dedicated news-candle fib anchor selection.
+- Cross-indicator confluence engine beyond current prompt facts.
+- Cloud LLM providers.
+- System tray scanner.
+- Inflect journal linkage.
 
 ---
 
@@ -82,6 +109,36 @@ This section tracks the newer Orbit work that renamed the former IBKR Hub concep
 - Manual IBKR paper validation for options chain data and single-leg option preview/place.
 - Option bracket order design/implementation after single-leg validation.
 - Remaining Orbit polish pass: shared settings, visual consistency, build/distribution checks, and any unmerged roadmap cleanup.
+
+## Order Placement Status + Test Plan (2026-06-01)
+
+Current implementation is intentionally **paper-account only** for mutations.
+
+| Capability | Status | Notes |
+|---|---|---|
+| Stock order preview | DONE | `/moonmarket/orders/preview` calls IBKR `whatif`. Allowed on paper and live accounts because it does not mutate. |
+| Stock single order placement | DONE | Paper accounts only. Live accounts are blocked server-side with `live_trading_blocked` even if the UI is bypassed. |
+| Stock bracket orders | DONE | Paper accounts only. Entry + profit-taker + stop payload is preserved and sent as an IBKR order group. |
+| Reply/confirm order | DONE | Paper accounts only. Required for IBKR warning/reply flows. |
+| Cancel live order | DONE | Paper accounts only. Available from MoonMarket live orders. |
+| Modify live order | DONE | Paper accounts only. Opens shared ticket with an existing order context. |
+| Option single-leg order | CODE COMPLETE | Implemented with Plan #6 on `feature/moonmarket-options`; needs merge and IBKR paper-account smoke test. |
+| Option bracket order | DEFERRED | Explicitly rejected server-side until single-leg option orders are validated. |
+| Live-account order placement | BLOCKED BY DESIGN | v1 blocks mutations on live accounts. Revisit only after paper flow is tested and a separate live-trading safety design is approved. |
+
+Manual order-placement smoke test:
+
+1. Use an IBKR paper account (`DU...`).
+2. Open Parallax Analysis for a liquid stock, click `Trade`.
+3. Preview a small market order; verify IBKR returns margin/cost preview.
+4. Preview a small limit order away from market; verify preview response and displayed price.
+5. Place a tiny paper-only order; handle any IBKR reply prompt through the confirm flow.
+6. Confirm the order appears in MoonMarket Transactions / live orders.
+7. Modify the order price from the live-orders row.
+8. Cancel the order from the live-orders row.
+9. Repeat with a bracket order: entry, profit target, stop. Verify all child payload fields are present.
+10. Switch to a live account and verify place/confirm/cancel/modify are blocked in UI and rejected by the backend.
+11. After Plan #6 is merged, repeat preview/place for one liquid single-leg option contract in paper only.
 
 ---
 
@@ -470,17 +527,47 @@ The Compare button on the Analysis toolbar replaces the chart area with a stack 
 
 ---
 
+### Phase 12: Parallax Rules/Fib Closeout — COMPLETE
+
+> Goal: Finish the Parallax v1 user-side trigger workflow before moving to Inflect: make rules understandable, make Today actions reliable, support trigger creation from Analysis, and tie Fibonacci alerts to the visible chart fib.
+> Merged to `dev`: `b056ef3` (`fix: clean up Parallax trigger rules UX`) and `766dbe7` (`feat: add fib chart trigger`).
+
+| # | Task | Status | Notes |
+|---|---|---|---|
+| 12.1 | Today hit action reliability | DONE | Fixed dismiss/snooze false-failure toasts caused by no-content responses. Cards now remove after successful action without misleading error feedback. |
+| 12.2 | Watchlist mutation safety | DONE | Fixed IBKR watchlist member extraction so adding one stock does not overwrite existing members. |
+| 12.3 | Rule-builder readability | DONE | EMA/VWAP rules are presented as price-vs-indicator logic. Threshold `0` is internal only; UI shows `Auto`. Numbers use readable labels and commas where displayed. |
+| 12.4 | Rule templates | DONE | Create-rule modal has fixed max height with vertical scroll, custom templates can be deleted, and built-in template cleanup is handled without exposing retired templates. |
+| 12.5 | Analysis-side trigger creation | DONE | Analysis `Triggers` tab can create per-stock rules prefilled with the active conid/symbol/timeframe. |
+| 12.6 | Fib chart-tied trigger | DONE | Fib panel has `Create alert`, which creates a per-stock trigger for the current chart symbol/timeframe when price enters the visible fib golden pocket. |
+| 12.7 | EMA set restriction | DONE | User-facing EMA rules expose only EMA 9, 21, 50, and 200. |
+| 12.8 | Compare line colors | TODO | Make stock/reference line colors customizable and light-mode-safe. Current hardcoded stock white can disappear in light mode. |
+
+**Verification already run for Phase 12:**
+
+- `npm test -- src/components/ai/__tests__/FibStackPanel.test.tsx src/components/triggers/__tests__/ConditionsList.test.tsx`
+- `uv run pytest tests/test_trigger_conditions_eval.py -q`
+- `./node_modules/.bin/vite build`
+
+**Known verification limitation:** `npm run typecheck` still fails on unrelated baseline test typing issues listed in the v1 sign-off checklist.
+
+---
+
 ### Future (v2 — Not In Scope Now)
 
-- Cloud LLM integration (Anthropic / OpenAI) for better analysis
-- Multi-account support
-- Options chain analysis
-- System tray mode with persistent scanning
-- Ichimoku Cloud, Supertrend, 52-Week indicators
-- Export analysis as PDF/image
-- Mobile companion (read-only dashboard)
-- Keyboard shortcuts
-- Backup / restore SQLite (watchlists, triggers, settings export)
+- Fib learning algorithm: price-outcome tracking, `fib_analyses`, `fib_outcomes`, evolving weights, optional AI-analysis feedback.
+- Cross-indicator confluence engine: explicit fib/EMA/Bollinger/VWAP overlap detection before the prompt layer.
+- News-candle-aware fib anchor selection: earnings/news candles become preferred swing anchors when criteria match.
+- Watchlist-aware / peer-relative AI analysis beyond the current prompt framing.
+- Cloud LLM integration (Anthropic / OpenAI) for better analysis.
+- Multi-account support.
+- Options chain analysis and option bracket parity after single-leg paper validation.
+- System tray mode with persistent scanning.
+- Ichimoku Cloud, Supertrend, 52-week indicators.
+- Export analysis as PDF/image.
+- Mobile companion (read-only dashboard).
+- Keyboard shortcuts.
+- Backup / restore SQLite (watchlists, triggers, settings export).
 
 > **Inflect (trading journal)** is Phase 4 of the Orbit roadmap, built after Parallax and MoonMarket.
 
