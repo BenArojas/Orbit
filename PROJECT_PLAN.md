@@ -486,6 +486,61 @@ The Compare button on the Analysis toolbar replaces the chart area with a stack 
 
 ---
 
+## Inflect (trading journal) — v1 shipped (2026-06-02)
+
+Inflect is the third Orbit module: a Tradezella-style journal. v1 turns the
+shared `fills` projection into round-trip trades on demand, attributes realized
+P&L to a monthly calendar, and lets the user annotate each trade. It rides the
+existing FastAPI sidecar and SQLite DB — no new services, no Parallax/MoonMarket
+journal hooks (parallax-hub boundary respected).
+
+### v1 scope (what shipped)
+
+- **Backend** (`/inflect/*`): FIFO round-trip matcher (`services/inflect/matcher.py`),
+  on-demand trade derivation + calendar aggregation + journal CRUD
+  (`services/inflect/service.py`), extended-hours-gated background fills sync
+  (`services/inflect_sync.py`), and a thin router (`routers/inflect.py`). The
+  only persisted Inflect-owned table is `journal_entries`, keyed by a stable
+  `trade_id` so annotations survive re-derivation.
+- **Frontend** (`src/modules/inflect/`): launcher tile + `/inflect/*` route,
+  monthly P&L calendar (Sunday-start grid + weekly rail), round-trip trades
+  table with OPEN/CLOSED filter, trade-detail drawer (stats + fills), and a
+  setup/notes/tags journal editor. Zustand view store + TanStack Query hooks.
+- **Tests**: 50 backend (matcher, calendar, sync gate, router, DB layer) +
+  frontend (store, hooks, formatters, calendar grid, trades table). Full
+  `npm test` and `tsc` green.
+
+### Locked decisions (D1–D9)
+
+- **D1.** Trades derived on demand from `fills` via FIFO; never persisted in v1.
+- **D2.** Stable `trade_id` = `{account_id}:{conid}:{first_open_execution_id}`.
+- **D3.** conid is the instrument key throughout (parallax-hub).
+- **D4.** Realized P&L net of commissions, attributed to the **close** date in
+  US/Eastern (the trading-day timezone).
+- **D5.** Commissions prorated per fill so position flips split costs correctly
+  across the closing and newly-opened trade.
+- **D6.** Background sync floors at 60s and is gated to extended hours via
+  `/trsrv/secdef/schedule` (cached once/day), with a hardcoded ~04:00–20:00 ET
+  weekday fallback; holidays authoritatively close without fallback.
+- **D7.** Setup vocabulary is a fixed list: Fib retracement, Fib extension,
+  Breakout, Mean reversion, News candle, Other.
+- **D8.** Options ride the same matcher via sec_type/conid (single-leg).
+- **D9.** R-multiple deferred to v2 (no risk/stop captured); detail view leaves a
+  slot, value always null.
+
+### v2 follow-ups
+
+- Flex/CSV import to backfill fills beyond IBKR's ~7-day window (schema is
+  import-ready; >7-day app downtime currently loses fills).
+- R-multiple / planned-risk entry.
+- Trade screenshots + ratings.
+- Multi-leg option strategies.
+- Average-cost matcher option alongside FIFO.
+- Materialized `trades` cache (matcher recomputes per request today — fine for
+  v1 history sizes, no API change needed to add a cache).
+
+---
+
 ## Open Questions
 
 | # | Question | Related Task | Status |
