@@ -322,6 +322,101 @@ export interface MoonMarketSingleOptionStrikeResponse {
   data: { call?: MoonMarketOptionContract; put?: MoonMarketOptionContract };
 }
 
+// Inflect (trading journal)
+export interface InflectJournalEntry {
+  trade_id: string;
+  account_id: string;
+  conid: number;
+  setup: string | null;
+  notes: string | null;
+  tags: string[];
+  created_at: string | null;
+  updated_at: string | null;
+}
+
+export interface InflectJournalUpsertRequest {
+  setup: string | null;
+  notes: string | null;
+  tags: string[];
+}
+
+export interface InflectSetupsResponse {
+  setups: string[];
+}
+
+export interface InflectFill {
+  execution_id: string;
+  conid: number;
+  symbol: string | null;
+  side: string;
+  quantity: number;
+  price: number | null;
+  commission: number | null;
+  net_amount: number | null;
+  sec_type: string | null;
+  trade_time: string;
+  trade_time_ms: number | null;
+}
+
+export interface InflectTrade {
+  trade_id: string;
+  account_id: string;
+  conid: number;
+  symbol: string;
+  sec_type: string | null;
+  direction: "LONG" | "SHORT";
+  status: "OPEN" | "CLOSED";
+  open_time: string;
+  open_time_ms: number;
+  close_time: string | null;
+  close_time_ms: number | null;
+  qty: number;
+  avg_entry: number;
+  avg_exit: number | null;
+  gross_pnl: number | null;
+  commissions: number;
+  net_pnl: number | null;
+  return_pct: number | null;
+  hold_duration_sec: number | null;
+  r_multiple: number | null;
+  fills: InflectFill[];
+  journal_entry: InflectJournalEntry | null;
+}
+
+export interface InflectTradesResponse {
+  account_id: string;
+  trades: InflectTrade[];
+}
+
+export interface InflectCalendarDay {
+  date: string;
+  net_pnl: number;
+  trade_count: number;
+}
+
+export interface InflectWeekRollup {
+  week_index: number;
+  net_pnl: number;
+  trading_days: number;
+}
+
+export interface InflectCalendarResponse {
+  account_id: string;
+  year: number;
+  month: number;
+  days: InflectCalendarDay[];
+  weeks: InflectWeekRollup[];
+  total_net_pnl: number;
+  days_traded: number;
+}
+
+export interface InflectSyncResponse {
+  account_id: string;
+  synced: number;
+}
+
+export type InflectTradeStatus = "OPEN" | "CLOSED";
+
 /**
  * news_candle detection methods (Phase 6.6). Only meaningful when
  * `indicator === "news_candle"`.
@@ -1325,6 +1420,54 @@ export const api = {
       undefined,
       signal,
     ),
+
+  // Inflect (trading journal)
+  inflectSetups: (signal?: AbortSignal) =>
+    request<InflectSetupsResponse>("GET", "/inflect/setups", undefined, signal),
+
+  inflectCalendar: (year: number, month: number, accountId?: string, signal?: AbortSignal) => {
+    const params = new URLSearchParams({ year: String(year), month: String(month) });
+    if (accountId) params.set("account_id", accountId);
+    return request<InflectCalendarResponse>("GET", `/inflect/calendar?${params.toString()}`, undefined, signal);
+  },
+
+  inflectTrades: (
+    opts: { accountId?: string; from?: number; to?: number; status?: InflectTradeStatus } = {},
+    signal?: AbortSignal,
+  ) => {
+    const params = new URLSearchParams();
+    if (opts.accountId) params.set("account_id", opts.accountId);
+    if (opts.from != null) params.set("from", String(opts.from));
+    if (opts.to != null) params.set("to", String(opts.to));
+    if (opts.status) params.set("status", opts.status);
+    const qs = params.toString();
+    return request<InflectTradesResponse>("GET", `/inflect/trades${qs ? `?${qs}` : ""}`, undefined, signal);
+  },
+
+  inflectTrade: (tradeId: string, accountId?: string, signal?: AbortSignal) => {
+    const qs = accountId ? `?account_id=${encodeURIComponent(accountId)}` : "";
+    return request<InflectTrade>("GET", `/inflect/trades/${encodeURIComponent(tradeId)}${qs}`, undefined, signal);
+  },
+
+  inflectSaveJournal: (
+    tradeId: string,
+    body: InflectJournalUpsertRequest,
+    accountId?: string,
+    signal?: AbortSignal,
+  ) => {
+    const qs = accountId ? `?account_id=${encodeURIComponent(accountId)}` : "";
+    return request<InflectJournalEntry>(
+      "PUT",
+      `/inflect/trades/${encodeURIComponent(tradeId)}/journal${qs}`,
+      body,
+      signal,
+    );
+  },
+
+  inflectSync: (accountId?: string, signal?: AbortSignal) => {
+    const qs = accountId ? `?account_id=${encodeURIComponent(accountId)}` : "";
+    return request<InflectSyncResponse>("POST", `/inflect/sync${qs}`, undefined, signal);
+  },
 
   // Indicators
   computeIndicators: (req: IndicatorRequest, signal?: AbortSignal) =>

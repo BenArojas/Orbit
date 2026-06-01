@@ -31,19 +31,14 @@ describe("OrbitLauncher", () => {
     expect(screen.getByRole("button", { name: /inflect/i })).toBeDisabled();
   });
 
-  it("enables Parallax/MoonMarket and navigates on click when authenticated", () => {
+  it("enables all three tiles and navigates on click when authenticated", () => {
     authed = true;
     render(<OrbitLauncher />);
     fireEvent.click(screen.getByRole("button", { name: /parallax/i }));
     expect(navigate).toHaveBeenCalledWith("/parallax");
     fireEvent.click(screen.getByRole("button", { name: /moonmarket/i }));
     expect(navigate).toHaveBeenCalledWith("/moonmarket");
-  });
-
-  it("keeps Inflect disabled with a Soon badge even when authenticated", () => {
-    authed = true;
-    render(<OrbitLauncher />);
-    expect(screen.getByRole("button", { name: /inflect/i })).toBeDisabled();
-    expect(screen.getByText(/soon/i)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /inflect/i }));
+    expect(navigate).toHaveBeenCalledWith("/inflect");
   });
 });

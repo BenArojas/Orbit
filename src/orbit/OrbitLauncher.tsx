@@ -3,8 +3,8 @@
  *
  * Slim top bar (ORBIT wordmark + GatewayStatusPill) over three hero app tiles.
  * Tiles gray/disabled until IBKR is authenticated, then colorize and navigate
- * into their modules. Inflect is always disabled ("Soon"). The IBKR connect
- * flow lives in the pill's popover (auto-opens until authenticated).
+ * into their modules. The IBKR connect flow lives in the pill's popover
+ * (auto-opens until authenticated).
  */
 import { useNavigate } from "react-router-dom";
 import { Activity, Briefcase, NotebookPen } from "lucide-react";
@@ -47,8 +47,8 @@ export function OrbitLauncher() {
             label="Inflect"
             icon={NotebookPen}
             description="Trading journal"
-            enabled={false}
-            badge="Soon"
+            enabled={isAuthenticated}
+            onOpen={() => navigate("/inflect")}
           />
         </div>
         {!isAuthenticated && (
