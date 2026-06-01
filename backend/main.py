@@ -39,6 +39,9 @@ from services.ai import AiService
 from services.ollama import OllamaLifecycle
 from services.ollama_context import OllamaContextService
 from services.scanner import ScannerService
+from services.moonmarket import MoonMarketService
+from services.inflect.service import InflectService
+from services.inflect_sync import InflectSyncService
 
 # ── Logging setup (must be first) ────────────────────────────
 
@@ -156,11 +159,22 @@ async def lifespan(app: FastAPI):
     scanner.on_trigger_fired = _on_trigger_fired
     scanner.start()
 
+    # Inflect background fills-sync (keeps the durable `fills` projection fresh
+    # inside IBKR's 7-day window while the app is open). Auth-gated, extended-
+    # hours-gated; modeled on the scanner's lifecycle.
+    inflect_service = InflectService(
+        ibkr=ibkr, db=db, moonmarket=MoonMarketService(ibkr)
+    )
+    inflect_sync = InflectSyncService(ibkr=ibkr, inflect=inflect_service)
+    app.state.inflect_sync = inflect_sync
+    inflect_sync.start()
+
     log.info("Backend ready. Waiting for frontend connections.")
     yield
 
     # Shutdown
     log.info("Orbit backend shutting down...")
+    await inflect_sync.stop()
     await scanner.stop()
     await ai.shutdown()
     await ollama.shutdown()
@@ -375,6 +389,9 @@ app.include_router(orders_router)
 
 from routers.options import router as options_router
 app.include_router(options_router)
+
+from routers.inflect import router as inflect_router
+app.include_router(inflect_router)
 
 
 # ── Health endpoint ──────────────────────────────────────────
