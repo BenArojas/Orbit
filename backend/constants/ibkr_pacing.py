@@ -77,6 +77,12 @@ ENDPOINT_LIMITS: dict[str, EndpointLimit] = {
     "/iserver/reply": EndpointLimit("per_sec", 1, 5),
     "/portfolio/accounts": EndpointLimit("per_sec", 1, 5),
     "/portfolio/subaccounts": EndpointLimit("per_sec", 1, 5),
+    # /portfolio2/{accountId}/positions — current-position sanity check for
+    # Inflect basis recovery. IBKR does not publish a separate limit for this
+    # newer endpoint, so we lean protective and treat it like the rest of the
+    # portfolio/account read family (1 req / 5 sec) rather than the 10/sec
+    # global cap. Better to under-poll a sanity check than risk a 429.
+    "/portfolio2/": EndpointLimit("per_sec", 1, 5),
 
     # 1 req / 15 min — performance/summary/transactions and scanner params.
     # Marked "per_minutes" so the decorator fails fast instead of blocking

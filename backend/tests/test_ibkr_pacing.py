@@ -55,6 +55,7 @@ def test_pacing_table_is_complete():
     assert ENDPOINT_LIMITS["/iserver/reply"] == EndpointLimit("per_sec", 1, 5)
     assert ENDPOINT_LIMITS["/portfolio/accounts"] == EndpointLimit("per_sec", 1, 5)
     assert ENDPOINT_LIMITS["/portfolio/subaccounts"] == EndpointLimit("per_sec", 1, 5)
+    assert ENDPOINT_LIMITS["/portfolio2/"] == EndpointLimit("per_sec", 1, 5)
     assert ENDPOINT_LIMITS["/sso/validate"] == EndpointLimit("per_sec", 1, 60)
     assert ENDPOINT_LIMITS["/tickle"] == EndpointLimit("per_sec", 1, 1)
     assert ENDPOINT_LIMITS["/iserver/scanner/run"] == EndpointLimit("per_sec", 1, 1)
@@ -97,6 +98,11 @@ def test_lookup_uses_longest_prefix():
 
     reply = lookup_limit("/iserver/reply/reply-1")
     assert reply == EndpointLimit("per_sec", 1, 5)
+
+    # /portfolio2 positions resolves to the protective 1/5s limit, never the
+    # 10/sec global cap (which would risk a 429 on the basis sanity check).
+    positions = lookup_limit("/portfolio2/DU12345/positions")
+    assert positions == EndpointLimit("per_sec", 1, 5)
 
     # Unmapped path → None (caller falls through to global cap)
     assert lookup_limit("/iserver/marketdata/regsnapshot") is None

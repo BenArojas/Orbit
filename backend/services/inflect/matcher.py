@@ -15,6 +15,12 @@ Key properties (spec §5.1):
     commission across the closing and the newly-opened trade.
   * Still-open positions (queue non-empty at end) are emitted as `OPEN` trades
     with no close fields and no realized P&L — the calendar excludes them.
+  * Protective basis rule — a sell with no known long behind it is NEVER
+    silently turned into a short. A first-seen flat sell, and the over-sell
+    remainder of a long→flat flip, both become `INCOMPLETE_BASIS` ("Needs
+    basis"). A short is opened only when the sell carries explicit IBKR
+    opening-short metadata (see `_is_explicit_opening_short`). This stops the
+    matcher inventing phantom shorts from incomplete local history.
 
 `trade_id` is the deterministic, stable id from spec §5.2:
     f"{account_id}:{conid}:{first_open_execution_id}"
@@ -81,16 +87,23 @@ def _match_conid(
         price = _fill_price(fill)
         fill_qty = abs(float(fill["quantity"]))
         remaining = fill_qty
-        can_open_short_from_flip = False
 
         while remaining > _EPS:
+            # Protective guard: a sell while flat (no known long to close) is
+            # missing basis, not a short. This fires both for a first-seen
+            # sell and for the over-sell remainder left after a long flips to
+            # flat. The only escape is explicit IBKR opening-short metadata,
+            # which proves the short was genuinely opened.
             if (
                 pos_dir == 0
                 and sign < 0
-                and not can_open_short_from_flip
                 and not _is_explicit_opening_short(fill)
             ):
-                trades.append(_incomplete_basis_trade(account_id, conid, fill))
+                trades.append(
+                    _incomplete_basis_trade(
+                        account_id, conid, fill, remaining, fill_qty
+                    )
+                )
                 remaining = 0.0
                 continue
 
@@ -134,12 +147,13 @@ def _match_conid(
 
                 if not lots:
                     # Position is flat → the round-trip closes here. Any
-                    # leftover `remaining` flips into a new opposite position
-                    # on the next loop iteration.
+                    # leftover `remaining` is an over-sell beyond the known
+                    # long: the protective guard at the top of the loop turns
+                    # it into a Needs-basis remainder (or a proven short if the
+                    # fill carries explicit opening-short metadata).
                     pos_dir = 0
                     trades.append(_finalize(acc, status="CLOSED"))
                     acc = None
-                    can_open_short_from_flip = remaining > _EPS
 
     if acc is not None:
         trades.append(_finalize(acc, status="OPEN"))
@@ -288,8 +302,27 @@ def _finalize(acc: dict[str, Any], *, status: str) -> InflectTrade:
 
 
 def _incomplete_basis_trade(
-    account_id: str, conid: int, fill: dict[str, Any]
+    account_id: str,
+    conid: int,
+    fill: dict[str, Any],
+    unmatched_qty: float,
+    fill_qty: float,
 ) -> InflectTrade:
+    """A Needs-basis pseudo-trade for `unmatched_qty` shares of a sell that
+    has no known long behind it.
+
+    `unmatched_qty` is the portion of the fill that could not be matched: the
+    whole fill for a first-seen flat sell, or just the over-sell remainder
+    after a long→flat flip. Trade-level commission is prorated to that portion
+    (the matched portion's share was already booked on the closing long). The
+    embedded `InflectFill` still carries the real execution (full quantity and
+    commission) so the detail view shows the true fill.
+    """
+    full_commission = _positive_float(fill.get("commission"))
+    if full_commission is not None and fill_qty > _EPS:
+        commission = full_commission * (unmatched_qty / fill_qty)
+    else:
+        commission = full_commission or 0.0
     fill_model = InflectFill(
         execution_id=str(fill["execution_id"]),
         conid=int(fill["conid"]),
@@ -297,7 +330,7 @@ def _incomplete_basis_trade(
         side=str(fill["side"]).upper(),
         quantity=abs(float(fill["quantity"])),
         price=_fill_price(fill),
-        commission=_positive_float(fill.get("commission")),
+        commission=full_commission,
         net_amount=_to_float(fill.get("net_amount")),
         multiplier=_fill_multiplier(fill),
         sec_type=fill.get("sec_type"),
@@ -316,11 +349,11 @@ def _incomplete_basis_trade(
         open_time_ms=int(fill["trade_time_ms"]),
         close_time=None,
         close_time_ms=None,
-        qty=abs(float(fill["quantity"])),
+        qty=unmatched_qty,
         avg_entry=0.0,
         avg_exit=_fill_price(fill),
         gross_pnl=None,
-        commissions=_positive_float(fill.get("commission")) or 0.0,
+        commissions=commission,
         net_pnl=None,
         return_pct=None,
         multiplier=_fill_multiplier(fill),

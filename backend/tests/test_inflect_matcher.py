@@ -149,12 +149,46 @@ def test_two_sequential_round_trips_same_conid():
     assert trades[1].gross_pnl == pytest.approx(20.0)
 
 
-def test_flip_long_to_short_splits_into_two_trades():
-    """Buy 100, then sell 150: closes the long (50 left over opens a short)."""
+def test_oversell_beyond_known_long_is_needs_basis_not_short():
+    """Buy 100, then sell 150 with no opening-short metadata: the known long
+    closes, and the 50-share over-sell remainder becomes Needs basis — NOT a
+    phantom short. Leaning protective: incomplete local history must never
+    invent short exposure (basis-recovery plan, P0)."""
     fills = [
         _fill("a", "BUY", 100, 10.0, commission=2.0, trade_time_ms=1_000),
         _fill("b", "SELL", 150, 12.0, commission=3.0, trade_time_ms=2_000),
-        _fill("c", "BUY", 50, 11.0, commission=1.0, trade_time_ms=3_000),
+    ]
+    trades = match_fills(fills)
+    assert len(trades) == 2
+
+    long_trade, needs_basis = trades
+    assert long_trade.direction == "LONG"
+    assert long_trade.status == "CLOSED"
+    assert long_trade.qty == 100
+    assert long_trade.gross_pnl == pytest.approx(200.0)  # (12-10)*100
+    # Open 2.0 + closing fill b's commission (3.0 over 150qty) prorated 100/150 → 2.0
+    assert long_trade.commissions == pytest.approx(2.0 + 2.0)
+
+    assert needs_basis.direction == "UNKNOWN"
+    assert needs_basis.status == "INCOMPLETE_BASIS"
+    assert needs_basis.qty == 50  # only the unmatched over-sell remainder
+    assert needs_basis.gross_pnl is None
+    assert needs_basis.net_pnl is None
+    # Remainder carries its prorated share of fill b's commission: 50/150 → 1.0
+    assert needs_basis.commissions == pytest.approx(1.0)
+    # The embedded fill is the real execution (full 150 shares / 3.0 commission)
+    assert needs_basis.fills[0].quantity == 150
+    assert needs_basis.fills[0].commission == pytest.approx(3.0)
+
+
+def test_oversell_with_opening_short_metadata_flips_to_proven_short():
+    """Same flip, but fill b carries explicit IBKR opening-short metadata.
+    Now the over-sell remainder is a *proven* short, so it opens a real SHORT
+    that fill c closes — the metadata is the only escape from Needs basis."""
+    fills = [
+        _fill("a", "BUY", 100, 10.0, trade_time_ms=1_000),
+        _fill("b", "SELL", 150, 12.0, trade_time_ms=2_000, position_effect="OPEN"),
+        _fill("c", "BUY", 50, 11.0, trade_time_ms=3_000),
     ]
     trades = match_fills(fills)
     assert len(trades) == 2
@@ -163,16 +197,11 @@ def test_flip_long_to_short_splits_into_two_trades():
     assert long_trade.direction == "LONG"
     assert long_trade.status == "CLOSED"
     assert long_trade.qty == 100
-    assert long_trade.gross_pnl == pytest.approx(200.0)  # (12-10)*100
-    # Closing fill b's commission (3.0 over 150qty) is prorated: 100/150 → 2.0
-    assert long_trade.commissions == pytest.approx(2.0 + 2.0)
 
     assert short_trade.direction == "SHORT"
     assert short_trade.status == "CLOSED"
     assert short_trade.qty == 50
     assert short_trade.gross_pnl == pytest.approx(50.0)  # (12-11)*50 short
-    # 50/150 of b's 3.0 commission (=1.0) + c's full 1.0
-    assert short_trade.commissions == pytest.approx(1.0 + 1.0)
 
 
 def test_return_pct_is_net_over_cost_basis():
