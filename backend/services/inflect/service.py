@@ -21,9 +21,11 @@ from __future__ import annotations
 
 from collections import defaultdict
 from datetime import datetime, timedelta
+from typing import Any
 from zoneinfo import ZoneInfo
 
 from constants.inflect import SETUP_OPTIONS, TRADING_DAY_TZ
+from exceptions import IBKRAuthError, IBKRConnectionError, IBKRRateLimitError
 from models.inflect import (
     InflectCalendarDay,
     InflectCalendarResponse,
@@ -59,6 +61,7 @@ class InflectService:
         self.ibkr = ibkr
         self.db = db
         self.moonmarket = moonmarket
+        self._position_cache: dict[tuple[str, int], float | None] = {}
 
     # ── Calendar ───────────────────────────────────────────────
 
@@ -178,6 +181,7 @@ class InflectService:
                 continue
             selected.append(trade)
 
+        selected = await self._apply_current_holdings_guard(selected)
         await self._attach_journal(selected)
         selected.sort(key=self._reference_ms, reverse=True)
         return InflectTradesResponse(account_id=resolved, trades=selected)
@@ -190,6 +194,8 @@ class InflectService:
         matched = await self._matched_trades(resolved, _FAR_FUTURE_MS)
         for candidate in matched:
             if candidate.trade_id == trade_id:
+                guarded = await self._apply_current_holdings_guard([candidate])
+                candidate = guarded[0]
                 await self._attach_journal([candidate])
                 return candidate
         return None
@@ -249,6 +255,117 @@ class InflectService:
         """
         fills = await self.db.list_fills_for_account_range(account_id, 0, end_ms)
         return match_fills(fills)
+
+    async def current_position(self, account_id: str, conid: int) -> float | None:
+        """Return IBKR's current signed aggregate position for one contract.
+
+        This is a display-only sanity check. It is cached per service instance
+        so repeated UI reads do not re-poll the portfolio endpoint.
+        """
+        key = (account_id, conid)
+        if key in self._position_cache:
+            return self._position_cache[key]
+        if self.ibkr is None:
+            self._position_cache[key] = None
+            return None
+
+        payload = await self.ibkr._request(
+            "GET", f"/portfolio2/{account_id}/positions"
+        )
+        position = self._position_from_payload(payload, conid)
+        self._position_cache[key] = position
+        return position
+
+    async def _apply_current_holdings_guard(
+        self, trades: list[InflectTrade]
+    ) -> list[InflectTrade]:
+        guarded: list[InflectTrade] = []
+        for trade in trades:
+            if trade.status != "OPEN" or trade.direction != "SHORT":
+                guarded.append(trade)
+                continue
+
+            try:
+                position = await self.current_position(trade.account_id, trade.conid)
+            except (IBKRAuthError, IBKRConnectionError, IBKRRateLimitError):
+                guarded.append(trade)
+                continue
+
+            if position is not None and position >= 0:
+                guarded.append(
+                    trade.model_copy(
+                        update={
+                            "direction": "UNKNOWN",
+                            "status": "INCOMPLETE_BASIS",
+                            "avg_entry": 0.0,
+                            "gross_pnl": None,
+                            "net_pnl": None,
+                            "return_pct": None,
+                        }
+                    )
+                )
+                continue
+
+            guarded.append(trade)
+        return guarded
+
+    @classmethod
+    def _position_from_payload(cls, payload: Any, conid: int) -> float | None:
+        total = 0.0
+        matched = False
+        for row in cls._position_rows(payload):
+            row_conid = cls._to_int(
+                cls._first_value(
+                    row, ("conid", "contractId", "contract_id", "conId")
+                )
+            )
+            if row_conid != conid:
+                continue
+            quantity = cls._to_float(
+                cls._first_value(row, ("position", "quantity", "pos", "qty"))
+            )
+            if quantity is None:
+                continue
+            total += quantity
+            matched = True
+        return total if matched else None
+
+    @classmethod
+    def _position_rows(cls, payload: Any) -> list[dict[str, Any]]:
+        if isinstance(payload, list):
+            return [row for row in payload if isinstance(row, dict)]
+        if not isinstance(payload, dict):
+            return []
+        for key in ("positions", "data", "results"):
+            rows = payload.get(key)
+            if isinstance(rows, list):
+                return [row for row in rows if isinstance(row, dict)]
+        return [payload]
+
+    @staticmethod
+    def _first_value(row: dict[str, Any], keys: tuple[str, ...]) -> Any:
+        for key in keys:
+            if key in row and row[key] is not None:
+                return row[key]
+        return None
+
+    @staticmethod
+    def _to_float(value: Any) -> float | None:
+        if value is None:
+            return None
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return None
+
+    @staticmethod
+    def _to_int(value: Any) -> int | None:
+        if value is None:
+            return None
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
 
     async def _find_trade(
         self, account_id: str, trade_id: str

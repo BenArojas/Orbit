@@ -31,6 +31,26 @@ def test_migrate_normalizes_legacy_crypto_pulse_symbols():
     ]
 
 
+def test_create_tables_includes_basis_backfill_queue():
+    svc = DatabaseService(db_path=":memory:")
+    svc._conn = svc._connect()
+    svc._create_tables()
+    svc._migrate()
+
+    columns = svc._fetchall("PRAGMA table_info(basis_backfill_queue)")
+    assert {column["name"] for column in columns} >= {
+        "account_id",
+        "conid",
+        "status",
+        "attempts",
+        "days_used",
+        "last_checked_ms",
+        "last_error",
+        "created_at",
+        "updated_at",
+    }
+
+
 @pytest.mark.asyncio
 async def test_fills_table_upserts_and_lists_recent_fills():
     svc = DatabaseService(db_path=":memory:")

@@ -19,7 +19,7 @@ vi.mock("../JournalEditor", () => ({
   JournalEditor: () => <div>Journal editor</div>,
 }));
 
-function makeTrade(): InflectTrade {
+function makeTrade(over: Partial<InflectTrade> = {}): InflectTrade {
   return {
     trade_id: "DU1:265598:exec-1",
     account_id: "DU1",
@@ -59,6 +59,7 @@ function makeTrade(): InflectTrade {
       } as InflectTrade["fills"][number] & { multiplier: number },
     ],
     journal_entry: null,
+    ...over,
   };
 }
 
@@ -78,5 +79,32 @@ describe("TradeDetail", () => {
     expect(screen.getAllByText("FUT")[0]).toBeInTheDocument();
     expect(screen.getAllByText("265598")[0]).toBeInTheDocument();
     expect(screen.getByText("50")).toBeInTheDocument();
+  });
+
+  it("explains incomplete basis trades without raw backend labels", () => {
+    hookMocks.useInflectTrade.mockReturnValue({
+      data: makeTrade({
+        direction: "UNKNOWN",
+        status: "INCOMPLETE_BASIS",
+        gross_pnl: null,
+        net_pnl: null,
+        return_pct: null,
+      }),
+      isLoading: false,
+      error: null,
+    });
+
+    render(<TradeDetail tradeId="DU1:265598:exec-1" accountId="DU1" onClose={vi.fn()} />);
+
+    expect(screen.getAllByText("Needs basis").length).toBeGreaterThan(0);
+    expect(
+      screen.getByText("Opening basis is missing — this row can't be fully classified yet."),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /repair basis/i })).toHaveAttribute(
+      "href",
+      "#basis-repair",
+    );
+    expect(screen.queryByText("UNKNOWN")).not.toBeInTheDocument();
+    expect(screen.queryByText("INCOMPLETE_BASIS")).not.toBeInTheDocument();
   });
 });

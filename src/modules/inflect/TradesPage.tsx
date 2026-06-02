@@ -4,10 +4,17 @@ import { useInflectStore } from "@/store/inflect";
 import { useInflectTrades } from "@/hooks/useInflectTrades";
 import { TradesTable } from "./TradesTable";
 import { TradeDetail } from "./TradeDetail";
+import { isNeedsBasisStatus } from "./format";
 import type { InflectTradeStatus } from "./types";
 
-type StatusFilter = "ALL" | InflectTradeStatus;
-const STATUS_TABS: StatusFilter[] = ["ALL", "CLOSED", "OPEN"];
+type StatusFilter = "ALL" | "NEEDS_ATTENTION" | InflectTradeStatus;
+const STATUS_TABS: StatusFilter[] = ["ALL", "CLOSED", "OPEN", "NEEDS_ATTENTION"];
+
+function tabLabel(tab: StatusFilter): string {
+  if (tab === "ALL") return "All";
+  if (tab === "NEEDS_ATTENTION") return "Needs attention";
+  return tab.toLowerCase();
+}
 
 export function TradesPage({ accountId }: { accountId: string | null }) {
   const [status, setStatus] = useState<StatusFilter>("ALL");
@@ -16,9 +23,13 @@ export function TradesPage({ accountId }: { accountId: string | null }) {
 
   const tradesQuery = useInflectTrades(
     accountId ?? undefined,
-    status === "ALL" ? undefined : status,
+    status === "ALL" || status === "NEEDS_ATTENTION" ? undefined : status,
   );
-  const trades = tradesQuery.data?.trades ?? [];
+  const allTrades = tradesQuery.data?.trades ?? [];
+  const trades =
+    status === "NEEDS_ATTENTION"
+      ? allTrades.filter((trade) => isNeedsBasisStatus(trade.status))
+      : allTrades;
 
   return (
     <div className="flex h-full min-h-0">
@@ -47,7 +58,7 @@ export function TradesPage({ accountId }: { accountId: string | null }) {
                     : "text-[var(--text-3)]",
                 )}
               >
-                {tab === "ALL" ? "All" : tab.toLowerCase()}
+                {tabLabel(tab)}
               </button>
             ))}
           </div>

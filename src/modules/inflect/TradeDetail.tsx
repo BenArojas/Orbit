@@ -1,6 +1,8 @@
 import { X } from "lucide-react";
+import type { ReactNode } from "react";
 import { cn } from "@/lib/utils";
 import { useInflectTrade } from "@/hooks/useTradeJournal";
+import { BasisBadge } from "./BasisBadge";
 import { JournalEditor } from "./JournalEditor";
 import {
   formatHold,
@@ -8,6 +10,9 @@ import {
   formatNumber,
   formatPercent,
   formatSignedMoney,
+  formatTradeDirection,
+  formatTradeStatus,
+  isNeedsBasisTrade,
 } from "./format";
 import type { InflectFill } from "./types";
 
@@ -15,7 +20,7 @@ type DebugFill = InflectFill & {
   multiplier?: number | string | null;
 };
 
-function Stat({ label, value, tone }: { label: string; value: string; tone?: "green" | "red" }) {
+function Stat({ label, value, tone }: { label: string; value: ReactNode; tone?: "green" | "red" }) {
   return (
     <div className="rounded-md border border-border bg-[var(--bg-1)] px-2.5 py-1.5">
       <div className="text-[9px] uppercase text-[var(--text-3)]">{label}</div>
@@ -106,6 +111,7 @@ export function TradeDetail({
 
   const net = trade?.net_pnl ?? null;
   const tone = net != null && net > 0 ? "green" : net != null && net < 0 ? "red" : undefined;
+  const needsBasis = trade ? isNeedsBasisTrade(trade) : false;
 
   return (
     <aside className="flex h-full w-[380px] shrink-0 flex-col border-l border-border bg-[var(--bg-2)]">
@@ -136,8 +142,14 @@ export function TradeDetail({
         ) : (
           <>
             <div className="grid grid-cols-2 gap-2">
-              <Stat label="Direction" value={trade.direction} />
-              <Stat label="Status" value={trade.status} />
+              <Stat
+                label="Direction"
+                value={needsBasis ? <BasisBadge /> : formatTradeDirection(trade.direction)}
+              />
+              <Stat
+                label="Status"
+                value={needsBasis ? <BasisBadge /> : formatTradeStatus(trade.status)}
+              />
               <Stat label="Net P&L" value={formatSignedMoney(net)} tone={tone} />
               <Stat label="Return" value={formatPercent(trade.return_pct)} tone={tone} />
               <Stat label="Gross P&L" value={formatSignedMoney(trade.gross_pnl)} />
@@ -147,6 +159,26 @@ export function TradeDetail({
               <Stat label="Avg Entry" value={formatMoney(trade.avg_entry)} />
               <Stat label="Avg Exit" value={formatMoney(trade.avg_exit)} />
             </div>
+
+            {needsBasis ? (
+              <section
+                id="basis-repair"
+                className="rounded-md border border-[var(--clr-orange)]/50 bg-[var(--clr-orange)]/10 p-3"
+              >
+                <div className="mb-1">
+                  <BasisBadge />
+                </div>
+                <p className="text-[12px] text-[var(--text-2)]">
+                  Opening basis is missing — this row can't be fully classified yet.
+                </p>
+                <a
+                  href="#basis-repair"
+                  className="mt-2 inline-flex text-[11px] font-medium text-[var(--clr-orange)] hover:text-[var(--text-1)]"
+                >
+                  Repair basis
+                </a>
+              </section>
+            ) : null}
 
             <div>
               <div className="mb-1 text-[10px] uppercase text-[var(--text-3)]">

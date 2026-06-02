@@ -84,4 +84,25 @@ describe("TradesTable", () => {
     );
     expect(screen.getByText("Breakout")).toBeInTheDocument();
   });
+
+  it("renders incomplete basis trades as Needs basis without raw backend labels", () => {
+    render(
+      <TradesTable
+        trades={[
+          makeTrade({
+            direction: "UNKNOWN",
+            status: "INCOMPLETE_BASIS",
+            net_pnl: null,
+            return_pct: null,
+          }),
+        ]}
+        selectedTradeId={null}
+        onSelect={vi.fn()}
+      />,
+    );
+
+    expect(screen.getAllByText("Needs basis").length).toBeGreaterThan(0);
+    expect(screen.queryByText("UNKNOWN")).not.toBeInTheDocument();
+    expect(screen.queryByText("INCOMPLETE_BASIS")).not.toBeInTheDocument();
+  });
 });

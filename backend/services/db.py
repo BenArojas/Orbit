@@ -496,6 +496,25 @@ class DatabaseService:
 
             CREATE INDEX IF NOT EXISTS idx_journal_conid
                 ON journal_entries(conid);
+
+            -- ─── Inflect Basis Backfill Queue ─────────────────────
+            -- One queue row per (account_id, conid) that the matcher marked
+            -- as Needs basis. The scheduler owns pacing for /pa/transactions.
+            CREATE TABLE IF NOT EXISTS basis_backfill_queue (
+                account_id      TEXT NOT NULL,
+                conid           INTEGER NOT NULL,
+                status          TEXT NOT NULL DEFAULT 'pending',
+                attempts        INTEGER NOT NULL DEFAULT 0,
+                days_used       INTEGER,
+                last_checked_ms INTEGER,
+                last_error      TEXT,
+                created_at      TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at      TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (account_id, conid)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_basis_backfill_status
+                ON basis_backfill_queue(status, last_checked_ms, created_at);
         """)
         self._conn.commit()
         log.info("Database tables verified/created.")
@@ -771,6 +790,130 @@ class DatabaseService:
         if isinstance(value, str):
             return value
         return json.dumps(value, sort_keys=True)
+
+    # ── Inflect Basis Backfill Queue ─────────────────────────
+
+    async def enqueue_basis(self, account_id: str, conid: int) -> None:
+        """Create an idempotent basis-backfill queue row for account + conid."""
+        def _do() -> None:
+            assert self._conn is not None
+            with self._conn:
+                self._conn.execute(
+                    """
+                    INSERT OR IGNORE INTO basis_backfill_queue
+                        (account_id, conid, status)
+                    VALUES (?, ?, 'pending')
+                    """,
+                    (account_id, int(conid)),
+                )
+
+        await self._run_write(_do)
+
+    async def claim_next_backfill(self, now_ms: int | None = None) -> dict | None:
+        """Claim the oldest eligible pending backfill item.
+
+        Eligibility is intentionally conservative: only pending rows whose
+        last check is absent or at least 16 minutes old can be claimed.
+        """
+        now = now_ms if now_ms is not None else int(
+            datetime.now(timezone.utc).timestamp() * 1000
+        )
+        cutoff_ms = int(now) - (16 * 60 * 1000)
+
+        def _do() -> dict | None:
+            assert self._conn is not None
+            with self._conn:
+                row = self._conn.execute(
+                    """
+                    SELECT account_id, conid
+                    FROM basis_backfill_queue
+                    WHERE status = 'pending'
+                      AND (last_checked_ms IS NULL OR last_checked_ms <= ?)
+                    ORDER BY created_at ASC, account_id ASC, conid ASC
+                    LIMIT 1
+                    """,
+                    (cutoff_ms,),
+                ).fetchone()
+                if row is None:
+                    return None
+
+                self._conn.execute(
+                    """
+                    UPDATE basis_backfill_queue
+                    SET status = 'running',
+                        attempts = attempts + 1,
+                        last_checked_ms = ?,
+                        last_error = NULL,
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE account_id = ? AND conid = ?
+                    """,
+                    (int(now), row["account_id"], int(row["conid"])),
+                )
+                claimed = self._conn.execute(
+                    """
+                    SELECT *
+                    FROM basis_backfill_queue
+                    WHERE account_id = ? AND conid = ?
+                    """,
+                    (row["account_id"], int(row["conid"])),
+                ).fetchone()
+                return dict(claimed) if claimed else None
+
+        return await self._run_write(_do)
+
+    async def set_backfill_status(
+        self,
+        account_id: str,
+        conid: int,
+        *,
+        status: str,
+        days_used: int | None = None,
+        last_checked_ms: int | None = None,
+        last_error: str | None = None,
+    ) -> None:
+        """Update one backfill queue row's status fields."""
+        def _do() -> None:
+            assert self._conn is not None
+            with self._conn:
+                self._conn.execute(
+                    """
+                    UPDATE basis_backfill_queue
+                    SET status = ?,
+                        days_used = ?,
+                        last_checked_ms = COALESCE(?, last_checked_ms),
+                        last_error = ?,
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE account_id = ? AND conid = ?
+                    """,
+                    (
+                        status,
+                        days_used,
+                        last_checked_ms,
+                        last_error,
+                        account_id,
+                        int(conid),
+                    ),
+                )
+
+        await self._run_write(_do)
+
+    async def list_backfill_status(self, account_id: str) -> list[dict[str, Any]]:
+        """Return basis-backfill queue rows for one account."""
+        def _do() -> list[dict[str, Any]]:
+            assert self._conn is not None
+            cur = self._conn.execute(
+                """
+                SELECT *
+                FROM basis_backfill_queue
+                WHERE account_id = ?
+                ORDER BY created_at ASC, conid ASC
+                """,
+                (account_id,),
+            )
+            cols = [d[0] for d in cur.description]
+            return [dict(zip(cols, row)) for row in cur.fetchall()]
+
+        return await self._run_read(_do)
 
     # ── Inflect Journal Entries ──────────────────────────────
     #

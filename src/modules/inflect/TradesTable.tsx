@@ -1,5 +1,15 @@
 import { cn } from "@/lib/utils";
-import { formatHold, formatMoney, formatNumber, formatPercent, formatSignedMoney } from "./format";
+import { BasisBadge } from "./BasisBadge";
+import {
+  formatHold,
+  formatMoney,
+  formatNumber,
+  formatPercent,
+  formatSignedMoney,
+  formatTradeStatus,
+  isNeedsBasisDirection,
+  isNeedsBasisStatus,
+} from "./format";
 import type { InflectTrade } from "./types";
 
 function formatTime(value: string | null): string {
@@ -59,6 +69,8 @@ export function TradesTable({
               const net = trade.net_pnl;
               const positive = net != null && net > 0;
               const negative = net != null && net < 0;
+              const needsBasisDirection = isNeedsBasisDirection(trade.direction);
+              const needsBasisStatus = isNeedsBasisStatus(trade.status);
               return (
                 <tr
                   key={trade.trade_id}
@@ -77,21 +89,25 @@ export function TradesTable({
                   <td className="px-3 py-2 text-[var(--text-3)]">{formatTime(trade.close_time)}</td>
                   <td className="px-3 py-2 font-semibold">{trade.symbol || `#${trade.conid}`}</td>
                   <td className="px-3 py-2">
-                    <span
-                      className={cn(
-                        "rounded px-2 py-1",
-                        trade.direction === "LONG" &&
-                          "bg-[var(--clr-green)]/15 text-[var(--clr-green)]",
-                        trade.direction === "SHORT" &&
-                          "bg-[var(--clr-red)]/15 text-[var(--clr-red)]",
-                        trade.direction === "UNKNOWN" &&
-                          "bg-[var(--bg-3)] text-[var(--text-3)]",
-                      )}
-                    >
-                      {trade.direction}
-                    </span>
+                    {needsBasisDirection ? (
+                      <BasisBadge />
+                    ) : (
+                      <span
+                        className={cn(
+                          "rounded px-2 py-1",
+                          trade.direction === "LONG" &&
+                            "bg-[var(--clr-green)]/15 text-[var(--clr-green)]",
+                          trade.direction === "SHORT" &&
+                            "bg-[var(--clr-red)]/15 text-[var(--clr-red)]",
+                        )}
+                      >
+                        {trade.direction}
+                      </span>
+                    )}
                   </td>
-                  <td className="px-3 py-2 text-[var(--text-2)]">{trade.status}</td>
+                  <td className="px-3 py-2 text-[var(--text-2)]">
+                    {needsBasisStatus ? <BasisBadge /> : formatTradeStatus(trade.status)}
+                  </td>
                   <td className="px-3 py-2 text-right font-data">{formatNumber(trade.qty)}</td>
                   <td className="px-3 py-2 text-right font-data">{formatMoney(trade.avg_entry)}</td>
                   <td className="px-3 py-2 text-right font-data">{formatMoney(trade.avg_exit)}</td>

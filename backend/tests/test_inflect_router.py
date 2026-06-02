@@ -13,11 +13,14 @@ cross-loop `asyncio.Lock` issues.
 import json
 from datetime import datetime
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 from zoneinfo import ZoneInfo
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from exceptions import IBKRRateLimitError
+from models.inflect import InflectTrade
 from routers.inflect import get_inflect_service, require_inflect_service, router
 from services.db import DatabaseService
 from services.inflect.service import InflectService
@@ -105,9 +108,25 @@ def _seed_journal(db, *, trade_id, conid, setup, notes, tags, account="DU1"):
     db._conn.commit()
 
 
-def _service(moon=None) -> InflectService:
+def _service(moon=None, ibkr=None) -> InflectService:
     db = _memory_db()
-    return InflectService(ibkr=None, db=db, moonmarket=moon or _FakeMoon())
+    return InflectService(ibkr=ibkr, db=db, moonmarket=moon or _FakeMoon())
+
+
+def _open_short_trade(*, account="DU1", conid=1) -> InflectTrade:
+    return InflectTrade(
+        trade_id=f"{account}:{conid}:short-open",
+        account_id=account,
+        conid=conid,
+        symbol="AAPL",
+        sec_type="STK",
+        direction="SHORT",
+        status="OPEN",
+        open_time="2026-06-02T09:00:00Z",
+        open_time_ms=_et_ms(2026, 6, 2, 9),
+        qty=10,
+        avg_entry=20.0,
+    )
 
 
 def test_health():
@@ -159,6 +178,76 @@ def test_trades_list_and_journal_attach():
     assert trades[0]["status"] == "CLOSED"
     assert trades[0]["journal_entry"]["setup"] == "Breakout"
     assert trades[0]["journal_entry"]["tags"] == ["momentum"]
+
+
+def test_trades_display_guard_suppresses_stray_open_short_when_current_position_is_long():
+    ibkr = SimpleNamespace(
+        _request=AsyncMock(
+            return_value=[{"conid": 1, "position": 5}]
+        )
+    )
+    svc = _service(ibkr=ibkr)
+
+    async def matched(account_id, end_ms):
+        return [_open_short_trade(account=account_id, conid=1)]
+
+    svc._matched_trades = matched
+
+    client = _client(svc)
+    first = client.get("/inflect/trades")
+    second = client.get("/inflect/trades")
+
+    assert first.status_code == 200
+    trade = first.json()["trades"][0]
+    assert trade["status"] == "INCOMPLETE_BASIS"
+    assert trade["direction"] == "UNKNOWN"
+    assert second.status_code == 200
+    ibkr._request.assert_awaited_once_with("GET", "/portfolio2/DU1/positions")
+
+
+def test_trades_display_guard_suppresses_stray_open_short_when_current_position_is_flat():
+    ibkr = SimpleNamespace(
+        _request=AsyncMock(
+            return_value=[{"conid": 1, "position": 0}]
+        )
+    )
+    svc = _service(ibkr=ibkr)
+
+    async def matched(account_id, end_ms):
+        return [_open_short_trade(account=account_id, conid=1)]
+
+    svc._matched_trades = matched
+
+    resp = _client(svc).get("/inflect/trades")
+
+    assert resp.status_code == 200
+    trade = resp.json()["trades"][0]
+    assert trade["status"] == "INCOMPLETE_BASIS"
+    assert trade["direction"] == "UNKNOWN"
+
+
+def test_trades_display_guard_skips_rate_limited_position_check_without_failing():
+    ibkr = SimpleNamespace(
+        _request=AsyncMock(
+            side_effect=IBKRRateLimitError(
+                endpoint="/portfolio2/DU1/positions",
+                retry_after=5,
+            )
+        )
+    )
+    svc = _service(ibkr=ibkr)
+
+    async def matched(account_id, end_ms):
+        return [_open_short_trade(account=account_id, conid=1)]
+
+    svc._matched_trades = matched
+
+    resp = _client(svc).get("/inflect/trades")
+
+    assert resp.status_code == 200
+    trade = resp.json()["trades"][0]
+    assert trade["status"] == "OPEN"
+    assert trade["direction"] == "SHORT"
 
 
 def test_trades_list_does_not_attach_journal_from_other_account():

@@ -47,6 +47,36 @@ export function formatHold(seconds: number | null | undefined): string {
   return remHours ? `${days}d ${remHours}h` : `${days}d`;
 }
 
+export function isNeedsBasisStatus(status: string | null | undefined): boolean {
+  return status === "INCOMPLETE_BASIS";
+}
+
+export function isNeedsBasisDirection(direction: string | null | undefined): boolean {
+  return direction === "UNKNOWN";
+}
+
+export function isNeedsBasisTrade({
+  status,
+  direction,
+}: {
+  status?: string | null;
+  direction?: string | null;
+}): boolean {
+  return isNeedsBasisStatus(status) || isNeedsBasisDirection(direction);
+}
+
+export function formatTradeStatus(status: string | null | undefined): string {
+  if (isNeedsBasisStatus(status)) return "Needs basis";
+  if (!status) return "--";
+  return status;
+}
+
+export function formatTradeDirection(direction: string | null | undefined): string {
+  if (isNeedsBasisDirection(direction)) return "Needs basis";
+  if (!direction) return "--";
+  return direction;
+}
+
 const MONTH_NAMES = [
   "January", "February", "March", "April", "May", "June",
   "July", "August", "September", "October", "November", "December",

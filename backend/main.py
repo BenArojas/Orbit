@@ -42,6 +42,7 @@ from services.scanner import ScannerService
 from services.moonmarket import MoonMarketService
 from services.inflect.service import InflectService
 from services.inflect_sync import InflectSyncService
+from services.inflect_backfill import InflectBackfillService
 
 # ── Logging setup (must be first) ────────────────────────────
 
@@ -169,11 +170,18 @@ async def lifespan(app: FastAPI):
     app.state.inflect_sync = inflect_sync
     inflect_sync.start()
 
+    inflect_backfill = InflectBackfillService(
+        ibkr=ibkr, db=db, inflect=inflect_service
+    )
+    app.state.inflect_backfill = inflect_backfill
+    inflect_backfill.start()
+
     log.info("Backend ready. Waiting for frontend connections.")
     yield
 
     # Shutdown
     log.info("Orbit backend shutting down...")
+    await inflect_backfill.stop()
     await inflect_sync.stop()
     await scanner.stop()
     await ai.shutdown()
