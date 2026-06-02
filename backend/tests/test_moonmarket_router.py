@@ -1,3 +1,5 @@
+from datetime import datetime, timezone
+
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -402,7 +404,15 @@ def test_moonmarket_performance_reuses_all_periods_payload_for_picker_changes():
     ]
 
 
-def test_moonmarket_trades_normalizes_summary_and_upserts_fills():
+def test_moonmarket_trades_normalizes_summary_and_upserts_fills(monkeypatch):
+    class FixedDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            value = datetime(2026, 5, 27, 12, 0, tzinfo=timezone.utc)
+            return value.astimezone(tz) if tz else value.replace(tzinfo=None)
+
+    monkeypatch.setattr("services.moonmarket.datetime", FixedDateTime)
+
     fake = _FakeIbkr()
     db = _memory_db()
     resp = _client(fake, db).get("/moonmarket/trades?account_id=DU12345&days=7")
@@ -441,6 +451,57 @@ def test_moonmarket_trades_normalizes_summary_and_upserts_fills():
         "E-BUY-1",
     ]
     assert ("GET", "/iserver/account/trades", {"params": {"days": 7}}) in fake.requests
+
+
+def test_moonmarket_trade_parsing_prefers_true_stock_quantity_and_positive_commission():
+    svc = MoonMarketService(_FakeIbkr())
+
+    trade = svc._trade_from_row(
+        {
+            "execution_id": "CRCL-LIKE",
+            "accountId": "DU12345",
+            "conid": 123456,
+            "symbol": "CRCL",
+            "side": "BOT",
+            "trade_time_r": 1779805920000,
+            "size": 1,
+            "quantity": 100,
+            "price": 42.0,
+            "net_amount": -4200.0,
+            "commission": -1.25,
+            "sec_type": "STK",
+        },
+        "DU12345",
+    )
+
+    assert trade is not None
+    assert trade.quantity == 100.0
+    assert trade.commission == 1.25
+
+
+def test_moonmarket_trade_parsing_recovers_stock_quantity_from_cash_amount():
+    svc = MoonMarketService(_FakeIbkr())
+
+    trade = svc._trade_from_row(
+        {
+            "execution_id": "CRCL-RECOVER",
+            "accountId": "DU12345",
+            "conid": 123456,
+            "symbol": "CRCL",
+            "side": "BOT",
+            "trade_time_r": 1779805920000,
+            "size": 1,
+            "price": 42.0,
+            "net_amount": -4200.0,
+            "commission": -1.25,
+            "sec_type": "STK",
+        },
+        "DU12345",
+    )
+
+    assert trade is not None
+    assert trade.quantity == 100.0
+    assert trade.commission == 1.25
 
 
 def test_moonmarket_live_orders_warms_and_returns_read_only_orders():

@@ -11,9 +11,34 @@ import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import type { InflectTradeStatus } from "@/modules/inflect/types";
 
-export function useInflectTrades(accountId?: string, status?: InflectTradeStatus) {
+export interface InflectTradeDateRange {
+  from: number;
+  to: number;
+}
+
+export function selectedDateRangeMs(dateKey: string): InflectTradeDateRange {
+  const [year, month, day] = dateKey.split("-").map(Number);
+  const start = new Date(year, month - 1, day).getTime();
+  const end = new Date(year, month - 1, day + 1).getTime() - 1;
+  return { from: start, to: end };
+}
+
+export function useInflectTrades(
+  accountId?: string,
+  status?: InflectTradeStatus,
+  range?: InflectTradeDateRange,
+  enabled = true,
+) {
   return useQuery({
-    queryKey: ["inflect", "trades", accountId ?? null, status ?? "ALL"],
-    queryFn: ({ signal }) => api.inflectTrades({ accountId, status }, signal),
+    queryKey: [
+      "inflect",
+      "trades",
+      accountId ?? null,
+      status ?? "ALL",
+      range?.from ?? null,
+      range?.to ?? null,
+    ],
+    queryFn: ({ signal }) => api.inflectTrades({ accountId, status, ...range }, signal),
+    enabled,
   });
 }

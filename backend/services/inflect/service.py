@@ -45,6 +45,10 @@ from services.moonmarket import MoonMarketService
 _FAR_FUTURE_MS = 4_102_444_800_000
 
 
+class InflectTradeNotFoundError(LookupError):
+    """Raised when a resolved account has no matching derived trade."""
+
+
 class InflectService:
     def __init__(
         self,
@@ -197,11 +201,14 @@ class InflectService:
     ) -> JournalEntry:
         """Upsert setup/notes/tags for a trade; returns the stored entry."""
         resolved = await self._resolve_account(account_id)
-        conid = self._conid_from_trade_id(trade_id)
+        self._conid_from_trade_id(trade_id)
+        trade = await self._find_trade(resolved, trade_id)
+        if trade is None:
+            raise InflectTradeNotFoundError(trade_id)
         await self.db.upsert_journal_entry(
             trade_id=trade_id,
             account_id=resolved,
-            conid=conid,
+            conid=trade.conid,
             setup=payload.setup,
             notes=payload.notes,
             tags=payload.tags,
@@ -217,9 +224,17 @@ class InflectService:
         """Force a fills sync via MoonMarket's ibkr → upsert_fills path."""
         resolved = await self._resolve_account(account_id)
         response = await self.moonmarket.trades(
-            account_id=resolved, days=7, db=self.db
+            account_id=resolved, days=7, db=None
         )
-        return InflectSyncResponse(account_id=resolved, synced=len(response.trades))
+        accepted = await self.db.upsert_fills(
+            [
+                trade.model_dump()
+                if hasattr(trade, "model_dump")
+                else dict(trade)
+                for trade in response.trades
+            ]
+        )
+        return InflectSyncResponse(account_id=resolved, synced=accepted)
 
     # ── Internals ──────────────────────────────────────────────
 
@@ -235,14 +250,32 @@ class InflectService:
         fills = await self.db.list_fills_for_account_range(account_id, 0, end_ms)
         return match_fills(fills)
 
+    async def _find_trade(
+        self, account_id: str, trade_id: str
+    ) -> InflectTrade | None:
+        matched = await self._matched_trades(account_id, _FAR_FUTURE_MS)
+        for trade in matched:
+            if trade.trade_id == trade_id and trade.account_id == account_id:
+                return trade
+        return None
+
     async def _attach_journal(self, trades: list[InflectTrade]) -> None:
         if not trades:
             return
-        conids = list({trade.conid for trade in trades})
-        rows = await self.db.get_journal_entries_for_conids(conids)
-        by_trade_id = {row["trade_id"]: row for row in rows}
+        rows: list[dict] = []
+        account_ids = {trade.account_id for trade in trades}
+        for account_id in account_ids:
+            conids = [
+                trade.conid for trade in trades if trade.account_id == account_id
+            ]
+            rows.extend(
+                await self.db.get_journal_entries_for_conids(
+                    conids, account_id=account_id
+                )
+            )
+        by_trade_key = {(row["trade_id"], row["account_id"]): row for row in rows}
         for trade in trades:
-            row = by_trade_id.get(trade.trade_id)
+            row = by_trade_key.get((trade.trade_id, trade.account_id))
             if row is not None:
                 trade.journal_entry = self._journal_from_row(row)
 

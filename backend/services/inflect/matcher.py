@@ -81,17 +81,29 @@ def _match_conid(
         price = _fill_price(fill)
         fill_qty = abs(float(fill["quantity"]))
         remaining = fill_qty
+        can_open_short_from_flip = False
 
         while remaining > _EPS:
+            if (
+                pos_dir == 0
+                and sign < 0
+                and not can_open_short_from_flip
+                and not _is_explicit_opening_short(fill)
+            ):
+                trades.append(_incomplete_basis_trade(account_id, conid, fill))
+                remaining = 0.0
+                continue
+
             opening = pos_dir == 0 or sign == pos_dir
             if opening:
                 if acc is None:
                     acc = _start_acc(account_id, conid, fill, sign)
                     pos_dir = sign
                 open_q = remaining
-                lots.append({"qty": open_q, "price": price})
+                lots.append({"qty": open_q, "price": price, "multiplier": _fill_multiplier(fill)})
                 acc["opened_qty"] += open_q
                 acc["entry_notional"] += price * open_q
+                acc["entry_cost_basis"] += price * open_q * _fill_multiplier(fill)
                 acc["cur_abs_qty"] += open_q
                 acc["max_abs_qty"] = max(acc["max_abs_qty"], acc["cur_abs_qty"])
                 _alloc_commission(acc, fill, open_q, fill_qty)
@@ -101,7 +113,12 @@ def _match_conid(
                 assert acc is not None
                 lot = lots[0]
                 close_q = min(remaining, lot["qty"])
-                acc["gross_pnl"] += (price - lot["price"]) * close_q * pos_dir
+                acc["gross_pnl"] += (
+                    (price - lot["price"])
+                    * close_q
+                    * pos_dir
+                    * lot["multiplier"]
+                )
                 acc["closed_qty"] += close_q
                 acc["exit_notional"] += price * close_q
                 acc["cur_abs_qty"] -= close_q
@@ -122,6 +139,7 @@ def _match_conid(
                     pos_dir = 0
                     trades.append(_finalize(acc, status="CLOSED"))
                     acc = None
+                    can_open_short_from_flip = remaining > _EPS
 
     if acc is not None:
         trades.append(_finalize(acc, status="OPEN"))
@@ -137,12 +155,14 @@ def _start_acc(
         "conid": conid,
         "symbol": open_fill.get("symbol") or "",
         "sec_type": open_fill.get("sec_type"),
+        "multiplier": _fill_multiplier(open_fill),
         "dir_sign": direction,
         "open_time": open_fill["trade_time"],
         "open_time_ms": int(open_fill["trade_time_ms"]),
         "first_open_execution_id": str(open_fill["execution_id"]),
         "opened_qty": 0.0,
         "entry_notional": 0.0,
+        "entry_cost_basis": 0.0,
         "closed_qty": 0.0,
         "exit_notional": 0.0,
         "gross_pnl": 0.0,
@@ -159,7 +179,7 @@ def _alloc_commission(
     acc: dict[str, Any], fill: dict[str, Any], applied_q: float, fill_qty: float
 ) -> None:
     """Add this fill's commission, prorated by the quantity applied here."""
-    commission = _to_float(fill.get("commission"))
+    commission = _positive_float(fill.get("commission"))
     if commission is None or fill_qty <= _EPS:
         return
     acc["commissions"] += commission * (applied_q / fill_qty)
@@ -179,8 +199,9 @@ def _add_fill(acc: dict[str, Any], fill: dict[str, Any]) -> None:
         side=str(fill["side"]).upper(),
         quantity=abs(float(fill["quantity"])),
         price=_fill_price(fill),
-        commission=_to_float(fill.get("commission")),
+        commission=_positive_float(fill.get("commission")),
         net_amount=_to_float(fill.get("net_amount")),
+        multiplier=_fill_multiplier(fill),
         sec_type=fill.get("sec_type"),
         trade_time=fill["trade_time"],
         trade_time_ms=_to_int(fill.get("trade_time_ms")),
@@ -204,7 +225,7 @@ def _finalize(acc: dict[str, Any], *, status: str) -> InflectTrade:
         gross_pnl = acc["gross_pnl"]
         commissions = acc["commissions"]
         net_pnl = gross_pnl - commissions
-        cost_basis = avg_entry * qty
+        cost_basis = acc["entry_cost_basis"]
         return_pct = (net_pnl / cost_basis) * 100 if cost_basis else None
         close_time = acc["last_close_time"]
         close_time_ms = acc["last_close_time_ms"]
@@ -232,6 +253,7 @@ def _finalize(acc: dict[str, Any], *, status: str) -> InflectTrade:
             commissions=commissions,
             net_pnl=net_pnl,
             return_pct=return_pct,
+            multiplier=acc["multiplier"],
             hold_duration_sec=hold,
             r_multiple=None,
             fills=fills,
@@ -258,10 +280,72 @@ def _finalize(acc: dict[str, Any], *, status: str) -> InflectTrade:
         commissions=acc["commissions"],
         net_pnl=None,
         return_pct=None,
+        multiplier=acc["multiplier"],
         hold_duration_sec=None,
         r_multiple=None,
         fills=fills,
     )
+
+
+def _incomplete_basis_trade(
+    account_id: str, conid: int, fill: dict[str, Any]
+) -> InflectTrade:
+    fill_model = InflectFill(
+        execution_id=str(fill["execution_id"]),
+        conid=int(fill["conid"]),
+        symbol=fill.get("symbol"),
+        side=str(fill["side"]).upper(),
+        quantity=abs(float(fill["quantity"])),
+        price=_fill_price(fill),
+        commission=_positive_float(fill.get("commission")),
+        net_amount=_to_float(fill.get("net_amount")),
+        multiplier=_fill_multiplier(fill),
+        sec_type=fill.get("sec_type"),
+        trade_time=fill["trade_time"],
+        trade_time_ms=_to_int(fill.get("trade_time_ms")),
+    )
+    return InflectTrade(
+        trade_id=f"{account_id}:{conid}:{fill['execution_id']}",
+        account_id=account_id,
+        conid=conid,
+        symbol=fill.get("symbol") or "",
+        sec_type=fill.get("sec_type"),
+        direction="UNKNOWN",
+        status="INCOMPLETE_BASIS",
+        open_time=fill["trade_time"],
+        open_time_ms=int(fill["trade_time_ms"]),
+        close_time=None,
+        close_time_ms=None,
+        qty=abs(float(fill["quantity"])),
+        avg_entry=0.0,
+        avg_exit=_fill_price(fill),
+        gross_pnl=None,
+        commissions=_positive_float(fill.get("commission")) or 0.0,
+        net_pnl=None,
+        return_pct=None,
+        multiplier=_fill_multiplier(fill),
+        hold_duration_sec=None,
+        r_multiple=None,
+        fills=[fill_model],
+    )
+
+
+def _is_explicit_opening_short(fill: dict[str, Any]) -> bool:
+    for key in (
+        "position_effect",
+        "positionEffect",
+        "open_close",
+        "openClose",
+        "open_close_indicator",
+        "openCloseIndicator",
+    ):
+        value = fill.get(key)
+        if value is None:
+            continue
+        normalized = str(value).upper().strip().replace("-", "_").replace(" ", "_")
+        if normalized in {"OPEN", "OPENING", "O", "SELL_TO_OPEN", "STO"}:
+            return True
+    return bool(fill.get("opens_position") or fill.get("is_opening"))
 
 
 def _fill_price(fill: dict[str, Any]) -> float:
@@ -279,6 +363,21 @@ def _fill_price(fill: dict[str, Any]) -> float:
     if net is not None and qty > _EPS:
         return abs(net) / qty
     return 0.0
+
+
+def _fill_multiplier(fill: dict[str, Any]) -> float:
+    for key in ("multiplier", "contract_multiplier", "contractMultiplier"):
+        multiplier = _to_float(fill.get(key))
+        if multiplier is not None and multiplier > 0:
+            return multiplier
+    if str(fill.get("sec_type") or "").upper() == "OPT":
+        return 100.0
+    return 1.0
+
+
+def _positive_float(value: Any) -> Optional[float]:
+    parsed = _to_float(value)
+    return abs(parsed) if parsed is not None else None
 
 
 def _to_float(value: Any) -> Optional[float]:

@@ -7,22 +7,58 @@ import type { InflectCalendarDay } from "./types";
  * render as an empty muted tile. Days with closed trades are tinted green/red
  * by net P&L; days inside the month with no trades stay neutral.
  */
-export function DayCell({ day, data }: { day: number | null; data?: InflectCalendarDay }) {
+export function DayCell({
+  day,
+  data,
+  dateKey,
+  dateLabel,
+  selected = false,
+  onSelectDate,
+}: {
+  day: number | null;
+  data?: InflectCalendarDay;
+  dateKey?: string;
+  dateLabel?: string;
+  selected?: boolean;
+  onSelectDate?: (date: string) => void;
+}) {
   if (day == null) {
-    return <div className="rounded-md border border-transparent bg-[var(--bg-1)]" aria-hidden />;
+    return <div className="h-full rounded-md border border-transparent bg-[var(--bg-1)]" aria-hidden />;
   }
 
   const pnl = data?.net_pnl ?? null;
   const positive = pnl != null && pnl > 0;
   const negative = pnl != null && pnl < 0;
+  const tradeCount = data?.trade_count ?? 0;
+  const ariaLabel = [
+    dateLabel,
+    data ? formatSignedMoney(pnl) : null,
+    `${tradeCount} ${tradeCount === 1 ? "trade" : "trades"}`,
+    selected ? "selected" : null,
+  ].filter(Boolean).join(", ");
+
+  const select = () => {
+    if (dateKey) onSelectDate?.(dateKey);
+  };
 
   return (
-    <div
+    <button
+      type="button"
+      aria-label={ariaLabel}
+      aria-pressed={selected}
+      onClick={select}
+      onKeyDown={(event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          select();
+        }
+      }}
       className={cn(
-        "flex min-h-[64px] flex-col rounded-md border p-1.5 transition-colors",
+        "flex h-full min-h-0 flex-col rounded-md border p-1.5 text-left transition-colors focus:outline-none focus:ring-1 focus:ring-[var(--clr-cyan)]",
         positive && "border-[var(--clr-green)]/40 bg-[var(--clr-green)]/10",
         negative && "border-[var(--clr-red)]/40 bg-[var(--clr-red)]/10",
         !positive && !negative && "border-border bg-[var(--bg-2)]",
+        selected && "ring-1 ring-[var(--clr-cyan)]",
       )}
     >
       <div className="text-[10px] text-[var(--text-3)]">{day}</div>
@@ -42,6 +78,6 @@ export function DayCell({ day, data }: { day: number | null; data?: InflectCalen
           </div>
         </div>
       ) : null}
-    </div>
+    </button>
   );
 }

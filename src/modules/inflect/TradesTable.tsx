@@ -14,6 +14,10 @@ function formatTime(value: string | null): string {
   }).format(date);
 }
 
+function isActivationKey(key: string): boolean {
+  return key === "Enter" || key === " ";
+}
+
 export function TradesTable({
   trades,
   selectedTradeId,
@@ -58,9 +62,15 @@ export function TradesTable({
               return (
                 <tr
                   key={trade.trade_id}
+                  tabIndex={0}
                   onClick={() => onSelect(trade.trade_id)}
+                  onKeyDown={(event) => {
+                    if (!isActivationKey(event.key)) return;
+                    event.preventDefault();
+                    onSelect(trade.trade_id);
+                  }}
                   className={cn(
-                    "cursor-pointer border-b border-border/70 last:border-0 hover:bg-[var(--bg-3)]",
+                    "cursor-pointer border-b border-border/70 outline-none last:border-0 hover:bg-[var(--bg-3)] focus-visible:bg-[var(--bg-3)] focus-visible:ring-1 focus-visible:ring-[var(--clr-cyan)]/70",
                     selectedTradeId === trade.trade_id && "bg-[var(--clr-cyan)]/10",
                   )}
                 >
@@ -70,9 +80,12 @@ export function TradesTable({
                     <span
                       className={cn(
                         "rounded px-2 py-1",
-                        trade.direction === "LONG"
-                          ? "bg-[var(--clr-green)]/15 text-[var(--clr-green)]"
-                          : "bg-[var(--clr-red)]/15 text-[var(--clr-red)]",
+                        trade.direction === "LONG" &&
+                          "bg-[var(--clr-green)]/15 text-[var(--clr-green)]",
+                        trade.direction === "SHORT" &&
+                          "bg-[var(--clr-red)]/15 text-[var(--clr-red)]",
+                        trade.direction === "UNKNOWN" &&
+                          "bg-[var(--bg-3)] text-[var(--text-3)]",
                       )}
                     >
                       {trade.direction}

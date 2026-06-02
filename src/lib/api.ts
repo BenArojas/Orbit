@@ -354,6 +354,7 @@ export interface InflectFill {
   commission: number | null;
   net_amount: number | null;
   sec_type: string | null;
+  multiplier: number | null;
   trade_time: string;
   trade_time_ms: number | null;
 }
@@ -364,8 +365,8 @@ export interface InflectTrade {
   conid: number;
   symbol: string;
   sec_type: string | null;
-  direction: "LONG" | "SHORT";
-  status: "OPEN" | "CLOSED";
+  direction: "LONG" | "SHORT" | "UNKNOWN";
+  status: "OPEN" | "CLOSED" | "INCOMPLETE_BASIS";
   open_time: string;
   open_time_ms: number;
   close_time: string | null;
@@ -379,6 +380,7 @@ export interface InflectTrade {
   return_pct: number | null;
   hold_duration_sec: number | null;
   r_multiple: number | null;
+  multiplier: number;
   fills: InflectFill[];
   journal_entry: InflectJournalEntry | null;
 }
@@ -415,7 +417,7 @@ export interface InflectSyncResponse {
   synced: number;
 }
 
-export type InflectTradeStatus = "OPEN" | "CLOSED";
+export type InflectTradeStatus = "OPEN" | "CLOSED" | "INCOMPLETE_BASIS";
 
 /**
  * news_candle detection methods (Phase 6.6). Only meaningful when

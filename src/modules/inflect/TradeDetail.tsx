@@ -11,6 +11,10 @@ import {
 } from "./format";
 import type { InflectFill } from "./types";
 
+type DebugFill = InflectFill & {
+  multiplier?: number | string | null;
+};
+
 function Stat({ label, value, tone }: { label: string; value: string; tone?: "green" | "red" }) {
   return (
     <div className="rounded-md border border-border bg-[var(--bg-1)] px-2.5 py-1.5">
@@ -28,7 +32,27 @@ function Stat({ label, value, tone }: { label: string; value: string; tone?: "gr
   );
 }
 
+function formatFillTime(value: string | null): string {
+  if (!value) return "--";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    timeZone: "UTC",
+  }).format(date);
+}
+
+function formatDebugValue(value: number | string | null | undefined): string {
+  if (value == null || value === "") return "--";
+  return String(value);
+}
+
 function FillRow({ fill }: { fill: InflectFill }) {
+  const debugFill = fill as DebugFill;
   return (
     <tr className="border-b border-border/70 last:border-0">
       <td className="px-2 py-1.5">
@@ -47,6 +71,22 @@ function FillRow({ fill }: { fill: InflectFill }) {
       <td className="px-2 py-1.5 text-right font-data">{formatMoney(fill.price)}</td>
       <td className="px-2 py-1.5 text-right font-data text-[var(--text-3)]">
         {formatMoney(fill.commission)}
+      </td>
+      <td className="px-2 py-1.5 font-data text-[var(--text-3)]">{fill.execution_id}</td>
+      <td className="px-2 py-1.5 font-data text-[var(--text-3)]">
+        {formatFillTime(fill.trade_time)}
+      </td>
+      <td className="px-2 py-1.5 text-right font-data text-[var(--text-3)]">
+        {formatMoney(fill.net_amount)}
+      </td>
+      <td className="px-2 py-1.5 font-data text-[var(--text-3)]">
+        {formatDebugValue(fill.sec_type)}
+      </td>
+      <td className="px-2 py-1.5 text-right font-data text-[var(--text-3)]">
+        {fill.conid}
+      </td>
+      <td className="px-2 py-1.5 text-right font-data text-[var(--text-3)]">
+        {formatDebugValue(debugFill.multiplier)}
       </td>
     </tr>
   );
@@ -112,14 +152,20 @@ export function TradeDetail({
               <div className="mb-1 text-[10px] uppercase text-[var(--text-3)]">
                 Fills ({trade.fills.length})
               </div>
-              <div className="rounded-md border border-border bg-[var(--bg-2)]">
-                <table className="w-full text-left text-[11px]">
+              <div className="overflow-x-auto rounded-md border border-border bg-[var(--bg-2)]">
+                <table className="w-full min-w-[720px] text-left text-[11px]">
                   <thead className="border-b border-border text-[9px] uppercase text-[var(--text-3)]">
                     <tr>
                       <th className="px-2 py-1.5 font-medium">Side</th>
                       <th className="px-2 py-1.5 text-right font-medium">Qty</th>
                       <th className="px-2 py-1.5 text-right font-medium">Price</th>
                       <th className="px-2 py-1.5 text-right font-medium">Comm.</th>
+                      <th className="px-2 py-1.5 font-medium">Exec ID</th>
+                      <th className="px-2 py-1.5 font-medium">Fill Time</th>
+                      <th className="px-2 py-1.5 text-right font-medium">Net</th>
+                      <th className="px-2 py-1.5 font-medium">Sec Type</th>
+                      <th className="px-2 py-1.5 text-right font-medium">Conid</th>
+                      <th className="px-2 py-1.5 text-right font-medium">Mult.</th>
                     </tr>
                   </thead>
                   <tbody>

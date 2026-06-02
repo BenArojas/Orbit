@@ -6,8 +6,8 @@
  * 1:1 with grid rows (row N → week_index N+1, matching the backend matcher).
  */
 
-import { describe, it, expect } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { describe, it, expect, vi } from "vitest";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { buildMonthGrid, CalendarGrid } from "../CalendarGrid";
 import type { InflectCalendarDay, InflectWeekRollup } from "../types";
 
@@ -51,5 +51,33 @@ describe("CalendarGrid", () => {
     render(<CalendarGrid year={2026} month={6} days={[]} weeks={[]} />);
     expect(screen.getByText("Sun")).toBeInTheDocument();
     expect(screen.getByText("Sat")).toBeInTheDocument();
+  });
+
+  it("uses the available vertical space instead of fixed-height rows", () => {
+    const { container } = render(<CalendarGrid year={2026} month={6} days={days} weeks={weeks} />);
+    expect(container.firstElementChild).toHaveClass("h-full");
+    expect(screen.getByRole("button", { name: /june 2, 2026/i })).toHaveClass("h-full");
+  });
+
+  it("selects a traded day by click and keyboard", () => {
+    const onSelectDate = vi.fn();
+    render(
+      <CalendarGrid
+        year={2026}
+        month={6}
+        days={days}
+        weeks={weeks}
+        selectedDate="2026-06-03"
+        onSelectDate={onSelectDate}
+      />,
+    );
+
+    const tradedDay = screen.getByRole("button", { name: /june 2, 2026.+2 trades/i });
+    fireEvent.click(tradedDay);
+    expect(onSelectDate).toHaveBeenCalledWith("2026-06-02");
+
+    const selectedDay = screen.getByRole("button", { name: /june 3, 2026.+selected/i });
+    fireEvent.keyDown(selectedDay, { key: "Enter" });
+    expect(onSelectDate).toHaveBeenCalledWith("2026-06-03");
   });
 });

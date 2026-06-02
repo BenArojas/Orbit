@@ -127,3 +127,47 @@ async def test_fills_table_upserts_and_lists_recent_fills():
         {"execution_id": "E-NEW"},
         {"execution_id": "E-OLD"},
     ]
+
+
+@pytest.mark.asyncio
+async def test_fills_are_keyed_by_account_and_execution_id():
+    svc = DatabaseService(db_path=":memory:")
+    svc._conn = svc._connect()
+    svc._create_tables()
+    svc._migrate()
+
+    trade_time = datetime.now(timezone.utc).replace(microsecond=0)
+    trade_time_ms = int(trade_time.timestamp() * 1000)
+    rows = [
+        {
+            "execution_id": "SHARED-EXEC",
+            "account_id": "DU1",
+            "conid": 1,
+            "side": "BUY",
+            "quantity": 10,
+            "price": 10.0,
+            "trade_time": trade_time.isoformat(),
+            "trade_time_ms": trade_time_ms,
+        },
+        {
+            "execution_id": "SHARED-EXEC",
+            "account_id": "DU2",
+            "conid": 2,
+            "side": "SELL",
+            "quantity": 5,
+            "price": 20.0,
+            "trade_time": trade_time.isoformat(),
+            "trade_time_ms": trade_time_ms,
+        },
+    ]
+
+    assert await svc.upsert_fills(rows) == 2
+
+    stored = svc._fetchall(
+        "SELECT account_id, execution_id, conid, quantity "
+        "FROM fills ORDER BY account_id"
+    )
+    assert stored == [
+        {"account_id": "DU1", "execution_id": "SHARED-EXEC", "conid": 1, "quantity": 10.0},
+        {"account_id": "DU2", "execution_id": "SHARED-EXEC", "conid": 2, "quantity": 5.0},
+    ]

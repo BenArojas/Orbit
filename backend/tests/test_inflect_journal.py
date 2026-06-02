@@ -140,6 +140,23 @@ async def test_get_entries_for_conids_bulk(db):
 
 
 @pytest.mark.asyncio
+async def test_get_entries_for_conids_filters_by_account(db):
+    """Bulk journal lookup does not return entries from another account."""
+    await db.upsert_journal_entry(
+        trade_id="DU1:10:a", account_id="DU1", conid=10,
+        setup="Breakout", notes=None, tags=["own"],
+    )
+    await db.upsert_journal_entry(
+        trade_id="DU2:10:b", account_id="DU2", conid=10,
+        setup="Mean reversion", notes=None, tags=["other"],
+    )
+
+    rows = await db.get_journal_entries_for_conids([10], account_id="DU1")
+
+    assert [row["trade_id"] for row in rows] == ["DU1:10:a"]
+
+
+@pytest.mark.asyncio
 async def test_concurrent_upserts_do_not_raise(db):
     """20 concurrent journal upserts must all land — no SQLITE_MISUSE.
 

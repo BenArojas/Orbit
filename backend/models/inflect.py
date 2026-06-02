@@ -14,7 +14,9 @@ conid is the Orbit-wide instrument key throughout, per parallax-hub.
 
 from __future__ import annotations
 
+from constants.inflect import SETUP_OPTIONS
 from pydantic import BaseModel, Field
+from pydantic import field_validator
 from typing import Literal, Optional
 
 
@@ -45,6 +47,13 @@ class JournalUpsertRequest(BaseModel):
     notes: Optional[str] = None
     tags: list[str] = Field(default_factory=list)
 
+    @field_validator("setup")
+    @classmethod
+    def _validate_setup(cls, value: str | None) -> str | None:
+        if value is None or value in SETUP_OPTIONS:
+            return value
+        raise ValueError(f"setup must be one of {SETUP_OPTIONS!r} or null")
+
 
 class InflectSetupsResponse(BaseModel):
     """Response from GET /inflect/setups — the fixed setup vocabulary."""
@@ -70,6 +79,7 @@ class InflectFill(BaseModel):
     price: Optional[float] = None
     commission: Optional[float] = None
     net_amount: Optional[float] = None
+    multiplier: Optional[float] = None
     sec_type: Optional[str] = None
     trade_time: str
     trade_time_ms: Optional[int] = None
@@ -88,8 +98,8 @@ class InflectTrade(BaseModel):
     conid: int
     symbol: str = ""
     sec_type: Optional[str] = None
-    direction: Literal["LONG", "SHORT"]
-    status: Literal["OPEN", "CLOSED"]
+    direction: Literal["LONG", "SHORT", "UNKNOWN"]
+    status: Literal["OPEN", "CLOSED", "INCOMPLETE_BASIS"]
     open_time: str
     open_time_ms: int
     close_time: Optional[str] = None
@@ -101,6 +111,7 @@ class InflectTrade(BaseModel):
     commissions: float = 0.0
     net_pnl: Optional[float] = None         # gross minus commissions
     return_pct: Optional[float] = None
+    multiplier: float = 1.0
     hold_duration_sec: Optional[int] = None
     # R-multiple is deferred to v2 — needs a planned risk/stop we don't
     # capture in v1. Always None; the detail view leaves a slot for it.

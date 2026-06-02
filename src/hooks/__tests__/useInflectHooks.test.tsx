@@ -31,7 +31,7 @@ vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
 import { api } from "@/lib/api";
 import { useInflectCalendar } from "../useInflectCalendar";
-import { useInflectTrades } from "../useInflectTrades";
+import { selectedDateRangeMs, useInflectTrades } from "../useInflectTrades";
 import { useInflectSync } from "../useInflectSync";
 import { useInflectTrade, useSaveTradeJournal } from "../useTradeJournal";
 
@@ -62,6 +62,25 @@ describe("useInflectTrades", () => {
       { accountId: "DU1", status: "CLOSED" },
       expect.anything(),
     );
+  });
+
+  it("fetches trades with a selected-day date range", async () => {
+    const { Wrapper } = makeWrapper();
+    const range = selectedDateRangeMs("2026-06-02");
+    const { result } = renderHook(() => useInflectTrades("DU1", "CLOSED", range), {
+      wrapper: Wrapper,
+    });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(api.inflectTrades).toHaveBeenCalledWith(
+      { accountId: "DU1", status: "CLOSED", from: range.from, to: range.to },
+      expect.anything(),
+    );
+  });
+
+  it("computes an inclusive local-day range", () => {
+    const range = selectedDateRangeMs("2026-06-02");
+    expect(range.from).toBe(new Date(2026, 5, 2).getTime());
+    expect(range.to).toBe(new Date(2026, 5, 3).getTime() - 1);
   });
 });
 

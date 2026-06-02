@@ -20,7 +20,7 @@ from models.inflect import (
 )
 from services.db import DatabaseService
 from services.ibkr import IBKRService
-from services.inflect.service import InflectService
+from services.inflect.service import InflectService, InflectTradeNotFoundError
 from services.moonmarket import MoonMarketAccountNotFoundError, MoonMarketService
 
 router = APIRouter(prefix="/inflect", tags=["inflect"])
@@ -132,6 +132,11 @@ async def inflect_save_journal(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail={"error": "inflect_invalid_trade_id", "message": str(exc)},
+        ) from exc
+    except InflectTradeNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"error": "inflect_trade_not_found", "message": str(exc)},
         ) from exc
 
 

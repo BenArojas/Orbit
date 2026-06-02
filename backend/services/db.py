@@ -296,9 +296,9 @@ class DatabaseService:
             -- Local execution/fill store for MoonMarket and future
             -- Inflect journal reads. IBKR remains the source of truth;
             -- this table is an idempotent local projection keyed by
-            -- execution_id. conid is the Orbit-wide instrument key.
+            -- (account_id, execution_id). conid is the Orbit-wide instrument key.
             CREATE TABLE IF NOT EXISTS fills (
-                execution_id  TEXT PRIMARY KEY,
+                execution_id  TEXT NOT NULL,
                 account_id    TEXT NOT NULL,
                 conid         INTEGER NOT NULL,
                 symbol        TEXT,
@@ -313,7 +313,8 @@ class DatabaseService:
                 trade_time_ms INTEGER,
                 raw_json      TEXT,
                 created_at    TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                updated_at    TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                updated_at    TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (account_id, execution_id)
             );
 
             -- ─── Conid Cache (Phase 8 / Task 1.5) ──────────────────
@@ -521,6 +522,8 @@ class DatabaseService:
             except sqlite3.OperationalError:
                 pass  # column already exists — safe to skip
 
+        self._migrate_fills_account_execution_pk()
+
         # Legacy pulse defaults briefly used BTC.USD / ETH.USD, but IBKR's
         # secdef search resolves the crypto spot contracts under BTC / ETH.
         # Normalise those persisted defaults in place so existing users stop
@@ -534,6 +537,70 @@ class DatabaseService:
             "WHERE label = 'ETH' AND resolve = 'ETH.USD' AND sec_type = ''"
         )
         self._conn.commit()
+
+    def _migrate_fills_account_execution_pk(self) -> None:
+        """Rebuild legacy fills tables keyed only by execution_id.
+
+        SQLite cannot alter a primary key in place. Existing rows keep their
+        account_id, so the rebuild preserves current local history while making
+        duplicate execution ids safe across accounts.
+        """
+        assert self._conn is not None
+        columns = self._conn.execute("PRAGMA table_info(fills)").fetchall()
+        execution_pk = next(
+            (int(row["pk"]) for row in columns if row["name"] == "execution_id"),
+            0,
+        )
+        account_pk = next(
+            (int(row["pk"]) for row in columns if row["name"] == "account_id"),
+            0,
+        )
+        if execution_pk != 1 or account_pk != 0:
+            return
+
+        self._conn.executescript("""
+            ALTER TABLE fills RENAME TO fills_legacy_single_execution_pk;
+
+            CREATE TABLE fills (
+                execution_id  TEXT NOT NULL,
+                account_id    TEXT NOT NULL,
+                conid         INTEGER NOT NULL,
+                symbol        TEXT,
+                description   TEXT,
+                side          TEXT NOT NULL,
+                quantity      REAL NOT NULL,
+                price         REAL,
+                net_amount    REAL,
+                commission    REAL,
+                sec_type      TEXT,
+                trade_time    TEXT NOT NULL,
+                trade_time_ms INTEGER,
+                raw_json      TEXT,
+                created_at    TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at    TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (account_id, execution_id)
+            );
+
+            INSERT OR REPLACE INTO fills (
+                execution_id, account_id, conid, symbol, description, side,
+                quantity, price, net_amount, commission, sec_type, trade_time,
+                trade_time_ms, raw_json, created_at, updated_at
+            )
+            SELECT
+                execution_id, account_id, conid, symbol, description, side,
+                quantity, price, net_amount, commission, sec_type, trade_time,
+                trade_time_ms, raw_json, created_at, updated_at
+            FROM fills_legacy_single_execution_pk;
+
+            DROP TABLE fills_legacy_single_execution_pk;
+
+            CREATE INDEX IF NOT EXISTS idx_fills_account_time
+                ON fills(account_id, trade_time_ms DESC);
+            CREATE INDEX IF NOT EXISTS idx_fills_conid_time
+                ON fills(conid, trade_time_ms DESC);
+        """)
+        self._conn.commit()
+        log.info("Migration applied: fills primary key is now (account_id, execution_id)")
 
     # ── Internal helpers ─────────────────────────────────────
 
@@ -602,8 +669,7 @@ class DatabaseService:
                             trade_time, trade_time_ms, raw_json
                         )
                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                        ON CONFLICT(execution_id) DO UPDATE SET
-                            account_id = excluded.account_id,
+                        ON CONFLICT(account_id, execution_id) DO UPDATE SET
                             conid = excluded.conid,
                             symbol = excluded.symbol,
                             description = excluded.description,
@@ -768,11 +834,13 @@ class DatabaseService:
         return await self._run_read(_do)
 
     async def get_journal_entries_for_conids(
-        self, conids: list[int]
+        self, conids: list[int], account_id: str | None = None
     ) -> list[dict]:
         """Bulk-fetch journal entries for a set of conids (indexed lookup).
 
-        The trades list joins these back to trades by trade_id in memory.
+        The trades list joins these back to trades by trade_id + account_id
+        in memory. Passing account_id prevents annotations from another
+        account leaking onto same-conid trades.
         Returns [] for an empty input. Tags decoded to a list.
         """
         if not conids:
@@ -780,9 +848,18 @@ class DatabaseService:
 
         def _do() -> list[dict]:
             placeholders = ",".join("?" for _ in conids)
+            params: list[Any] = [int(c) for c in conids]
+            account_clause = ""
+            if account_id is not None:
+                account_clause = " AND account_id = ?"
+                params.append(account_id)
             rows = self._fetchall(
-                f"SELECT * FROM journal_entries WHERE conid IN ({placeholders})",
-                tuple(int(c) for c in conids),
+                f"""
+                SELECT *
+                FROM journal_entries
+                WHERE conid IN ({placeholders}){account_clause}
+                """,
+                tuple(params),
             )
             for r in rows:
                 r["tags"] = self._decode_tags(r.get("tags"))

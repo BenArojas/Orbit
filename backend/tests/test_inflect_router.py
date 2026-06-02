@@ -30,11 +30,19 @@ def _et_ms(year, month, day, hour=12, minute=0) -> int:
     return int(datetime(year, month, day, hour, minute, tzinfo=ET).timestamp() * 1000)
 
 
+class _FakeTrade:
+    def __init__(self, **row):
+        self._row = row
+
+    def model_dump(self):
+        return dict(self._row)
+
+
 class _FakeMoon:
-    def __init__(self, account="DU1", not_found=False, synced=2):
+    def __init__(self, account="DU1", not_found=False, trades=None):
         self._account = account
         self._not_found = not_found
-        self._synced = synced
+        self._trades = trades if trades is not None else []
 
     async def _resolve_account_id(self, account_id):
         if self._not_found:
@@ -42,7 +50,7 @@ class _FakeMoon:
         return account_id or self._account
 
     async def trades(self, account_id=None, days=7, db=None):
-        return SimpleNamespace(trades=[{}] * self._synced)
+        return SimpleNamespace(trades=list(self._trades))
 
 
 def _memory_db() -> DatabaseService:
@@ -76,23 +84,23 @@ def _insert_fill(db, *, execution_id, conid, side, qty, price, ms, account="DU1"
 
 
 def _seed_round_trip(db, *, conid=1, open_ms=None, close_ms=None,
-                     entry=10.0, exit_=11.0, qty=10) -> str:
+                     entry=10.0, exit_=11.0, qty=10, account="DU1") -> str:
     open_ms = open_ms or _et_ms(2026, 6, 2, 9)
     close_ms = close_ms or _et_ms(2026, 6, 2, 10)
-    _insert_fill(db, execution_id=f"{conid}-o-{open_ms}", conid=conid,
-                 side="BUY", qty=qty, price=entry, ms=open_ms)
-    _insert_fill(db, execution_id=f"{conid}-c-{close_ms}", conid=conid,
-                 side="SELL", qty=qty, price=exit_, ms=close_ms)
-    return f"DU1:{conid}:{conid}-o-{open_ms}"
+    _insert_fill(db, execution_id=f"{account}-{conid}-o-{open_ms}", conid=conid,
+                 side="BUY", qty=qty, price=entry, ms=open_ms, account=account)
+    _insert_fill(db, execution_id=f"{account}-{conid}-c-{close_ms}", conid=conid,
+                 side="SELL", qty=qty, price=exit_, ms=close_ms, account=account)
+    return f"{account}:{conid}:{account}-{conid}-o-{open_ms}"
 
 
-def _seed_journal(db, *, trade_id, conid, setup, notes, tags):
+def _seed_journal(db, *, trade_id, conid, setup, notes, tags, account="DU1"):
     db._conn.execute(
         """
         INSERT INTO journal_entries (trade_id, account_id, conid, setup, notes, tags)
         VALUES (?, ?, ?, ?, ?, ?)
         """,
-        (trade_id, "DU1", conid, setup, notes, json.dumps(tags)),
+        (trade_id, account, conid, setup, notes, json.dumps(tags)),
     )
     db._conn.commit()
 
@@ -153,6 +161,25 @@ def test_trades_list_and_journal_attach():
     assert trades[0]["journal_entry"]["tags"] == ["momentum"]
 
 
+def test_trades_list_does_not_attach_journal_from_other_account():
+    svc = _service()
+    trade_id = _seed_round_trip(svc.db, account="DU1")
+    _seed_journal(
+        svc.db,
+        trade_id=trade_id,
+        account="DU2",
+        conid=1,
+        setup="Breakout",
+        notes="wrong account",
+        tags=["leak"],
+    )
+
+    resp = _client(svc).get("/inflect/trades?account_id=DU1")
+
+    assert resp.status_code == 200
+    assert resp.json()["trades"][0]["journal_entry"] is None
+
+
 def test_trades_status_filter():
     svc = _service()
     _seed_round_trip(svc.db)  # closed
@@ -201,6 +228,27 @@ def test_save_journal_round_trips():
     assert detail.json()["journal_entry"]["notes"] == "faded the gap"
 
 
+def test_save_journal_returns_404_for_valid_missing_trade_id():
+    resp = _client(_service()).put(
+        "/inflect/trades/DU1:1:not-present/journal",
+        json={"setup": None, "notes": "should not save", "tags": []},
+    )
+    assert resp.status_code == 404
+    assert resp.json()["detail"]["error"] == "inflect_trade_not_found"
+
+
+def test_save_journal_rejects_unknown_setup():
+    svc = _service()
+    trade_id = _seed_round_trip(svc.db)
+
+    resp = _client(svc).put(
+        f"/inflect/trades/{trade_id}/journal",
+        json={"setup": "Not a setup", "notes": None, "tags": []},
+    )
+
+    assert resp.status_code == 422
+
+
 def test_save_journal_rejects_malformed_trade_id():
     resp = _client(_service()).put(
         "/inflect/trades/not-a-valid-id/journal",
@@ -210,10 +258,54 @@ def test_save_journal_rejects_malformed_trade_id():
     assert resp.json()["detail"]["error"] == "inflect_invalid_trade_id"
 
 
-def test_sync_returns_count():
-    resp = _client(_service(_FakeMoon(synced=4))).post("/inflect/sync")
+def test_sync_returns_accepted_db_upsert_count():
+    trades = [
+        _FakeTrade(
+            execution_id="ok-1",
+            account_id="DU1",
+            conid=1,
+            side="BUY",
+            quantity=1,
+            trade_time="2026-06-02T10:00:00Z",
+        ),
+        _FakeTrade(
+            execution_id="missing-required-fields",
+            account_id="DU1",
+            conid=1,
+            side="SELL",
+        ),
+    ]
+
+    resp = _client(_service(_FakeMoon(trades=trades))).post("/inflect/sync")
+
     assert resp.status_code == 200
-    assert resp.json() == {"account_id": "DU1", "synced": 4}
+    assert resp.json() == {"account_id": "DU1", "synced": 1}
+
+
+def test_sync_is_idempotent_for_duplicate_execution_ids():
+    trades = [
+        _FakeTrade(
+            execution_id="same-exec",
+            account_id="DU1",
+            conid=1,
+            side="BUY",
+            quantity=1,
+            trade_time="2026-06-02T10:00:00Z",
+        ),
+    ]
+    svc = _service(_FakeMoon(trades=trades))
+    client = _client(svc)
+
+    first = client.post("/inflect/sync")
+    second = client.post("/inflect/sync")
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    rows = svc.db._conn.execute(
+        "SELECT execution_id, quantity FROM fills WHERE account_id = ?",
+        ("DU1",),
+    ).fetchall()
+    assert [tuple(row) for row in rows] == [("same-exec", 1.0)]
 
 
 def test_account_not_found_maps_to_404():

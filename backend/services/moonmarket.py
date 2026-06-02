@@ -353,7 +353,10 @@ class MoonMarketService:
         execution_id = _first_text(row, ("execution_id", "executionId", "execId", "executionID"))
         conid = _safe_int(_first_value(row, ("conid", "contractId", "contract_id")))
         side = self._normalize_side(_first_value(row, ("side", "buySell", "transactionType")))
-        quantity = self._optional_float(_first_value(row, ("size", "quantity", "qty")))
+        sec_type = _first_text(row, ("sec_type", "secType", "assetClass")) or None
+        price = self._optional_float(_first_value(row, ("price", "tradePrice")))
+        net_amount = self._optional_float(_first_value(row, ("net_amount", "netAmount")))
+        quantity = self._trade_quantity(row, sec_type=sec_type, price=price, net_amount=net_amount)
         trade_time_ms = self._timestamp_ms(_first_value(row, ("trade_time_r", "tradeTimeR", "time", "trade_time")))
         if not execution_id or conid is None or side is None or quantity is None:
             return None
@@ -366,10 +369,10 @@ class MoonMarketService:
             description=_first_text(row, ("order_description", "orderDescription", "description", "orderDesc")) or None,
             side=side,
             quantity=quantity,
-            price=self._optional_float(_first_value(row, ("price", "tradePrice"))),
-            net_amount=self._optional_float(_first_value(row, ("net_amount", "netAmount"))),
-            commission=self._optional_float(_first_value(row, ("commission", "commissions"))),
-            sec_type=_first_text(row, ("sec_type", "secType", "assetClass")) or None,
+            price=price,
+            net_amount=net_amount,
+            commission=self._positive_optional_float(_first_value(row, ("commission", "commissions"))),
+            sec_type=sec_type,
             trade_time=self._timestamp_iso(trade_time_ms),
             trade_time_ms=trade_time_ms,
         )
@@ -455,6 +458,52 @@ class MoonMarketService:
             return round(float(value), 2)
         except (TypeError, ValueError):
             return None
+
+    @staticmethod
+    def _positive_optional_float(value: Any) -> float | None:
+        normalized = MoonMarketService._optional_float(value)
+        return abs(normalized) if normalized is not None else None
+
+    def _trade_quantity(
+        self,
+        row: dict[str, Any],
+        *,
+        sec_type: str | None,
+        price: float | None,
+        net_amount: float | None,
+    ) -> float | None:
+        recovered = self._stock_quantity_from_cash(sec_type, price, net_amount)
+        quantity = self._optional_float(_first_value(row, ("quantity", "qty", "size")))
+        if quantity is None:
+            return recovered
+
+        if recovered is None:
+            return quantity
+
+        tolerance = max(0.01, abs(quantity) * 0.05)
+        if abs(recovered - abs(quantity)) > tolerance:
+            return recovered
+        return quantity
+
+    @staticmethod
+    def _stock_quantity_from_cash(
+        sec_type: str | None,
+        price: float | None,
+        net_amount: float | None,
+    ) -> float | None:
+        if str(sec_type or "").upper() not in {"STK", "ETF"}:
+            return None
+        if price is None or price <= 0 or net_amount is None:
+            return None
+
+        recovered = abs(net_amount) / price
+        if recovered <= 0:
+            return None
+
+        rounded = round(recovered)
+        if abs(recovered - rounded) <= max(0.01, rounded * 0.001):
+            return float(rounded)
+        return round(recovered, 4)
 
     @staticmethod
     def _normalize_side(value: Any) -> str | None:

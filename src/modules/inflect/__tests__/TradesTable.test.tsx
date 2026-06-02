@@ -29,6 +29,7 @@ function makeTrade(over: Partial<InflectTrade> = {}): InflectTrade {
     return_pct: 19.8,
     hold_duration_sec: 3600,
     r_multiple: null,
+    multiplier: 1,
     fills: [],
     journal_entry: null,
     ...over,
@@ -53,6 +54,21 @@ describe("TradesTable", () => {
     render(<TradesTable trades={[makeTrade()]} selectedTradeId={null} onSelect={onSelect} />);
     fireEvent.click(screen.getByText("AAPL"));
     expect(onSelect).toHaveBeenCalledWith("DU1:1:e1");
+  });
+
+  it("lets keyboard users open a trade row with Enter or Space", () => {
+    const onSelect = vi.fn();
+    render(<TradesTable trades={[makeTrade()]} selectedTradeId={null} onSelect={onSelect} />);
+
+    const row = screen.getByText("AAPL").closest("tr");
+    expect(row).toHaveAttribute("tabIndex", "0");
+
+    fireEvent.keyDown(row!, { key: "Enter" });
+    fireEvent.keyDown(row!, { key: " " });
+
+    expect(onSelect).toHaveBeenCalledTimes(2);
+    expect(onSelect).toHaveBeenNthCalledWith(1, "DU1:1:e1");
+    expect(onSelect).toHaveBeenNthCalledWith(2, "DU1:1:e1");
   });
 
   it("shows the attached journal setup when present", () => {

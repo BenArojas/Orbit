@@ -143,6 +143,23 @@ def test_http_multiple_requests_each_get_their_own_line():
     assert [line["query"] for line in lines] == ["", "x=2", "x=3"]
 
 
+def test_inflect_trade_id_and_account_query_are_redacted():
+    app = _build_app()
+    client = TestClient(app)
+
+    client.get(
+        "/inflect/trades/DU123:265598:execution-abc/journal"
+        "?account_id=DU123&status=CLOSED"
+    )
+
+    lines = _read_log_lines()
+    assert len(lines) == 1
+    assert lines[0]["path"] == "/inflect/trades/[REDACTED]/journal"
+    assert lines[0]["query"] == "account_id=[REDACTED]&status=CLOSED"
+    assert "DU123" not in json.dumps(lines[0])
+    assert "265598" not in json.dumps(lines[0])
+
+
 # ── WebSocket ─────────────────────────────────────────────────────────────
 
 

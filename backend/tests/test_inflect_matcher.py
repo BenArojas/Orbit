@@ -23,8 +23,9 @@ def _fill(
     trade_time_ms=None,
     symbol="AAPL",
     sec_type="STK",
+    position_effect=None,
 ):
-    return {
+    row = {
         "execution_id": execution_id,
         "account_id": account_id,
         "conid": conid,
@@ -38,6 +39,9 @@ def _fill(
         "trade_time": f"t{trade_time_ms}",
         "trade_time_ms": trade_time_ms,
     }
+    if position_effect is not None:
+        row["position_effect"] = position_effect
+    return row
 
 
 def test_simple_long_round_trip():
@@ -66,7 +70,7 @@ def test_simple_long_round_trip():
 def test_simple_short_round_trip():
     """Sell-to-open 50 @ 20, buy-to-close 50 @ 18 → +100 gross for a short."""
     fills = [
-        _fill("s1", "SELL", 50, 20.0, trade_time_ms=1_000),
+        _fill("s1", "SELL", 50, 20.0, trade_time_ms=1_000, position_effect="OPEN"),
         _fill("s2", "BUY", 50, 18.0, trade_time_ms=2_000),
     ]
     trades = match_fills(fills)
@@ -210,8 +214,35 @@ def test_single_leg_option_round_trip():
     ]
     t = match_fills(fills)[0]
     assert t.sec_type == "OPT"
-    assert t.gross_pnl == pytest.approx(2.0)  # (2.50-1.50)*2
-    assert t.net_pnl == pytest.approx(2.0 - 2.60)
+    assert t.gross_pnl == pytest.approx(200.0)  # (2.50-1.50)*2*100
+    assert t.net_pnl == pytest.approx(200.0 - 2.60)
+    assert t.return_pct == pytest.approx(((200.0 - 2.60) / (1.50 * 2 * 100)) * 100)
+
+
+def test_negative_commissions_are_positive_expenses():
+    fills = [
+        _fill("e1", "BUY", 100, 10.0, commission=-1.0, trade_time_ms=1_000),
+        _fill("e2", "SELL", 100, 12.0, commission=-1.0, trade_time_ms=5_000),
+    ]
+
+    t = match_fills(fills)[0]
+
+    assert t.commissions == pytest.approx(2.0)
+    assert t.net_pnl == pytest.approx(198.0)
+
+
+def test_first_seen_sell_without_opening_baseline_is_incomplete_not_short():
+    fills = [
+        _fill("close-existing", "SELL", 100, 8.0, trade_time_ms=1_000, symbol="BLZE"),
+    ]
+
+    trades = match_fills(fills)
+
+    assert len(trades) == 1
+    assert trades[0].status == "INCOMPLETE_BASIS"
+    assert trades[0].direction == "UNKNOWN"
+    assert trades[0].gross_pnl is None
+    assert trades[0].net_pnl is None
 
 
 def test_fills_without_trade_time_ms_are_skipped():

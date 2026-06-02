@@ -8,6 +8,8 @@ import { InflectLayout } from "./InflectLayout";
 import { CalendarPage } from "./CalendarPage";
 import { TradesPage } from "./TradesPage";
 
+const autoSyncedAccounts = new Set<string>();
+
 export function InflectModule() {
   const page = useInflectStore((state) => state.page);
   const setPage = useInflectStore((state) => state.setPage);
@@ -33,6 +35,14 @@ export function InflectModule() {
 
   const sync = useInflectSync(accountId ?? undefined);
 
+  useEffect(() => {
+    if (!accountId || accountsQuery.isLoading || accountError || autoSyncedAccounts.has(accountId)) {
+      return;
+    }
+    autoSyncedAccounts.add(accountId);
+    sync.mutate(undefined);
+  }, [accountError, accountId, accountsQuery.isLoading, sync]);
+
   return (
     <InflectLayout
       activePage={page}
@@ -43,15 +53,20 @@ export function InflectModule() {
       onSync={() => sync.mutate(undefined)}
       syncing={sync.isPending}
     >
-      {accountError ? (
+      {accountsQuery.isLoading ? (
+        <div
+          role="status"
+          aria-label="Loading Inflect"
+          className="mx-4 mt-4 min-h-[220px] animate-pulse rounded-md border border-border bg-[var(--bg-2)]"
+        />
+      ) : accountError ? (
         <div
           role="alert"
           className="mx-4 mt-4 rounded-md border border-[var(--clr-red)]/50 bg-[var(--clr-red)]/10 p-3 text-[12px] text-[var(--clr-red)]"
         >
           Inflect account data is unavailable.
         </div>
-      ) : null}
-      {page === "trades" ? (
+      ) : page === "trades" ? (
         <TradesPage accountId={accountId} />
       ) : (
         <CalendarPage accountId={accountId} />

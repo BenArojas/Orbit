@@ -13,6 +13,7 @@ function resetStore() {
     page: "calendar",
     year: 2026,
     month: 6,
+    selectedDate: null,
     selectedTradeId: null,
   });
 }
@@ -26,14 +27,27 @@ describe("setPage", () => {
     useInflectStore.getState().setPage("calendar");
     expect(useInflectStore.getState().page).toBe("calendar");
   });
+
+  it("clears selected day and trade when the page changes", () => {
+    useInflectStore.getState().selectDay("2026-06-02");
+    useInflectStore.getState().selectTrade("DU1:265598:e1");
+    useInflectStore.getState().setPage("trades");
+    const s = useInflectStore.getState();
+    expect(s.selectedDate).toBeNull();
+    expect(s.selectedTradeId).toBeNull();
+  });
 });
 
 describe("setMonth", () => {
   it("sets year and month directly", () => {
+    useInflectStore.getState().selectDay("2026-06-02");
+    useInflectStore.getState().selectTrade("DU1:265598:e1");
     useInflectStore.getState().setMonth(2025, 11);
     const s = useInflectStore.getState();
     expect(s.year).toBe(2025);
     expect(s.month).toBe(11);
+    expect(s.selectedDate).toBeNull();
+    expect(s.selectedTradeId).toBeNull();
   });
 });
 
@@ -85,5 +99,15 @@ describe("selectTrade", () => {
     expect(useInflectStore.getState().selectedTradeId).toBe("DU1:265598:e1");
     useInflectStore.getState().selectTrade(null);
     expect(useInflectStore.getState().selectedTradeId).toBeNull();
+  });
+});
+
+describe("selectDay", () => {
+  it("sets selected day and clears a stale selected trade", () => {
+    useInflectStore.getState().selectTrade("DU1:265598:e1");
+    useInflectStore.getState().selectDay("2026-06-02");
+    const s = useInflectStore.getState();
+    expect(s.selectedDate).toBe("2026-06-02");
+    expect(s.selectedTradeId).toBeNull();
   });
 });

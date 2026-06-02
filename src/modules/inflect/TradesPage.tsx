@@ -36,7 +36,10 @@ export function TradesPage({ accountId }: { accountId: string | null }) {
                 key={tab}
                 type="button"
                 aria-pressed={status === tab}
-                onClick={() => setStatus(tab)}
+                onClick={() => {
+                  setStatus(tab);
+                  selectTrade(null);
+                }}
                 className={cn(
                   "h-6 rounded px-2.5 text-[11px] font-medium capitalize",
                   status === tab

@@ -1,5 +1,6 @@
 import { DayCell } from "./DayCell";
 import { WeekRail } from "./WeekRail";
+import { cn } from "@/lib/utils";
 import type { InflectCalendarDay, InflectWeekRollup } from "./types";
 
 const WEEKDAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -28,51 +29,77 @@ function dayKey(year: number, month: number, day: number): string {
   return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
 }
 
+function dayLabel(year: number, month: number, day: number): string {
+  return new Intl.DateTimeFormat("en-US", {
+    month: "long",
+    day: "numeric",
+    year: "numeric",
+  }).format(new Date(year, month - 1, day));
+}
+
+function rowClass(rows: number): string {
+  if (rows === 4) return "grid-rows-4";
+  if (rows === 6) return "grid-rows-6";
+  return "grid-rows-5";
+}
+
 export function CalendarGrid({
   year,
   month,
   days,
   weeks,
+  selectedDate,
+  onSelectDate,
 }: {
   year: number;
   month: number;
   days: InflectCalendarDay[];
   weeks: InflectWeekRollup[];
+  selectedDate?: string | null;
+  onSelectDate?: (date: string) => void;
 }) {
   const grid = buildMonthGrid(year, month);
   const dayMap = new Map(days.map((d) => [d.date, d]));
   const weekMap = new Map(weeks.map((w) => [w.week_index, w]));
+  const rows = rowClass(grid.length);
 
   return (
-    <div className="flex gap-3">
-      <div className="flex-1">
-        <div className="mb-1 grid grid-cols-7 gap-2">
+    <div className="flex h-full min-h-0 gap-3">
+      <div className="flex min-h-0 flex-1 flex-col">
+        <div className="mb-1 grid shrink-0 grid-cols-7 gap-2">
           {WEEKDAY_LABELS.map((label) => (
             <div key={label} className="text-center text-[10px] uppercase text-[var(--text-3)]">
               {label}
             </div>
           ))}
         </div>
-        <div className="space-y-2">
-          {grid.map((week, rowIndex) => (
-            <div key={rowIndex} className="grid grid-cols-7 gap-2">
-              {week.map((day, colIndex) => (
-                <DayCell
-                  key={colIndex}
-                  day={day}
-                  data={day != null ? dayMap.get(dayKey(year, month, day)) : undefined}
-                />
-              ))}
-            </div>
-          ))}
+        <div className={cn("grid min-h-0 flex-1 grid-cols-7 gap-2", rows)}>
+          {grid.flat().map((day, index) => {
+            const key = day != null ? dayKey(year, month, day) : undefined;
+            return (
+              <DayCell
+                key={index}
+                day={day}
+                data={key ? dayMap.get(key) : undefined}
+                dateKey={key}
+                dateLabel={day != null ? dayLabel(year, month, day) : undefined}
+                selected={key === selectedDate}
+                onSelectDate={onSelectDate}
+              />
+            );
+          })}
         </div>
       </div>
 
-      <div className="w-32 shrink-0">
-        <div className="mb-1 text-center text-[10px] uppercase text-[var(--text-3)]">Weekly</div>
-        <div className="space-y-2">
+      <div className="flex w-32 shrink-0 flex-col">
+        <div className="mb-1 shrink-0 text-center text-[10px] uppercase text-[var(--text-3)]">
+          Weekly
+        </div>
+        <div className={cn("grid min-h-0 flex-1 gap-2", rows)}>
           {grid.map((_week, rowIndex) => (
-            <WeekRail key={rowIndex} weekIndex={rowIndex + 1} rollup={weekMap.get(rowIndex + 1)} />
+            <div key={rowIndex} className="h-full [&>*]:h-full">
+              <WeekRail weekIndex={rowIndex + 1} rollup={weekMap.get(rowIndex + 1)} />
+            </div>
           ))}
         </div>
       </div>
