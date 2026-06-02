@@ -517,6 +517,27 @@ class DatabaseService:
             CREATE INDEX IF NOT EXISTS idx_basis_backfill_status
                 ON basis_backfill_queue(status, last_checked_ms, created_at);
 
+            -- ─── Inflect Manual Basis Lots ────────────────────────
+            -- User-entered starting lots for positions whose opening basis
+            -- predates recoverable IBKR history. P2-I converts these rows to
+            -- synthetic matcher fills; this table is CRUD-only in P2-H.
+            CREATE TABLE IF NOT EXISTS basis_lots (
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                account_id   TEXT NOT NULL,
+                conid        INTEGER NOT NULL,
+                side         TEXT NOT NULL,
+                quantity     REAL NOT NULL,
+                entry_date   TEXT NOT NULL,
+                entry_price  REAL NOT NULL,
+                commission   REAL,
+                note         TEXT,
+                created_at   TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at   TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_basis_lots_acct_conid
+                ON basis_lots(account_id, conid);
+
             -- ─── Inflect Basis Audit ──────────────────────────────
             -- Audit symmetry for automatic PA recovery and manual basis repair.
             CREATE TABLE IF NOT EXISTS basis_audit (
@@ -961,6 +982,142 @@ class DatabaseService:
             return [dict(zip(cols, row)) for row in cur.fetchall()]
 
         return await self._run_read(_do)
+
+    # ── Inflect Manual Basis Lots ────────────────────────────
+
+    async def create_basis_lot(
+        self,
+        *,
+        account_id: str,
+        conid: int,
+        side: str,
+        quantity: float,
+        entry_date: str,
+        entry_price: float,
+        commission: float | None,
+        note: str | None,
+    ) -> dict[str, Any]:
+        """Insert one manual starting lot and return the stored row."""
+        def _do() -> dict[str, Any]:
+            assert self._conn is not None
+            with self._conn:
+                cur = self._conn.execute(
+                    """
+                    INSERT INTO basis_lots (
+                        account_id, conid, side, quantity, entry_date,
+                        entry_price, commission, note
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        account_id,
+                        int(conid),
+                        side,
+                        float(quantity),
+                        entry_date,
+                        float(entry_price),
+                        commission,
+                        note,
+                    ),
+                )
+                row = self._conn.execute(
+                    "SELECT * FROM basis_lots WHERE id = ?",
+                    (cur.lastrowid,),
+                ).fetchone()
+                assert row is not None
+                return dict(row)
+
+        return await self._run_write(_do)
+
+    async def list_basis_lots(
+        self, account_id: str, conid: int
+    ) -> list[dict[str, Any]]:
+        """Return manual starting lots for one account + conid."""
+        def _do() -> list[dict[str, Any]]:
+            assert self._conn is not None
+            cur = self._conn.execute(
+                """
+                SELECT *
+                FROM basis_lots
+                WHERE account_id = ? AND conid = ?
+                ORDER BY entry_date ASC, created_at ASC, id ASC
+                """,
+                (account_id, int(conid)),
+            )
+            cols = [d[0] for d in cur.description]
+            return [dict(zip(cols, row)) for row in cur.fetchall()]
+
+        return await self._run_read(_do)
+
+    async def update_basis_lot(
+        self,
+        *,
+        lot_id: int,
+        account_id: str,
+        conid: int,
+        side: str,
+        quantity: float,
+        entry_date: str,
+        entry_price: float,
+        commission: float | None,
+        note: str | None,
+    ) -> dict[str, Any] | None:
+        """Replace one manual starting lot for the owning account."""
+        def _do() -> dict[str, Any] | None:
+            assert self._conn is not None
+            with self._conn:
+                self._conn.execute(
+                    """
+                    UPDATE basis_lots
+                    SET conid = ?,
+                        side = ?,
+                        quantity = ?,
+                        entry_date = ?,
+                        entry_price = ?,
+                        commission = ?,
+                        note = ?,
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE id = ? AND account_id = ?
+                    """,
+                    (
+                        int(conid),
+                        side,
+                        float(quantity),
+                        entry_date,
+                        float(entry_price),
+                        commission,
+                        note,
+                        int(lot_id),
+                        account_id,
+                    ),
+                )
+                row = self._conn.execute(
+                    """
+                    SELECT *
+                    FROM basis_lots
+                    WHERE id = ? AND account_id = ?
+                    """,
+                    (int(lot_id), account_id),
+                ).fetchone()
+                return dict(row) if row else None
+
+        return await self._run_write(_do)
+
+    async def delete_basis_lot(self, lot_id: int, account_id: str) -> bool:
+        """Delete one manual starting lot for the owning account."""
+        def _do() -> bool:
+            assert self._conn is not None
+            with self._conn:
+                cur = self._conn.execute(
+                    """
+                    DELETE FROM basis_lots
+                    WHERE id = ? AND account_id = ?
+                    """,
+                    (int(lot_id), account_id),
+                )
+                return cur.rowcount > 0
+
+        return await self._run_write(_do)
 
     # ── Inflect Journal Entries ──────────────────────────────
     #

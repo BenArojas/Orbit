@@ -14,6 +14,8 @@ conid is the Orbit-wide instrument key throughout, per parallax-hub.
 
 from __future__ import annotations
 
+from datetime import date
+
 from constants.inflect import SETUP_OPTIONS
 from pydantic import BaseModel, Field
 from pydantic import field_validator
@@ -164,3 +166,77 @@ class InflectSyncResponse(BaseModel):
     """Response from POST /inflect/sync — how many fills were upserted."""
     account_id: str
     synced: int
+
+
+# ═══════════════════════════════════════════════════════════════
+#  Basis backfill queue status
+# ═══════════════════════════════════════════════════════════════
+
+
+class InflectBackfillStatusItem(BaseModel):
+    """One queued automatic basis-recovery item."""
+    account_id: str
+    conid: int
+    status: Literal[
+        "pending",
+        "running",
+        "resolved",
+        "still_needs_basis",
+        "failed",
+        "rate_limited",
+        "max_days_rejected",
+    ]
+    attempts: int
+    days_used: Optional[int] = None
+    last_checked_ms: Optional[int] = None
+    last_error: Optional[str] = None
+    created_at: str
+    updated_at: str
+
+
+class InflectBackfillStatusResponse(BaseModel):
+    """Response from GET /inflect/backfill-status."""
+    account_id: str
+    items: list[InflectBackfillStatusItem]
+
+
+# ═══════════════════════════════════════════════════════════════
+#  Manual basis lots
+# ═══════════════════════════════════════════════════════════════
+
+
+class BasisLot(BaseModel):
+    """A manual starting lot for missing opening basis."""
+    id: int
+    account_id: str
+    conid: int
+    side: Literal["LONG", "SHORT"]
+    quantity: float
+    entry_date: str
+    entry_price: float
+    commission: Optional[float] = None
+    note: Optional[str] = None
+    created_at: Optional[str] = None
+    updated_at: Optional[str] = None
+
+
+class BasisLotUpsertRequest(BaseModel):
+    """Body for POST/PUT /inflect/basis-lots."""
+    conid: int
+    side: Literal["LONG", "SHORT"]
+    quantity: float = Field(gt=0)
+    entry_date: str
+    entry_price: float = Field(gt=0)
+    commission: Optional[float] = Field(default=None, ge=0)
+    note: Optional[str] = None
+
+    @field_validator("entry_date")
+    @classmethod
+    def _validate_entry_date(cls, value: str) -> str:
+        if len(value) != 10:
+            raise ValueError("entry_date must be YYYY-MM-DD")
+        try:
+            parsed = date.fromisoformat(value)
+        except ValueError as exc:
+            raise ValueError("entry_date must be YYYY-MM-DD") from exc
+        return parsed.isoformat()

@@ -1,7 +1,9 @@
 import { X } from "lucide-react";
 import type { ReactNode } from "react";
 import { cn } from "@/lib/utils";
+import { useInflectBackfill } from "@/hooks/useInflectBackfill";
 import { useInflectTrade } from "@/hooks/useTradeJournal";
+import { BackfillStatus } from "./BackfillStatus";
 import { BasisBadge } from "./BasisBadge";
 import { JournalEditor } from "./JournalEditor";
 import {
@@ -112,6 +114,11 @@ export function TradeDetail({
   const net = trade?.net_pnl ?? null;
   const tone = net != null && net > 0 ? "green" : net != null && net < 0 ? "red" : undefined;
   const needsBasis = trade ? isNeedsBasisTrade(trade) : false;
+  const backfillQuery = useInflectBackfill({
+    accountId,
+    conid: trade?.conid,
+    enabled: needsBasis,
+  });
 
   return (
     <aside className="flex h-full w-[380px] shrink-0 flex-col border-l border-border bg-[var(--bg-2)]">
@@ -178,6 +185,16 @@ export function TradeDetail({
                   Repair basis
                 </a>
               </section>
+            ) : null}
+
+            {needsBasis ? (
+              <BackfillStatus
+                item={backfillQuery.data ?? null}
+                isLoading={backfillQuery.isLoading}
+                onAddManualLot={() => {
+                  window.location.hash = "basis-repair";
+                }}
+              />
             ) : null}
 
             <div>

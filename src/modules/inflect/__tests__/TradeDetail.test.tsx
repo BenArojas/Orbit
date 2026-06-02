@@ -9,10 +9,15 @@ import type { InflectTrade } from "../types";
 
 const hookMocks = vi.hoisted(() => ({
   useInflectTrade: vi.fn(),
+  useInflectBackfill: vi.fn(),
 }));
 
 vi.mock("@/hooks/useTradeJournal", () => ({
   useInflectTrade: hookMocks.useInflectTrade,
+}));
+
+vi.mock("@/hooks/useInflectBackfill", () => ({
+  useInflectBackfill: hookMocks.useInflectBackfill,
 }));
 
 vi.mock("../JournalEditor", () => ({
@@ -70,6 +75,11 @@ describe("TradeDetail", () => {
       isLoading: false,
       error: null,
     });
+    hookMocks.useInflectBackfill.mockReturnValue({
+      data: null,
+      isLoading: false,
+      error: null,
+    });
 
     render(<TradeDetail tradeId="DU1:265598:exec-1" accountId="DU1" onClose={vi.fn()} />);
 
@@ -93,6 +103,21 @@ describe("TradeDetail", () => {
       isLoading: false,
       error: null,
     });
+    hookMocks.useInflectBackfill.mockReturnValue({
+      data: {
+        account_id: "DU1",
+        conid: 265598,
+        status: "still_needs_basis",
+        attempts: 1,
+        days_used: 90,
+        last_checked_ms: Date.UTC(2026, 5, 2, 13, 30),
+        last_error: null,
+        created_at: "2026-06-02T13:00:00Z",
+        updated_at: "2026-06-02T13:30:00Z",
+      },
+      isLoading: false,
+      error: null,
+    });
 
     render(<TradeDetail tradeId="DU1:265598:exec-1" accountId="DU1" onClose={vi.fn()} />);
 
@@ -106,5 +131,9 @@ describe("TradeDetail", () => {
     );
     expect(screen.queryByText("UNKNOWN")).not.toBeInTheDocument();
     expect(screen.queryByText("INCOMPLETE_BASIS")).not.toBeInTheDocument();
+    expect(screen.getByText("Still needs basis")).toBeInTheDocument();
+    expect(
+      screen.getByText("Opening lot may predate IBKR history. Add a manual starting lot."),
+    ).toBeInTheDocument();
   });
 });

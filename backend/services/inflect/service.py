@@ -28,6 +28,10 @@ from zoneinfo import ZoneInfo
 from constants.inflect import SETUP_OPTIONS, TRADING_DAY_TZ
 from exceptions import IBKRAuthError, IBKRConnectionError, IBKRRateLimitError
 from models.inflect import (
+    BasisLot,
+    BasisLotUpsertRequest,
+    InflectBackfillStatusItem,
+    InflectBackfillStatusResponse,
     InflectCalendarDay,
     InflectCalendarResponse,
     InflectSetupsResponse,
@@ -51,6 +55,10 @@ _FAR_FUTURE_MS = 4_102_444_800_000
 
 class InflectTradeNotFoundError(LookupError):
     """Raised when a resolved account has no matching derived trade."""
+
+
+class InflectBasisLotNotFoundError(LookupError):
+    """Raised when a manual basis lot is missing for the resolved account."""
 
 
 class InflectService:
@@ -228,6 +236,18 @@ class InflectService:
     def setups(self) -> InflectSetupsResponse:
         return InflectSetupsResponse(setups=list(SETUP_OPTIONS))
 
+    async def backfill_status(
+        self, account_id: str | None, conid: int | None = None
+    ) -> InflectBackfillStatusResponse:
+        resolved = await self._resolve_account(account_id)
+        rows = await self.db.list_backfill_status(resolved)
+        items = [
+            InflectBackfillStatusItem(**row)
+            for row in rows
+            if conid is None or int(row["conid"]) == int(conid)
+        ]
+        return InflectBackfillStatusResponse(account_id=resolved, items=items)
+
     async def sync(self, account_id: str | None) -> InflectSyncResponse:
         """Force a fills sync via MoonMarket's ibkr → upsert_fills path."""
         resolved = await self._resolve_account(account_id)
@@ -299,6 +319,63 @@ class InflectService:
             "days_used": result.days_used,
             "fallback_days": result.fallback_days,
         }
+
+    # ── Manual Basis Lots ─────────────────────────────────────
+
+    async def list_basis_lots(
+        self, account_id: str | None, conid: int
+    ) -> list[BasisLot]:
+        resolved = await self._resolve_account(account_id)
+        rows = await self.db.list_basis_lots(resolved, int(conid))
+        return [self._basis_lot_from_row(row) for row in rows]
+
+    async def create_basis_lot(
+        self, account_id: str | None, payload: BasisLotUpsertRequest
+    ) -> BasisLot:
+        resolved = await self._resolve_account(account_id)
+        row = await self.db.create_basis_lot(
+            account_id=resolved,
+            conid=payload.conid,
+            side=payload.side,
+            quantity=payload.quantity,
+            entry_date=payload.entry_date,
+            entry_price=payload.entry_price,
+            commission=payload.commission,
+            note=payload.note,
+        )
+        return self._basis_lot_from_row(row)
+
+    async def update_basis_lot(
+        self,
+        *,
+        lot_id: int,
+        account_id: str | None,
+        payload: BasisLotUpsertRequest,
+    ) -> BasisLot:
+        resolved = await self._resolve_account(account_id)
+        row = await self.db.update_basis_lot(
+            lot_id=lot_id,
+            account_id=resolved,
+            conid=payload.conid,
+            side=payload.side,
+            quantity=payload.quantity,
+            entry_date=payload.entry_date,
+            entry_price=payload.entry_price,
+            commission=payload.commission,
+            note=payload.note,
+        )
+        if row is None:
+            raise InflectBasisLotNotFoundError(str(lot_id))
+        return self._basis_lot_from_row(row)
+
+    async def delete_basis_lot(
+        self, *, lot_id: int, account_id: str | None
+    ) -> bool:
+        resolved = await self._resolve_account(account_id)
+        deleted = await self.db.delete_basis_lot(lot_id, resolved)
+        if not deleted:
+            raise InflectBasisLotNotFoundError(str(lot_id))
+        return True
 
     # ── Internals ──────────────────────────────────────────────
 
@@ -722,6 +799,24 @@ class InflectService:
             setup=row.get("setup"),
             notes=row.get("notes"),
             tags=row.get("tags") or [],
+            created_at=row.get("created_at"),
+            updated_at=row.get("updated_at"),
+        )
+
+    @staticmethod
+    def _basis_lot_from_row(row: dict) -> BasisLot:
+        return BasisLot(
+            id=int(row["id"]),
+            account_id=row["account_id"],
+            conid=int(row["conid"]),
+            side=row["side"],
+            quantity=float(row["quantity"]),
+            entry_date=row["entry_date"],
+            entry_price=float(row["entry_price"]),
+            commission=(
+                None if row.get("commission") is None else float(row["commission"])
+            ),
+            note=row.get("note"),
             created_at=row.get("created_at"),
             updated_at=row.get("updated_at"),
         )

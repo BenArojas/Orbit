@@ -282,6 +282,49 @@ def test_trades_status_filter():
     assert [t["status"] for t in open_] == ["OPEN"]
 
 
+def test_backfill_status_returns_queue_items_and_filters_by_conid():
+    svc = _service()
+    svc.db._conn.execute(
+        """
+        INSERT INTO basis_backfill_queue
+            (account_id, conid, status, attempts, days_used, last_checked_ms, last_error)
+        VALUES
+            (?, ?, ?, ?, ?, ?, ?),
+            (?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            "DU1",
+            101,
+            "still_needs_basis",
+            2,
+            365,
+            _et_ms(2026, 6, 2, 11),
+            "basis still missing",
+            "DU1",
+            202,
+            "pending",
+            0,
+            None,
+            None,
+            None,
+        ),
+    )
+    svc.db._conn.commit()
+
+    client = _client(svc)
+
+    all_items = client.get("/inflect/backfill-status?account_id=DU1")
+    assert all_items.status_code == 200
+    assert all_items.json()["account_id"] == "DU1"
+    assert [item["conid"] for item in all_items.json()["items"]] == [101, 202]
+    assert all_items.json()["items"][0]["status"] == "still_needs_basis"
+    assert all_items.json()["items"][0]["days_used"] == 365
+
+    filtered = client.get("/inflect/backfill-status?account_id=DU1&conid=202")
+    assert filtered.status_code == 200
+    assert [item["conid"] for item in filtered.json()["items"]] == [202]
+
+
 def test_trade_detail_found_and_missing():
     svc = _service()
     trade_id = _seed_round_trip(svc.db)

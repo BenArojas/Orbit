@@ -10,6 +10,9 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from deps import get_db, get_ibkr, require_ibkr_auth
 from models.inflect import (
+    BasisLot,
+    BasisLotUpsertRequest,
+    InflectBackfillStatusResponse,
     InflectCalendarResponse,
     InflectSetupsResponse,
     InflectSyncResponse,
@@ -20,7 +23,11 @@ from models.inflect import (
 )
 from services.db import DatabaseService
 from services.ibkr import IBKRService
-from services.inflect.service import InflectService, InflectTradeNotFoundError
+from services.inflect.service import (
+    InflectBasisLotNotFoundError,
+    InflectService,
+    InflectTradeNotFoundError,
+)
 from services.moonmarket import MoonMarketAccountNotFoundError, MoonMarketService
 
 router = APIRouter(prefix="/inflect", tags=["inflect"])
@@ -50,6 +57,13 @@ def _account_not_found(exc: MoonMarketAccountNotFoundError) -> HTTPException:
     return HTTPException(
         status_code=status.HTTP_404_NOT_FOUND,
         detail={"error": "inflect_account_not_found", "message": str(exc)},
+    )
+
+
+def _basis_lot_not_found(exc: InflectBasisLotNotFoundError) -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_404_NOT_FOUND,
+        detail={"error": "inflect_basis_lot_not_found", "message": str(exc)},
     )
 
 
@@ -95,6 +109,77 @@ async def inflect_trades(
         )
     except MoonMarketAccountNotFoundError as exc:
         raise _account_not_found(exc) from exc
+
+
+@router.get("/backfill-status", response_model=InflectBackfillStatusResponse)
+async def inflect_backfill_status(
+    account_id: str | None = Query(default=None),
+    conid: int | None = Query(default=None),
+    service: InflectService = Depends(require_inflect_service),
+) -> InflectBackfillStatusResponse:
+    try:
+        return await service.backfill_status(account_id=account_id, conid=conid)
+    except MoonMarketAccountNotFoundError as exc:
+        raise _account_not_found(exc) from exc
+
+
+@router.get("/basis-lots", response_model=list[BasisLot])
+async def inflect_basis_lots(
+    account_id: str | None = Query(default=None),
+    conid: int = Query(...),
+    service: InflectService = Depends(require_inflect_service),
+) -> list[BasisLot]:
+    try:
+        return await service.list_basis_lots(account_id=account_id, conid=conid)
+    except MoonMarketAccountNotFoundError as exc:
+        raise _account_not_found(exc) from exc
+
+
+@router.post("/basis-lots", response_model=BasisLot)
+async def inflect_create_basis_lot(
+    payload: BasisLotUpsertRequest,
+    account_id: str | None = Query(default=None),
+    service: InflectService = Depends(require_inflect_service),
+) -> BasisLot:
+    try:
+        return await service.create_basis_lot(account_id=account_id, payload=payload)
+    except MoonMarketAccountNotFoundError as exc:
+        raise _account_not_found(exc) from exc
+
+
+@router.put("/basis-lots/{lot_id}", response_model=BasisLot)
+async def inflect_update_basis_lot(
+    lot_id: int,
+    payload: BasisLotUpsertRequest,
+    account_id: str | None = Query(default=None),
+    service: InflectService = Depends(require_inflect_service),
+) -> BasisLot:
+    try:
+        return await service.update_basis_lot(
+            lot_id=lot_id, account_id=account_id, payload=payload
+        )
+    except MoonMarketAccountNotFoundError as exc:
+        raise _account_not_found(exc) from exc
+    except InflectBasisLotNotFoundError as exc:
+        raise _basis_lot_not_found(exc) from exc
+
+
+@router.delete("/basis-lots/{lot_id}")
+async def inflect_delete_basis_lot(
+    lot_id: int,
+    account_id: str | None = Query(default=None),
+    service: InflectService = Depends(require_inflect_service),
+) -> dict[str, bool]:
+    try:
+        return {
+            "deleted": await service.delete_basis_lot(
+                lot_id=lot_id, account_id=account_id
+            )
+        }
+    except MoonMarketAccountNotFoundError as exc:
+        raise _account_not_found(exc) from exc
+    except InflectBasisLotNotFoundError as exc:
+        raise _basis_lot_not_found(exc) from exc
 
 
 @router.get("/trades/{trade_id}", response_model=InflectTrade)

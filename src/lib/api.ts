@@ -419,6 +419,32 @@ export interface InflectSyncResponse {
 
 export type InflectTradeStatus = "OPEN" | "CLOSED" | "INCOMPLETE_BASIS";
 
+export type InflectBackfillQueueStatus =
+  | "pending"
+  | "running"
+  | "resolved"
+  | "still_needs_basis"
+  | "failed"
+  | "rate_limited"
+  | "max_days_rejected";
+
+export interface InflectBackfillStatusItem {
+  account_id: string;
+  conid: number;
+  status: InflectBackfillQueueStatus;
+  attempts: number;
+  days_used: number | null;
+  last_checked_ms: number | null;
+  last_error: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface InflectBackfillStatusResponse {
+  account_id: string;
+  items: InflectBackfillStatusItem[];
+}
+
 /**
  * news_candle detection methods (Phase 6.6). Only meaningful when
  * `indicator === "news_candle"`.
@@ -1469,6 +1495,20 @@ export const api = {
   inflectSync: (accountId?: string, signal?: AbortSignal) => {
     const qs = accountId ? `?account_id=${encodeURIComponent(accountId)}` : "";
     return request<InflectSyncResponse>("POST", `/inflect/sync${qs}`, undefined, signal);
+  },
+
+  inflectBackfillStatus: (
+    opts: { accountId: string; conid?: number },
+    signal?: AbortSignal,
+  ) => {
+    const params = new URLSearchParams({ account_id: opts.accountId });
+    if (opts.conid != null) params.set("conid", String(opts.conid));
+    return request<InflectBackfillStatusResponse>(
+      "GET",
+      `/inflect/backfill-status?${params.toString()}`,
+      undefined,
+      signal,
+    );
   },
 
   // Indicators
