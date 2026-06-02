@@ -313,9 +313,10 @@ class MoonMarketSingleOptionStrikeResponse(BaseModel):
 
 
 OrderSide = Literal["BUY", "SELL"]
-OrderType = Literal["MKT", "LMT", "STP", "STP_LIMIT", "TRAIL"]
+OrderType = Literal["MKT", "LMT", "STP", "STP_LIMIT", "TRAIL", "TRAILLMT"]
 TimeInForce = Literal["DAY", "GTC", "IOC"]
 OrderAssetClass = Literal["STK", "OPT"]
+TrailingType = Literal["amt", "%"]
 
 
 class MoonMarketOrderDraft(BaseModel):
@@ -328,11 +329,23 @@ class MoonMarketOrderDraft(BaseModel):
     tif: TimeInForce = "DAY"
     price: Optional[float] = Field(default=None, gt=0)
     aux_price: Optional[float] = Field(default=None, alias="auxPrice", gt=0)
+    trailing_type: Optional[TrailingType] = Field(default=None, alias="trailingType")
+    trailing_amt: Optional[float] = Field(default=None, alias="trailingAmt", gt=0)
+    outside_rth: bool = Field(default=False, alias="outsideRTH")
     client_order_id: Optional[str] = Field(default=None, alias="cOID")
     parent_id: Optional[str] = Field(default=None, alias="parentId")
     is_single_group: bool = Field(default=False, alias="isSingleGroup")
 
     model_config = ConfigDict(populate_by_name=True)
+
+    @model_validator(mode="after")
+    def _validate_trailing(self) -> "MoonMarketOrderDraft":
+        if self.order_type in ("TRAIL", "TRAILLMT"):
+            if self.trailing_amt is None or self.trailing_type is None:
+                raise ValueError("Trailing orders require trailingAmt and trailingType")
+            if self.order_type == "TRAILLMT" and self.price is None:
+                raise ValueError("TRAILLMT orders require a limit price")
+        return self
 
 
 class MoonMarketOrderPreviewRequest(BaseModel):
