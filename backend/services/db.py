@@ -311,6 +311,7 @@ class DatabaseService:
                 sec_type      TEXT,
                 trade_time    TEXT NOT NULL,
                 trade_time_ms INTEGER,
+                source        TEXT NOT NULL DEFAULT 'IBKR_TRADES',
                 raw_json      TEXT,
                 created_at    TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 updated_at    TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -515,6 +516,22 @@ class DatabaseService:
 
             CREATE INDEX IF NOT EXISTS idx_basis_backfill_status
                 ON basis_backfill_queue(status, last_checked_ms, created_at);
+
+            -- ─── Inflect Basis Audit ──────────────────────────────
+            -- Audit symmetry for automatic PA recovery and manual basis repair.
+            CREATE TABLE IF NOT EXISTS basis_audit (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                account_id  TEXT NOT NULL,
+                conid       INTEGER NOT NULL,
+                action      TEXT NOT NULL,
+                source      TEXT,
+                before_json TEXT,
+                after_json  TEXT,
+                created_at  TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_basis_audit_acct_conid
+                ON basis_audit(account_id, conid);
         """)
         self._conn.commit()
         log.info("Database tables verified/created.")
@@ -532,6 +549,8 @@ class DatabaseService:
         migrations = [
             # Phase 8.9 / Commit D: sec_type hint for pulse items
             "ALTER TABLE pulse_config ADD COLUMN sec_type TEXT NOT NULL DEFAULT ''",
+            # Inflect P1-F: distinguish IBKR recent fills from PA/manual basis rows.
+            "ALTER TABLE fills ADD COLUMN source TEXT NOT NULL DEFAULT 'IBKR_TRADES'",
         ]
         for sql in migrations:
             try:
@@ -594,6 +613,7 @@ class DatabaseService:
                 sec_type      TEXT,
                 trade_time    TEXT NOT NULL,
                 trade_time_ms INTEGER,
+                source        TEXT NOT NULL DEFAULT 'IBKR_TRADES',
                 raw_json      TEXT,
                 created_at    TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 updated_at    TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -603,12 +623,12 @@ class DatabaseService:
             INSERT OR REPLACE INTO fills (
                 execution_id, account_id, conid, symbol, description, side,
                 quantity, price, net_amount, commission, sec_type, trade_time,
-                trade_time_ms, raw_json, created_at, updated_at
+                trade_time_ms, source, raw_json, created_at, updated_at
             )
             SELECT
                 execution_id, account_id, conid, symbol, description, side,
                 quantity, price, net_amount, commission, sec_type, trade_time,
-                trade_time_ms, raw_json, created_at, updated_at
+                trade_time_ms, source, raw_json, created_at, updated_at
             FROM fills_legacy_single_execution_pk;
 
             DROP TABLE fills_legacy_single_execution_pk;
@@ -685,9 +705,9 @@ class DatabaseService:
                         INSERT INTO fills (
                             execution_id, account_id, conid, symbol, description,
                             side, quantity, price, net_amount, commission, sec_type,
-                            trade_time, trade_time_ms, raw_json
+                            trade_time, trade_time_ms, source, raw_json
                         )
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         ON CONFLICT(account_id, execution_id) DO UPDATE SET
                             conid = excluded.conid,
                             symbol = excluded.symbol,
@@ -700,6 +720,7 @@ class DatabaseService:
                             sec_type = excluded.sec_type,
                             trade_time = excluded.trade_time,
                             trade_time_ms = excluded.trade_time_ms,
+                            source = excluded.source,
                             raw_json = excluded.raw_json,
                             updated_at = CURRENT_TIMESTAMP
                         """,
@@ -717,6 +738,7 @@ class DatabaseService:
                             row.get("sec_type"),
                             row["trade_time"],
                             row.get("trade_time_ms"),
+                            row.get("source") or "IBKR_TRADES",
                             self._encode_raw_json(row.get("raw_json")),
                         ),
                     )
@@ -897,6 +919,31 @@ class DatabaseService:
 
         await self._run_write(_do)
 
+    async def insert_basis_audit(
+        self,
+        *,
+        account_id: str,
+        conid: int,
+        action: str,
+        source: str | None,
+        before_json: str | None,
+        after_json: str | None,
+    ) -> None:
+        """Append one basis recovery/repair audit row."""
+        def _do() -> None:
+            assert self._conn is not None
+            with self._conn:
+                self._conn.execute(
+                    """
+                    INSERT INTO basis_audit
+                        (account_id, conid, action, source, before_json, after_json)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (account_id, int(conid), action, source, before_json, after_json),
+                )
+
+        await self._run_write(_do)
+
     async def list_backfill_status(self, account_id: str) -> list[dict[str, Any]]:
         """Return basis-backfill queue rows for one account."""
         def _do() -> list[dict[str, Any]]:
@@ -975,6 +1022,64 @@ class DatabaseService:
             return row
 
         return await self._run_read(_do)
+
+    async def rekey_journal_entry(self, old_trade_id: str, new_trade_id: str) -> None:
+        """Move one journal annotation to a successor derived trade id."""
+        if old_trade_id == new_trade_id:
+            return
+
+        def _do() -> None:
+            assert self._conn is not None
+            with self._conn:
+                existing = self._conn.execute(
+                    "SELECT * FROM journal_entries WHERE trade_id = ?",
+                    (old_trade_id,),
+                ).fetchone()
+                if existing is None:
+                    return
+
+                conflict = self._conn.execute(
+                    "SELECT trade_id FROM journal_entries WHERE trade_id = ?",
+                    (new_trade_id,),
+                ).fetchone()
+                if conflict is not None:
+                    self._conn.execute(
+                        """
+                        UPDATE journal_entries
+                        SET account_id = ?,
+                            conid = ?,
+                            setup = ?,
+                            notes = ?,
+                            tags = ?,
+                            updated_at = CURRENT_TIMESTAMP
+                        WHERE trade_id = ?
+                        """,
+                        (
+                            existing["account_id"],
+                            int(existing["conid"]),
+                            existing["setup"],
+                            existing["notes"],
+                            existing["tags"],
+                            new_trade_id,
+                        ),
+                    )
+                    self._conn.execute(
+                        "DELETE FROM journal_entries WHERE trade_id = ?",
+                        (old_trade_id,),
+                    )
+                    return
+
+                self._conn.execute(
+                    """
+                    UPDATE journal_entries
+                    SET trade_id = ?,
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE trade_id = ?
+                    """,
+                    (new_trade_id, old_trade_id),
+                )
+
+        await self._run_write(_do)
 
     async def get_journal_entries_for_conids(
         self, conids: list[int], account_id: str | None = None

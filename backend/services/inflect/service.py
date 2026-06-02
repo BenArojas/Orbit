@@ -19,6 +19,7 @@ All SQLite goes through `DatabaseService`; all IBKR through `MoonMarketService`
 
 from __future__ import annotations
 
+import json
 from collections import defaultdict
 from datetime import datetime, timedelta
 from typing import Any
@@ -39,6 +40,7 @@ from models.inflect import (
 )
 from services.db import DatabaseService
 from services.inflect.matcher import match_fills
+from services.inflect.pa_transactions import PaBackfillResult
 from services.moonmarket import MoonMarketService
 
 # Upper bound for "open-ended" fill windows (≈ year 2100 in epoch ms). The
@@ -242,6 +244,62 @@ class InflectService:
         )
         return InflectSyncResponse(account_id=resolved, synced=accepted)
 
+    async def apply_pa_backfill_result(
+        self,
+        account_id: str | None,
+        conid: int,
+        result: PaBackfillResult,
+    ) -> dict[str, Any]:
+        """Import already-fetched PA rows, rerun matching, re-key, and audit.
+
+        This method deliberately consumes a `PaBackfillResult` and never calls
+        `/pa/transactions`; the backfill scheduler owns pacing and fetch timing.
+        """
+        resolved = await self._resolve_account(account_id)
+        target_conid = int(conid)
+        before = await self._matched_trades_for_conid(resolved, target_conid)
+
+        fills = self._normalize_pa_rows(resolved, target_conid, result.rows)
+        deduped = await self._dedupe_pa_fills(resolved, target_conid, fills)
+        imported = await self.db.upsert_fills(deduped)
+
+        after = await self._matched_trades_for_conid(resolved, target_conid)
+        await self._rekey_vanished_journals(before, after)
+
+        status = (
+            "still_needs_basis"
+            if any(trade.status == "INCOMPLETE_BASIS" for trade in after)
+            else "resolved"
+        )
+        last_error = self._pa_backfill_last_error(result)
+        await self.db.set_backfill_status(
+            resolved,
+            target_conid,
+            status=status,
+            days_used=result.days_used,
+            last_error=last_error,
+        )
+        await self.db.insert_basis_audit(
+            account_id=resolved,
+            conid=target_conid,
+            action="auto_backfill",
+            source="PA_TRANSACTION",
+            before_json=json.dumps(
+                self._trade_summaries(before), sort_keys=True
+            ),
+            after_json=json.dumps(
+                self._trade_summaries(after), sort_keys=True
+            ),
+        )
+        return {
+            "account_id": resolved,
+            "conid": target_conid,
+            "imported": imported,
+            "status": status,
+            "days_used": result.days_used,
+            "fallback_days": result.fallback_days,
+        }
+
     # ── Internals ──────────────────────────────────────────────
 
     async def _matched_trades(
@@ -255,6 +313,250 @@ class InflectService:
         """
         fills = await self.db.list_fills_for_account_range(account_id, 0, end_ms)
         return match_fills(fills)
+
+    async def _matched_trades_for_conid(
+        self, account_id: str, conid: int
+    ) -> list[InflectTrade]:
+        matched = await self._matched_trades(account_id, _FAR_FUTURE_MS)
+        return [
+            trade
+            for trade in matched
+            if trade.account_id == account_id and trade.conid == int(conid)
+        ]
+
+    def _normalize_pa_rows(
+        self, account_id: str, conid: int, rows: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        normalized: list[dict[str, Any]] = []
+        for seq, row in enumerate(rows, start=1):
+            row_conid = self._to_int(
+                self._first_value(row, ("conid", "contractId", "contract_id"))
+            )
+            if row_conid is not None and row_conid != conid:
+                continue
+            side = self._pa_side(row)
+            quantity = self._pa_quantity(row)
+            trade_time_ms = self._pa_trade_time_ms(row)
+            if side is None or quantity is None or trade_time_ms is None:
+                continue
+            price = self._to_float(
+                self._first_value(
+                    row, ("price", "tradePrice", "transactionPrice", "costPrice")
+                )
+            )
+            trade_time = self._pa_trade_time(row, trade_time_ms)
+            normalized.append(
+                {
+                    "execution_id": f"PA:{conid}:{trade_time_ms}:{seq}",
+                    "account_id": account_id,
+                    "conid": conid,
+                    "symbol": self._first_value(row, ("symbol", "ticker")),
+                    "description": self._first_value(
+                        row, ("description", "assetDescription")
+                    ),
+                    "side": side,
+                    "quantity": quantity,
+                    "price": price,
+                    "net_amount": self._to_float(
+                        self._first_value(row, ("net_amount", "netAmount", "amount"))
+                    ),
+                    "commission": self._to_float(
+                        self._first_value(row, ("commission", "commissions"))
+                    ),
+                    "sec_type": self._first_value(row, ("sec_type", "secType")),
+                    "trade_time": trade_time,
+                    "trade_time_ms": trade_time_ms,
+                    "source": "PA_TRANSACTION",
+                    "raw_json": row,
+                }
+            )
+        return normalized
+
+    async def _dedupe_pa_fills(
+        self, account_id: str, conid: int, fills: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        if not fills:
+            return []
+        existing = [
+            fill
+            for fill in await self.db.list_fills_for_account_range(
+                account_id, 0, _FAR_FUTURE_MS
+            )
+            if int(fill["conid"]) == int(conid)
+        ]
+        existing_pks = {
+            (str(fill["account_id"]), str(fill["execution_id"]))
+            for fill in existing
+        }
+        existing_content = {self._fill_content_key(fill) for fill in existing}
+
+        accepted: list[dict[str, Any]] = []
+        seen_content: set[tuple[Any, ...]] = set()
+        for fill in fills:
+            pk = (str(fill["account_id"]), str(fill["execution_id"]))
+            content_key = self._fill_content_key(fill)
+            if pk in existing_pks:
+                continue
+            if content_key in existing_content or content_key in seen_content:
+                continue
+            accepted.append(fill)
+            seen_content.add(content_key)
+        return accepted
+
+    async def _rekey_vanished_journals(
+        self, before: list[InflectTrade], after: list[InflectTrade]
+    ) -> None:
+        after_ids = {trade.trade_id for trade in after}
+        for old_trade in before:
+            if old_trade.trade_id in after_ids:
+                continue
+            journal = await self.db.get_journal_entry(old_trade.trade_id)
+            if journal is None:
+                continue
+            successor = self._successor_trade(old_trade, after)
+            if successor is not None:
+                await self.db.rekey_journal_entry(
+                    old_trade.trade_id, successor.trade_id
+                )
+
+    @staticmethod
+    def _successor_trade(
+        old_trade: InflectTrade, candidates: list[InflectTrade]
+    ) -> InflectTrade | None:
+        recovered = [
+            trade
+            for trade in candidates
+            if trade.status != "INCOMPLETE_BASIS"
+            and trade.account_id == old_trade.account_id
+            and trade.conid == old_trade.conid
+        ]
+        if not recovered:
+            return None
+
+        old_execution_ids = {fill.execution_id for fill in old_trade.fills}
+        covering = [
+            trade
+            for trade in recovered
+            if old_execution_ids
+            & {fill.execution_id for fill in trade.fills}
+        ]
+        if covering:
+            return sorted(covering, key=lambda trade: trade.open_time_ms)[0]
+        return sorted(recovered, key=lambda trade: trade.open_time_ms)[0]
+
+    @staticmethod
+    def _fill_content_key(fill: dict[str, Any]) -> tuple[Any, ...]:
+        price = fill.get("price")
+        return (
+            int(fill["conid"]),
+            str(fill["side"]).upper(),
+            float(fill["quantity"]),
+            None if price is None else float(price),
+            int(fill["trade_time_ms"]),
+        )
+
+    @classmethod
+    def _pa_side(cls, row: dict[str, Any]) -> str | None:
+        raw = cls._first_value(
+            row,
+            (
+                "side",
+                "buySell",
+                "buy_sell",
+                "transactionType",
+                "tradeType",
+            ),
+        )
+        if raw is None:
+            return None
+        value = str(raw).strip().upper()
+        if value in {"BUY", "BOT", "B"}:
+            return "BUY"
+        if value in {"SELL", "SLD", "S"}:
+            return "SELL"
+        return None
+
+    @classmethod
+    def _pa_quantity(cls, row: dict[str, Any]) -> float | None:
+        value = cls._to_float(
+            cls._first_value(row, ("quantity", "qty", "shares", "units"))
+        )
+        if value is None:
+            return None
+        return abs(value)
+
+    @classmethod
+    def _pa_trade_time_ms(cls, row: dict[str, Any]) -> int | None:
+        explicit = cls._to_int(
+            cls._first_value(row, ("trade_time_ms", "tradeTimeMs", "time_ms"))
+        )
+        if explicit is not None:
+            return explicit
+        raw = cls._first_value(
+            row, ("trade_time", "dateTime", "datetime", "tradeDate", "date")
+        )
+        parsed = cls._parse_datetime(raw)
+        if parsed is None:
+            return None
+        return int(parsed.timestamp() * 1000)
+
+    @classmethod
+    def _pa_trade_time(cls, row: dict[str, Any], trade_time_ms: int) -> str:
+        raw = cls._first_value(row, ("trade_time", "dateTime", "datetime"))
+        if raw is not None:
+            return str(raw)
+        return datetime.fromtimestamp(
+            trade_time_ms / 1000, ZoneInfo(TRADING_DAY_TZ)
+        ).isoformat()
+
+    @staticmethod
+    def _parse_datetime(value: Any) -> datetime | None:
+        if value is None:
+            return None
+        text = str(value).strip()
+        if not text:
+            return None
+        if text.endswith("Z"):
+            text = f"{text[:-1]}+00:00"
+        try:
+            parsed = datetime.fromisoformat(text)
+        except ValueError:
+            for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d"):
+                try:
+                    parsed = datetime.strptime(text, fmt)
+                    break
+                except ValueError:
+                    parsed = None
+            if parsed is None:
+                return None
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=ZoneInfo(TRADING_DAY_TZ))
+        return parsed
+
+    @staticmethod
+    def _pa_backfill_last_error(result: PaBackfillResult) -> str | None:
+        if result.rejected_long_history and result.fallback_days is not None:
+            return f"max_days_rejected; fallback_days={result.fallback_days}"
+        if result.rejected_long_history:
+            return "max_days_rejected"
+        return None
+
+    @staticmethod
+    def _trade_summaries(trades: list[InflectTrade]) -> list[dict[str, Any]]:
+        return [
+            {
+                "trade_id": trade.trade_id,
+                "status": trade.status,
+                "direction": trade.direction,
+                "qty": trade.qty,
+                "open_time_ms": trade.open_time_ms,
+                "close_time_ms": trade.close_time_ms,
+                "fill_execution_ids": [
+                    fill.execution_id for fill in trade.fills
+                ],
+            }
+            for trade in sorted(trades, key=lambda item: item.open_time_ms)
+        ]
 
     async def current_position(self, account_id: str, conid: int) -> float | None:
         """Return IBKR's current signed aggregate position for one contract.
