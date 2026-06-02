@@ -1,0 +1,882 @@
+# OrderTicket Enhancements Implementation Plan
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+
+**Goal:** Add IBKR-native trailing stops (`TRAIL`/`TRAILLMT`), an outside-RTH flag, plain-English labels, a risk/reward readout, and dollar-based cash sizing to the MoonMarket OrderTicket.
+
+**Architecture:** Backend gains two new draft fields (`trailing_type`, `trailing_amt`), an `outside_rth` flag, the `TRAILLMT` order type, plus payload serialization and validation. Frontend mirrors the types, extracts two pure helper modules (`labels.ts`, `orderMath.ts`) for testability, and wires new controls into the existing `OrderForm.tsx`. Cash sizing and R/R are front-end only — IBKR still receives share quantities.
+
+**Tech Stack:** Python 3 / FastAPI / Pydantic v2 / pytest (backend); React 19 / TypeScript / Zustand / TanStack Query / Vitest + Testing Library (frontend).
+
+**Branch:** `feature/orderticket-trailing-rr-cash` (already created off `dev`). The design spec lives at `docs/superpowers/specs/2026-06-03-orderticket-trailing-rr-cash-design.md`.
+
+**Spec deviation (locked):** "% of buying power" cash sizing is deferred — `MoonMarketAccount` has no buying-power field and adding one needs backend account-summary plumbing. Cash sizing here is dollar-amount only.
+
+---
+
+## Task 1: Backend — order model fields, types, and validation
+
+**Files:**
+- Modify: `backend/models/__init__.py:315-335`
+- Test: `backend/tests/test_orders_model.py` (Create)
+
+- [ ] **Step 1: Write the failing test**
+
+Create `backend/tests/test_orders_model.py`:
+
+```python
+import pytest
+from pydantic import ValidationError
+
+from models import MoonMarketOrderDraft
+
+
+def test_trail_requires_trailing_fields():
+    with pytest.raises(ValidationError):
+        MoonMarketOrderDraft(
+            conid=265598, side="SELL", quantity=5, orderType="TRAIL", tif="GTC"
+        )
+
+
+def test_trail_accepts_trailing_fields():
+    order = MoonMarketOrderDraft(
+        conid=265598,
+        side="SELL",
+        quantity=5,
+        orderType="TRAIL",
+        tif="GTC",
+        trailingType="%",
+        trailingAmt=5,
+    )
+    assert order.trailing_type == "%"
+    assert order.trailing_amt == 5
+    assert order.outside_rth is False
+
+
+def test_traillmt_requires_price():
+    with pytest.raises(ValidationError):
+        MoonMarketOrderDraft(
+            conid=265598,
+            side="SELL",
+            quantity=5,
+            orderType="TRAILLMT",
+            tif="GTC",
+            trailingType="amt",
+            trailingAmt=2,
+        )
+
+
+def test_traillmt_accepts_price_and_outside_rth():
+    order = MoonMarketOrderDraft(
+        conid=265598,
+        side="SELL",
+        quantity=5,
+        orderType="TRAILLMT",
+        tif="GTC",
+        trailingType="amt",
+        trailingAmt=2,
+        price=178.0,
+        outsideRTH=True,
+    )
+    assert order.price == 178.0
+    assert order.outside_rth is True
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `cd backend && python -m pytest tests/test_orders_model.py -v`
+Expected: FAIL — `MoonMarketOrderDraft` rejects unknown kwargs `trailingType`/`trailingAmt`/`outsideRTH`, or `TRAILLMT` not a valid `orderType`.
+
+- [ ] **Step 3: Write minimal implementation**
+
+In `backend/models/__init__.py`, update the order type literal and the draft model. Replace lines 315-335:
+
+```python
+OrderSide = Literal["BUY", "SELL"]
+OrderType = Literal["MKT", "LMT", "STP", "STP_LIMIT", "TRAIL", "TRAILLMT"]
+TimeInForce = Literal["DAY", "GTC", "IOC"]
+OrderAssetClass = Literal["STK", "OPT"]
+TrailingType = Literal["amt", "%"]
+
+
+class MoonMarketOrderDraft(BaseModel):
+    """One normalized order request accepted by Orbit."""
+    conid: int
+    asset_class: OrderAssetClass = Field(default="STK", alias="assetClass")
+    side: OrderSide
+    quantity: float = Field(gt=0)
+    order_type: OrderType = Field(alias="orderType")
+    tif: TimeInForce = "DAY"
+    price: Optional[float] = Field(default=None, gt=0)
+    aux_price: Optional[float] = Field(default=None, alias="auxPrice", gt=0)
+    trailing_type: Optional[TrailingType] = Field(default=None, alias="trailingType")
+    trailing_amt: Optional[float] = Field(default=None, alias="trailingAmt", gt=0)
+    outside_rth: bool = Field(default=False, alias="outsideRTH")
+    client_order_id: Optional[str] = Field(default=None, alias="cOID")
+    parent_id: Optional[str] = Field(default=None, alias="parentId")
+    is_single_group: bool = Field(default=False, alias="isSingleGroup")
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    @model_validator(mode="after")
+    def _validate_trailing(self) -> "MoonMarketOrderDraft":
+        if self.order_type in ("TRAIL", "TRAILLMT"):
+            if self.trailing_amt is None or self.trailing_type is None:
+                raise ValueError("Trailing orders require trailingAmt and trailingType")
+            if self.order_type == "TRAILLMT" and self.price is None:
+                raise ValueError("TRAILLMT orders require a limit price")
+        return self
+```
+
+Ensure `model_validator` is imported. At the top of `backend/models/__init__.py` the pydantic import line should include it — add `model_validator` if absent:
+
+```python
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+```
+
+- [ ] **Step 4: Run test to verify it passes**
+
+Run: `cd backend && python -m pytest tests/test_orders_model.py -v`
+Expected: PASS (4 passed).
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add backend/models/__init__.py backend/tests/test_orders_model.py
+git commit -m "feat: add trailing-stop and outside-RTH fields to order draft model"
+```
+
+---
+
+## Task 2: Backend — serialize trailing + RTH fields in the IBKR payload
+
+**Files:**
+- Modify: `backend/services/orders.py:93-111`
+- Test: `backend/tests/test_orders_router.py` (append)
+
+- [ ] **Step 1: Write the failing test**
+
+Append to `backend/tests/test_orders_router.py` (after the existing tests; reuses the module's `_FakeIbkr` and `_client`):
+
+```python
+def _trail_order(conid: int = 265598) -> dict:
+    return {
+        "conid": conid,
+        "side": "SELL",
+        "quantity": 5,
+        "orderType": "TRAIL",
+        "tif": "GTC",
+        "trailingType": "%",
+        "trailingAmt": 5,
+        "outsideRTH": True,
+    }
+
+
+def _traillmt_order(conid: int = 265598) -> dict:
+    return {
+        "conid": conid,
+        "side": "SELL",
+        "quantity": 5,
+        "orderType": "TRAILLMT",
+        "tif": "GTC",
+        "trailingType": "amt",
+        "trailingAmt": 2,
+        "price": 178.0,
+    }
+
+
+def test_place_trail_order_serializes_trailing_and_rth_fields():
+    fake = _FakeIbkr()
+    resp = _client(fake).post(
+        "/moonmarket/orders",
+        json={"account_id": "DU12345", "orders": [_trail_order()]},
+    )
+
+    assert resp.status_code == 200
+    sent = fake.requests[-1][2]["json"]["orders"][0]
+    assert sent["orderType"] == "TRAIL"
+    assert sent["trailingType"] == "%"
+    assert sent["trailingAmt"] == 5
+    assert sent["outsideRTH"] is True
+    assert "price" not in sent
+
+
+def test_place_traillmt_order_includes_limit_price():
+    fake = _FakeIbkr()
+    resp = _client(fake).post(
+        "/moonmarket/orders",
+        json={"account_id": "DU12345", "orders": [_traillmt_order()]},
+    )
+
+    assert resp.status_code == 200
+    sent = fake.requests[-1][2]["json"]["orders"][0]
+    assert sent["orderType"] == "TRAILLMT"
+    assert sent["price"] == 178.0
+    assert sent["trailingType"] == "amt"
+    assert sent["trailingAmt"] == 2
+    assert sent["outsideRTH"] is False or "outsideRTH" not in sent
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `cd backend && python -m pytest tests/test_orders_router.py -k "trail" -v`
+Expected: FAIL — `trailingType`/`trailingAmt`/`outsideRTH` missing from the serialized payload (`KeyError`).
+
+- [ ] **Step 3: Write minimal implementation**
+
+In `backend/services/orders.py`, update `_order_payload` (replace lines 93-111):
+
+```python
+    def _order_payload(self, order: MoonMarketOrderDraft) -> dict[str, object]:
+        payload: dict[str, object] = {
+            "conid": order.conid,
+            "orderType": order.order_type,
+            "side": order.side,
+            "tif": order.tif,
+            "quantity": order.quantity,
+        }
+        if order.price is not None:
+            payload["price"] = order.price
+        if order.aux_price is not None:
+            payload["auxPrice"] = order.aux_price
+        if order.trailing_type is not None:
+            payload["trailingType"] = order.trailing_type
+        if order.trailing_amt is not None:
+            payload["trailingAmt"] = order.trailing_amt
+        if order.outside_rth:
+            payload["outsideRTH"] = True
+        if order.client_order_id is not None:
+            payload["cOID"] = order.client_order_id
+        if order.parent_id is not None:
+            payload["parentId"] = order.parent_id
+        if order.is_single_group:
+            payload["isSingleGroup"] = True
+        return payload
+```
+
+- [ ] **Step 4: Run test to verify it passes**
+
+Run: `cd backend && python -m pytest tests/test_orders_router.py -v`
+Expected: PASS (all existing tests + the two new ones).
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add backend/services/orders.py backend/tests/test_orders_router.py
+git commit -m "feat: serialize trailing-stop and outside-RTH fields in IBKR order payload"
+```
+
+---
+
+## Task 3: Frontend — mirror order types and draft fields
+
+**Files:**
+- Modify: `src/lib/api.ts:252-268`
+
+- [ ] **Step 1: Update the types**
+
+In `src/lib/api.ts`, replace lines 252 and the `MoonMarketOrderDraft` interface (252-268):
+
+```typescript
+export type MoonMarketOrderType = "MKT" | "LMT" | "STP" | "STP_LIMIT" | "TRAIL" | "TRAILLMT";
+export type MoonMarketTimeInForce = "DAY" | "GTC" | "IOC";
+export type MoonMarketTrailingType = "amt" | "%";
+export type MoonMarketOrderAssetClass = "STK" | "OPT";
+
+export interface MoonMarketOrderDraft {
+  conid: number;
+  assetClass?: MoonMarketOrderAssetClass;
+  side: MoonMarketOrderSide;
+  quantity: number;
+  orderType: MoonMarketOrderType;
+  tif: MoonMarketTimeInForce;
+  price?: number;
+  auxPrice?: number;
+  trailingType?: MoonMarketTrailingType;
+  trailingAmt?: number;
+  outsideRTH?: boolean;
+  cOID?: string;
+  parentId?: string;
+  isSingleGroup?: boolean;
+}
+```
+
+(Note: `MoonMarketOrderSide` on line 251 is unchanged; keep it.)
+
+- [ ] **Step 2: Verify it compiles**
+
+Run: `npx tsc --noEmit`
+Expected: PASS — no type errors (new optional fields don't break existing call sites).
+
+- [ ] **Step 3: Commit**
+
+```bash
+git add src/lib/api.ts
+git commit -m "feat: add TRAILLMT and trailing/outside-RTH fields to order draft type"
+```
+
+---
+
+## Task 4: Frontend — pure helpers for labels, R/R, and cash sizing
+
+**Files:**
+- Create: `src/orbit/OrderTicket/labels.ts`
+- Create: `src/orbit/OrderTicket/orderMath.ts`
+- Test: `src/orbit/OrderTicket/__tests__/orderMath.test.ts` (Create)
+
+- [ ] **Step 1: Write the failing test**
+
+Create `src/orbit/OrderTicket/__tests__/orderMath.test.ts`:
+
+```typescript
+import { describe, expect, it } from "vitest";
+import { computeRiskReward, sharesForCash } from "../orderMath";
+import { ORDER_TYPE_LABELS, TIF_LABELS } from "../labels";
+
+describe("computeRiskReward", () => {
+  it("computes ratio for a long position", () => {
+    const rr = computeRiskReward({ side: "BUY", entry: 100, takeProfit: 130, stopLoss: 90 });
+    expect(rr).not.toBeNull();
+    expect(rr!.risk).toBeCloseTo(10);
+    expect(rr!.reward).toBeCloseTo(30);
+    expect(rr!.ratio).toBeCloseTo(3);
+  });
+
+  it("computes ratio for a short position", () => {
+    const rr = computeRiskReward({ side: "SELL", entry: 100, takeProfit: 80, stopLoss: 110 });
+    expect(rr).not.toBeNull();
+    expect(rr!.risk).toBeCloseTo(10);
+    expect(rr!.reward).toBeCloseTo(20);
+    expect(rr!.ratio).toBeCloseTo(2);
+  });
+
+  it("returns null when inputs are incomplete", () => {
+    expect(computeRiskReward({ side: "BUY", entry: undefined, takeProfit: 130, stopLoss: 90 })).toBeNull();
+  });
+
+  it("returns null when risk is non-positive (stop on wrong side)", () => {
+    expect(computeRiskReward({ side: "BUY", entry: 100, takeProfit: 130, stopLoss: 110 })).toBeNull();
+  });
+});
+
+describe("sharesForCash", () => {
+  it("floors cash divided by reference price", () => {
+    expect(sharesForCash(1000, 180)).toBe(5);
+  });
+
+  it("returns null when reference price is missing or non-positive", () => {
+    expect(sharesForCash(1000, undefined)).toBeNull();
+    expect(sharesForCash(1000, 0)).toBeNull();
+  });
+
+  it("returns null when cash is missing", () => {
+    expect(sharesForCash(undefined, 180)).toBeNull();
+  });
+});
+
+describe("labels", () => {
+  it("maps order-type codes to plain English", () => {
+    expect(ORDER_TYPE_LABELS.TRAIL).toBe("Trailing Stop");
+    expect(ORDER_TYPE_LABELS.TRAILLMT).toBe("Trailing Stop Limit");
+    expect(TIF_LABELS.GTC).toBe("Good Till Cancel");
+  });
+});
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `npx vitest run src/orbit/OrderTicket/__tests__/orderMath.test.ts`
+Expected: FAIL — modules `../orderMath` and `../labels` do not exist.
+
+- [ ] **Step 3: Write the label map**
+
+Create `src/orbit/OrderTicket/labels.ts`:
+
+```typescript
+import type {
+  MoonMarketOrderType,
+  MoonMarketTimeInForce,
+  MoonMarketTrailingType,
+} from "@/lib/api";
+
+export const ORDER_TYPE_LABELS: Record<MoonMarketOrderType, string> = {
+  MKT: "Market",
+  LMT: "Limit",
+  STP: "Stop",
+  STP_LIMIT: "Stop Limit",
+  TRAIL: "Trailing Stop",
+  TRAILLMT: "Trailing Stop Limit",
+};
+
+export const TIF_LABELS: Record<MoonMarketTimeInForce, string> = {
+  DAY: "Day",
+  GTC: "Good Till Cancel",
+  IOC: "Immediate or Cancel",
+};
+
+export const TRAILING_TYPE_LABELS: Record<MoonMarketTrailingType, string> = {
+  amt: "Amount ($)",
+  "%": "Percent (%)",
+};
+```
+
+- [ ] **Step 4: Write the math helpers**
+
+Create `src/orbit/OrderTicket/orderMath.ts`:
+
+```typescript
+import type { MoonMarketOrderSide } from "@/lib/api";
+
+export interface RiskReward {
+  risk: number;
+  reward: number;
+  ratio: number;
+}
+
+export function computeRiskReward(params: {
+  side: MoonMarketOrderSide;
+  entry: number | undefined;
+  takeProfit: number | undefined;
+  stopLoss: number | undefined;
+}): RiskReward | null {
+  const { side, entry, takeProfit, stopLoss } = params;
+  if (entry == null || takeProfit == null || stopLoss == null) return null;
+  const risk = side === "BUY" ? entry - stopLoss : stopLoss - entry;
+  const reward = side === "BUY" ? takeProfit - entry : entry - takeProfit;
+  if (risk <= 0 || reward <= 0) return null;
+  return { risk, reward, ratio: reward / risk };
+}
+
+export function sharesForCash(
+  cash: number | undefined,
+  referencePrice: number | undefined,
+): number | null {
+  if (cash == null || cash <= 0) return null;
+  if (referencePrice == null || referencePrice <= 0) return null;
+  return Math.floor(cash / referencePrice);
+}
+```
+
+- [ ] **Step 5: Run test to verify it passes**
+
+Run: `npx vitest run src/orbit/OrderTicket/__tests__/orderMath.test.ts`
+Expected: PASS (all cases).
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add src/orbit/OrderTicket/labels.ts src/orbit/OrderTicket/orderMath.ts src/orbit/OrderTicket/__tests__/orderMath.test.ts
+git commit -m "feat: add label maps and risk-reward/cash-sizing helpers for order ticket"
+```
+
+---
+
+## Task 5: Frontend — wire trailing fields, RTH, labels, R/R, and cash sizing into OrderForm
+
+**Files:**
+- Modify: `src/orbit/OrderTicket/OrderForm.tsx`
+- Test: `src/orbit/OrderTicket/__tests__/OrderTicket.test.tsx` (append)
+
+This task is split into TDD sub-cycles for each control. Run the full file's tests after each implementation step: `npx vitest run src/orbit/OrderTicket/__tests__/OrderTicket.test.tsx`.
+
+### 5a — Trailing stop fields + plain-English order-type labels
+
+- [ ] **Step 1: Write the failing test**
+
+Append to `src/orbit/OrderTicket/__tests__/OrderTicket.test.tsx` inside the `describe("OrderTicket", ...)` block:
+
+```typescript
+it("shows plain-English order type labels", () => {
+  useOrderTicketStore.getState().open({ conid: 265598, symbol: "AAPL", side: "SELL" });
+  renderTicket();
+
+  const select = screen.getByLabelText(/order type/i);
+  expect(select).toHaveTextContent("Trailing Stop");
+  expect(select).toHaveTextContent("Trailing Stop Limit");
+  expect(select).toHaveTextContent("Market");
+});
+
+it("reveals trailing fields and places a TRAIL order", async () => {
+  useOrderTicketStore.getState().open({ conid: 265598, symbol: "AAPL", side: "SELL" });
+  renderTicket();
+
+  fireEvent.change(screen.getByLabelText(/order type/i), { target: { value: "TRAIL" } });
+  expect(screen.getByLabelText(/trail by/i)).toBeInTheDocument();
+  fireEvent.change(screen.getByLabelText(/trail by/i), { target: { value: "%" } });
+  fireEvent.change(screen.getByLabelText(/trail distance/i), { target: { value: "5" } });
+  fireEvent.click(screen.getByRole("button", { name: /place/i }));
+
+  await waitFor(() => expect(mockApi.moonmarketPlaceOrders).toHaveBeenCalled());
+  const order = mockApi.moonmarketPlaceOrders.mock.calls[0][0].orders[0];
+  expect(order).toMatchObject({ orderType: "TRAIL", trailingType: "%", trailingAmt: 5 });
+});
+
+it("requires a limit offset for TRAILLMT", () => {
+  useOrderTicketStore.getState().open({ conid: 265598, symbol: "AAPL", side: "SELL" });
+  renderTicket();
+
+  fireEvent.change(screen.getByLabelText(/order type/i), { target: { value: "TRAILLMT" } });
+  expect(screen.getByLabelText(/limit offset/i)).toBeInTheDocument();
+});
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `npx vitest run src/orbit/OrderTicket/__tests__/OrderTicket.test.tsx -t "trailing"`
+Expected: FAIL — no "Trail by" / "Trail distance" / "Limit offset" controls; TRAIL not an option.
+
+- [ ] **Step 3: Implement trailing state, options, fields, and payload**
+
+In `src/orbit/OrderTicket/OrderForm.tsx`:
+
+a. Add imports near the top (after existing imports, line 15):
+
+```typescript
+import type { MoonMarketTrailingType } from "@/lib/api";
+import { ORDER_TYPE_LABELS, TIF_LABELS, TRAILING_TYPE_LABELS } from "./labels";
+import { computeRiskReward, sharesForCash } from "./orderMath";
+```
+
+b. Add state next to the other `useState` calls (after line 78):
+
+```typescript
+  const [trailingType, setTrailingType] = useState<MoonMarketTrailingType>("%");
+  const [trailingAmt, setTrailingAmt] = useState("");
+  const [outsideRth, setOutsideRth] = useState(false);
+```
+
+c. Reset them in the `useEffect` that resets on `target` change (after line 118 `setAuxPrice(...)`):
+
+```typescript
+    setTrailingType("%");
+    setTrailingAmt("");
+    setOutsideRth(false);
+```
+
+d. Add a derived flag after the state block (e.g. after line 96 mutations or near `optionTarget`):
+
+```typescript
+  const isTrailing = orderType === "TRAIL" || orderType === "TRAILLMT";
+```
+
+e. Extend `baseOrder` (lines 147-156) to include trailing + RTH fields:
+
+```typescript
+  const baseOrder = useMemo<MoonMarketOrderDraft>(() => ({
+    conid: target.conid,
+    assetClass,
+    side,
+    quantity: Number(quantity) || 0,
+    orderType,
+    tif,
+    price: numberOrUndefined(price),
+    auxPrice: numberOrUndefined(auxPrice),
+    trailingType: isTrailing ? trailingType : undefined,
+    trailingAmt: isTrailing ? numberOrUndefined(trailingAmt) : undefined,
+    outsideRTH: outsideRth || undefined,
+  }), [assetClass, auxPrice, isTrailing, orderType, outsideRth, price, quantity, side, target.conid, tif, trailingAmt, trailingType]);
+```
+
+f. Replace the hard-coded order-type `<option>`s (lines 294-297) with label-mapped options:
+
+```typescript
+            {(Object.keys(ORDER_TYPE_LABELS) as Array<keyof typeof ORDER_TYPE_LABELS>).map((code) => (
+              <option key={code} value={code}>{ORDER_TYPE_LABELS[code]}</option>
+            ))}
+```
+
+g. Replace the hard-coded TIF `<option>`s (lines 303-305) with label-mapped options:
+
+```typescript
+            {(Object.keys(TIF_LABELS) as Array<keyof typeof TIF_LABELS>).map((code) => (
+              <option key={code} value={code}>{TIF_LABELS[code]}</option>
+            ))}
+```
+
+h. Add the trailing controls block immediately after the Aux Price label (after line 315), before the option/bracket section:
+
+```typescript
+        {isTrailing ? (
+          <div className="grid gap-3 rounded-md border border-border bg-[var(--bg-1)] p-3">
+            <label className="block text-[11px] text-[var(--text-3)]">
+              Trail By
+              <select aria-label="Trail by" value={trailingType} onChange={(event) => setTrailingType(event.target.value as MoonMarketTrailingType)} className="mt-1 h-9 w-full rounded-md border border-border bg-[var(--bg-1)] px-2 text-[12px]">
+                {(Object.keys(TRAILING_TYPE_LABELS) as Array<keyof typeof TRAILING_TYPE_LABELS>).map((code) => (
+                  <option key={code} value={code}>{TRAILING_TYPE_LABELS[code]}</option>
+                ))}
+              </select>
+            </label>
+            <label className="block text-[11px] text-[var(--text-3)]">
+              Trail Distance
+              <input aria-label="Trail distance" value={trailingAmt} onChange={(event) => setTrailingAmt(event.target.value)} className="mt-1 h-9 w-full rounded-md border border-border bg-[var(--bg-1)] px-2 text-[12px]" />
+            </label>
+            {orderType === "TRAILLMT" ? (
+              <label className="block text-[11px] text-[var(--text-3)]">
+                Limit Offset
+                <input aria-label="Limit offset" value={price} onChange={(event) => setPrice(event.target.value)} className="mt-1 h-9 w-full rounded-md border border-border bg-[var(--bg-1)] px-2 text-[12px]" />
+              </label>
+            ) : null}
+          </div>
+        ) : null}
+```
+
+- [ ] **Step 4: Run test to verify it passes**
+
+Run: `npx vitest run src/orbit/OrderTicket/__tests__/OrderTicket.test.tsx`
+Expected: PASS — trailing tests pass and existing tests still pass.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add src/orbit/OrderTicket/OrderForm.tsx src/orbit/OrderTicket/__tests__/OrderTicket.test.tsx
+git commit -m "feat: add trailing-stop controls and plain-English labels to order form"
+```
+
+### 5b — Outside RTH checkbox
+
+- [ ] **Step 1: Write the failing test**
+
+Append inside the describe block:
+
+```typescript
+it("passes the outside-RTH flag on placement when checked", async () => {
+  useOrderTicketStore.getState().open({ conid: 265598, symbol: "AAPL", side: "BUY" });
+  renderTicket();
+
+  fireEvent.change(screen.getByLabelText(/quantity/i), { target: { value: "5" } });
+  fireEvent.change(screen.getByLabelText(/limit price/i), { target: { value: "180" } });
+  fireEvent.click(screen.getByLabelText(/outside regular trading hours/i));
+  fireEvent.click(screen.getByRole("button", { name: /place/i }));
+
+  await waitFor(() => expect(mockApi.moonmarketPlaceOrders).toHaveBeenCalled());
+  expect(mockApi.moonmarketPlaceOrders.mock.calls[0][0].orders[0]).toMatchObject({ outsideRTH: true });
+});
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `npx vitest run src/orbit/OrderTicket/__tests__/OrderTicket.test.tsx -t "outside-RTH"`
+Expected: FAIL — no "outside regular trading hours" control.
+
+- [ ] **Step 3: Implement the checkbox**
+
+In `OrderForm.tsx`, add after the Aux Price label (line 315), before the trailing block:
+
+```typescript
+        <label className="flex items-center gap-2 text-[12px] text-[var(--text-3)]">
+          <input aria-label="Outside regular trading hours" type="checkbox" checked={outsideRth} onChange={(event) => setOutsideRth(event.target.checked)} />
+          Allow execution outside regular trading hours
+        </label>
+```
+
+- [ ] **Step 4: Run test to verify it passes**
+
+Run: `npx vitest run src/orbit/OrderTicket/__tests__/OrderTicket.test.tsx`
+Expected: PASS.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add src/orbit/OrderTicket/OrderForm.tsx src/orbit/OrderTicket/__tests__/OrderTicket.test.tsx
+git commit -m "feat: add outside-RTH flag to order form"
+```
+
+### 5c — Risk/Reward readout
+
+- [ ] **Step 1: Write the failing test**
+
+Append inside the describe block:
+
+```typescript
+it("shows a risk/reward readout when take profit and stop loss are set", () => {
+  useOrderTicketStore.getState().open({ conid: 265598, symbol: "AAPL", side: "BUY" });
+  renderTicket();
+
+  fireEvent.change(screen.getByLabelText(/limit price/i), { target: { value: "100" } });
+  fireEvent.click(screen.getByLabelText(/take profit/i));
+  fireEvent.change(screen.getByLabelText(/profit taker price/i), { target: { value: "130" } });
+  fireEvent.click(screen.getByLabelText(/stop loss/i));
+  fireEvent.change(screen.getByLabelText(/stop loss price/i), { target: { value: "90" } });
+
+  expect(screen.getByText(/risk \/ reward/i)).toHaveTextContent("1 : 3.0");
+  expect(screen.getByText(/for every \$1 you risk/i)).toBeInTheDocument();
+});
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `npx vitest run src/orbit/OrderTicket/__tests__/OrderTicket.test.tsx -t "risk/reward"`
+Expected: FAIL — no R/R readout.
+
+- [ ] **Step 3: Implement the readout**
+
+In `OrderForm.tsx`, add a derived value after `baseOrder` (after line 156):
+
+```typescript
+  const entryReference = numberOrUndefined(price) ?? book.ask ?? quote?.lastPrice ?? undefined;
+  const riskReward = computeRiskReward({
+    side,
+    entry: entryReference ?? undefined,
+    takeProfit: takeProfitEnabled ? numberOrUndefined(profitTakerPrice) : undefined,
+    stopLoss: stopLossEnabled ? numberOrUndefined(stopLossPrice) : undefined,
+  });
+```
+
+Then add the readout inside the protective-orders price block — after the closing of the `{takeProfitEnabled || stopLossEnabled ? (...)}` section (after line 348), add a sibling:
+
+```typescript
+        {riskReward ? (
+          <div className="rounded-md border border-border bg-[var(--bg-1)] p-3 text-[11px]">
+            <div className="font-semibold text-[var(--text-1)]">
+              Risk / Reward&nbsp;&nbsp;1 : {riskReward.ratio.toFixed(1)}
+            </div>
+            <p className="mt-1 text-[var(--text-3)]">
+              For every $1 you risk down to your stop, you stand to make about ${riskReward.ratio.toFixed(2)} at your target. A ratio of 1:3 or higher is generally considered favorable.
+            </p>
+          </div>
+        ) : null}
+```
+
+- [ ] **Step 4: Run test to verify it passes**
+
+Run: `npx vitest run src/orbit/OrderTicket/__tests__/OrderTicket.test.tsx`
+Expected: PASS.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add src/orbit/OrderTicket/OrderForm.tsx src/orbit/OrderTicket/__tests__/OrderTicket.test.tsx
+git commit -m "feat: add risk-reward readout to order form bracket"
+```
+
+### 5d — Cash sizing toggle
+
+- [ ] **Step 1: Write the failing test**
+
+Append inside the describe block:
+
+```typescript
+it("computes share quantity from a cash amount", async () => {
+  useOrderTicketStore.getState().open({ conid: 265598, symbol: "AAPL", side: "BUY" });
+  renderTicket();
+
+  fireEvent.change(screen.getByLabelText(/limit price/i), { target: { value: "180" } });
+  fireEvent.change(screen.getByLabelText(/size by/i), { target: { value: "cash" } });
+  fireEvent.change(screen.getByLabelText(/cash amount/i), { target: { value: "900" } });
+
+  expect(screen.getByText(/≈ 5 shares/i)).toBeInTheDocument();
+
+  fireEvent.click(screen.getByRole("button", { name: /place/i }));
+  await waitFor(() => expect(mockApi.moonmarketPlaceOrders).toHaveBeenCalled());
+  expect(mockApi.moonmarketPlaceOrders.mock.calls[0][0].orders[0]).toMatchObject({ quantity: 5 });
+});
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `npx vitest run src/orbit/OrderTicket/__tests__/OrderTicket.test.tsx -t "cash amount"`
+Expected: FAIL — no "Size by" / "Cash amount" controls.
+
+- [ ] **Step 3: Implement cash sizing**
+
+In `OrderForm.tsx`:
+
+a. Add state (after line 78, with the other inputs):
+
+```typescript
+  const [sizeMode, setSizeMode] = useState<"shares" | "cash">("shares");
+  const [cashAmount, setCashAmount] = useState("");
+```
+
+b. Reset them in the target `useEffect` (after the trailing resets added in 5a):
+
+```typescript
+    setSizeMode("shares");
+    setCashAmount("");
+```
+
+c. Compute the effective quantity after `entryReference` is defined (from 5c). Add:
+
+```typescript
+  const cashShares = sharesForCash(numberOrUndefined(cashAmount), entryReference ?? undefined);
+  const effectiveQuantity = sizeMode === "cash" ? (cashShares ?? 0) : Number(quantity) || 0;
+```
+
+d. Change `baseOrder.quantity` (in the `useMemo` from 5a) from `Number(quantity) || 0` to `effectiveQuantity`, and add `effectiveQuantity` to the dependency array (replace `quantity` in deps with `effectiveQuantity`):
+
+```typescript
+    quantity: effectiveQuantity,
+```
+```typescript
+  }), [assetClass, auxPrice, effectiveQuantity, isTrailing, orderType, outsideRth, price, side, target.conid, tif, trailingAmt, trailingType]);
+```
+
+e. Add the Size-by toggle and cash input. Replace the existing Quantity `<label>` (lines 287-290) with:
+
+```typescript
+        <label className="block text-[11px] text-[var(--text-3)]">
+          Size By
+          <select aria-label="Size by" value={sizeMode} onChange={(event) => setSizeMode(event.target.value as "shares" | "cash")} className="mt-1 h-9 w-full rounded-md border border-border bg-[var(--bg-1)] px-2 text-[12px]">
+            <option value="shares">Shares</option>
+            <option value="cash">Cash ($)</option>
+          </select>
+        </label>
+        {sizeMode === "shares" ? (
+          <label className="block text-[11px] text-[var(--text-3)]">
+            Quantity
+            <input aria-label="Quantity" value={quantity} onChange={(event) => setQuantity(event.target.value)} className="mt-1 h-9 w-full rounded-md border border-border bg-[var(--bg-1)] px-2 text-[12px]" />
+          </label>
+        ) : (
+          <label className="block text-[11px] text-[var(--text-3)]">
+            Cash Amount
+            <input aria-label="Cash amount" value={cashAmount} onChange={(event) => setCashAmount(event.target.value)} className="mt-1 h-9 w-full rounded-md border border-border bg-[var(--bg-1)] px-2 text-[12px]" />
+            <span className="mt-1 block text-[var(--text-3)]">{cashShares != null ? `≈ ${cashShares} shares` : "≈ — shares"}</span>
+          </label>
+        )}
+```
+
+- [ ] **Step 4: Run test to verify it passes**
+
+Run: `npx vitest run src/orbit/OrderTicket/__tests__/OrderTicket.test.tsx`
+Expected: PASS — all OrderTicket tests pass.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add src/orbit/OrderTicket/OrderForm.tsx src/orbit/OrderTicket/__tests__/OrderTicket.test.tsx
+git commit -m "feat: add dollar-based cash sizing to order form"
+```
+
+---
+
+## Task 6: Full verification
+
+- [ ] **Step 1: Run the backend suite**
+
+Run: `cd backend && python -m pytest tests/test_orders_router.py tests/test_orders_model.py -v`
+Expected: PASS (all order tests green).
+
+- [ ] **Step 2: Run the frontend suite + typecheck**
+
+Run: `npx vitest run src/orbit/OrderTicket && npx tsc --noEmit`
+Expected: PASS — all OrderTicket tests green, no type errors.
+
+- [ ] **Step 3: Lint the changed files**
+
+Run: `npx eslint src/orbit/OrderTicket/OrderForm.tsx src/orbit/OrderTicket/labels.ts src/orbit/OrderTicket/orderMath.ts`
+Expected: no errors.
+
+- [ ] **Step 4: Final commit (if lint/format changed anything)**
+
+```bash
+git add -A
+git commit -m "chore: lint and format order ticket enhancements"
+```
+
+---
+
+## Self-Review Notes
+
+- **Spec coverage:** TRAIL+TRAILLMT (Tasks 1,2,3,5a) ✓; outside RTH (1,2,3,5b) ✓; plain labels (4,5a) ✓; R/R readout (4,5c) ✓; cash sizing dollar-only (4,5d) ✓; "% of buying power" intentionally deferred per locked deviation ✓.
+- **Type consistency:** `trailingType`/`trailingAmt`/`outsideRTH` (camelCase wire) ↔ `trailing_type`/`trailing_amt`/`outside_rth` (snake) via Pydantic aliases; helper names `computeRiskReward`, `sharesForCash`, `ORDER_TYPE_LABELS`, `TIF_LABELS`, `TRAILING_TYPE_LABELS` used identically across Tasks 4 and 5.
+- **Out of scope (unchanged):** bracket stop-loss leg stays `STP`; GTD/MOC/LOC; option brackets; the v2 tiered scale-out engine.

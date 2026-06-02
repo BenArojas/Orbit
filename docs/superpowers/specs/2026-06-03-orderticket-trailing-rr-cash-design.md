@@ -42,7 +42,7 @@ All five ship together on one branch.
 | Outside RTH | New checkbox → `outsideRTH: bool`, default **off**. |
 | Labels | Display-only plain-English labels; **wire values stay the IBKR codes** (`MKT`, `GTC`, `TRAIL`, etc.). One shared label map, defined once. |
 | R/R readout | Shown only in bracket mode when both TP and SL are set. **Read-only / informational — never blocks the order.** Includes a one-line plain-English explainer. |
-| Cash sizing | Front-end convenience toggle **Size by: Shares / Cash**. Computes share quantity; IBKR still receives shares. No backend change. |
+| Cash sizing | Front-end convenience toggle **Size by: Shares / Cash**. Computes share quantity from a **dollar amount**; IBKR still receives shares. No backend change. **% of buying power is deferred** — `MoonMarketAccount` carries no buying-power field today, and adding one needs backend account-summary plumbing (out of this effort's "no backend change" boundary). |
 | Branch base | New branch cut **from `dev`** (per parallax-git naming), not from `feature/inflect-journal`. |
 
 ---
@@ -130,9 +130,10 @@ When bracket mode is active and **both** take-profit and stop-loss prices are se
 A **Size by: Shares / Cash** toggle in the form.
 
 - **Shares mode:** unchanged — quantity is entered directly.
-- **Cash mode:** user enters a dollar amount and optionally a **% of buying power** (buying power pulled from the existing account store). `quantity = floor(cashAmount / referencePrice)`, where `referencePrice` = limit price if set, else live ask/last. The resolved share count is displayed before submit.
+- **Cash mode:** user enters a dollar amount. `quantity = floor(cashAmount / referencePrice)`, where `referencePrice` = limit price if set, else live ask, else live last. The resolved share count is displayed before submit.
 - IBKR still receives `quantity` in shares — this is purely a front-end helper. **No backend change.**
-- Degrades gracefully when reference price is unavailable (prompt the user / disable submit).
+- Degrades gracefully when reference price is unavailable (computed shares shown as `—`).
+- **Deferred:** "% of buying power" sizing. `MoonMarketAccount` has no buying-power field today; supplying one requires backend account-summary plumbing, which is outside this effort. Tracked as a fast-follow.
 
 ---
 
