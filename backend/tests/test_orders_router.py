@@ -252,3 +252,61 @@ def test_live_account_blocks_all_order_mutations():
 
     assert [resp.status_code for resp in responses] == [403, 403, 403, 403]
     assert all(resp.json()["detail"]["error"] == "live_trading_blocked" for resp in responses)
+
+
+def _trail_order(conid: int = 265598) -> dict:
+    return {
+        "conid": conid,
+        "side": "SELL",
+        "quantity": 5,
+        "orderType": "TRAIL",
+        "tif": "GTC",
+        "trailingType": "%",
+        "trailingAmt": 5,
+        "outsideRTH": True,
+    }
+
+
+def _traillmt_order(conid: int = 265598) -> dict:
+    return {
+        "conid": conid,
+        "side": "SELL",
+        "quantity": 5,
+        "orderType": "TRAILLMT",
+        "tif": "GTC",
+        "trailingType": "amt",
+        "trailingAmt": 2,
+        "price": 178.0,
+    }
+
+
+def test_place_trail_order_serializes_trailing_and_rth_fields():
+    fake = _FakeIbkr()
+    resp = _client(fake).post(
+        "/moonmarket/orders",
+        json={"account_id": "DU12345", "orders": [_trail_order()]},
+    )
+
+    assert resp.status_code == 200
+    sent = fake.requests[-1][2]["json"]["orders"][0]
+    assert sent["orderType"] == "TRAIL"
+    assert sent["trailingType"] == "%"
+    assert sent["trailingAmt"] == 5
+    assert sent["outsideRTH"] is True
+    assert "price" not in sent
+
+
+def test_place_traillmt_order_includes_limit_price():
+    fake = _FakeIbkr()
+    resp = _client(fake).post(
+        "/moonmarket/orders",
+        json={"account_id": "DU12345", "orders": [_traillmt_order()]},
+    )
+
+    assert resp.status_code == 200
+    sent = fake.requests[-1][2]["json"]["orders"][0]
+    assert sent["orderType"] == "TRAILLMT"
+    assert sent["price"] == 178.0
+    assert sent["trailingType"] == "amt"
+    assert sent["trailingAmt"] == 2
+    assert "outsideRTH" not in sent or sent["outsideRTH"] is False

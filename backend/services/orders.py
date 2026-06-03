@@ -102,6 +102,12 @@ class OrderService:
             payload["price"] = order.price
         if order.aux_price is not None:
             payload["auxPrice"] = order.aux_price
+        if order.trailing_type is not None:
+            payload["trailingType"] = order.trailing_type
+        if order.trailing_amt is not None:
+            payload["trailingAmt"] = order.trailing_amt
+        if order.outside_rth:
+            payload["outsideRTH"] = True
         if order.client_order_id is not None:
             payload["cOID"] = order.client_order_id
         if order.parent_id is not None:
