@@ -496,6 +496,25 @@ export interface BasisAuditResponse {
   items: BasisAuditEntry[];
 }
 
+export interface InflectStorageStatsResponse {
+  file_size_bytes: number;
+  table_counts: Record<string, number>;
+  raw_json_bytes: number;
+}
+
+export interface InflectStorageCleanupRequest {
+  before_date: string;
+  confirm: boolean;
+}
+
+export interface InflectStorageCleanupResponse {
+  before_date: string;
+  cleared_raw_payloads: number;
+  deleted_rows: number;
+  export_recommended: boolean;
+  message: string;
+}
+
 /**
  * news_candle detection methods (Phase 6.6). Only meaningful when
  * `indicator === "news_candle"`.
@@ -1630,6 +1649,16 @@ export const api = {
       signal,
     );
   },
+
+  inflectStorage: (signal?: AbortSignal) =>
+    request<InflectStorageStatsResponse>("GET", "/inflect/storage", undefined, signal),
+
+  inflectStorageCleanup: (body: InflectStorageCleanupRequest) =>
+    request<InflectStorageCleanupResponse>(
+      "POST",
+      "/inflect/storage/cleanup",
+      body,
+    ),
 
   // Indicators
   computeIndicators: (req: IndicatorRequest, signal?: AbortSignal) =>

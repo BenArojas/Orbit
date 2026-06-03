@@ -236,6 +236,39 @@ class BasisAuditResponse(BaseModel):
     items: list[BasisAuditEntry]
 
 
+class InflectStorageStatsResponse(BaseModel):
+    """Local storage usage for Inflect-owned/relevant tables."""
+    file_size_bytes: int
+    table_counts: dict[str, int]
+    raw_json_bytes: int
+
+
+class InflectStorageCleanupRequest(BaseModel):
+    """Request to clear old raw IBKR payload blobs."""
+    before_date: str
+    confirm: bool = False
+
+    @field_validator("before_date")
+    @classmethod
+    def _validate_before_date(cls, value: str) -> str:
+        if len(value) != 10:
+            raise ValueError("before_date must be YYYY-MM-DD")
+        try:
+            parsed = date.fromisoformat(value)
+        except ValueError as exc:
+            raise ValueError("before_date must be YYYY-MM-DD") from exc
+        return parsed.isoformat()
+
+
+class InflectStorageCleanupResponse(BaseModel):
+    """Result from POST /inflect/storage/cleanup."""
+    before_date: str
+    cleared_raw_payloads: int
+    deleted_rows: int
+    export_recommended: bool
+    message: str
+
+
 # ═══════════════════════════════════════════════════════════════
 #  Manual basis lots
 # ═══════════════════════════════════════════════════════════════

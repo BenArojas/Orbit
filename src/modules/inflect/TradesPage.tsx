@@ -4,6 +4,7 @@ import { useInflectStore } from "@/store/inflect";
 import { useInflectSymbols } from "@/hooks/useInflectSymbols";
 import { useInflectTrades } from "@/hooks/useInflectTrades";
 import { SymbolSearch } from "./SymbolSearch";
+import { StoragePanel } from "./StoragePanel";
 import { TradesTable } from "./TradesTable";
 import { TradeDetail } from "./TradeDetail";
 import { isNeedsBasisStatus } from "./format";
@@ -111,6 +112,8 @@ export function TradesPage({ accountId }: { accountId: string | null }) {
             onSelect={selectTrade}
           />
         )}
+
+        <StoragePanel />
       </main>
 
       {selectedTradeId ? (

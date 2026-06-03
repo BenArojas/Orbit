@@ -16,6 +16,9 @@ from models.inflect import (
     InflectBackfillStatusResponse,
     InflectCalendarResponse,
     InflectSetupsResponse,
+    InflectStorageCleanupRequest,
+    InflectStorageCleanupResponse,
+    InflectStorageStatsResponse,
     InflectSymbolsResponse,
     InflectSyncResponse,
     InflectTrade,
@@ -30,6 +33,7 @@ from services.inflect.service import (
     InflectService,
     InflectTradeNotFoundError,
 )
+from services.inflect.storage import cleanup_storage, storage_stats
 from services.moonmarket import MoonMarketAccountNotFoundError, MoonMarketService
 
 router = APIRouter(prefix="/inflect", tags=["inflect"])
@@ -128,6 +132,31 @@ async def inflect_symbols(
         )
     except MoonMarketAccountNotFoundError as exc:
         raise _account_not_found(exc) from exc
+
+
+@router.get("/storage", response_model=InflectStorageStatsResponse)
+async def inflect_storage(
+    service: InflectService = Depends(require_inflect_service),
+) -> InflectStorageStatsResponse:
+    return await storage_stats(service.db)
+
+
+@router.post("/storage/cleanup", response_model=InflectStorageCleanupResponse)
+async def inflect_storage_cleanup(
+    payload: InflectStorageCleanupRequest,
+    service: InflectService = Depends(require_inflect_service),
+) -> InflectStorageCleanupResponse:
+    try:
+        return await cleanup_storage(
+            service.db,
+            before_date=payload.before_date,
+            confirm=payload.confirm,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"error": "inflect_storage_cleanup_unconfirmed", "message": str(exc)},
+        ) from exc
 
 
 @router.get("/backfill-status", response_model=InflectBackfillStatusResponse)

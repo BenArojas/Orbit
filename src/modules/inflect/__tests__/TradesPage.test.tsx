@@ -21,6 +21,10 @@ vi.mock("../TradeDetail", () => ({
   TradeDetail: () => <aside>Trade detail</aside>,
 }));
 
+vi.mock("../StoragePanel", () => ({
+  StoragePanel: () => <section>Storage panel</section>,
+}));
+
 function makeTrade(over: Partial<InflectTrade> = {}): InflectTrade {
   return {
     trade_id: "DU1:1:e1",

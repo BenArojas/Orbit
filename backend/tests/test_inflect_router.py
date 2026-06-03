@@ -424,6 +424,45 @@ def test_symbols_returns_distinct_traded_conids_in_period():
     ]
 
 
+def test_storage_endpoints_report_stats_and_require_cleanup_confirm():
+    svc = _service()
+    _insert_fill(
+        svc.db,
+        execution_id="raw-old",
+        conid=101,
+        side="BUY",
+        qty=1,
+        price=10,
+        ms=_et_ms(2026, 5, 1, 10),
+    )
+    svc.db._conn.execute(
+        "UPDATE fills SET raw_json = ? WHERE execution_id = ?",
+        ('{"source":"old"}', "raw-old"),
+    )
+    svc.db._conn.commit()
+    client = _client(svc)
+
+    stats = client.get("/inflect/storage")
+    assert stats.status_code == 200
+    assert stats.json()["table_counts"]["fills"] == 1
+    assert stats.json()["raw_json_bytes"] > 0
+
+    rejected = client.post(
+        "/inflect/storage/cleanup",
+        json={"before_date": "2026-06-01", "confirm": False},
+    )
+    assert rejected.status_code == 400
+
+    cleaned = client.post(
+        "/inflect/storage/cleanup",
+        json={"before_date": "2026-06-01", "confirm": True},
+    )
+    assert cleaned.status_code == 200
+    assert cleaned.json()["cleared_raw_payloads"] == 1
+    assert cleaned.json()["deleted_rows"] == 0
+    assert cleaned.json()["export_recommended"] is True
+
+
 def test_trade_detail_found_and_missing():
     svc = _service()
     trade_id = _seed_round_trip(svc.db)
