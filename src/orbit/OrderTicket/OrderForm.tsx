@@ -255,6 +255,10 @@ export function OrderForm({ target }: OrderFormProps) {
 
   const handlePlace = () => {
     if (!selectedAccountId || liveBlocked) return;
+    if (effectiveQuantity <= 0) {
+      toast.error("Quantity must be greater than zero.");
+      return;
+    }
     const orders = buildOrders();
     if (!orders.length) return;
     if (target.mode === "modify" && target.orderId) {
@@ -376,10 +380,12 @@ export function OrderForm({ target }: OrderFormProps) {
             ))}
           </select>
         </label>
-        <label className="block text-[11px] text-[var(--text-3)]">
-          Limit Price
-          <input aria-label="Limit Price" value={price} onChange={(event) => setPrice(event.target.value)} className="mt-1 h-9 w-full rounded-md border border-border bg-[var(--bg-1)] px-2 text-[12px]" />
-        </label>
+        {!isTrailing ? (
+          <label className="block text-[11px] text-[var(--text-3)]">
+            Limit Price
+            <input aria-label="Limit Price" value={price} onChange={(event) => setPrice(event.target.value)} className="mt-1 h-9 w-full rounded-md border border-border bg-[var(--bg-1)] px-2 text-[12px]" />
+          </label>
+        ) : null}
         <label className="block text-[11px] text-[var(--text-3)]">
           Aux Price
           <input aria-label="Aux Price" value={auxPrice} onChange={(event) => setAuxPrice(event.target.value)} className="mt-1 h-9 w-full rounded-md border border-border bg-[var(--bg-1)] px-2 text-[12px]" />
