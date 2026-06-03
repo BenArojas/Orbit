@@ -333,6 +333,7 @@ class InflectService:
         self, account_id: str | None, payload: BasisLotUpsertRequest
     ) -> BasisLot:
         resolved = await self._resolve_account(account_id)
+        before = await self._matched_trades_for_conid(resolved, int(payload.conid))
         row = await self.db.create_basis_lot(
             account_id=resolved,
             conid=payload.conid,
@@ -342,6 +343,15 @@ class InflectService:
             entry_price=payload.entry_price,
             commission=payload.commission,
             note=payload.note,
+        )
+        after = await self._matched_trades_for_conid(resolved, int(payload.conid))
+        await self._rekey_vanished_journals(before, after)
+        await self._audit_lot_change(
+            account_id=resolved,
+            conid=int(payload.conid),
+            action="lot_create",
+            before=before,
+            after=after,
         )
         return self._basis_lot_from_row(row)
 
@@ -353,6 +363,11 @@ class InflectService:
         payload: BasisLotUpsertRequest,
     ) -> BasisLot:
         resolved = await self._resolve_account(account_id)
+        old_row = await self._basis_lot_row(resolved, lot_id)
+        before_conids = {int(payload.conid)}
+        if old_row is not None:
+            before_conids.add(int(old_row["conid"]))
+        before = await self._matched_trades_for_conids(resolved, before_conids)
         row = await self.db.update_basis_lot(
             lot_id=lot_id,
             account_id=resolved,
@@ -366,15 +381,40 @@ class InflectService:
         )
         if row is None:
             raise InflectBasisLotNotFoundError(str(lot_id))
+        after = await self._matched_trades_for_conids(
+            resolved, {int(row["conid"]), *before_conids}
+        )
+        await self._rekey_vanished_journals(before, after)
+        await self._audit_lot_change(
+            account_id=resolved,
+            conid=int(row["conid"]),
+            action="lot_update",
+            before=before,
+            after=after,
+        )
         return self._basis_lot_from_row(row)
 
     async def delete_basis_lot(
         self, *, lot_id: int, account_id: str | None
     ) -> bool:
         resolved = await self._resolve_account(account_id)
+        old_row = await self._basis_lot_row(resolved, lot_id)
+        if old_row is None:
+            raise InflectBasisLotNotFoundError(str(lot_id))
+        conid = int(old_row["conid"])
+        before = await self._matched_trades_for_conid(resolved, conid)
         deleted = await self.db.delete_basis_lot(lot_id, resolved)
         if not deleted:
             raise InflectBasisLotNotFoundError(str(lot_id))
+        after = await self._matched_trades_for_conid(resolved, conid)
+        await self._rekey_vanished_journals(before, after)
+        await self._audit_lot_change(
+            account_id=resolved,
+            conid=conid,
+            action="lot_delete",
+            before=before,
+            after=after,
+        )
         return True
 
     # ── Internals ──────────────────────────────────────────────
@@ -389,6 +429,10 @@ class InflectService:
         compute its P&L. Acceptable for v1 history sizes (plan risk #4).
         """
         fills = await self.db.list_fills_for_account_range(account_id, 0, end_ms)
+        fills = [
+            *await self._manual_lot_fills(account_id, end_ms),
+            *fills,
+        ]
         return match_fills(fills)
 
     async def _matched_trades_for_conid(
@@ -400,6 +444,98 @@ class InflectService:
             for trade in matched
             if trade.account_id == account_id and trade.conid == int(conid)
         ]
+
+    async def _matched_trades_for_conids(
+        self, account_id: str, conids: set[int]
+    ) -> list[InflectTrade]:
+        matched = await self._matched_trades(account_id, _FAR_FUTURE_MS)
+        target_conids = {int(conid) for conid in conids}
+        return [
+            trade
+            for trade in matched
+            if trade.account_id == account_id and trade.conid in target_conids
+        ]
+
+    async def _manual_lot_fills(
+        self, account_id: str, end_ms: int
+    ) -> list[dict[str, Any]]:
+        rows = await self.db.fetch_all(
+            """
+            SELECT *
+            FROM basis_lots
+            WHERE account_id = ?
+            ORDER BY entry_date ASC, created_at ASC, id ASC
+            """,
+            (account_id,),
+        )
+        fills: list[dict[str, Any]] = []
+        for offset_ms, row in enumerate(rows):
+            trade_time_ms = self._basis_lot_trade_time_ms(row, offset_ms)
+            if trade_time_ms > end_ms:
+                continue
+            side = str(row["side"]).upper()
+            fill = {
+                "execution_id": f"LOT:{int(row['id'])}",
+                "account_id": account_id,
+                "conid": int(row["conid"]),
+                "symbol": row.get("symbol"),
+                "side": "BUY" if side == "LONG" else "SELL",
+                "quantity": float(row["quantity"]),
+                "price": float(row["entry_price"]),
+                "net_amount": float(row["entry_price"]) * float(row["quantity"]),
+                "commission": self._to_float(row.get("commission")),
+                "sec_type": row.get("sec_type"),
+                "trade_time": datetime.fromtimestamp(
+                    trade_time_ms / 1000, ZoneInfo(TRADING_DAY_TZ)
+                ).isoformat(),
+                "trade_time_ms": trade_time_ms,
+                "source": "MANUAL_LOT",
+            }
+            if side == "SHORT":
+                fill["position_effect"] = "OPEN"
+            fills.append(fill)
+        return fills
+
+    @staticmethod
+    def _basis_lot_trade_time_ms(row: dict[str, Any], offset_ms: int) -> int:
+        entry = datetime.strptime(str(row["entry_date"]), "%Y-%m-%d")
+        entry = entry.replace(tzinfo=ZoneInfo(TRADING_DAY_TZ))
+        return int(entry.timestamp() * 1000) + offset_ms
+
+    async def _basis_lot_row(
+        self, account_id: str, lot_id: int
+    ) -> dict[str, Any] | None:
+        rows = await self.db.fetch_all(
+            """
+            SELECT *
+            FROM basis_lots
+            WHERE account_id = ? AND id = ?
+            """,
+            (account_id, int(lot_id)),
+        )
+        return rows[0] if rows else None
+
+    async def _audit_lot_change(
+        self,
+        *,
+        account_id: str,
+        conid: int,
+        action: str,
+        before: list[InflectTrade],
+        after: list[InflectTrade],
+    ) -> None:
+        await self.db.insert_basis_audit(
+            account_id=account_id,
+            conid=conid,
+            action=action,
+            source="MANUAL",
+            before_json=json.dumps(
+                self._trade_summaries(before), sort_keys=True
+            ),
+            after_json=json.dumps(
+                self._trade_summaries(after), sort_keys=True
+            ),
+        )
 
     def _normalize_pa_rows(
         self, account_id: str, conid: int, rows: list[dict[str, Any]]
@@ -500,13 +636,17 @@ class InflectService:
     def _successor_trade(
         old_trade: InflectTrade, candidates: list[InflectTrade]
     ) -> InflectTrade | None:
-        recovered = [
+        same_contract = [
             trade
             for trade in candidates
-            if trade.status != "INCOMPLETE_BASIS"
-            and trade.account_id == old_trade.account_id
+            if trade.account_id == old_trade.account_id
             and trade.conid == old_trade.conid
         ]
+        recovered = [
+            trade for trade in same_contract if trade.status != "INCOMPLETE_BASIS"
+        ]
+        if not recovered:
+            recovered = same_contract
         if not recovered:
             return None
 
