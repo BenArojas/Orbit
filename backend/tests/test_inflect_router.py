@@ -370,6 +370,60 @@ def test_basis_audit_returns_rows_for_conid():
     assert resp.json()["items"][0]["after_json"] == '[{"status":"CLOSED"}]'
 
 
+def test_symbols_returns_distinct_traded_conids_in_period():
+    svc = _service()
+    _insert_fill(
+        svc.db,
+        execution_id="aapl-1",
+        conid=101,
+        side="BUY",
+        qty=1,
+        price=10,
+        ms=_et_ms(2026, 6, 1, 10),
+    )
+    svc.db._conn.execute(
+        "UPDATE fills SET symbol = ? WHERE execution_id = ?",
+        ("AAPL", "aapl-1"),
+    )
+    _insert_fill(
+        svc.db,
+        execution_id="old",
+        conid=202,
+        side="BUY",
+        qty=1,
+        price=20,
+        ms=_et_ms(2026, 5, 1, 10),
+    )
+    svc.db._conn.execute(
+        """
+        INSERT INTO instruments (conid, symbol, company_name, sec_type)
+        VALUES (?, ?, ?, ?), (?, ?, ?, ?)
+        """,
+        (303, "MSFT", "Microsoft", "STK", 202, "OLD", "Old", "STK"),
+    )
+    svc.db._conn.execute(
+        """
+        INSERT INTO basis_lots
+            (account_id, conid, side, quantity, entry_date, entry_price)
+        VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        ("DU1", 303, "LONG", 5, "2026-06-02", 30),
+    )
+    svc.db._conn.commit()
+
+    resp = _client(svc).get(
+        "/inflect/symbols"
+        f"?account_id=DU1&from={_et_ms(2026, 6, 1, 0)}&to={_et_ms(2026, 6, 3, 0)}"
+    )
+
+    assert resp.status_code == 200
+    assert resp.json()["account_id"] == "DU1"
+    assert resp.json()["symbols"] == [
+        {"conid": 101, "symbol": "AAPL"},
+        {"conid": 303, "symbol": "MSFT"},
+    ]
+
+
 def test_trade_detail_found_and_missing():
     svc = _service()
     trade_id = _seed_round_trip(svc.db)

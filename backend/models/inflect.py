@@ -128,6 +128,18 @@ class InflectTradesResponse(BaseModel):
     trades: list[InflectTrade]
 
 
+class InflectSymbol(BaseModel):
+    """One conid/symbol option traded in an Inflect period."""
+    conid: int
+    symbol: str
+
+
+class InflectSymbolsResponse(BaseModel):
+    """Response from GET /inflect/symbols."""
+    account_id: str
+    symbols: list[InflectSymbol]
+
+
 # ═══════════════════════════════════════════════════════════════
 #  Calendar aggregation
 # ═══════════════════════════════════════════════════════════════

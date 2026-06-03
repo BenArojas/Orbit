@@ -1,15 +1,20 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { TradesPage } from "../TradesPage";
 import { useInflectStore } from "@/store/inflect";
 import type { InflectTrade } from "../types";
 
 const hookMocks = vi.hoisted(() => ({
   useInflectTrades: vi.fn(),
+  useInflectSymbols: vi.fn(),
 }));
 
 vi.mock("@/hooks/useInflectTrades", () => ({
   useInflectTrades: hookMocks.useInflectTrades,
+}));
+
+vi.mock("@/hooks/useInflectSymbols", () => ({
+  useInflectSymbols: hookMocks.useInflectSymbols,
 }));
 
 vi.mock("../TradeDetail", () => ({
@@ -67,6 +72,16 @@ beforeEach(() => {
     error: null,
     isLoading: false,
   });
+  hookMocks.useInflectSymbols.mockReturnValue({
+    data: {
+      account_id: "DU1",
+      symbols: [
+        { conid: 1, symbol: "AAPL" },
+        { conid: 2, symbol: "MSFT" },
+      ],
+    },
+    isLoading: false,
+  });
 });
 
 describe("TradesPage", () => {
@@ -75,11 +90,42 @@ describe("TradesPage", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /needs attention/i }));
 
-    expect(screen.queryByText("AAPL")).not.toBeInTheDocument();
-    expect(screen.getByText("MSFT")).toBeInTheDocument();
+    const table = screen.getByRole("table");
+    expect(within(table).queryByText("AAPL")).not.toBeInTheDocument();
+    expect(within(table).getByText("MSFT")).toBeInTheDocument();
     expect(screen.getAllByText("Needs basis").length).toBeGreaterThan(0);
     expect(screen.queryByText("UNKNOWN")).not.toBeInTheDocument();
     expect(screen.queryByText("INCOMPLETE_BASIS")).not.toBeInTheDocument();
     expect(hookMocks.useInflectTrades).toHaveBeenLastCalledWith("DU1", undefined);
+  });
+
+  it("filters trades by typed ticker text", () => {
+    render(<TradesPage accountId="DU1" />);
+
+    fireEvent.change(screen.getByLabelText("Search trades"), {
+      target: { value: "msf" },
+    });
+
+    const table = screen.getByRole("table");
+    expect(within(table).queryByText("AAPL")).not.toBeInTheDocument();
+    expect(within(table).getByText("MSFT")).toBeInTheDocument();
+  });
+
+  it("filters trades by symbol dropdown conid and clears filters", () => {
+    render(<TradesPage accountId="DU1" />);
+
+    fireEvent.change(screen.getByLabelText("Symbol list"), {
+      target: { value: "2" },
+    });
+
+    let table = screen.getByRole("table");
+    expect(within(table).queryByText("AAPL")).not.toBeInTheDocument();
+    expect(within(table).getByText("MSFT")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /clear filters/i }));
+
+    table = screen.getByRole("table");
+    expect(within(table).getByText("AAPL")).toBeInTheDocument();
+    expect(within(table).getByText("MSFT")).toBeInTheDocument();
   });
 });

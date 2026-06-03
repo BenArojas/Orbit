@@ -390,6 +390,16 @@ export interface InflectTradesResponse {
   trades: InflectTrade[];
 }
 
+export interface InflectSymbol {
+  conid: number;
+  symbol: string;
+}
+
+export interface InflectSymbolsResponse {
+  account_id: string;
+  symbols: InflectSymbol[];
+}
+
 export interface InflectCalendarDay {
   date: string;
   net_pnl: number;
@@ -1516,6 +1526,23 @@ export const api = {
   inflectTrade: (tradeId: string, accountId?: string, signal?: AbortSignal) => {
     const qs = accountId ? `?account_id=${encodeURIComponent(accountId)}` : "";
     return request<InflectTrade>("GET", `/inflect/trades/${encodeURIComponent(tradeId)}${qs}`, undefined, signal);
+  },
+
+  inflectSymbols: (
+    opts: { accountId?: string; from?: number; to?: number } = {},
+    signal?: AbortSignal,
+  ) => {
+    const params = new URLSearchParams();
+    if (opts.accountId) params.set("account_id", opts.accountId);
+    if (opts.from != null) params.set("from", String(opts.from));
+    if (opts.to != null) params.set("to", String(opts.to));
+    const qs = params.toString();
+    return request<InflectSymbolsResponse>(
+      "GET",
+      `/inflect/symbols${qs ? `?${qs}` : ""}`,
+      undefined,
+      signal,
+    );
   },
 
   inflectSaveJournal: (

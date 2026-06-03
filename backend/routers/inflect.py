@@ -16,6 +16,7 @@ from models.inflect import (
     InflectBackfillStatusResponse,
     InflectCalendarResponse,
     InflectSetupsResponse,
+    InflectSymbolsResponse,
     InflectSyncResponse,
     InflectTrade,
     InflectTradesResponse,
@@ -107,6 +108,23 @@ async def inflect_trades(
             from_ms=from_ms,
             to_ms=to_ms,
             status=status_filter,
+        )
+    except MoonMarketAccountNotFoundError as exc:
+        raise _account_not_found(exc) from exc
+
+
+@router.get("/symbols", response_model=InflectSymbolsResponse)
+async def inflect_symbols(
+    account_id: str | None = Query(default=None),
+    from_ms: int | None = Query(default=None, alias="from"),
+    to_ms: int | None = Query(default=None, alias="to"),
+    service: InflectService = Depends(require_inflect_service),
+) -> InflectSymbolsResponse:
+    try:
+        return await service.symbols(
+            account_id=account_id,
+            from_ms=from_ms,
+            to_ms=to_ms,
         )
     except MoonMarketAccountNotFoundError as exc:
         raise _account_not_found(exc) from exc

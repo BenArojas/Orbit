@@ -37,6 +37,8 @@ from models.inflect import (
     InflectCalendarDay,
     InflectCalendarResponse,
     InflectSetupsResponse,
+    InflectSymbol,
+    InflectSymbolsResponse,
     InflectSyncResponse,
     InflectTrade,
     InflectTradesResponse,
@@ -268,6 +270,67 @@ class InflectService:
             account_id=resolved,
             conid=target_conid,
             items=[BasisAuditEntry(**row) for row in rows],
+        )
+
+    async def symbols(
+        self,
+        account_id: str | None,
+        from_ms: int | None = None,
+        to_ms: int | None = None,
+    ) -> InflectSymbolsResponse:
+        resolved = await self._resolve_account(account_id)
+        fills = await self.db.fetch_all(
+            """
+            SELECT conid, symbol, trade_time_ms
+            FROM fills
+            WHERE account_id = ?
+              AND trade_time_ms IS NOT NULL
+              AND (? IS NULL OR trade_time_ms >= ?)
+              AND (? IS NULL OR trade_time_ms <= ?)
+            ORDER BY trade_time_ms ASC, conid ASC
+            """,
+            (resolved, from_ms, from_ms, to_ms, to_ms),
+        )
+        lot_rows = await self.db.fetch_all(
+            """
+            SELECT conid, entry_date
+            FROM basis_lots
+            WHERE account_id = ?
+            ORDER BY entry_date ASC, conid ASC
+            """,
+            (resolved,),
+        )
+        lot_conids = [
+            int(row["conid"])
+            for row in lot_rows
+            if self._basis_lot_in_range(row, from_ms, to_ms)
+        ]
+
+        conids = sorted({int(row["conid"]) for row in fills} | set(lot_conids))
+        instruments = {
+            int(row["conid"]): row
+            for row in await self.db.get_instruments_by_conids(conids)
+        }
+        symbols: dict[int, str] = {}
+        for row in fills:
+            conid = int(row["conid"])
+            symbol = row.get("symbol")
+            if symbol:
+                symbols.setdefault(conid, str(symbol))
+        for conid in conids:
+            if conid not in symbols:
+                cached = instruments.get(conid)
+                if cached and cached.get("symbol"):
+                    symbols[conid] = str(cached["symbol"])
+                else:
+                    symbols[conid] = f"#{conid}"
+
+        return InflectSymbolsResponse(
+            account_id=resolved,
+            symbols=[
+                InflectSymbol(conid=conid, symbol=symbols[conid])
+                for conid in sorted(conids, key=lambda item: symbols[item])
+            ],
         )
 
     async def sync(self, account_id: str | None) -> InflectSyncResponse:
@@ -523,6 +586,17 @@ class InflectService:
         entry = datetime.strptime(str(row["entry_date"]), "%Y-%m-%d")
         entry = entry.replace(tzinfo=ZoneInfo(TRADING_DAY_TZ))
         return int(entry.timestamp() * 1000) + offset_ms
+
+    @classmethod
+    def _basis_lot_in_range(
+        cls, row: dict[str, Any], from_ms: int | None, to_ms: int | None
+    ) -> bool:
+        trade_time_ms = cls._basis_lot_trade_time_ms(row, 0)
+        if from_ms is not None and trade_time_ms < from_ms:
+            return False
+        if to_ms is not None and trade_time_ms > to_ms:
+            return False
+        return True
 
     async def _basis_lot_row(
         self, account_id: str, lot_id: int
