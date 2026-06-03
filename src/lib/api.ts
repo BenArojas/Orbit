@@ -249,8 +249,9 @@ export interface MoonMarketLiveOrdersResponse {
 }
 
 export type MoonMarketOrderSide = "BUY" | "SELL";
-export type MoonMarketOrderType = "MKT" | "LMT" | "STP" | "STP_LIMIT" | "TRAIL";
+export type MoonMarketOrderType = "MKT" | "LMT" | "STP" | "STP_LIMIT" | "TRAIL" | "TRAILLMT";
 export type MoonMarketTimeInForce = "DAY" | "GTC" | "IOC";
+export type MoonMarketTrailingType = "amt" | "%";
 export type MoonMarketOrderAssetClass = "STK" | "OPT";
 
 export interface MoonMarketOrderDraft {
@@ -262,9 +263,20 @@ export interface MoonMarketOrderDraft {
   tif: MoonMarketTimeInForce;
   price?: number;
   auxPrice?: number;
+  trailingType?: MoonMarketTrailingType;
+  trailingAmt?: number;
+  outsideRTH?: boolean;
   cOID?: string;
   parentId?: string;
   isSingleGroup?: boolean;
+}
+
+export interface MoonMarketAccountFunds {
+  account_id: string;
+  buying_power: number | null;
+  available_funds: number | null;
+  cash: number | null;
+  currency: string;
 }
 
 export interface MoonMarketOrderPreviewRequest {
@@ -1435,6 +1447,14 @@ export const api = {
   // MoonMarket
   moonmarketAccounts: (signal?: AbortSignal) =>
     request<MoonMarketAccountsResponse>("GET", "/moonmarket/accounts", undefined, signal),
+
+  moonmarketAccountFunds: (accountId: string, signal?: AbortSignal) =>
+    request<MoonMarketAccountFunds>(
+      "GET",
+      `/moonmarket/accounts/${encodeURIComponent(accountId)}/funds`,
+      undefined,
+      signal,
+    ),
 
   moonmarketPortfolio: (accountId?: string, signal?: AbortSignal) => {
     const qs = accountId ? `?account_id=${encodeURIComponent(accountId)}` : "";
