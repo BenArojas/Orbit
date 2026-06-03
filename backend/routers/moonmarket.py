@@ -33,12 +33,15 @@ async def moonmarket_accounts(
 @router.get("/accounts/{account_id}/funds", response_model=MoonMarketAccountFunds)
 async def moonmarket_account_funds(
     account_id: str,
-    ibkr=Depends(require_ibkr_auth),
+    ibkr: IBKRService = Depends(require_ibkr_auth),
 ) -> MoonMarketAccountFunds:
     try:
         return await MoonMarketService(ibkr).account_funds(account_id)
     except MoonMarketAccountNotFoundError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"error": "moonmarket_account_not_found", "message": str(exc)},
+        ) from exc
 
 
 @router.get("/portfolio", response_model=MoonMarketPortfolioResponse)
