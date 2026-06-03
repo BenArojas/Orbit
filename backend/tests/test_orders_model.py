@@ -53,3 +53,26 @@ def test_traillmt_accepts_price_and_outside_rth():
     )
     assert order.price == 178.0
     assert order.outside_rth is True
+
+
+def test_non_trailing_order_ignores_trailing_validator():
+    order = MoonMarketOrderDraft(
+        conid=265598, side="BUY", quantity=5, orderType="LMT", tif="DAY", price=180.0
+    )
+    assert order.order_type == "LMT"
+    assert order.trailing_type is None
+    assert order.trailing_amt is None
+    assert order.outside_rth is False
+
+
+def test_trail_requires_both_trailing_fields_not_just_one():
+    with pytest.raises(ValidationError):
+        MoonMarketOrderDraft(
+            conid=265598,
+            side="SELL",
+            quantity=5,
+            orderType="TRAIL",
+            tif="GTC",
+            trailingAmt=5,
+            # trailingType intentionally absent
+        )
