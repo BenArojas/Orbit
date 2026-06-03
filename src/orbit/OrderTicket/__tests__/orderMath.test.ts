@@ -38,8 +38,9 @@ describe("sharesForCash", () => {
     expect(sharesForCash(1000, 0)).toBeNull();
   });
 
-  it("returns null when cash is missing", () => {
+  it("returns null when cash is missing or non-positive", () => {
     expect(sharesForCash(undefined, 180)).toBeNull();
+    expect(sharesForCash(0, 180)).toBeNull();
   });
 });
 

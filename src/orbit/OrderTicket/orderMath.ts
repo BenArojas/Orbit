@@ -13,7 +13,11 @@ export function computeRiskReward(params: {
   stopLoss: number | undefined;
 }): RiskReward | null {
   const { side, entry, takeProfit, stopLoss } = params;
-  if (entry == null || takeProfit == null || stopLoss == null) return null;
+  if (
+    entry == null || !Number.isFinite(entry) ||
+    takeProfit == null || !Number.isFinite(takeProfit) ||
+    stopLoss == null || !Number.isFinite(stopLoss)
+  ) return null;
   const risk = side === "BUY" ? entry - stopLoss : stopLoss - entry;
   const reward = side === "BUY" ? takeProfit - entry : entry - takeProfit;
   if (risk <= 0 || reward <= 0) return null;
@@ -24,8 +28,8 @@ export function sharesForCash(
   cash: number | undefined,
   referencePrice: number | undefined,
 ): number | null {
-  if (cash == null || cash <= 0) return null;
-  if (referencePrice == null || referencePrice <= 0) return null;
+  if (cash == null || !Number.isFinite(cash) || cash <= 0) return null;
+  if (referencePrice == null || !Number.isFinite(referencePrice) || referencePrice <= 0) return null;
   return Math.floor(cash / referencePrice);
 }
 
@@ -33,7 +37,7 @@ export function cashForBuyingPowerPct(
   pct: number | undefined,
   buyingPower: number | null | undefined,
 ): number | null {
-  if (pct == null || pct <= 0) return null;
-  if (buyingPower == null || buyingPower <= 0) return null;
+  if (pct == null || !Number.isFinite(pct) || pct <= 0) return null;
+  if (buyingPower == null || !Number.isFinite(buyingPower) || buyingPower <= 0) return null;
   return (buyingPower * pct) / 100;
 }
