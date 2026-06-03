@@ -6,6 +6,7 @@ import type {
   MoonMarketOrderSide,
   MoonMarketOrderType,
   MoonMarketTimeInForce,
+  MoonMarketTrailingType,
 } from "@/lib/api";
 import { api } from "@/lib/api";
 import { useWebSocket, type WsMessage } from "@/hooks/useWebSocket";
@@ -13,6 +14,8 @@ import { useAccountStore } from "./useAccountStore";
 import { useModifyOrder, usePlaceOrder, usePreviewOrder, useReplyOrder } from "./useOrderMutations";
 import type { OrderTicketTarget } from "./useOrderTicketStore";
 import { OrderResult } from "./OrderResult";
+import { ORDER_TYPE_LABELS, TIF_LABELS, TRAILING_TYPE_LABELS } from "./labels";
+import { cashForBuyingPowerPct, computeRiskReward, sharesForCash } from "./orderMath";
 
 function numberOrUndefined(value: string): number | undefined {
   const parsed = Number(value);
@@ -80,6 +83,12 @@ export function OrderForm({ target }: OrderFormProps) {
   const [stopLossEnabled, setStopLossEnabled] = useState(false);
   const [profitTakerPrice, setProfitTakerPrice] = useState("");
   const [stopLossPrice, setStopLossPrice] = useState("");
+  const [trailingType, setTrailingType] = useState<MoonMarketTrailingType>("%");
+  const [trailingAmt, setTrailingAmt] = useState("");
+  const [outsideRth, setOutsideRth] = useState(false);
+  const [sizeMode, setSizeMode] = useState<"shares" | "cash" | "bp">("shares");
+  const [cashAmount, setCashAmount] = useState("");
+  const [bpPercent, setBpPercent] = useState("");
   const [liveBook, setLiveBook] = useState<LiveBook>({
     bid: null,
     ask: null,
@@ -109,6 +118,14 @@ export function OrderForm({ target }: OrderFormProps) {
     askSize: liveBook.askSize ?? quote?.askSize,
   };
 
+  const fundsQuery = useQuery({
+    queryKey: ["moonmarket", "funds", selectedAccountId],
+    queryFn: ({ signal }) => api.moonmarketAccountFunds(selectedAccountId as string, signal),
+    enabled: !!selectedAccountId,
+    staleTime: 30_000,
+  });
+  const buyingPower = fundsQuery.data?.buying_power ?? null;
+
   useEffect(() => {
     setSide(target.side ?? "BUY");
     setQuantity(target.draft?.quantity ? String(target.draft.quantity) : "1");
@@ -120,6 +137,12 @@ export function OrderForm({ target }: OrderFormProps) {
     setStopLossEnabled(false);
     setProfitTakerPrice("");
     setStopLossPrice("");
+    setTrailingType("%");
+    setTrailingAmt("");
+    setOutsideRth(false);
+    setSizeMode("shares");
+    setCashAmount("");
+    setBpPercent("");
     setLiveBook({ bid: null, ask: null, bidSize: null, askSize: null });
     setPreviewResult(null);
     setActionResult(null);
@@ -144,16 +167,39 @@ export function OrderForm({ target }: OrderFormProps) {
     return remove;
   }, [addHandler, target.conid]);
 
+  const isTrailing = orderType === "TRAIL" || orderType === "TRAILLMT";
+
+  // Derived computation order: entryReference → effectiveCash/cashShares/effectiveQuantity → baseOrder
+  const entryReference = numberOrUndefined(price) ?? book.ask ?? quote?.lastPrice ?? undefined;
+  const effectiveCash =
+    sizeMode === "cash"
+      ? numberOrUndefined(cashAmount)
+      : sizeMode === "bp"
+        ? cashForBuyingPowerPct(numberOrUndefined(bpPercent), buyingPower) ?? undefined
+        : undefined;
+  const cashShares = sharesForCash(effectiveCash, entryReference);
+  const effectiveQuantity = sizeMode === "shares" ? Number(quantity) || 0 : cashShares ?? 0;
+
+  const riskReward = computeRiskReward({
+    side,
+    entry: entryReference,
+    takeProfit: takeProfitEnabled ? numberOrUndefined(profitTakerPrice) : undefined,
+    stopLoss: stopLossEnabled ? numberOrUndefined(stopLossPrice) : undefined,
+  });
+
   const baseOrder = useMemo<MoonMarketOrderDraft>(() => ({
     conid: target.conid,
     assetClass,
     side,
-    quantity: Number(quantity) || 0,
+    quantity: effectiveQuantity,
     orderType,
     tif,
     price: numberOrUndefined(price),
     auxPrice: numberOrUndefined(auxPrice),
-  }), [assetClass, auxPrice, orderType, price, quantity, side, target.conid, tif]);
+    trailingType: isTrailing ? trailingType : undefined,
+    trailingAmt: isTrailing ? numberOrUndefined(trailingAmt) : undefined,
+    outsideRTH: outsideRth || undefined,
+  }), [assetClass, auxPrice, effectiveQuantity, isTrailing, orderType, outsideRth, price, side, target.conid, tif, trailingAmt, trailingType]);
 
   const buildOrders = (): MoonMarketOrderDraft[] => {
     if (optionTarget || (!takeProfitEnabled && !stopLossEnabled)) return [baseOrder];
@@ -285,24 +331,49 @@ export function OrderForm({ target }: OrderFormProps) {
           <button type="button" aria-pressed={side === "SELL"} onClick={() => setSide("SELL")} className="rounded-md border border-border px-3 py-2 text-[12px]">SELL</button>
         </div>
         <label className="block text-[11px] text-[var(--text-3)]">
-          Quantity
-          <input aria-label="Quantity" value={quantity} onChange={(event) => setQuantity(event.target.value)} className="mt-1 h-9 w-full rounded-md border border-border bg-[var(--bg-1)] px-2 text-[12px]" />
+          Size By
+          <select aria-label="Size by" value={sizeMode} onChange={(event) => setSizeMode(event.target.value as "shares" | "cash" | "bp")} className="mt-1 h-9 w-full rounded-md border border-border bg-[var(--bg-1)] px-2 text-[12px]">
+            <option value="shares">Shares</option>
+            <option value="cash">Cash ($)</option>
+            <option value="bp">% of Buying Power</option>
+          </select>
         </label>
+        {sizeMode === "shares" ? (
+          <label className="block text-[11px] text-[var(--text-3)]">
+            Quantity
+            <input aria-label="Quantity" value={quantity} onChange={(event) => setQuantity(event.target.value)} className="mt-1 h-9 w-full rounded-md border border-border bg-[var(--bg-1)] px-2 text-[12px]" />
+          </label>
+        ) : sizeMode === "cash" ? (
+          <label className="block text-[11px] text-[var(--text-3)]">
+            Cash Amount
+            <input aria-label="Cash amount" value={cashAmount} onChange={(event) => setCashAmount(event.target.value)} className="mt-1 h-9 w-full rounded-md border border-border bg-[var(--bg-1)] px-2 text-[12px]" />
+            <span className="mt-1 block text-[var(--text-3)]">{cashShares != null ? `≈ ${cashShares} shares` : "≈ — shares"}</span>
+          </label>
+        ) : (
+          <label className="block text-[11px] text-[var(--text-3)]">
+            Percent of Buying Power
+            <input aria-label="Percent of buying power" value={bpPercent} onChange={(event) => setBpPercent(event.target.value)} className="mt-1 h-9 w-full rounded-md border border-border bg-[var(--bg-1)] px-2 text-[12px]" />
+            <span className="mt-1 block text-[var(--text-3)]">
+              Buying power {buyingPower != null ? `$${formatQuoteNumber(buyingPower)}` : "—"}
+              {" · "}
+              {cashShares != null ? `≈ ${cashShares} shares` : "≈ — shares"}
+            </span>
+          </label>
+        )}
         <label className="block text-[11px] text-[var(--text-3)]">
           Order Type
           <select aria-label="Order Type" value={orderType} onChange={(event) => setOrderType(event.target.value as MoonMarketOrderType)} className="mt-1 h-9 w-full rounded-md border border-border bg-[var(--bg-1)] px-2 text-[12px]">
-            <option value="MKT">Market</option>
-            <option value="LMT">Limit</option>
-            <option value="STP">Stop</option>
-            <option value="STP_LIMIT">Stop Limit</option>
+            {(Object.keys(ORDER_TYPE_LABELS) as Array<keyof typeof ORDER_TYPE_LABELS>).map((code) => (
+              <option key={code} value={code}>{ORDER_TYPE_LABELS[code]}</option>
+            ))}
           </select>
         </label>
         <label className="block text-[11px] text-[var(--text-3)]">
           TIF
           <select aria-label="TIF" value={tif} onChange={(event) => setTif(event.target.value as MoonMarketTimeInForce)} className="mt-1 h-9 w-full rounded-md border border-border bg-[var(--bg-1)] px-2 text-[12px]">
-            <option value="DAY">DAY</option>
-            <option value="GTC">GTC</option>
-            <option value="IOC">IOC</option>
+            {(Object.keys(TIF_LABELS) as Array<keyof typeof TIF_LABELS>).map((code) => (
+              <option key={code} value={code}>{TIF_LABELS[code]}</option>
+            ))}
           </select>
         </label>
         <label className="block text-[11px] text-[var(--text-3)]">
@@ -313,6 +384,32 @@ export function OrderForm({ target }: OrderFormProps) {
           Aux Price
           <input aria-label="Aux Price" value={auxPrice} onChange={(event) => setAuxPrice(event.target.value)} className="mt-1 h-9 w-full rounded-md border border-border bg-[var(--bg-1)] px-2 text-[12px]" />
         </label>
+        <label className="flex items-center gap-2 text-[12px] text-[var(--text-3)]">
+          <input aria-label="Outside regular trading hours" type="checkbox" checked={outsideRth} onChange={(event) => setOutsideRth(event.target.checked)} />
+          Allow execution outside regular trading hours
+        </label>
+        {isTrailing ? (
+          <div className="grid gap-3 rounded-md border border-border bg-[var(--bg-1)] p-3">
+            <label className="block text-[11px] text-[var(--text-3)]">
+              Trail By
+              <select aria-label="Trail by" value={trailingType} onChange={(event) => setTrailingType(event.target.value as MoonMarketTrailingType)} className="mt-1 h-9 w-full rounded-md border border-border bg-[var(--bg-1)] px-2 text-[12px]">
+                {(Object.keys(TRAILING_TYPE_LABELS) as Array<keyof typeof TRAILING_TYPE_LABELS>).map((code) => (
+                  <option key={code} value={code}>{TRAILING_TYPE_LABELS[code]}</option>
+                ))}
+              </select>
+            </label>
+            <label className="block text-[11px] text-[var(--text-3)]">
+              Trail Distance
+              <input aria-label="Trail distance" value={trailingAmt} onChange={(event) => setTrailingAmt(event.target.value)} className="mt-1 h-9 w-full rounded-md border border-border bg-[var(--bg-1)] px-2 text-[12px]" />
+            </label>
+            {orderType === "TRAILLMT" ? (
+              <label className="block text-[11px] text-[var(--text-3)]">
+                Limit Offset
+                <input aria-label="Limit offset" value={price} onChange={(event) => setPrice(event.target.value)} className="mt-1 h-9 w-full rounded-md border border-border bg-[var(--bg-1)] px-2 text-[12px]" />
+              </label>
+            ) : null}
+          </div>
+        ) : null}
         {optionTarget ? (
           <div className="rounded-md border border-border bg-[var(--bg-1)] px-3 py-2 text-[11px] text-[var(--text-3)]">
             Option bracket orders are deferred until after single-leg paper validation.
@@ -344,6 +441,16 @@ export function OrderForm({ target }: OrderFormProps) {
                 <input aria-label="Stop Loss Price" value={stopLossPrice} onChange={(event) => setStopLossPrice(event.target.value)} className="mt-1 h-9 w-full rounded-md border border-border bg-[var(--bg-1)] px-2 text-[12px]" />
               </label>
             ) : null}
+          </div>
+        ) : null}
+        {riskReward ? (
+          <div className="rounded-md border border-border bg-[var(--bg-1)] p-3 text-[11px]">
+            <div className="font-semibold text-[var(--text-1)]">
+              Risk / Reward&nbsp;&nbsp;1 : {riskReward.ratio.toFixed(1)}
+            </div>
+            <p className="mt-1 text-[var(--text-3)]">
+              For every $1 you risk down to your stop, you stand to make about ${riskReward.ratio.toFixed(2)} at your target. A ratio of 1:3 or higher is generally considered favorable.
+            </p>
           </div>
         ) : null}
       </div>

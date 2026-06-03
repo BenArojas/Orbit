@@ -11,6 +11,7 @@ const mockApi = vi.hoisted(() => ({
   moonmarketPlaceOrders: vi.fn(),
   moonmarketReplyOrder: vi.fn(),
   moonmarketModifyOrder: vi.fn(),
+  moonmarketAccountFunds: vi.fn(),
 }));
 
 const mockWs = vi.hoisted(() => ({
@@ -62,6 +63,14 @@ describe("OrderTicket", () => {
     mockApi.moonmarketPlaceOrders.mockReset();
     mockApi.moonmarketReplyOrder.mockReset();
     mockApi.moonmarketModifyOrder.mockReset();
+    mockApi.moonmarketAccountFunds.mockReset();
+    mockApi.moonmarketAccountFunds.mockResolvedValue({
+      account_id: "DU12345",
+      buying_power: 40000,
+      available_funds: 10000,
+      cash: 10000,
+      currency: "USD",
+    });
     mockWs.subscribe.mockReset();
     mockWs.unsubscribe.mockReset();
     mockWs.addHandler.mockReset();
@@ -256,5 +265,97 @@ describe("OrderTicket", () => {
       parentId: payload.orders[0].cOID,
       isSingleGroup: true,
     });
+  });
+
+  it("shows plain-English order type labels", () => {
+    useOrderTicketStore.getState().open({ conid: 265598, symbol: "AAPL", side: "SELL" });
+    renderTicket();
+
+    const select = screen.getByLabelText(/order type/i);
+    expect(select).toHaveTextContent("Trailing Stop");
+    expect(select).toHaveTextContent("Trailing Stop Limit");
+    expect(select).toHaveTextContent("Market");
+  });
+
+  it("reveals trailing fields and places a TRAIL order", async () => {
+    useOrderTicketStore.getState().open({ conid: 265598, symbol: "AAPL", side: "SELL" });
+    renderTicket();
+
+    fireEvent.change(screen.getByLabelText(/order type/i), { target: { value: "TRAIL" } });
+    expect(screen.getByLabelText(/trail by/i)).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText(/trail by/i), { target: { value: "%" } });
+    fireEvent.change(screen.getByLabelText(/trail distance/i), { target: { value: "5" } });
+    fireEvent.click(screen.getByRole("button", { name: /place/i }));
+
+    await waitFor(() => expect(mockApi.moonmarketPlaceOrders).toHaveBeenCalled());
+    const order = mockApi.moonmarketPlaceOrders.mock.calls[0][0].orders[0];
+    expect(order).toMatchObject({ orderType: "TRAIL", trailingType: "%", trailingAmt: 5 });
+  });
+
+  it("requires a limit offset for TRAILLMT", () => {
+    useOrderTicketStore.getState().open({ conid: 265598, symbol: "AAPL", side: "SELL" });
+    renderTicket();
+
+    fireEvent.change(screen.getByLabelText(/order type/i), { target: { value: "TRAILLMT" } });
+    expect(screen.getByLabelText(/limit offset/i)).toBeInTheDocument();
+  });
+
+  it("passes the outside-RTH flag on placement when checked", async () => {
+    useOrderTicketStore.getState().open({ conid: 265598, symbol: "AAPL", side: "BUY" });
+    renderTicket();
+
+    fireEvent.change(screen.getByLabelText(/quantity/i), { target: { value: "5" } });
+    fireEvent.change(screen.getByLabelText(/limit price/i), { target: { value: "180" } });
+    fireEvent.click(screen.getByLabelText(/outside regular trading hours/i));
+    fireEvent.click(screen.getByRole("button", { name: /place/i }));
+
+    await waitFor(() => expect(mockApi.moonmarketPlaceOrders).toHaveBeenCalled());
+    expect(mockApi.moonmarketPlaceOrders.mock.calls[0][0].orders[0]).toMatchObject({ outsideRTH: true });
+  });
+
+  it("shows a risk/reward readout when take profit and stop loss are set", () => {
+    useOrderTicketStore.getState().open({ conid: 265598, symbol: "AAPL", side: "BUY" });
+    renderTicket();
+
+    fireEvent.change(screen.getByLabelText(/limit price/i), { target: { value: "100" } });
+    fireEvent.click(screen.getByLabelText(/take profit/i));
+    fireEvent.change(screen.getByLabelText(/profit taker price/i), { target: { value: "130" } });
+    fireEvent.click(screen.getByLabelText(/stop loss/i));
+    fireEvent.change(screen.getByLabelText(/stop loss price/i), { target: { value: "90" } });
+
+    expect(screen.getByText(/risk \/ reward/i)).toHaveTextContent("1 : 3.0");
+    expect(screen.getByText(/for every \$1 you risk/i)).toBeInTheDocument();
+  });
+
+  it("computes share quantity from a cash amount", async () => {
+    useOrderTicketStore.getState().open({ conid: 265598, symbol: "AAPL", side: "BUY" });
+    renderTicket();
+
+    fireEvent.change(screen.getByLabelText(/limit price/i), { target: { value: "180" } });
+    fireEvent.change(screen.getByLabelText(/size by/i), { target: { value: "cash" } });
+    fireEvent.change(screen.getByLabelText(/cash amount/i), { target: { value: "900" } });
+
+    expect(screen.getByText(/≈ 5 shares/i)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /place/i }));
+    await waitFor(() => expect(mockApi.moonmarketPlaceOrders).toHaveBeenCalled());
+    expect(mockApi.moonmarketPlaceOrders.mock.calls[0][0].orders[0]).toMatchObject({ quantity: 5 });
+  });
+
+  it("computes share quantity from a percent of buying power", async () => {
+    useOrderTicketStore.getState().open({ conid: 265598, symbol: "AAPL", side: "BUY" });
+    renderTicket();
+
+    // buying_power 40000 → 10% = 4000 cash ; at 200/share → 20 shares
+    fireEvent.change(screen.getByLabelText(/limit price/i), { target: { value: "200" } });
+    fireEvent.change(screen.getByLabelText(/size by/i), { target: { value: "bp" } });
+    await screen.findByText(/\$40,000\.00/i);
+    fireEvent.change(screen.getByLabelText(/percent of buying power/i), { target: { value: "10" } });
+
+    expect(screen.getByText(/≈ 20 shares/i)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /place/i }));
+    await waitFor(() => expect(mockApi.moonmarketPlaceOrders).toHaveBeenCalled());
+    expect(mockApi.moonmarketPlaceOrders.mock.calls[0][0].orders[0]).toMatchObject({ quantity: 20 });
   });
 });
