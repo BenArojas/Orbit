@@ -26,6 +26,19 @@ def test_trail_accepts_trailing_fields():
     assert order.outside_rth is False
 
 
+def test_trailing_rejects_ioc_tif():
+    with pytest.raises(ValidationError):
+        MoonMarketOrderDraft(
+            conid=265598,
+            side="SELL",
+            quantity=5,
+            orderType="TRAIL",
+            tif="IOC",
+            trailingType="%",
+            trailingAmt=5,
+        )
+
+
 def test_traillmt_requires_price():
     with pytest.raises(ValidationError):
         MoonMarketOrderDraft(
@@ -39,7 +52,21 @@ def test_traillmt_requires_price():
         )
 
 
-def test_traillmt_accepts_price_and_outside_rth():
+def test_traillmt_requires_aux_price():
+    with pytest.raises(ValidationError):
+        MoonMarketOrderDraft(
+            conid=265598,
+            side="SELL",
+            quantity=5,
+            orderType="TRAILLMT",
+            tif="GTC",
+            trailingType="amt",
+            trailingAmt=2,
+            price=178.0,
+        )
+
+
+def test_traillmt_accepts_price_aux_price_and_outside_rth():
     order = MoonMarketOrderDraft(
         conid=265598,
         side="SELL",
@@ -49,9 +76,11 @@ def test_traillmt_accepts_price_and_outside_rth():
         trailingType="amt",
         trailingAmt=2,
         price=178.0,
+        auxPrice=183.0,
         outsideRTH=True,
     )
     assert order.price == 178.0
+    assert order.aux_price == 183.0
     assert order.outside_rth is True
 
 

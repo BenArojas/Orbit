@@ -419,12 +419,17 @@ class MoonMarketService:
             symbol=_first_text(row, ("symbol", "ticker"), f"#{conid}" if conid is not None else "") or None,
             description=_first_text(row, ("description", "orderDesc", "order_description", "orderDescription")) or None,
             side=_first_text(row, ("side", "buySell"), "UNKNOWN"),
-            order_type=_first_text(row, ("order_type", "orderType", "type")) or None,
+            order_type=_first_text(row, ("order_type", "orderType", "origOrderType", "type")) or None,
             quantity=self._optional_float(_first_value(row, ("quantity", "totalQuantity", "total_quantity"))),
             remaining_quantity=self._optional_float(
                 _first_value(row, ("remaining_quantity", "remainingQuantity", "remaining"))
             ),
             limit_price=self._optional_float(_first_value(row, ("limit_price", "limitPrice", "price"))),
+            aux_price=self._optional_float(_first_value(row, ("aux_price", "auxPrice"))),
+            trailing_type=_first_text(row, ("trailing_type", "trailingType")) or None,
+            trailing_amt=self._optional_float(_first_value(row, ("trailing_amt", "trailingAmt"))),
+            outside_rth=bool(_bool_value(_first_value(row, ("outside_rth", "outsideRTH", "outsideRth")))),
+            tif=_first_text(row, ("tif", "timeInForce")) or None,
             status=_first_text(row, ("status", "orderStatus")) or None,
         )
 

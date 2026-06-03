@@ -12,15 +12,28 @@ function normalizeSide(side: string): MoonMarketOrderSide {
 }
 
 function normalizeOrderType(orderType: string | null): MoonMarketOrderType {
-  const normalized = orderType?.toUpperCase();
+  const normalized = orderType?.toUpperCase().replace(/[\s-]+/g, "_");
   if (
     normalized === "MKT" ||
+    normalized === "MARKET" ||
     normalized === "LMT" ||
+    normalized === "LIMIT" ||
     normalized === "STP" ||
+    normalized === "STOP" ||
     normalized === "STP_LIMIT" ||
-    normalized === "TRAIL"
+    normalized === "STOP_LIMIT" ||
+    normalized === "TRAIL" ||
+    normalized === "TRAILING_STOP" ||
+    normalized === "TRAILLMT" ||
+    normalized === "TRAILING_STOP_LIMIT"
   ) {
-    return normalized;
+    if (normalized === "MARKET") return "MKT";
+    if (normalized === "LIMIT") return "LMT";
+    if (normalized === "STOP") return "STP";
+    if (normalized === "STOP_LIMIT") return "STP_LIMIT";
+    if (normalized === "TRAILING_STOP") return "TRAIL";
+    if (normalized === "TRAILING_STOP_LIMIT") return "TRAILLMT";
+    return normalized as MoonMarketOrderType;
   }
   return "LMT";
 }
@@ -35,8 +48,12 @@ function orderDraft(order: MoonMarketLiveOrder): MoonMarketOrderDraft | null {
     side: normalizeSide(order.side),
     quantity: order.quantity,
     orderType: normalizeOrderType(order.order_type),
-    tif: "DAY",
+    tif: order.tif === "GTC" || order.tif === "IOC" ? order.tif : "DAY",
     price: order.limit_price ?? undefined,
+    auxPrice: order.aux_price ?? undefined,
+    trailingType: order.trailing_type ?? undefined,
+    trailingAmt: order.trailing_amt ?? undefined,
+    outsideRTH: order.outside_rth || undefined,
   };
 }
 

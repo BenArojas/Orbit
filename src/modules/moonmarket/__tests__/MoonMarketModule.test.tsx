@@ -204,12 +204,16 @@ describe("MoonMarketModule", () => {
           order_id: "123456789",
           conid: 265598,
           symbol: "AAPL",
-          description: "BUY 5 AAPL LIMIT 180.00",
+          description: "BUY 5 AAPL TRAIL LIMIT 180.00",
           side: "BUY",
-          order_type: "LMT",
+          order_type: "TRAILLMT",
           quantity: 5,
           remaining_quantity: 5,
           limit_price: 180,
+          aux_price: 178,
+          trailing_type: "amt",
+          trailing_amt: 2,
+          outside_rth: true,
           status: "Submitted",
         },
       ],
@@ -403,7 +407,7 @@ describe("MoonMarketModule", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /live orders/i }));
 
-    expect(await screen.findByText(/BUY 5 AAPL LIMIT 180.00/i)).toBeInTheDocument();
+    expect(await screen.findByText(/BUY 5 AAPL TRAIL LIMIT 180.00/i)).toBeInTheDocument();
     expect(screen.getByText(/submitted/i)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /modify aapl order/i })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /cancel aapl order/i })).toBeInTheDocument();
@@ -454,7 +458,18 @@ describe("MoonMarketModule", () => {
       conid: 265598,
       symbol: "AAPL",
       side: "BUY",
-      draft: { conid: 265598, side: "BUY", quantity: 5, orderType: "LMT", tif: "DAY", price: 180 },
+      draft: {
+        conid: 265598,
+        side: "BUY",
+        quantity: 5,
+        orderType: "TRAILLMT",
+        tif: "DAY",
+        price: 180,
+        auxPrice: 178,
+        trailingType: "amt",
+        trailingAmt: 2,
+        outsideRTH: true,
+      },
     });
 
     fireEvent.click(screen.getByRole("button", { name: /cancel aapl order/i }));

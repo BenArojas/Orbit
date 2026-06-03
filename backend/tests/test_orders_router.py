@@ -277,6 +277,7 @@ def _traillmt_order(conid: int = 265598) -> dict:
         "trailingType": "amt",
         "trailingAmt": 2,
         "price": 178.0,
+        "auxPrice": 183.0,
     }
 
 
@@ -307,6 +308,7 @@ def test_place_traillmt_order_includes_limit_price():
     sent = fake.requests[-1][2]["json"]["orders"][0]
     assert sent["orderType"] == "TRAILLMT"
     assert sent["price"] == 178.0
+    assert sent["auxPrice"] == 183.0
     assert sent["trailingType"] == "amt"
     assert sent["trailingAmt"] == 2
     assert "outsideRTH" not in sent or sent["outsideRTH"] is False

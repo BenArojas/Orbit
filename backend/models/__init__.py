@@ -267,6 +267,11 @@ class MoonMarketLiveOrder(BaseModel):
     quantity: Optional[float] = None
     remaining_quantity: Optional[float] = None
     limit_price: Optional[float] = None
+    aux_price: Optional[float] = None
+    trailing_type: Optional[str] = None
+    trailing_amt: Optional[float] = None
+    outside_rth: bool = False
+    tif: Optional[str] = None
     status: Optional[str] = None
 
 
@@ -350,10 +355,14 @@ class MoonMarketOrderDraft(BaseModel):
     @model_validator(mode="after")
     def _validate_trailing(self) -> "MoonMarketOrderDraft":
         if self.order_type in ("TRAIL", "TRAILLMT"):
+            if self.tif == "IOC":
+                raise ValueError("Trailing orders require DAY or GTC time-in-force")
             if self.trailing_amt is None or self.trailing_type is None:
                 raise ValueError("Trailing orders require trailingAmt and trailingType")
             if self.order_type == "TRAILLMT" and self.price is None:
                 raise ValueError("TRAILLMT orders require a limit price")
+            if self.order_type == "TRAILLMT" and self.aux_price is None:
+                raise ValueError("TRAILLMT orders require auxPrice")
         return self
 
 

@@ -300,6 +300,37 @@ describe("OrderTicket", () => {
     expect(screen.getByLabelText(/limit offset/i)).toBeInTheDocument();
   });
 
+  it("hydrates trailing fields from a modify draft", () => {
+    useOrderTicketStore.getState().open({
+      mode: "modify",
+      orderId: "order-1",
+      conid: 265598,
+      symbol: "AAPL",
+      side: "SELL",
+      draft: {
+        conid: 265598,
+        side: "SELL",
+        quantity: 5,
+        orderType: "TRAILLMT",
+        tif: "GTC",
+        price: 178,
+        auxPrice: 183,
+        trailingType: "amt",
+        trailingAmt: 2,
+        outsideRTH: true,
+      },
+    });
+    renderTicket();
+
+    expect(screen.getByLabelText(/order type/i)).toHaveValue("TRAILLMT");
+    expect(screen.getByLabelText(/tif/i)).toHaveValue("GTC");
+    expect(screen.getByLabelText(/trail by/i)).toHaveValue("amt");
+    expect(screen.getByLabelText(/trail distance/i)).toHaveValue("2");
+    expect(screen.getByLabelText(/limit offset/i)).toHaveValue("178");
+    expect(screen.getByLabelText(/aux price/i)).toHaveValue("183");
+    expect(screen.getByLabelText(/outside regular trading hours/i)).toBeChecked();
+  });
+
   it("passes the outside-RTH flag on placement when checked", async () => {
     useOrderTicketStore.getState().open({ conid: 265598, symbol: "AAPL", side: "BUY" });
     renderTicket();

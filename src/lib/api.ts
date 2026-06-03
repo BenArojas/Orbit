@@ -240,6 +240,11 @@ export interface MoonMarketLiveOrder {
   quantity: number | null;
   remaining_quantity: number | null;
   limit_price: number | null;
+  aux_price: number | null;
+  trailing_type: MoonMarketTrailingType | null;
+  trailing_amt: number | null;
+  outside_rth: boolean;
+  tif: string | null;
   status: string | null;
 }
 

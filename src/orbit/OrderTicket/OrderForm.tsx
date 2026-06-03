@@ -137,9 +137,9 @@ export function OrderForm({ target }: OrderFormProps) {
     setStopLossEnabled(false);
     setProfitTakerPrice("");
     setStopLossPrice("");
-    setTrailingType("%");
-    setTrailingAmt("");
-    setOutsideRth(false);
+    setTrailingType(target.draft?.trailingType ?? "%");
+    setTrailingAmt(target.draft?.trailingAmt ? String(target.draft.trailingAmt) : "");
+    setOutsideRth(Boolean(target.draft?.outsideRTH));
     setSizeMode("shares");
     setCashAmount("");
     setBpPercent("");
@@ -168,6 +168,14 @@ export function OrderForm({ target }: OrderFormProps) {
   }, [addHandler, target.conid]);
 
   const isTrailing = orderType === "TRAIL" || orderType === "TRAILLMT";
+  const tifOptions = (Object.keys(TIF_LABELS) as Array<keyof typeof TIF_LABELS>)
+    .filter((code) => !isTrailing || code !== "IOC");
+
+  useEffect(() => {
+    if (isTrailing && tif === "IOC") {
+      setTif("DAY");
+    }
+  }, [isTrailing, tif]);
 
   // Derived computation order: entryReference → effectiveCash/cashShares/effectiveQuantity → baseOrder
   const entryReference = numberOrUndefined(price) ?? book.ask ?? quote?.lastPrice ?? undefined;
@@ -257,6 +265,18 @@ export function OrderForm({ target }: OrderFormProps) {
     if (!selectedAccountId || liveBlocked) return;
     if (effectiveQuantity <= 0) {
       toast.error("Quantity must be greater than zero.");
+      return;
+    }
+    if (isTrailing && !numberOrUndefined(trailingAmt)) {
+      toast.error("Trail distance is required.");
+      return;
+    }
+    if (orderType === "TRAILLMT" && !numberOrUndefined(price)) {
+      toast.error("Limit offset is required.");
+      return;
+    }
+    if (orderType === "TRAILLMT" && !numberOrUndefined(auxPrice)) {
+      toast.error("Aux price is required.");
       return;
     }
     const orders = buildOrders();
@@ -375,7 +395,7 @@ export function OrderForm({ target }: OrderFormProps) {
         <label className="block text-[11px] text-[var(--text-3)]">
           TIF
           <select aria-label="TIF" value={tif} onChange={(event) => setTif(event.target.value as MoonMarketTimeInForce)} className="mt-1 h-9 w-full rounded-md border border-border bg-[var(--bg-1)] px-2 text-[12px]">
-            {(Object.keys(TIF_LABELS) as Array<keyof typeof TIF_LABELS>).map((code) => (
+            {tifOptions.map((code) => (
               <option key={code} value={code}>{TIF_LABELS[code]}</option>
             ))}
           </select>
