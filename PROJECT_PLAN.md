@@ -1,7 +1,7 @@
 # Orbit — Project Plan
 
-> Last updated: 2026-06-01
-> Status: Parallax core v1 is code-complete on `dev` through the rules/fib-trigger closeout pass. Phase 8 E2E remains the v1 sign-off gate. Phase 9, Phase 10, Phase 11, and Phase 12 are merged to `dev`. Orbit consolidation Plans #1–#5 are merged to `dev`; Plan #6 (MoonMarket options chain + single-leg option orders) is implemented on `feature/moonmarket-options`, pending merge and IBKR paper-account smoke testing.
+> Last updated: 2026-06-03
+> Status: Parallax core v1 is code-complete on `dev` through the rules/fib-trigger closeout pass. Phase 8 E2E remains the v1 sign-off gate. Phase 9, Phase 10, Phase 11, and Phase 12 are merged to `dev`. Orbit consolidation Plans #1–#7 are merged to local `dev`: options chain, Inflect v1/basis recovery, and OrderTicket trailing/RTH/R-R/cash-sizing are now included. Live/manual IBKR paper-account smoke testing remains the release gate.
 ---
 
 ## IBKR Gateway — What We Learned (2026-04-14)
@@ -46,6 +46,7 @@ These are locked in. Don't revisit unless something breaks.
 | Ollama lifecycle | Detect-only, never auto-install | Guide user, don't decide for them |
 | Persistence | SQLite (local) | Survives restarts, shared across Orbit modules |
 | Market data | IBKR Client Portal Web API (port 5001) | Staying with this — TWS API rejected (no scanner, callback model). ibind client. |
+| TWS usage | v2 execution engine only | TWS is not the v1 market-data path. A future trading bot can require TWS connection because that is a separate execution subsystem. |
 | Multi-timeframe | Single chart + timeframe switcher | Simpler UX |
 | Background scanner | Runs while app is open only | No system tray mode |
 | Dynamic watchlists | Auto-populated by trigger rules | Separate from master IBKR watchlist |
@@ -60,9 +61,11 @@ These are locked in. Don't revisit unless something breaks.
 These notes are intentionally tracked in the project plan because they affect the next Orbit/MoonMarket implementation passes.
 
 - **Plan #6: MoonMarket Options Chain** ships single-leg option orders first. Selecting a call/put contract opens the shared OrderTicket as `OPTION`, but option brackets are disabled in the UI and rejected server-side if an option order payload tries to submit a multi-order group.
+- **OrderTicket enhancement pass:** trailing stops (`TRAIL`/`TRAILLMT`), outside-RTH, plain-English labels, risk/reward readout, cash sizing, and percent-of-buying-power sizing are merged to local `dev`.
 - **Deferred but required follow-up:** option bracket orders belong in a later MoonMarket trading-depth pass after single-leg option orders are validated against the IBKR paper account. Revisit this before any options trading polish or "bracket parity" work.
 - **Parallax v1 done gate:** no v2 feature is required before calling Parallax v1 done. The remaining gate is live/manual E2E validation plus a short polish pass listed under "Parallax v1 Sign-off Checklist".
 - **Compare-mode color customization:** still belongs in v1 polish because the hardcoded white stock line is not visible enough in light mode.
+- **v2 strategic direction:** the major v2 themes are (1) a TWS-gated trading bot / tiered execution engine, (2) optional cloud LLM + hybrid local/frontier agentic inference, and (3) the fib learning / confluence roadmap. These do not change v1's local-first/no-cloud release rule.
 
 ## Parallax v1 Sign-off Checklist (2026-06-01)
 
@@ -78,14 +81,15 @@ Parallax should be considered **code-complete**, but not fully signed off, until
 | Scanner/triggers live data | E2E OPEN | Validate scanner cadence, dedup, all 4 news-candle methods, watchlist move, and auto-return with IBKR watchlists. |
 | Settings + restart | E2E OPEN | Restart the app and verify theme, scan interval, model selection, watchlists, rules, locked fibs, drawings, and compare panes persist as intended. |
 | Fresh install | E2E OPEN | Clean macOS run-through and Windows run-through: gateway setup, auth, first chart, first scan, first trigger, first order preview. |
-| Typecheck baseline | KNOWN DEBT | `npm run typecheck` still fails in existing test files (`MarketPulse`, `useGateway`, `DrawingsLayer`, `screener.test`). Not caused by the trigger/fib work, but should be cleared before a strict release tag. |
+| Build/typecheck baseline | CODE COMPLETE | `npm run build` passes on local `dev`. Current release caveat is Vite bundle-size / mixed static-dynamic import warnings, not TypeScript failure. |
 
 **v2 items intentionally not required for Parallax v1:**
 
 - Fib learning algorithm and price-outcome grading.
 - Dedicated news-candle fib anchor selection.
 - Cross-indicator confluence engine beyond current prompt facts.
-- Cloud LLM providers.
+- Optional cloud LLM providers and hybrid local/cloud inference.
+- TWS-gated execution bot / tiered scale-out engine.
 - System tray scanner.
 - Inflect journal linkage.
 
@@ -102,15 +106,16 @@ This section tracks the newer Orbit work that renamed the former IBKR Hub concep
 | Plan #3 — MoonMarket Portfolio | DONE on `dev` | Re-stacked MoonMarket portfolio using the Orbit visual system. Left chart area keeps graph switching, right side keeps `PerformanceCards`, bottom duplicate holdings table replaced by selected-position inspector, `HistoricalDataCard` dropped. Key commit: `d88609b`. |
 | Plan #4 — MoonMarket Transactions | DONE on `dev` | Transactions ledger, transaction charts, live orders tab, and shared account selector integration. Key commit: `18c8f61`. |
 | Plan #5 — OrderTicket + conid nav bridge | DONE on `dev` | Paper-only MoonMarket order API, shared account store, shared right-side `OrderTicket`, stock single/bracket orders, live-order cancel/modify actions, MoonMarket↔Parallax conid navigation, Parallax trade entry. Key commits: `102826e`, `b5f06cd`, `ed4115f`, `19aa10b`, `2e994e5`, `4cd45c2`, `42bc9d5`, `90952cc`, `db76757`. |
-| Plan #6 — MoonMarket Options Chain | CODE COMPLETE on `feature/moonmarket-options` | Adds `/moonmarket/options/*` backend read API, option-chain client/types/hooks, MoonMarket Options route/tab, lazy per-strike call/put loading, Parallax and Portfolio options entry points, and shared OrderTicket option metadata. Single-leg option orders only; option brackets are blocked server-side and hidden in the UI. Needs merge to `dev` and IBKR paper-account smoke testing. Key branch commits: `4e90495`, `6841e68`, `1a923eb`, `e256554`, `782184f`, `b589364`, `7fd8c0a`. |
+| Plan #6 — MoonMarket Options Chain | DONE on local `dev` | Adds `/moonmarket/options/*` backend read API, option-chain client/types/hooks, MoonMarket Options route/tab, lazy per-strike call/put loading, Parallax and Portfolio options entry points, and shared OrderTicket option metadata. Single-leg option orders only; option brackets are blocked server-side and hidden in the UI. Needs IBKR paper-account smoke testing. Key commits: `4e90495`, `6841e68`, `1a923eb`, `e256554`, `782184f`, `b589364`, `7fd8c0a`, plus option-contract surface fixes in `4729648`. |
+| Plan #7 — OrderTicket trailing/RTH/R-R/cash sizing | DONE on local `dev` | Adds IBKR-native `TRAIL`/`TRAILLMT`, trailing amount/type validation, outside-RTH, plain-English labels, risk/reward readout, cash sizing, percent-of-buying-power sizing via `/moonmarket/accounts/{account_id}/funds`, and IBKR-aligned modify hydration for trailing live orders. Key commits: `dbad056` through `33a05d4`. |
 
-**Next Orbit work after Plan #6 merge:**
+**Next Orbit work after current local `dev`:**
 
-- Manual IBKR paper validation for options chain data and single-leg option preview/place.
+- Manual IBKR paper validation for options chain data, single-leg option preview/place, and enhanced stock order-ticket flows.
 - Option bracket order design/implementation after single-leg validation.
 - Remaining Orbit polish pass: shared settings, visual consistency, build/distribution checks, and any unmerged roadmap cleanup.
 
-## Order Placement Status + Test Plan (2026-06-01)
+## Order Placement Status + Test Plan (2026-06-03)
 
 Current implementation is intentionally **paper-account only** for mutations.
 
@@ -122,7 +127,11 @@ Current implementation is intentionally **paper-account only** for mutations.
 | Reply/confirm order | DONE | Paper accounts only. Required for IBKR warning/reply flows. |
 | Cancel live order | DONE | Paper accounts only. Available from MoonMarket live orders. |
 | Modify live order | DONE | Paper accounts only. Opens shared ticket with an existing order context. |
-| Option single-leg order | CODE COMPLETE | Implemented with Plan #6 on `feature/moonmarket-options`; needs merge and IBKR paper-account smoke test. |
+| Trailing stop / trailing stop limit | DONE | Supports `TRAIL` and `TRAILLMT`. Trailing orders reject `IOC`; `TRAILLMT` requires both `price` and `auxPrice` per IBKR order payload rules. |
+| Outside RTH | DONE | Optional flag on the shared order draft and IBKR payload. Defaults off. |
+| Cash / buying-power sizing | DONE | Frontend computes share quantity from entered cash or percent of IBKR buying power. IBKR still receives `quantity`. |
+| Risk/reward readout | DONE | Informational only; never blocks placement. Shown when bracket TP/SL inputs and an entry reference are available. |
+| Option single-leg order | CODE COMPLETE | Implemented with Plan #6 and merged to local `dev`; needs IBKR paper-account smoke test. |
 | Option bracket order | DEFERRED | Explicitly rejected server-side until single-leg option orders are validated. |
 | Live-account order placement | BLOCKED BY DESIGN | v1 blocks mutations on live accounts. Revisit only after paper flow is tested and a separate live-trading safety design is approved. |
 
@@ -136,9 +145,12 @@ Manual order-placement smoke test:
 6. Confirm the order appears in MoonMarket Transactions / live orders.
 7. Modify the order price from the live-orders row.
 8. Cancel the order from the live-orders row.
-9. Repeat with a bracket order: entry, profit target, stop. Verify all child payload fields are present.
-10. Switch to a live account and verify place/confirm/cancel/modify are blocked in UI and rejected by the backend.
-11. After Plan #6 is merged, repeat preview/place for one liquid single-leg option contract in paper only.
+9. Repeat with a bracket order: entry, profit target, stop. Verify all child payload fields are present and the R/R readout matches the entered prices.
+10. Preview/place a tiny `TRAIL` order in paper with `DAY` or `GTC`.
+11. Preview/place a tiny `TRAILLMT` order in paper with trail amount/type, limit offset, and aux price.
+12. Test cash sizing and percent-of-buying-power sizing against a known buying-power response.
+13. Switch to a live account and verify place/confirm/cancel/modify are blocked in UI and rejected by the backend.
+14. Repeat preview/place for one liquid single-leg option contract in paper only.
 
 ---
 
@@ -549,19 +561,62 @@ The Compare button on the Analysis toolbar replaces the chart area with a stack 
 - `uv run pytest tests/test_trigger_conditions_eval.py -q`
 - `./node_modules/.bin/vite build`
 
-**Known verification limitation:** `npm run typecheck` still fails on unrelated baseline test typing issues listed in the v1 sign-off checklist.
+**Known verification limitation:** latest local `npm run build` passes, but Vite still warns about the large main bundle and `src/store/chart.ts` being both statically and dynamically imported.
 
 ---
 
 ### Future (v2 — Not In Scope Now)
 
-- Fib learning algorithm: price-outcome tracking, `fib_analyses`, `fib_outcomes`, evolving weights, optional AI-analysis feedback.
-- Cross-indicator confluence engine: explicit fib/EMA/Bollinger/VWAP overlap detection before the prompt layer.
-- News-candle-aware fib anchor selection: earnings/news candles become preferred swing anchors when criteria match.
+These are deliberately outside the v1 release gate. v1 remains local-first and
+paper/live-safety guarded. v2 can add optional cloud and TWS-mode capabilities,
+but only behind explicit settings and connection gates.
+
+**Primary v2 themes**
+
+1. **TWS-gated trading bot / execution engine**
+   - Only available when TWS is connected and explicitly selected by the user.
+   - Separate from the current Client Portal Web API decision-support path.
+   - Starts as a paper-only execution engine before any live-trading path.
+   - Handles tiered scale-outs, trailing/advanced order management, GTD, MOC/LOC,
+     and multi-leg option strategy execution after single-leg validation.
+   - Must have its own safety design: live-account guardrails, max order size,
+     max daily loss, manual arming, kill switch, audit log, and replayable order
+     intent history.
+
+2. **Cloud LLM provider support**
+   - Optional providers: Anthropic, OpenAI, and any later frontier model provider
+     that fits the same interface.
+   - Local Ollama remains the default and fallback.
+   - API keys stay local: encrypted at rest, never logged, never sent anywhere
+     except the chosen provider.
+   - Add per-provider token budgets, streaming parity, rate-limit handling,
+     usage/cost logging, and optional monthly cost caps.
+
+3. **Hybrid agentic inference**
+   - Split work between local and cloud models instead of treating provider choice
+     as one global toggle.
+   - Local model handles cheap/private/repetitive tasks: summarizing cached market
+     context, extracting facts, validating schemas, ranking watchlist candidates,
+     and pre-filtering candidate plans.
+   - Frontier cloud model handles higher-value reasoning: trade thesis critique,
+     multi-step plan synthesis, disagreement resolution, and final natural-language
+     analysis.
+   - Add a router that chooses model/provider per task based on privacy, cost,
+     latency, context size, and required reasoning quality.
+   - Every cloud call must receive structured facts, not raw uncontrolled app
+     state. The prompt-fact layer remains the boundary.
+
+**Other v2 roadmap items**
+
+- Fib learning algorithm: price-outcome tracking, `fib_analyses`, `fib_outcomes`,
+  evolving weights, optional AI-analysis feedback.
+- Cross-indicator confluence engine: explicit fib/EMA/Bollinger/VWAP overlap
+  detection before the prompt layer.
+- News-candle-aware fib anchor selection: earnings/news candles become preferred
+  swing anchors when criteria match.
 - Watchlist-aware / peer-relative AI analysis beyond the current prompt framing.
-- Cloud LLM integration (Anthropic / OpenAI) for better analysis.
 - Multi-account support.
-- Options chain analysis and option bracket parity after single-leg paper validation.
+- Option bracket parity after single-leg paper validation.
 - System tray mode with persistent scanning.
 - Ichimoku Cloud, Supertrend, 52-week indicators.
 - Export analysis as PDF/image.
@@ -593,11 +648,17 @@ journal hooks (parallax-hub boundary respected).
   monthly P&L calendar (Sunday-start grid + weekly rail), round-trip trades
   table with OPEN/CLOSED filter, trade-detail drawer (stats + fills), and a
   setup/notes/tags journal editor. Zustand view store + TanStack Query hooks.
+- **Basis recovery pass**: incomplete-basis trades now surface as repairable
+  instead of becoming phantom shorts. The app can synthesize starting lots from
+  IBKR Performance & Reports data, show basis-lot status, let the user manually
+  repair basis, search trades by symbol, and clear Inflect-owned storage when a
+  reset is needed.
 - **Tests**: 50 backend (matcher, calendar, sync gate, router, DB layer) +
-  frontend (store, hooks, formatters, calendar grid, trades table). Full
-  `npm test` and `tsc` green.
+  frontend coverage for the original journal, plus added basis-recovery,
+  manual-basis, symbol-search, and storage-cleanup regression coverage.
+  Latest targeted suites and frontend build are green on local `dev`.
 
-### Locked decisions (D1–D9)
+### Locked decisions (D1–D10)
 
 - **D1.** Trades derived on demand from `fills` via FIFO; never persisted in v1.
 - **D2.** Stable `trade_id` = `{account_id}:{conid}:{first_open_execution_id}`.
@@ -614,6 +675,8 @@ journal hooks (parallax-hub boundary respected).
 - **D8.** Options ride the same matcher via sec_type/conid (single-leg).
 - **D9.** R-multiple deferred to v2 (no risk/stop captured); detail view leaves a
   slot, value always null.
+- **D10.** Incomplete basis is a first-class repair state, not evidence of a
+  short. Repairs must remain auditable because they affect derived realized P&L.
 
 ### v2 follow-ups
 
@@ -640,4 +703,6 @@ journal hooks (parallax-hub boundary respected).
 | Q6 | How to calculate Market Strength gauge composite? | 3.2 | OPEN — proposal: advance/decline + % above 200 EMA + McClellan |
 | Q7 | ~~Sector Rotation RRG calculation?~~ | 3.4 | RESOLVED: standard JdK method |
 | Q8 | ~~Can Ollama be bundled into Tauri?~~ | 4.12 | RESOLVED: detect-only, never auto-install. Guide user instead |
-| Q9 | ~~TWS API or IBKR Client Portal Web API?~~ | ALL | RESOLVED: staying with Client Portal Web API. TWS API rejected — no scanner endpoint, callback model would require full backend rewrite. |
+| Q9 | ~~TWS API or IBKR Client Portal Web API for v1 market data/order ticket?~~ | ALL | RESOLVED: v1 stays with Client Portal Web API. TWS is not the v1 data path. |
+| Q10 | What should the TWS-gated trading bot support first? | v2 execution engine | OPEN — likely paper-only tiered scale-out engine first, then advanced order types, then live-account safety review. |
+| Q11 | How should hybrid local/cloud inference route tasks? | v2 AI | OPEN — define task classes, privacy/cost thresholds, provider fallback, and when frontier models are allowed to override local analysis. |
