@@ -10,11 +10,12 @@ from __future__ import annotations
 import logging
 import time
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Optional
 
 from exceptions import IBKRError
 from models import (
     MoonMarketAccount,
+    MoonMarketAccountFunds,
     MoonMarketAccountsResponse,
     MoonMarketAllocationItem,
     MoonMarketLiveOrder,
@@ -271,6 +272,36 @@ class MoonMarketService:
             daily_pnl_percent=0.0,
             currency=currency.upper(),
         )
+
+    async def account_funds(self, account_id: str) -> MoonMarketAccountFunds:
+        resolved = await self._resolve_account_id(account_id)
+        payload = await self.ibkr._request("GET", f"/portfolio/{resolved}/summary")
+        summary = payload if isinstance(payload, dict) else {}
+        return MoonMarketAccountFunds(
+            account_id=resolved,
+            buying_power=self._summary_amount(summary, ("buyingpower", "buyingPower")),
+            available_funds=self._summary_amount(summary, ("availablefunds", "availableFunds")),
+            cash=self._summary_amount(summary, ("totalcashvalue", "totalCashValue", "cashbalance")),
+            currency=self._summary_currency(summary),
+        )
+
+    @staticmethod
+    def _summary_amount(summary: dict[str, Any], keys: tuple[str, ...]) -> Optional[float]:
+        for key in keys:
+            value = summary.get(key)
+            if isinstance(value, dict):
+                value = value.get("amount")
+            if isinstance(value, (int, float)):
+                return float(value)
+        return None
+
+    @staticmethod
+    def _summary_currency(summary: dict[str, Any]) -> str:
+        for key in ("buyingpower", "availablefunds", "totalcashvalue"):
+            value = summary.get(key)
+            if isinstance(value, dict) and isinstance(value.get("currency"), str):
+                return value["currency"]
+        return "USD"
 
     async def _fetch_all_periods(self, account_id: str) -> Any:
         cache_key = (id(self.ibkr), account_id)

@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from deps import get_db, require_ibkr_auth
 from models import (
+    MoonMarketAccountFunds,
     MoonMarketAccountsResponse,
     MoonMarketLiveOrdersResponse,
     MoonMarketPerformanceResponse,
@@ -27,6 +28,17 @@ async def moonmarket_accounts(
     ibkr: IBKRService = Depends(require_ibkr_auth),
 ) -> MoonMarketAccountsResponse:
     return await MoonMarketService(ibkr).accounts()
+
+
+@router.get("/accounts/{account_id}/funds", response_model=MoonMarketAccountFunds)
+async def moonmarket_account_funds(
+    account_id: str,
+    ibkr=Depends(require_ibkr_auth),
+) -> MoonMarketAccountFunds:
+    try:
+        return await MoonMarketService(ibkr).account_funds(account_id)
+    except MoonMarketAccountNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @router.get("/portfolio", response_model=MoonMarketPortfolioResponse)

@@ -150,6 +150,15 @@ class MoonMarketAccountsResponse(BaseModel):
     selected_account_id: Optional[str] = None
 
 
+class MoonMarketAccountFunds(BaseModel):
+    """Normalized buying-power / cash snapshot for one account."""
+    account_id: str
+    buying_power: Optional[float] = None
+    available_funds: Optional[float] = None
+    cash: Optional[float] = None
+    currency: str = "USD"
+
+
 class MoonMarketPosition(BaseModel):
     """One normalized portfolio position keyed by IBKR conid."""
     conid: int
