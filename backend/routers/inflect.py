@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from deps import get_db, get_ibkr, require_ibkr_auth
 from models.inflect import (
+    BasisAuditResponse,
     BasisLot,
     BasisLotUpsertRequest,
     InflectBackfillStatusResponse,
@@ -131,6 +132,18 @@ async def inflect_basis_lots(
 ) -> list[BasisLot]:
     try:
         return await service.list_basis_lots(account_id=account_id, conid=conid)
+    except MoonMarketAccountNotFoundError as exc:
+        raise _account_not_found(exc) from exc
+
+
+@router.get("/basis-audit", response_model=BasisAuditResponse)
+async def inflect_basis_audit(
+    account_id: str | None = Query(default=None),
+    conid: int = Query(...),
+    service: InflectService = Depends(require_inflect_service),
+) -> BasisAuditResponse:
+    try:
+        return await service.basis_audit(account_id=account_id, conid=conid)
     except MoonMarketAccountNotFoundError as exc:
         raise _account_not_found(exc) from exc
 

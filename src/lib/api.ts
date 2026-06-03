@@ -445,6 +445,47 @@ export interface InflectBackfillStatusResponse {
   items: InflectBackfillStatusItem[];
 }
 
+export interface BasisLot {
+  id: number;
+  account_id: string;
+  conid: number;
+  side: "LONG" | "SHORT";
+  quantity: number;
+  entry_date: string;
+  entry_price: number;
+  commission: number | null;
+  note: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+export interface BasisLotUpsertRequest {
+  conid: number;
+  side: "LONG" | "SHORT";
+  quantity: number;
+  entry_date: string;
+  entry_price: number;
+  commission?: number | null;
+  note?: string | null;
+}
+
+export interface BasisAuditEntry {
+  id: number;
+  account_id: string;
+  conid: number;
+  action: string;
+  source: string | null;
+  before_json: string | null;
+  after_json: string | null;
+  created_at: string;
+}
+
+export interface BasisAuditResponse {
+  account_id: string;
+  conid: number;
+  items: BasisAuditEntry[];
+}
+
 /**
  * news_candle detection methods (Phase 6.6). Only meaningful when
  * `indicator === "news_candle"`.
@@ -1506,6 +1547,58 @@ export const api = {
     return request<InflectBackfillStatusResponse>(
       "GET",
       `/inflect/backfill-status?${params.toString()}`,
+      undefined,
+      signal,
+    );
+  },
+
+  inflectBasisLots: (
+    opts: { accountId: string; conid: number },
+    signal?: AbortSignal,
+  ) => {
+    const params = new URLSearchParams({
+      account_id: opts.accountId,
+      conid: String(opts.conid),
+    });
+    return request<BasisLot[]>(
+      "GET",
+      `/inflect/basis-lots?${params.toString()}`,
+      undefined,
+      signal,
+    );
+  },
+
+  inflectCreateBasisLot: (accountId: string, body: BasisLotUpsertRequest) =>
+    request<BasisLot>(
+      "POST",
+      `/inflect/basis-lots?account_id=${encodeURIComponent(accountId)}`,
+      body,
+    ),
+
+  inflectUpdateBasisLot: (lotId: number, accountId: string, body: BasisLotUpsertRequest) =>
+    request<BasisLot>(
+      "PUT",
+      `/inflect/basis-lots/${lotId}?account_id=${encodeURIComponent(accountId)}`,
+      body,
+    ),
+
+  inflectDeleteBasisLot: (lotId: number, accountId: string) =>
+    request<{ deleted: boolean }>(
+      "DELETE",
+      `/inflect/basis-lots/${lotId}?account_id=${encodeURIComponent(accountId)}`,
+    ),
+
+  inflectBasisAudit: (
+    opts: { accountId: string; conid: number },
+    signal?: AbortSignal,
+  ) => {
+    const params = new URLSearchParams({
+      account_id: opts.accountId,
+      conid: String(opts.conid),
+    });
+    return request<BasisAuditResponse>(
+      "GET",
+      `/inflect/basis-audit?${params.toString()}`,
       undefined,
       signal,
     );

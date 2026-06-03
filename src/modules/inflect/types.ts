@@ -10,9 +10,17 @@ import type {
   InflectTradeStatus,
   InflectTradesResponse,
   InflectWeekRollup,
+  BasisAuditEntry,
+  BasisAuditResponse,
+  BasisLot,
+  BasisLotUpsertRequest,
 } from "@/lib/api";
 
 export type {
+  BasisAuditEntry,
+  BasisAuditResponse,
+  BasisLot,
+  BasisLotUpsertRequest,
   InflectCalendarDay,
   InflectCalendarResponse,
   InflectFill,

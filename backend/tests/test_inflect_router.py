@@ -325,6 +325,51 @@ def test_backfill_status_returns_queue_items_and_filters_by_conid():
     assert [item["conid"] for item in filtered.json()["items"]] == [202]
 
 
+def test_basis_audit_returns_rows_for_conid():
+    svc = _service()
+    svc.db._conn.execute(
+        """
+        INSERT INTO basis_audit
+            (account_id, conid, action, source, before_json, after_json)
+        VALUES
+            (?, ?, ?, ?, ?, ?),
+            (?, ?, ?, ?, ?, ?),
+            (?, ?, ?, ?, ?, ?)
+        """,
+        (
+            "DU1",
+            101,
+            "lot_create",
+            "MANUAL",
+            "[]",
+            '[{"status":"CLOSED"}]',
+            "DU1",
+            202,
+            "auto_backfill",
+            "PA_TRANSACTION",
+            "[]",
+            "[]",
+            "DU2",
+            101,
+            "lot_delete",
+            "MANUAL",
+            "[]",
+            "[]",
+        ),
+    )
+    svc.db._conn.commit()
+
+    resp = _client(svc).get("/inflect/basis-audit?account_id=DU1&conid=101")
+
+    assert resp.status_code == 200
+    assert resp.json()["account_id"] == "DU1"
+    assert resp.json()["conid"] == 101
+    assert len(resp.json()["items"]) == 1
+    assert resp.json()["items"][0]["action"] == "lot_create"
+    assert resp.json()["items"][0]["source"] == "MANUAL"
+    assert resp.json()["items"][0]["after_json"] == '[{"status":"CLOSED"}]'
+
+
 def test_trade_detail_found_and_missing():
     svc = _service()
     trade_id = _seed_round_trip(svc.db)

@@ -24,6 +24,14 @@ vi.mock("../JournalEditor", () => ({
   JournalEditor: () => <div>Journal editor</div>,
 }));
 
+vi.mock("../BasisLotEditor", () => ({
+  BasisLotEditor: () => <div>Basis lot editor</div>,
+}));
+
+vi.mock("../BasisAuditTrail", () => ({
+  BasisAuditTrail: () => <div>Basis audit trail</div>,
+}));
+
 function makeTrade(over: Partial<InflectTrade> = {}): InflectTrade {
   return {
     trade_id: "DU1:265598:exec-1",
@@ -129,6 +137,8 @@ describe("TradeDetail", () => {
       "href",
       "#basis-repair",
     );
+    expect(screen.getByText("Basis lot editor")).toBeInTheDocument();
+    expect(screen.getByText("Basis audit trail")).toBeInTheDocument();
     expect(screen.queryByText("UNKNOWN")).not.toBeInTheDocument();
     expect(screen.queryByText("INCOMPLETE_BASIS")).not.toBeInTheDocument();
     expect(screen.getByText("Still needs basis")).toBeInTheDocument();

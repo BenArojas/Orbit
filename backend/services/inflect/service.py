@@ -28,6 +28,8 @@ from zoneinfo import ZoneInfo
 from constants.inflect import SETUP_OPTIONS, TRADING_DAY_TZ
 from exceptions import IBKRAuthError, IBKRConnectionError, IBKRRateLimitError
 from models.inflect import (
+    BasisAuditEntry,
+    BasisAuditResponse,
     BasisLot,
     BasisLotUpsertRequest,
     InflectBackfillStatusItem,
@@ -247,6 +249,26 @@ class InflectService:
             if conid is None or int(row["conid"]) == int(conid)
         ]
         return InflectBackfillStatusResponse(account_id=resolved, items=items)
+
+    async def basis_audit(
+        self, account_id: str | None, conid: int
+    ) -> BasisAuditResponse:
+        resolved = await self._resolve_account(account_id)
+        target_conid = int(conid)
+        rows = await self.db.fetch_all(
+            """
+            SELECT *
+            FROM basis_audit
+            WHERE account_id = ? AND conid = ?
+            ORDER BY id DESC
+            """,
+            (resolved, target_conid),
+        )
+        return BasisAuditResponse(
+            account_id=resolved,
+            conid=target_conid,
+            items=[BasisAuditEntry(**row) for row in rows],
+        )
 
     async def sync(self, account_id: str | None) -> InflectSyncResponse:
         """Force a fills sync via MoonMarket's ibkr → upsert_fills path."""

@@ -4,7 +4,9 @@ import { cn } from "@/lib/utils";
 import { useInflectBackfill } from "@/hooks/useInflectBackfill";
 import { useInflectTrade } from "@/hooks/useTradeJournal";
 import { BackfillStatus } from "./BackfillStatus";
+import { BasisAuditTrail } from "./BasisAuditTrail";
 import { BasisBadge } from "./BasisBadge";
+import { BasisLotEditor } from "./BasisLotEditor";
 import { JournalEditor } from "./JournalEditor";
 import {
   formatHold,
@@ -196,6 +198,17 @@ export function TradeDetail({
                 }}
               />
             ) : null}
+
+            {needsBasis ? (
+              <BasisLotEditor
+                accountId={accountId}
+                conid={trade.conid}
+                defaultQuantity={trade.qty}
+                defaultSide={trade.direction === "SHORT" ? "SHORT" : "LONG"}
+              />
+            ) : null}
+
+            <BasisAuditTrail accountId={accountId} conid={trade.conid} />
 
             <div>
               <div className="mb-1 text-[10px] uppercase text-[var(--text-3)]">

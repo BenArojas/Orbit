@@ -201,6 +201,30 @@ class InflectBackfillStatusResponse(BaseModel):
 
 
 # ═══════════════════════════════════════════════════════════════
+#  Basis audit
+# ═══════════════════════════════════════════════════════════════
+
+
+class BasisAuditEntry(BaseModel):
+    """One automatic or manual basis-recovery audit event."""
+    id: int
+    account_id: str
+    conid: int
+    action: str
+    source: Optional[str] = None
+    before_json: Optional[str] = None
+    after_json: Optional[str] = None
+    created_at: str
+
+
+class BasisAuditResponse(BaseModel):
+    """Response from GET /inflect/basis-audit."""
+    account_id: str
+    conid: int
+    items: list[BasisAuditEntry]
+
+
+# ═══════════════════════════════════════════════════════════════
 #  Manual basis lots
 # ═══════════════════════════════════════════════════════════════
 
