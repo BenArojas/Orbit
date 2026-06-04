@@ -933,4 +933,16 @@ describe("OrderTicket", () => {
     await waitFor(() => expect(mockToast.error).toHaveBeenCalledWith("Stop price is required."));
     expect(mockApi.moonmarketPlaceOrders).not.toHaveBeenCalled();
   });
+
+  it("renders the error card and no success state when IBKR returns a rejection row", async () => {
+    const { placeOrder } = renderTicket({
+      placeResult: { result: [{ error: "10/Order rejected: insufficient margin" }] },
+    });
+    await placeOrder();
+    expect(await screen.findByText(/Order rejected: insufficient margin/)).toBeInTheDocument();
+    expect(screen.queryByText("Order Submitted")).not.toBeInTheDocument();
+    expect(screen.queryByText("Order Tracker")).not.toBeInTheDocument();
+    expect(screen.queryByText("Order Filled")).not.toBeInTheDocument();
+    expect(screen.queryByText("Close")).not.toBeInTheDocument();
+  });
 });
