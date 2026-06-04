@@ -7,7 +7,7 @@ function formatPrice(value: number | null | undefined): string {
   return typeof value === "number" && Number.isFinite(value) ? value.toFixed(2) : "--";
 }
 
-function selectStrikesAroundPrice(strikes: number[], price: number | null | undefined, count: number): Set<number> {
+export function selectStrikesAroundPrice(strikes: number[], price: number | null | undefined, count: number): Set<number> {
   if (!strikes.length || count <= 0) {
     return new Set();
   }
@@ -16,14 +16,9 @@ function selectStrikesAroundPrice(strikes: number[], price: number | null | unde
   }
 
   const upperIndex = strikes.findIndex((strike) => strike >= price);
-  const nearestIndex = (() => {
-    if (upperIndex === -1) return strikes.length - 1;
-    if (upperIndex === 0) return 0;
-    const lowerIndex = upperIndex - 1;
-    return Math.abs(strikes[upperIndex] - price) < Math.abs(price - strikes[lowerIndex])
-      ? upperIndex
-      : lowerIndex;
-  })();
+  // When the spot is not exactly on a strike, bias the centre to the upper
+  // (at-or-above-spot) strike so the auto-load window leans toward the money.
+  const nearestIndex = upperIndex === -1 ? strikes.length - 1 : upperIndex;
   const maxStart = Math.max(0, strikes.length - count);
   const start = Math.min(Math.max(0, nearestIndex - Math.floor(count / 2)), maxStart);
   return new Set(strikes.slice(start, start + count));
@@ -38,6 +33,8 @@ export function OptionsChainTable({
   allStrikes,
   underlyingPrice,
   underlyingPriceLoading,
+  underlyingPriceError,
+  onRetryQuote,
   loading,
   error,
   onSelect,
@@ -50,11 +47,13 @@ export function OptionsChainTable({
   allStrikes: number[];
   underlyingPrice: number | null | undefined;
   underlyingPriceLoading: boolean;
+  underlyingPriceError?: boolean;
+  onRetryQuote?: () => void;
   loading: boolean;
   error: unknown;
   onSelect: (option: MoonMarketOptionContract) => void;
 }) {
-  const autoLoadStrikes = underlyingPriceLoading
+  const autoLoadStrikes = underlyingPriceLoading || underlyingPriceError
     ? new Set<number>()
     : selectStrikesAroundPrice(allStrikes, underlyingPrice, AUTO_LOAD_STRIKE_COUNT);
 
@@ -109,6 +108,14 @@ export function OptionsChainTable({
         <div className="p-4 text-[12px] text-[var(--clr-red)]">Options chain is unavailable.</div>
       ) : loading ? (
         <div className="p-4 text-[12px] text-[var(--text-3)]">Loading chain data...</div>
+      ) : underlyingPriceError ? (
+        <div className="p-4 text-[12px] text-[var(--clr-orange)]">
+          Couldn't determine spot price — pick a strike to load, or
+          <button type="button" onClick={() => onRetryQuote?.()} className="ml-1 underline">
+            retry
+          </button>
+          .
+        </div>
       ) : allStrikes.length ? (
         <div className="max-h-[calc(100vh-220px)] overflow-y-auto">
           {allStrikes.map((strike) => (

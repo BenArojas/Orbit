@@ -43,7 +43,8 @@ function resultRows(result: unknown): Array<Record<string, unknown>> {
 
 function firstReplyId(result: unknown): string | null {
   for (const row of resultRows(result)) {
-    if (typeof row.id === "string") return row.id;
+    if (typeof row.id === "string" && row.id.trim()) return row.id;
+    if (typeof row.id === "number") return String(row.id);
   }
   return null;
 }
@@ -201,6 +202,7 @@ export function OrderForm({ target }: OrderFormProps) {
   const [trackedOrder, setTrackedOrder] = useState<TrackedOrder | null>(null);
   const [sideTouched, setSideTouched] = useState(false);
   const filledToastRef = useRef<string | null>(null);
+  const hasInteractedRef = useRef(false);
 
   const previewMutation = usePreviewOrder();
   const placeMutation = usePlaceOrder();
@@ -292,10 +294,11 @@ export function OrderForm({ target }: OrderFormProps) {
     setTrackedOrder(null);
     setSideTouched(false);
     filledToastRef.current = null;
+    hasInteractedRef.current = false;
   }, [target]);
 
   useEffect(() => {
-    if (target.side || sideTouched || assetClass !== "STK") return;
+    if (target.side || sideTouched || hasInteractedRef.current || assetClass !== "STK") return;
     const heldPosition = portfolioQuery.data?.positions.find((position) => (
       position.conid === target.conid && position.quantity !== 0
     ));
@@ -550,10 +553,12 @@ export function OrderForm({ target }: OrderFormProps) {
       {
         onSuccess: (result) => {
           setActionResult(result);
-          setReplyId(firstReplyId(result));
           const orderId = firstOrderId(result);
           if (orderId) {
+            setReplyId(null);
             setTrackedOrder({ orderId, order: orders[0], submittedAt: Date.now() });
+          } else {
+            setReplyId(firstReplyId(result));
           }
           refreshAccountAfterSubmitted(result);
         },
@@ -659,18 +664,18 @@ export function OrderForm({ target }: OrderFormProps) {
         {sizeMode === "shares" ? (
           <label className="block text-[11px] font-medium text-[var(--text-2)]">
             Quantity
-            <input aria-label="Quantity" value={quantity} onChange={(event) => setQuantity(event.target.value)} className="mt-1 h-9 w-full rounded-md border border-border bg-[var(--bg-1)] px-2 text-[12px] text-[var(--text-1)]" />
+            <input aria-label="Quantity" value={quantity} onChange={(event) => { hasInteractedRef.current = true; setQuantity(event.target.value); }} className="mt-1 h-9 w-full rounded-md border border-border bg-[var(--bg-1)] px-2 text-[12px] text-[var(--text-1)]" />
           </label>
         ) : sizeMode === "cash" ? (
           <label className="block text-[11px] font-medium text-[var(--text-2)]">
             Cash Amount
-            <input aria-label="Cash amount" value={cashAmount} onChange={(event) => setCashAmount(event.target.value)} className="mt-1 h-9 w-full rounded-md border border-border bg-[var(--bg-1)] px-2 text-[12px] text-[var(--text-1)]" />
+            <input aria-label="Cash amount" value={cashAmount} onChange={(event) => { hasInteractedRef.current = true; setCashAmount(event.target.value); }} className="mt-1 h-9 w-full rounded-md border border-border bg-[var(--bg-1)] px-2 text-[12px] text-[var(--text-1)]" />
             <span className="mt-1 block text-[var(--text-3)]">{cashShares != null ? `≈ ${cashShares} shares` : "≈ — shares"}</span>
           </label>
         ) : (
           <label className="block text-[11px] font-medium text-[var(--text-2)]">
             Percent of Buying Power
-            <input aria-label="Percent of buying power" value={bpPercent} onChange={(event) => setBpPercent(event.target.value)} className="mt-1 h-9 w-full rounded-md border border-border bg-[var(--bg-1)] px-2 text-[12px] text-[var(--text-1)]" />
+            <input aria-label="Percent of buying power" value={bpPercent} onChange={(event) => { hasInteractedRef.current = true; setBpPercent(event.target.value); }} className="mt-1 h-9 w-full rounded-md border border-border bg-[var(--bg-1)] px-2 text-[12px] text-[var(--text-1)]" />
             <span className="mt-1 block text-[var(--text-3)]">
               Buying power {buyingPower != null ? `$${formatQuoteNumber(buyingPower)}` : "—"}
               {" · "}
@@ -706,7 +711,7 @@ export function OrderForm({ target }: OrderFormProps) {
         {needsLimitPrice ? (
           <label className="block text-[11px] font-medium text-[var(--text-2)]">
             Limit Price
-            <input aria-label="Limit Price" value={price} onChange={(event) => setPrice(event.target.value)} className="mt-1 h-9 w-full rounded-md border border-border bg-[var(--bg-1)] px-2 text-[12px] text-[var(--text-1)]" />
+            <input aria-label="Limit Price" value={price} onChange={(event) => { hasInteractedRef.current = true; setPrice(event.target.value); }} className="mt-1 h-9 w-full rounded-md border border-border bg-[var(--bg-1)] px-2 text-[12px] text-[var(--text-1)]" />
           </label>
         ) : null}
         {canUseOutsideRth ? (

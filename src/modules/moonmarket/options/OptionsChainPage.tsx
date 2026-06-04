@@ -66,6 +66,10 @@ export function OptionsChainPage() {
         allStrikes={chainQuery.data?.all_strikes ?? []}
         underlyingPrice={underlyingPrice}
         underlyingPriceLoading={quoteQuery.isLoading}
+        underlyingPriceError={quoteQuery.isError || (!quoteQuery.isLoading && underlyingPrice == null)}
+        onRetryQuote={() => {
+          void quoteQuery.refetch();
+        }}
         loading={expirationsQuery.isLoading || chainQuery.isLoading}
         error={expirationsQuery.error || chainQuery.error}
         onSelect={handleSelect}

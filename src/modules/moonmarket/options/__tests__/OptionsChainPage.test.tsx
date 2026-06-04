@@ -168,4 +168,14 @@ describe("OptionsChainPage", () => {
       side: "BUY",
     });
   });
+
+  it("does not auto-load strikes and shows a prompt when the underlying quote fails", async () => {
+    mockApi.quote.mockRejectedValue(new Error("quote unavailable"));
+
+    renderPage();
+
+    expect(await screen.findByText(/couldn't determine spot price/i)).toBeInTheDocument();
+    expect(screen.queryByTestId(/option-strike-/)).not.toBeInTheDocument();
+    expect(mockApi.moonmarketOptionContract).not.toHaveBeenCalled();
+  });
 });

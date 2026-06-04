@@ -373,6 +373,51 @@ describe("OrderTicket", () => {
     expect(screen.getByRole("button", { name: /buy/i })).toHaveAttribute("aria-pressed", "false");
   });
 
+  it("does not auto-flip to sell once the user starts editing before portfolio resolves", async () => {
+    let resolvePortfolio: (value: unknown) => void = () => {};
+    const heldPortfolio = {
+      account_id: "DU12345",
+      total_market_value: 1810,
+      total_unrealized_pnl: 0,
+      positions: [
+        {
+          conid: 265598,
+          symbol: "AAPL",
+          description: "Apple Inc",
+          asset_class: "STK",
+          quantity: 10,
+          last_price: 181,
+          average_cost: 180,
+          market_value: 1810,
+          unrealized_pnl: 10,
+          daily_pnl: null,
+          pnl_percent: 0.5,
+          daily_pnl_percent: null,
+          currency: "USD",
+        },
+      ],
+      allocation: [],
+    };
+    mockApi.moonmarketPortfolio.mockImplementation(
+      () => new Promise((resolve) => {
+        resolvePortfolio = resolve;
+      }),
+    );
+    useOrderTicketStore.getState().open({ conid: 265598, symbol: "AAPL" });
+    renderTicket();
+
+    // User edits the quantity before the held-position data arrives.
+    fireEvent.change(screen.getByLabelText(/quantity/i), { target: { value: "4" } });
+
+    await act(async () => {
+      resolvePortfolio(heldPortfolio);
+      await Promise.resolve();
+    });
+
+    await waitFor(() => expect(screen.getByRole("button", { name: /buy/i })).toHaveAttribute("aria-pressed", "true"));
+    expect(screen.getByRole("button", { name: /sell/i })).toHaveAttribute("aria-pressed", "false");
+  });
+
   it("disables order mutations on a live account but leaves preview available", () => {
     useAccountStore.setState({
       accounts: [{ account_id: "U12345", label: "Live", selected: true, is_paper: false }],
@@ -616,6 +661,52 @@ describe("OrderTicket", () => {
       "limit-1",
       expect.objectContaining({ orderType: "LMT", price: 179 }),
     ));
+  });
+
+  it("treats a confirmation-only place response as a reply, not a tracked order", async () => {
+    mockApi.moonmarketPlaceOrders.mockResolvedValue({
+      account_id: "DU12345",
+      result: [{ id: "reply-confirm-1", message: ["Confirm this order?"], messageOptions: ["Yes", "No"] }],
+    });
+    useOrderTicketStore.getState().open({ conid: 265598, symbol: "AAPL", side: "BUY" });
+    renderTicket();
+
+    fireEvent.change(screen.getByLabelText(/limit price/i), { target: { value: "180" } });
+    fireEvent.click(screen.getByRole("button", { name: /place/i }));
+
+    expect(await screen.findByRole("button", { name: /confirm and submit/i })).toBeInTheDocument();
+    expect(screen.queryByText(/order tracker/i)).not.toBeInTheDocument();
+  });
+
+  it("treats a final order_id place response as a tracked order, not a confirmation", async () => {
+    mockApi.moonmarketPlaceOrders.mockResolvedValue({
+      account_id: "DU12345",
+      result: [{ order_id: "final-1" }],
+    });
+    useOrderTicketStore.getState().open({ conid: 265598, symbol: "AAPL", side: "BUY" });
+    renderTicket();
+
+    fireEvent.change(screen.getByLabelText(/limit price/i), { target: { value: "180" } });
+    fireEvent.click(screen.getByRole("button", { name: /place/i }));
+
+    expect(await screen.findByText(/order tracker/i)).toBeInTheDocument();
+    expect(screen.getByText(/final-1/i)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /confirm and submit/i })).not.toBeInTheDocument();
+  });
+
+  it("treats a numeric confirmation id as a confirmation reply", async () => {
+    mockApi.moonmarketPlaceOrders.mockResolvedValue({
+      account_id: "DU12345",
+      result: [{ id: 123, message: ["Confirm this order?"], messageOptions: ["Yes", "No"] }],
+    });
+    useOrderTicketStore.getState().open({ conid: 265598, symbol: "AAPL", side: "BUY" });
+    renderTicket();
+
+    fireEvent.change(screen.getByLabelText(/limit price/i), { target: { value: "180" } });
+    fireEvent.click(screen.getByRole("button", { name: /place/i }));
+
+    expect(await screen.findByRole("button", { name: /confirm and submit/i })).toBeInTheDocument();
+    expect(screen.queryByText(/order tracker/i)).not.toBeInTheDocument();
   });
 
   it("clearly indicates the active buy or sell side", () => {
