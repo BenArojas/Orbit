@@ -38,6 +38,8 @@ export function OptionsChainTable({
   allStrikes,
   underlyingPrice,
   underlyingPriceLoading,
+  underlyingPriceError,
+  onRetryQuote,
   loading,
   error,
   onSelect,
@@ -50,11 +52,13 @@ export function OptionsChainTable({
   allStrikes: number[];
   underlyingPrice: number | null | undefined;
   underlyingPriceLoading: boolean;
+  underlyingPriceError?: boolean;
+  onRetryQuote?: () => void;
   loading: boolean;
   error: unknown;
   onSelect: (option: MoonMarketOptionContract) => void;
 }) {
-  const autoLoadStrikes = underlyingPriceLoading
+  const autoLoadStrikes = underlyingPriceLoading || underlyingPriceError
     ? new Set<number>()
     : selectStrikesAroundPrice(allStrikes, underlyingPrice, AUTO_LOAD_STRIKE_COUNT);
 
@@ -109,6 +113,14 @@ export function OptionsChainTable({
         <div className="p-4 text-[12px] text-[var(--clr-red)]">Options chain is unavailable.</div>
       ) : loading ? (
         <div className="p-4 text-[12px] text-[var(--text-3)]">Loading chain data...</div>
+      ) : underlyingPriceError ? (
+        <div className="p-4 text-[12px] text-[var(--clr-orange)]">
+          Couldn't determine spot price — pick a strike to load, or
+          <button type="button" onClick={() => onRetryQuote?.()} className="ml-1 underline">
+            retry
+          </button>
+          .
+        </div>
       ) : allStrikes.length ? (
         <div className="max-h-[calc(100vh-220px)] overflow-y-auto">
           {allStrikes.map((strike) => (
