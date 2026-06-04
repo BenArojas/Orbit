@@ -388,3 +388,28 @@ def test_place_traillmt_order_includes_limit_price():
     assert sent["trailingType"] == "amt"
     assert sent["trailingAmt"] == 2
     assert "outsideRTH" not in sent or sent["outsideRTH"] is False
+
+
+def test_place_rejects_stop_order_without_stop_price():
+    fake = _FakeIbkr()
+    resp = _client(fake).post(
+        "/moonmarket/orders",
+        json={
+            "account_id": "DU12345",
+            "orders": [{"conid": 1, "side": "BUY", "quantity": 1, "orderType": "STP", "tif": "DAY"}],
+        },
+    )
+    assert resp.status_code == 422
+
+
+def test_place_rejects_stop_limit_missing_a_leg():
+    fake = _FakeIbkr()
+    # missing auxPrice (stop)
+    resp = _client(fake).post(
+        "/moonmarket/orders",
+        json={
+            "account_id": "DU12345",
+            "orders": [{"conid": 1, "side": "BUY", "quantity": 1, "orderType": "STP_LIMIT", "tif": "DAY", "price": 10}],
+        },
+    )
+    assert resp.status_code == 422

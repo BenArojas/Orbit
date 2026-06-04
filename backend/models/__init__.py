@@ -377,6 +377,13 @@ class MoonMarketOrderDraft(BaseModel):
                 raise ValueError("TRAILLMT orders require a limit price")
             if self.order_type == "TRAILLMT" and self.aux_price is None:
                 raise ValueError("TRAILLMT orders require auxPrice")
+        if self.order_type == "STP" and self.aux_price is None and self.price is None:
+            raise ValueError("STP orders require a stop price (auxPrice)")
+        if self.order_type == "STP_LIMIT":
+            if self.price is None:
+                raise ValueError("STP_LIMIT orders require a limit price")
+            if self.aux_price is None:
+                raise ValueError("STP_LIMIT orders require a stop price (auxPrice)")
         return self
 
 

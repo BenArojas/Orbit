@@ -516,6 +516,14 @@ export function OrderForm({ target }: OrderFormProps) {
       toast.error("Limit offset is required.");
       return;
     }
+    if (orderType === "STP" && !numberOrUndefined(auxPrice)) {
+      toast.error("Stop price is required.");
+      return;
+    }
+    if (orderType === "STP_LIMIT" && (!numberOrUndefined(price) || !numberOrUndefined(auxPrice))) {
+      toast.error("Stop-limit orders require both a stop price and a limit price.");
+      return;
+    }
     const orders = buildOrders();
     if (!orders.length) return;
     const modifyOrderId = target.mode === "modify" && target.orderId

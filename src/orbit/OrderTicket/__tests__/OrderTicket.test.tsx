@@ -26,6 +26,16 @@ const mockWs = vi.hoisted(() => ({
   handlers: [] as Array<(msg: { type: string; conid?: number; [key: string]: unknown }) => void>,
 }));
 
+const mockToast = vi.hoisted(() => ({
+  success: vi.fn(),
+  error: vi.fn(),
+}));
+
+vi.mock("sonner", () => ({
+  toast: mockToast,
+  Toaster: () => null,
+}));
+
 vi.mock("@/lib/api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/api")>();
   return {
@@ -165,6 +175,8 @@ describe("OrderTicket", () => {
     mockApi.moonmarketOrderRules.mockReset();
     mockApi.moonmarketTrades.mockReset();
     mockApi.moonmarketLiveOrders.mockReset();
+    mockToast.success.mockReset();
+    mockToast.error.mockReset();
     mockApi.moonmarketAccountFunds.mockResolvedValue({
       account_id: "DU12345",
       buying_power: 40000,
@@ -908,5 +920,17 @@ describe("OrderTicket", () => {
     });
     await placeOrder({ orderId: "o1" });
     expect(await screen.findByText("Order Filled")).toBeInTheDocument();
+  });
+
+  it("blocks placing a stop order without a stop price and does not call IBKR", async () => {
+    useOrderTicketStore.getState().open({ conid: 265598, symbol: "AAPL", side: "SELL" });
+    renderTicket();
+
+    fireEvent.change(screen.getByLabelText(/order type/i), { target: { value: "STP" } });
+    fireEvent.change(screen.getByLabelText(/quantity/i), { target: { value: "5" } });
+    fireEvent.click(screen.getByRole("button", { name: /place/i }));
+
+    await waitFor(() => expect(mockToast.error).toHaveBeenCalledWith("Stop price is required."));
+    expect(mockApi.moonmarketPlaceOrders).not.toHaveBeenCalled();
   });
 });
