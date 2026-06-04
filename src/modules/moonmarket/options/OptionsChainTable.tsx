@@ -3,6 +3,32 @@ import { StrikeRow } from "./StrikeRow";
 
 const AUTO_LOAD_STRIKE_COUNT = 6;
 
+function formatPrice(value: number | null | undefined): string {
+  return typeof value === "number" && Number.isFinite(value) ? value.toFixed(2) : "--";
+}
+
+function selectStrikesAroundPrice(strikes: number[], price: number | null | undefined, count: number): Set<number> {
+  if (!strikes.length || count <= 0) {
+    return new Set();
+  }
+  if (typeof price !== "number" || !Number.isFinite(price)) {
+    return new Set(strikes.slice(0, count));
+  }
+
+  const upperIndex = strikes.findIndex((strike) => strike >= price);
+  const nearestIndex = (() => {
+    if (upperIndex === -1) return strikes.length - 1;
+    if (upperIndex === 0) return 0;
+    const lowerIndex = upperIndex - 1;
+    return Math.abs(strikes[upperIndex] - price) < Math.abs(price - strikes[lowerIndex])
+      ? upperIndex
+      : lowerIndex;
+  })();
+  const maxStart = Math.max(0, strikes.length - count);
+  const start = Math.min(Math.max(0, nearestIndex - Math.floor(count / 2)), maxStart);
+  return new Set(strikes.slice(start, start + count));
+}
+
 export function OptionsChainTable({
   title,
   underlyingConid,
@@ -10,6 +36,8 @@ export function OptionsChainTable({
   selectedExpiration,
   onExpirationChange,
   allStrikes,
+  underlyingPrice,
+  underlyingPriceLoading,
   loading,
   error,
   onSelect,
@@ -20,16 +48,24 @@ export function OptionsChainTable({
   selectedExpiration: string | null;
   onExpirationChange: (expiration: string) => void;
   allStrikes: number[];
+  underlyingPrice: number | null | undefined;
+  underlyingPriceLoading: boolean;
   loading: boolean;
   error: unknown;
   onSelect: (option: MoonMarketOptionContract) => void;
 }) {
+  const autoLoadStrikes = underlyingPriceLoading
+    ? new Set<number>()
+    : selectStrikesAroundPrice(allStrikes, underlyingPrice, AUTO_LOAD_STRIKE_COUNT);
+
   return (
     <section className="min-h-0 rounded-md border border-border bg-[var(--bg-2)]">
       <header className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-4 py-3">
         <div>
           <h2 className="text-[16px] font-semibold">{title} Options</h2>
-          <p className="text-[11px] text-[var(--text-3)]">Underlying #{underlyingConid}</p>
+          <p className="text-[11px] text-[var(--text-3)]">
+            Underlying #{underlyingConid} · Last {underlyingPriceLoading ? "loading" : formatPrice(underlyingPrice)}
+          </p>
         </div>
         <label className="text-[11px] text-[var(--text-3)]">
           Expiration
@@ -75,13 +111,13 @@ export function OptionsChainTable({
         <div className="p-4 text-[12px] text-[var(--text-3)]">Loading chain data...</div>
       ) : allStrikes.length ? (
         <div className="max-h-[calc(100vh-220px)] overflow-y-auto">
-          {allStrikes.map((strike, index) => (
+          {allStrikes.map((strike) => (
             <StrikeRow
               key={`${selectedExpiration ?? "none"}-${strike}`}
               underlyingConid={underlyingConid}
               expiration={selectedExpiration ?? ""}
               strike={strike}
-              autoLoad={index < AUTO_LOAD_STRIKE_COUNT}
+              autoLoad={autoLoadStrikes.has(strike)}
               onSelect={onSelect}
             />
           ))}

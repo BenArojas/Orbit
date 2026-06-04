@@ -10,6 +10,7 @@ vi.mock("@/orbit/OrderTicket", () => ({
 }));
 
 const mockApi = vi.hoisted(() => ({
+  quote: vi.fn(),
   moonmarketOptionExpirations: vi.fn(),
   moonmarketOptionChain: vi.fn(),
   moonmarketOptionContract: vi.fn(),
@@ -47,9 +48,25 @@ function renderPage(initialEntry = "/moonmarket/options?conid=265598&symbol=AAPL
 describe("OptionsChainPage", () => {
   beforeEach(() => {
     orderTicketState.open.mockClear();
+    mockApi.quote.mockReset();
     mockApi.moonmarketOptionExpirations.mockReset();
     mockApi.moonmarketOptionChain.mockReset();
     mockApi.moonmarketOptionContract.mockReset();
+    mockApi.quote.mockResolvedValue({
+      conid: 265598,
+      symbol: "AAPL",
+      companyName: "Apple Inc.",
+      lastPrice: 202,
+      bid: 201.95,
+      ask: 202.05,
+      bidSize: 10,
+      askSize: 12,
+      open: 200,
+      high: 203,
+      low: 199,
+      previousClose: 201,
+      reasoning: "mock",
+    });
     mockApi.moonmarketOptionExpirations.mockResolvedValue({
       underlying_conid: 265598,
       symbol: "AAPL",
@@ -109,41 +126,44 @@ describe("OptionsChainPage", () => {
     expect(mockApi.moonmarketOptionExpirations).not.toHaveBeenCalled();
   });
 
-  it("loads expirations, strikes, and auto-loads the first visible strike contracts", async () => {
+  it("loads expirations, strikes, and auto-loads contracts around the underlying price", async () => {
     renderPage();
 
     expect(await screen.findByRole("heading", { name: /aapl options/i })).toBeInTheDocument();
     await waitFor(() => expect(screen.getByRole("combobox", { name: /expiration/i })).toHaveValue("JUN24"));
+    expect(mockApi.quote).toHaveBeenCalledWith(265598, expect.any(AbortSignal));
     expect(mockApi.moonmarketOptionExpirations).toHaveBeenCalledWith(265598, "AAPL", expect.any(AbortSignal));
     expect(mockApi.moonmarketOptionChain).toHaveBeenCalledWith(265598, "JUN24", expect.any(AbortSignal));
     await waitFor(() =>
-      expect(mockApi.moonmarketOptionContract).toHaveBeenCalledWith(265598, "JUN24", 180, expect.any(AbortSignal)),
+      expect(mockApi.moonmarketOptionContract).toHaveBeenCalledWith(265598, "JUN24", 200, expect.any(AbortSignal)),
     );
-    expect(await screen.findByRole("button", { name: /select call 180/i })).toBeInTheDocument();
+    expect(mockApi.moonmarketOptionContract).toHaveBeenCalledWith(265598, "JUN24", 205, expect.any(AbortSignal));
+    expect(mockApi.moonmarketOptionContract).not.toHaveBeenCalledWith(265598, "JUN24", 175, expect.any(AbortSignal));
+    expect(await screen.findByRole("button", { name: /select call 200/i })).toBeInTheDocument();
   });
 
   it("manual-loads a strike row outside the initial visible window", async () => {
     renderPage();
 
-    fireEvent.click(await screen.findByRole("button", { name: /load strike 205/i }));
+    fireEvent.click(await screen.findByRole("button", { name: /load strike 175/i }));
 
     await waitFor(() =>
-      expect(mockApi.moonmarketOptionContract).toHaveBeenCalledWith(265598, "JUN24", 205, expect.any(AbortSignal)),
+      expect(mockApi.moonmarketOptionContract).toHaveBeenCalledWith(265598, "JUN24", 175, expect.any(AbortSignal)),
     );
-    const row = await screen.findByTestId("option-strike-205.00");
-    expect(within(row).getByRole("button", { name: /select call 205/i })).toBeInTheDocument();
+    const row = await screen.findByTestId("option-strike-175.00");
+    expect(within(row).getByRole("button", { name: /select call 175/i })).toBeInTheDocument();
     expect(within(row).getByText("4.30")).toBeInTheDocument();
   });
 
   it("opens the shared OrderTicket with assetClass OPT when a call is selected", async () => {
     renderPage();
 
-    fireEvent.click(await screen.findByRole("button", { name: /select call 180/i }));
+    fireEvent.click(await screen.findByRole("button", { name: /select call 200/i }));
 
     expect(orderTicketState.open).toHaveBeenCalledWith({
-      conid: 7180,
-      symbol: "AAPL JUN24 180 CALL",
-      description: "AAPL JUN24 180 CALL",
+      conid: 7200,
+      symbol: "AAPL JUN24 200 CALL",
+      description: "AAPL JUN24 200 CALL",
       assetClass: "OPT",
       side: "BUY",
     });
