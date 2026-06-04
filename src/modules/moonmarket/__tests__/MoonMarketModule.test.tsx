@@ -477,6 +477,44 @@ describe("MoonMarketModule", () => {
     await waitFor(() => expect(mockApi.moonmarketCancelOrder).toHaveBeenCalledWith("DU12345", "123456789"));
   });
 
+  it("normalizes a lowercase tif into the modify draft TIF select", async () => {
+    mockApi.moonmarketLiveOrders.mockResolvedValue({
+      account_id: "DU12345",
+      orders: [
+        {
+          order_id: "987654321",
+          conid: 265598,
+          symbol: "AAPL",
+          description: "BUY 5 AAPL LIMIT 180.00",
+          side: "BUY",
+          order_type: "LMT",
+          quantity: 5,
+          remaining_quantity: 5,
+          limit_price: 180,
+          aux_price: null,
+          trailing_type: null,
+          trailing_amt: null,
+          outside_rth: false,
+          tif: "gtc",
+          status: "Submitted",
+        },
+      ],
+    });
+
+    renderMoonMarket("/moonmarket/transactions");
+
+    fireEvent.click(await screen.findByRole("button", { name: /live orders/i }));
+    fireEvent.click(await screen.findByRole("button", { name: /modify aapl order/i }));
+
+    expect(orderTicketState.open).toHaveBeenCalledWith(
+      expect.objectContaining({
+        mode: "modify",
+        orderId: "987654321",
+        draft: expect.objectContaining({ tif: "GTC" }),
+      }),
+    );
+  });
+
   it("surfaces tiny positions in a selectable rail when the chart cannot show them", async () => {
     mockApi.moonmarketPortfolio.mockResolvedValueOnce({
       account_id: "DU12345",
