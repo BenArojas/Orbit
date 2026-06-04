@@ -270,6 +270,51 @@ describe("OrderTicket", () => {
     expect(screen.getByRole("button", { name: /buy/i })).toHaveAttribute("aria-pressed", "false");
   });
 
+  it("does not auto-flip to sell once the user starts editing before portfolio resolves", async () => {
+    let resolvePortfolio: (value: unknown) => void = () => {};
+    const heldPortfolio = {
+      account_id: "DU12345",
+      total_market_value: 1810,
+      total_unrealized_pnl: 0,
+      positions: [
+        {
+          conid: 265598,
+          symbol: "AAPL",
+          description: "Apple Inc",
+          asset_class: "STK",
+          quantity: 10,
+          last_price: 181,
+          average_cost: 180,
+          market_value: 1810,
+          unrealized_pnl: 10,
+          daily_pnl: null,
+          pnl_percent: 0.5,
+          daily_pnl_percent: null,
+          currency: "USD",
+        },
+      ],
+      allocation: [],
+    };
+    mockApi.moonmarketPortfolio.mockImplementation(
+      () => new Promise((resolve) => {
+        resolvePortfolio = resolve;
+      }),
+    );
+    useOrderTicketStore.getState().open({ conid: 265598, symbol: "AAPL" });
+    renderTicket();
+
+    // User edits the quantity before the held-position data arrives.
+    fireEvent.change(screen.getByLabelText(/quantity/i), { target: { value: "4" } });
+
+    await act(async () => {
+      resolvePortfolio(heldPortfolio);
+      await Promise.resolve();
+    });
+
+    await waitFor(() => expect(screen.getByRole("button", { name: /buy/i })).toHaveAttribute("aria-pressed", "true"));
+    expect(screen.getByRole("button", { name: /sell/i })).toHaveAttribute("aria-pressed", "false");
+  });
+
   it("disables order mutations on a live account but leaves preview available", () => {
     useAccountStore.setState({
       accounts: [{ account_id: "U12345", label: "Live", selected: true, is_paper: false }],
