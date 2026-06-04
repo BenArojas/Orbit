@@ -566,6 +566,20 @@ def test_moonmarket_trade_parsing_recovers_stock_quantity_from_cash_amount():
     assert trade.commission == 1.25
 
 
+def test_revalidate_positions_unknown_account_returns_404():
+    fake = _FakeIbkr()
+    resp = _client(fake).post("/moonmarket/accounts/NOPE/positions/revalidate")
+    assert resp.status_code == 404
+    assert resp.json()["detail"]["error"] == "moonmarket_account_not_found"
+
+
+def test_order_rules_unknown_account_returns_404():
+    fake = _FakeIbkr()
+    resp = _client(fake).get("/moonmarket/accounts/NOPE/contracts/1/order-rules?side=BUY")
+    assert resp.status_code == 404
+    assert resp.json()["detail"]["error"] == "moonmarket_account_not_found"
+
+
 def test_moonmarket_live_orders_warms_and_returns_read_only_orders():
     fake = _FakeIbkr()
     resp = _client(fake).get("/moonmarket/live-orders?account_id=DU12345")
