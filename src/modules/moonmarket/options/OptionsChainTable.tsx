@@ -1,3 +1,4 @@
+import { useMemo } from "react";
 import type { MoonMarketOptionContract } from "@/lib/api";
 import { StrikeRow } from "./StrikeRow";
 
@@ -53,9 +54,16 @@ export function OptionsChainTable({
   error: unknown;
   onSelect: (option: MoonMarketOptionContract) => void;
 }) {
-  const autoLoadStrikes = underlyingPriceLoading || underlyingPriceError
-    ? new Set<number>()
-    : selectStrikesAroundPrice(allStrikes, underlyingPrice, AUTO_LOAD_STRIKE_COUNT);
+  // Memoize the auto-load window so we don't recompute the Set (and hand a fresh
+  // reference to every StrikeRow) on unrelated re-renders; recompute only when an
+  // input that actually changes the window changes.
+  const autoLoadStrikes = useMemo(
+    () =>
+      underlyingPriceLoading || underlyingPriceError
+        ? new Set<number>()
+        : selectStrikesAroundPrice(allStrikes, underlyingPrice, AUTO_LOAD_STRIKE_COUNT),
+    [allStrikes, underlyingPrice, underlyingPriceLoading, underlyingPriceError],
+  );
 
   return (
     <section className="min-h-0 rounded-md border border-border bg-[var(--bg-2)]">
