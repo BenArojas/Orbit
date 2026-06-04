@@ -1025,6 +1025,18 @@ describe("OrderTicket", () => {
     expect(mockApi.moonmarketPlaceOrders).not.toHaveBeenCalled();
   });
 
+  it("surfaces a zero limit price as an invalid input and blocks place", async () => {
+    useOrderTicketStore.getState().open({ conid: 265598, symbol: "AAPL", side: "BUY" });
+    renderTicket();
+
+    fireEvent.change(screen.getByLabelText(/quantity/i), { target: { value: "5" } });
+    fireEvent.change(screen.getByLabelText(/limit price/i), { target: { value: "0" } });
+    fireEvent.click(screen.getByRole("button", { name: /place/i }));
+
+    expect(await screen.findByText(/limit price must be greater than zero/i)).toBeInTheDocument();
+    expect(mockApi.moonmarketPlaceOrders).not.toHaveBeenCalled();
+  });
+
   it("renders the error card and no success state when IBKR returns a rejection row", async () => {
     const { placeOrder } = renderTicket({
       placeResult: { result: [{ error: "10/Order rejected: insufficient margin" }] },
