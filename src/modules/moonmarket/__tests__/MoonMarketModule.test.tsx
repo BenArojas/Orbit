@@ -515,6 +515,105 @@ describe("MoonMarketModule", () => {
     );
   });
 
+  it("filters the small-positions rail to sub-0.5% non-cash holdings sorted ascending", async () => {
+    mockApi.moonmarketPortfolio.mockResolvedValueOnce({
+      account_id: "DU12345",
+      total_market_value: 1_000_000,
+      total_unrealized_pnl: 0,
+      positions: [],
+      allocation: [
+        {
+          conid: -999,
+          symbol: "CASH",
+          label: "Cash balance",
+          value: 100,
+          percent: 0.2,
+          asset_class: "CASH",
+          unrealized_pnl: 0,
+          daily_pnl: null,
+          pnl_percent: 0,
+          daily_pnl_percent: null,
+        },
+        {
+          conid: 5001,
+          symbol: "EDGE",
+          label: "Edge Holdings",
+          value: 5000,
+          percent: 0.5,
+          asset_class: "STK",
+          unrealized_pnl: 1,
+          daily_pnl: 1,
+          pnl_percent: 0.02,
+          daily_pnl_percent: 0.02,
+        },
+        {
+          conid: 5002,
+          symbol: "BIGG",
+          label: "Bigger Co",
+          value: 12000,
+          percent: 1.2,
+          asset_class: "STK",
+          unrealized_pnl: 5,
+          daily_pnl: 5,
+          pnl_percent: 0.05,
+          daily_pnl_percent: 0.05,
+        },
+        {
+          conid: 5003,
+          symbol: "SHORTY",
+          label: "Short Position",
+          value: -300,
+          percent: 0.03,
+          asset_class: "STK",
+          unrealized_pnl: -2,
+          daily_pnl: -2,
+          pnl_percent: -0.01,
+          daily_pnl_percent: -0.01,
+        },
+        {
+          conid: 5004,
+          symbol: "TINYB",
+          label: "Tiny B",
+          value: 400,
+          percent: 0.4,
+          asset_class: "STK",
+          unrealized_pnl: 1,
+          daily_pnl: 1,
+          pnl_percent: 0.01,
+          daily_pnl_percent: 0.01,
+        },
+        {
+          conid: 5005,
+          symbol: "TINYA",
+          label: "Tiny A",
+          value: 100,
+          percent: 0.1,
+          asset_class: "STK",
+          unrealized_pnl: 1,
+          daily_pnl: 1,
+          pnl_percent: 0.01,
+          daily_pnl_percent: 0.01,
+        },
+      ],
+    });
+
+    renderMoonMarket();
+
+    expect(await screen.findByText(/small positions/i)).toBeInTheDocument();
+
+    // exactly 0.5% (not < 0.5), 1.2%, value <= 0, and cash are all excluded.
+    expect(screen.queryByRole("button", { name: /select small position edge/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /select small position bigg/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /select small position shorty/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /select small position cash/i })).not.toBeInTheDocument();
+
+    // The two sub-0.5% holdings render in ascending percent order: TINYA (0.1) then TINYB (0.4).
+    const railButtons = screen.getAllByRole("button", { name: /select small position/i });
+    expect(railButtons).toHaveLength(2);
+    expect(railButtons[0]).toHaveAccessibleName(/select small position tinya/i);
+    expect(railButtons[1]).toHaveAccessibleName(/select small position tinyb/i);
+  });
+
   it("surfaces tiny positions in a selectable rail when the chart cannot show them", async () => {
     mockApi.moonmarketPortfolio.mockResolvedValueOnce({
       account_id: "DU12345",
