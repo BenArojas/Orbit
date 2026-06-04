@@ -43,7 +43,8 @@ function resultRows(result: unknown): Array<Record<string, unknown>> {
 
 function firstReplyId(result: unknown): string | null {
   for (const row of resultRows(result)) {
-    if (typeof row.id === "string") return row.id;
+    if (typeof row.id === "string" && row.id.trim()) return row.id;
+    if (typeof row.id === "number") return String(row.id);
   }
   return null;
 }
@@ -530,10 +531,12 @@ export function OrderForm({ target }: OrderFormProps) {
       {
         onSuccess: (result) => {
           setActionResult(result);
-          setReplyId(firstReplyId(result));
           const orderId = firstOrderId(result);
           if (orderId) {
+            setReplyId(null);
             setTrackedOrder({ orderId, order: orders[0], submittedAt: Date.now() });
+          } else {
+            setReplyId(firstReplyId(result));
           }
           refreshAccountAfterSubmitted(result);
         },

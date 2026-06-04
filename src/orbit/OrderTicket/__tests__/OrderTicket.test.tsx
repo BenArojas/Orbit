@@ -542,6 +542,52 @@ describe("OrderTicket", () => {
     ));
   });
 
+  it("treats a confirmation-only place response as a reply, not a tracked order", async () => {
+    mockApi.moonmarketPlaceOrders.mockResolvedValue({
+      account_id: "DU12345",
+      result: [{ id: "reply-confirm-1", message: ["Confirm this order?"], messageOptions: ["Yes", "No"] }],
+    });
+    useOrderTicketStore.getState().open({ conid: 265598, symbol: "AAPL", side: "BUY" });
+    renderTicket();
+
+    fireEvent.change(screen.getByLabelText(/limit price/i), { target: { value: "180" } });
+    fireEvent.click(screen.getByRole("button", { name: /place/i }));
+
+    expect(await screen.findByRole("button", { name: /confirm and submit/i })).toBeInTheDocument();
+    expect(screen.queryByText(/order tracker/i)).not.toBeInTheDocument();
+  });
+
+  it("treats a final order_id place response as a tracked order, not a confirmation", async () => {
+    mockApi.moonmarketPlaceOrders.mockResolvedValue({
+      account_id: "DU12345",
+      result: [{ order_id: "final-1" }],
+    });
+    useOrderTicketStore.getState().open({ conid: 265598, symbol: "AAPL", side: "BUY" });
+    renderTicket();
+
+    fireEvent.change(screen.getByLabelText(/limit price/i), { target: { value: "180" } });
+    fireEvent.click(screen.getByRole("button", { name: /place/i }));
+
+    expect(await screen.findByText(/order tracker/i)).toBeInTheDocument();
+    expect(screen.getByText(/final-1/i)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /confirm and submit/i })).not.toBeInTheDocument();
+  });
+
+  it("treats a numeric confirmation id as a confirmation reply", async () => {
+    mockApi.moonmarketPlaceOrders.mockResolvedValue({
+      account_id: "DU12345",
+      result: [{ id: 123, message: ["Confirm this order?"], messageOptions: ["Yes", "No"] }],
+    });
+    useOrderTicketStore.getState().open({ conid: 265598, symbol: "AAPL", side: "BUY" });
+    renderTicket();
+
+    fireEvent.change(screen.getByLabelText(/limit price/i), { target: { value: "180" } });
+    fireEvent.click(screen.getByRole("button", { name: /place/i }));
+
+    expect(await screen.findByRole("button", { name: /confirm and submit/i })).toBeInTheDocument();
+    expect(screen.queryByText(/order tracker/i)).not.toBeInTheDocument();
+  });
+
   it("clearly indicates the active buy or sell side", () => {
     useOrderTicketStore.getState().open({ conid: 265598, symbol: "AAPL", side: "BUY" });
     renderTicket();
