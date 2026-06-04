@@ -11,7 +11,7 @@ type OrderResultProps = {
 export type OrderTrackerState = {
   orderId: string;
   orderType: string;
-  status: "filled" | "pending" | "submitted";
+  status: "filled" | "partial" | "pending" | "submitted";
   liveStatus?: string | null;
   quantity?: number | null;
   filledQuantity?: number | null;
@@ -206,13 +206,15 @@ function formatQuantity(value: number | null | undefined): string {
 
 function OrderTrackerCard({ tracker }: { tracker: OrderTrackerState }) {
   const filled = tracker.status === "filled";
+  const partial = tracker.status === "partial";
+  const heading = filled ? "Order Filled" : partial ? "Partially Filled" : "Order Tracker";
   return (
     <section className={filled ? "rounded-md border border-[var(--clr-green)]/50 bg-[var(--clr-green)]/10 p-3" : "rounded-md border border-[var(--clr-cyan)]/45 bg-[var(--clr-cyan)]/10 p-3"}>
       <div className={filled ? "text-[11px] font-semibold uppercase text-[var(--clr-green)]" : "text-[11px] font-semibold uppercase text-[var(--clr-cyan)]"}>
-        {filled ? "Order Filled" : "Order Tracker"}
+        {heading}
       </div>
       <div className="mt-2 grid grid-cols-2 gap-2">
-        <Fact label="Status" value={filled ? "Filled" : tracker.liveStatus ?? "Pending"} tone={filled ? "green" : "cyan"} />
+        <Fact label="Status" value={filled ? "Filled" : partial ? "Partially Filled" : tracker.liveStatus ?? "Pending"} tone={filled ? "green" : "cyan"} />
         <Fact label="Order ID" value={tracker.orderId} />
         {filled ? (
           <>
@@ -221,6 +223,7 @@ function OrderTrackerCard({ tracker }: { tracker: OrderTrackerState }) {
           </>
         ) : (
           <>
+            {partial ? <Fact label="Filled" value={formatQuantity(tracker.filledQuantity)} tone="cyan" /> : null}
             <Fact label="Current Price" value={`$${formatNumber(tracker.currentPrice)}`} />
             <Fact label="Distance" value={tracker.distancePercent == null ? "--" : `${formatNumber(tracker.distancePercent)}% away`} tone="cyan" />
             <Fact label="Limit Price" value={tracker.limitPrice == null ? "--" : `$${formatNumber(tracker.limitPrice)}`} />

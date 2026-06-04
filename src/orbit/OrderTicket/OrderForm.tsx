@@ -132,25 +132,28 @@ function matchingLiveOrder(orders: MoonMarketLiveOrder[], trackedOrder: TrackedO
   return orders.find((order) => order.order_id === trackedOrder.orderId) ?? null;
 }
 
-function matchingFill(trades: MoonMarketTrade[], trackedOrder: TrackedOrder | null): {
+// Enriches the average fill price from executions at/after submit time only.
+// This is never a fill *trigger*: the live order's status/remaining quantity is
+// authoritative for fill state (see orderTracker). Trades only refine avg price.
+function fillEnrichment(trades: MoonMarketTrade[], trackedOrder: TrackedOrder | null): {
   quantity: number;
   averagePrice: number | null;
 } | null {
   if (!trackedOrder) return null;
-  const since = trackedOrder.submittedAt - 5 * 60_000;
   const matches = trades.filter((trade) => (
     trade.conid === trackedOrder.order.conid
     && trade.side === trackedOrder.order.side
-    && (trade.trade_time_ms == null || trade.trade_time_ms >= since)
+    && trade.trade_time_ms != null
+    && trade.trade_time_ms >= trackedOrder.submittedAt
   ));
   const quantity = matches.reduce((sum, trade) => sum + Math.abs(trade.quantity), 0);
   if (quantity <= 0) return null;
-  const priceBasis = matches.reduce((sum, trade) => (
+  const basis = matches.reduce((sum, trade) => (
     trade.price == null ? sum : sum + Math.abs(trade.quantity) * trade.price
   ), 0);
   return {
     quantity,
-    averagePrice: priceBasis > 0 ? priceBasis / quantity : null,
+    averagePrice: basis > 0 ? basis / quantity : null,
   };
 }
 
@@ -252,7 +255,7 @@ export function OrderForm({ target }: OrderFormProps) {
     enabled: !!selectedAccountId && !!trackedOrder,
     refetchInterval: (query) => {
       if (!trackedOrder) return false;
-      return matchingFill(query.state.data?.trades ?? [], trackedOrder) ? false : 3_000;
+      return fillEnrichment(query.state.data?.trades ?? [], trackedOrder) ? false : 3_000;
     },
   });
   const liveOrdersQuery = useQuery({
@@ -377,7 +380,7 @@ export function OrderForm({ target }: OrderFormProps) {
     outsideRTH: outsideRth && canUseOutsideRth ? true : undefined,
   }), [assetClass, auxPrice, canUseOutsideRth, effectiveQuantity, isTrailing, needsLimitPrice, needsStopAuxPrice, orderType, outsideRth, price, side, target.conid, tif, trailingAmt, trailingType]);
   const liveOrder = matchingLiveOrder(liveOrdersQuery.data?.orders ?? [], trackedOrder);
-  const fill = matchingFill(tradesQuery.data?.trades ?? [], trackedOrder);
+  const enrichment = fillEnrichment(tradesQuery.data?.trades ?? [], trackedOrder);
   const currentPrice = quote?.lastPrice ?? book.ask ?? book.bid ?? null;
   const trackedLimitPrice = trackedOrder?.order.price ?? liveOrder?.limit_price ?? null;
   const distancePercent = currentPrice != null && trackedLimitPrice != null && trackedLimitPrice > 0
@@ -385,38 +388,49 @@ export function OrderForm({ target }: OrderFormProps) {
     : null;
   const orderTracker = useMemo<OrderTrackerState | null>(() => {
     if (!trackedOrder) return null;
-    if (fill || orderIsFilled(liveOrder?.status)) {
-      const liveFilledQuantity =
-        liveOrder?.quantity != null && liveOrder?.remaining_quantity != null
-          ? Math.max(0, liveOrder.quantity - liveOrder.remaining_quantity)
-          : liveOrder?.quantity ?? null;
+    const orderedQty = trackedOrder.order.quantity;
+    const liveStatus = liveOrder?.status ?? null;
+    const remaining = liveOrder?.remaining_quantity ?? null;
+    const liveFilled = liveOrder?.quantity != null && remaining != null
+      ? Math.max(0, liveOrder.quantity - remaining)
+      : null;
+    const isFilled = orderIsFilled(liveStatus) || (remaining != null && remaining <= 0 && liveOrder != null);
+    if (isFilled) {
       return {
         orderId: trackedOrder.orderId,
         orderType: trackedOrder.order.orderType,
         status: "filled",
-        quantity: trackedOrder.order.quantity,
-        filledQuantity: fill?.quantity ?? liveFilledQuantity ?? trackedOrder.order.quantity,
-        averagePrice: fill?.averagePrice ?? null,
+        quantity: orderedQty,
+        filledQuantity: liveFilled ?? enrichment?.quantity ?? orderedQty,
+        averagePrice: enrichment?.averagePrice ?? null,
       };
     }
+    const partialFilled = liveFilled != null && liveFilled > 0;
     return {
       orderId: trackedOrder.orderId,
       orderType: trackedOrder.order.orderType,
-      status: liveOrder ? "pending" : "submitted",
-      liveStatus: liveOrder?.status ?? "Pending",
-      quantity: trackedOrder.order.quantity,
+      status: partialFilled ? "partial" : (liveOrder ? "pending" : "submitted"),
+      liveStatus: liveStatus ?? "Pending",
+      quantity: orderedQty,
+      filledQuantity: liveFilled ?? 0,
       currentPrice,
       limitPrice: trackedLimitPrice,
       distancePercent,
-      remainingQuantity: liveOrder?.remaining_quantity ?? trackedOrder.order.quantity,
+      remainingQuantity: remaining ?? orderedQty,
     };
-  }, [currentPrice, distancePercent, fill, liveOrder, trackedLimitPrice, trackedOrder]);
+  }, [currentPrice, distancePercent, enrichment, liveOrder, trackedLimitPrice, trackedOrder]);
 
   useEffect(() => {
     if (!orderTracker || orderTracker.status !== "filled" || filledToastRef.current === orderTracker.orderId) return;
     filledToastRef.current = orderTracker.orderId;
     toast.success(`Order filled: ${orderTracker.filledQuantity ?? 0} shares at $${orderTracker.averagePrice?.toFixed(2) ?? "--"}`);
-  }, [orderTracker]);
+    if (selectedAccountId) {
+      void queryClient.invalidateQueries({ queryKey: ["moonmarket", "portfolio", selectedAccountId] });
+      void queryClient.invalidateQueries({ queryKey: ["moonmarket", "funds", selectedAccountId] });
+      void queryClient.invalidateQueries({ queryKey: ["moonmarket", "live-orders", selectedAccountId] });
+      void queryClient.invalidateQueries({ queryKey: ["moonmarket", "trades", selectedAccountId] });
+    }
+  }, [orderTracker, queryClient, selectedAccountId]);
   const canUpdateTrackedOrder = Boolean(
     trackedOrder?.orderId
     && trackedOrder.order.orderType !== "MKT"

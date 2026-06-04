@@ -47,18 +47,109 @@ vi.mock("@/hooks/useWebSocket", () => ({
   }),
 }));
 
-function renderTicket() {
+type LiveOrderOverride = Partial<import("@/lib/api").MoonMarketLiveOrder> & { order_id: string };
+type TradeOverride = Partial<import("@/lib/api").MoonMarketTrade> & { execution_id: string; conid: number };
+
+type RenderTicketOptions = {
+  liveOrders?: LiveOrderOverride[];
+  trades?: TradeOverride[];
+  placeResult?: unknown;
+};
+
+function seedLiveOrder(order: LiveOrderOverride): import("@/lib/api").MoonMarketLiveOrder {
+  return {
+    order_id: order.order_id,
+    conid: order.conid ?? 265598,
+    symbol: order.symbol ?? "AAPL",
+    description: order.description ?? null,
+    side: order.side ?? "BUY",
+    order_type: order.order_type ?? "LMT",
+    quantity: order.quantity ?? null,
+    remaining_quantity: order.remaining_quantity ?? null,
+    limit_price: order.limit_price ?? null,
+    aux_price: order.aux_price ?? null,
+    trailing_type: order.trailing_type ?? null,
+    trailing_amt: order.trailing_amt ?? null,
+    outside_rth: order.outside_rth ?? false,
+    tif: order.tif ?? "DAY",
+    status: order.status ?? "Submitted",
+  };
+}
+
+function seedTrade(trade: TradeOverride): import("@/lib/api").MoonMarketTrade {
+  return {
+    execution_id: trade.execution_id,
+    account_id: trade.account_id ?? "DU12345",
+    conid: trade.conid,
+    symbol: trade.symbol ?? "AAPL",
+    description: trade.description ?? null,
+    side: trade.side ?? "BUY",
+    quantity: trade.quantity ?? 0,
+    price: trade.price ?? null,
+    net_amount: trade.net_amount ?? null,
+    commission: trade.commission ?? null,
+    sec_type: trade.sec_type ?? "STK",
+    trade_time: trade.trade_time ?? "2026-06-04T19:40:00+00:00",
+    trade_time_ms: trade.trade_time_ms ?? Date.now(),
+  };
+}
+
+function renderTicket(options?: RenderTicketOptions) {
+  if (options) {
+    if (options.liveOrders) {
+      mockApi.moonmarketLiveOrders.mockResolvedValue({
+        account_id: "DU12345",
+        orders: options.liveOrders.map(seedLiveOrder),
+      });
+    }
+    if (options.trades) {
+      mockApi.moonmarketTrades.mockResolvedValue({
+        account_id: "DU12345",
+        days: 7,
+        summary: {
+          total_trades: options.trades.length,
+          total_volume: 0,
+          total_commissions: 0,
+          net_cash: 0,
+          buy_count: 0,
+          sell_count: 0,
+        },
+        trades: options.trades.map(seedTrade),
+      });
+    }
+    if (options.placeResult !== undefined) {
+      mockApi.moonmarketPlaceOrders.mockResolvedValue(
+        options.placeResult && typeof options.placeResult === "object" && "account_id" in (options.placeResult as Record<string, unknown>)
+          ? options.placeResult
+          : { account_id: "DU12345", ...(options.placeResult as Record<string, unknown>) },
+      );
+    }
+    if (!useOrderTicketStore.getState().target) {
+      useOrderTicketStore.getState().open({ conid: 265598, symbol: "AAPL", side: "BUY" });
+    }
+  }
   const client = new QueryClient({
     defaultOptions: {
       queries: { retry: false },
       mutations: { retry: false },
     },
   });
-  return render(
+  const rendered = render(
     <QueryClientProvider client={client}>
       <OrderTicket />
     </QueryClientProvider>,
   );
+  const placeOrder = async (placeOptions?: { orderId?: string }) => {
+    if (placeOptions?.orderId) {
+      mockApi.moonmarketPlaceOrders.mockResolvedValue({
+        account_id: "DU12345",
+        result: { data: [{ order_id: placeOptions.orderId }] },
+      });
+    }
+    fireEvent.click(await screen.findByRole("button", { name: /place/i }));
+    await waitFor(() => expect(mockApi.moonmarketPlaceOrders).toHaveBeenCalled());
+  };
+  return { ...rendered, placeOrder };
 }
 
 describe("OrderTicket", () => {
@@ -381,6 +472,24 @@ describe("OrderTicket", () => {
 
   it("shows a market order as filled when matching trades arrive", async () => {
     mockApi.moonmarketPlaceOrders.mockResolvedValue({ account_id: "DU12345", result: { data: [{ order_id: "order-mkt-1" }] } });
+    mockApi.moonmarketLiveOrders.mockResolvedValue({
+      account_id: "DU12345",
+      orders: [
+        {
+          order_id: "order-mkt-1",
+          conid: 265598,
+          symbol: "AAPL",
+          description: "BOT 3 AAPL MARKET",
+          side: "BUY",
+          order_type: "MKT",
+          quantity: 3,
+          remaining_quantity: 0,
+          limit_price: null,
+          tif: "DAY",
+          status: "Filled",
+        },
+      ],
+    });
     mockApi.moonmarketTrades.mockResolvedValue({
       account_id: "DU12345",
       days: 7,
@@ -406,7 +515,7 @@ describe("OrderTicket", () => {
           commission: 1,
           sec_type: "STK",
           trade_time: "2026-06-04T19:40:00+00:00",
-          trade_time_ms: Date.now(),
+          trade_time_ms: Date.now() + 60_000,
         },
       ],
     });
@@ -419,7 +528,7 @@ describe("OrderTicket", () => {
 
     expect(await screen.findByText(/order filled/i)).toBeInTheDocument();
     expect(screen.getByText(/3 shares/i)).toBeInTheDocument();
-    expect(screen.getByText(/\$181\.25 avg/i)).toBeInTheDocument();
+    expect(await screen.findByText(/\$181\.25 avg/i)).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /update order/i })).not.toBeInTheDocument();
   });
 
@@ -768,5 +877,36 @@ describe("OrderTicket", () => {
     fireEvent.click(screen.getByRole("button", { name: /place/i }));
     await waitFor(() => expect(mockApi.moonmarketPlaceOrders).toHaveBeenCalled());
     expect(mockApi.moonmarketPlaceOrders.mock.calls[0][0].orders[0]).toMatchObject({ quantity: 20 });
+  });
+
+  it("does not mark filled from a same-conid/same-side trade that predates submission", async () => {
+    // live order present, status Submitted, remaining == quantity; a stale trade exists in window
+    const { placeOrder } = renderTicket({
+      liveOrders: [{ order_id: "o1", conid: 111, side: "BUY", quantity: 5, remaining_quantity: 5, status: "Submitted", order_type: "LMT", limit_price: 10 }],
+      trades: [{ execution_id: "old", conid: 111, side: "BUY", quantity: 3, price: 9.9, trade_time_ms: Date.now() - 60_000 }],
+    });
+    await placeOrder({ orderId: "o1" });
+    expect(await screen.findByText("Order Tracker")).toBeInTheDocument();
+    expect(screen.queryByText("Order Filled")).not.toBeInTheDocument();
+    expect(screen.getByText(/Remaining/)).toBeInTheDocument();
+  });
+
+  it("shows partial fill state when remaining_quantity is between 0 and quantity", async () => {
+    const { placeOrder } = renderTicket({
+      liveOrders: [{ order_id: "o1", conid: 111, side: "BUY", quantity: 5, remaining_quantity: 2, status: "Submitted", order_type: "LMT", limit_price: 10 }],
+    });
+    await placeOrder({ orderId: "o1" });
+    expect(await screen.findByText(/Partially Filled|Order Tracker/)).toBeInTheDocument();
+    expect(screen.queryByText("Order Filled")).not.toBeInTheDocument();
+    expect(screen.getByText("3")).toBeInTheDocument(); // filled = 5 - 2
+  });
+
+  it("marks filled only when live order status is Filled (remaining 0)", async () => {
+    const { placeOrder } = renderTicket({
+      liveOrders: [{ order_id: "o1", conid: 111, side: "BUY", quantity: 5, remaining_quantity: 0, status: "Filled", order_type: "LMT", limit_price: 10 }],
+      trades: [{ execution_id: "e1", conid: 111, side: "BUY", quantity: 5, price: 10.1, trade_time_ms: Date.now() }],
+    });
+    await placeOrder({ orderId: "o1" });
+    expect(await screen.findByText("Order Filled")).toBeInTheDocument();
   });
 });
