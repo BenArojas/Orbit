@@ -154,6 +154,56 @@ function GroupInspector({ group, onSelect }: { group: DisplayAllocationItem; onS
   );
 }
 
+function SmallPositionsRail({
+  items,
+  selectedConid,
+  onSelect,
+}: {
+  items: MoonMarketAllocationItem[];
+  selectedConid: number | null;
+  onSelect: (item: MoonMarketAllocationItem) => void;
+}) {
+  if (!items.length) return null;
+  return (
+    <section className="mt-3 rounded-md border border-border bg-[var(--bg-2)] px-3 py-2">
+      <div className="mb-2 flex items-center justify-between gap-3">
+        <div className="text-[10px] font-semibold uppercase tracking-wide text-[var(--text-3)]">Small Positions</div>
+        <div className="text-[10px] text-[var(--text-3)]">Under 0.5% weight</div>
+      </div>
+      <div className="flex gap-2 overflow-x-auto pb-1">
+        {items.map((item) => {
+          const selected = selectedConid === item.conid;
+          const negative = item.unrealized_pnl < 0;
+          return (
+            <button
+              key={item.conid}
+              type="button"
+              aria-label={`Select small position ${displayHoldingName(item)}`}
+              onClick={() => onSelect(item)}
+              className={
+                selected
+                  ? "min-w-[148px] rounded border border-[var(--clr-cyan)] bg-[var(--clr-cyan)]/10 px-2.5 py-2 text-left shadow-[0_0_14px_var(--glow-cyan)]"
+                  : "min-w-[148px] rounded border border-border bg-[var(--bg-1)] px-2.5 py-2 text-left hover:border-[var(--clr-cyan)]/60"
+              }
+            >
+              <div className="flex items-center justify-between gap-2">
+                <span className="truncate text-[12px] font-semibold">{displayHoldingName(item)}</span>
+                <span className="font-data text-[10px] text-[var(--text-3)]">{formatPercent(item.percent)}</span>
+              </div>
+              <div className="mt-1 flex items-center justify-between gap-2">
+                <span className="font-data text-[11px] text-[var(--text-2)]">{formatMoney(item.value)}</span>
+                <span className={negative ? "font-data text-[11px] text-[var(--clr-red)]" : "font-data text-[11px] text-[var(--clr-green)]"}>
+                  {formatPercent(item.pnl_percent)}
+                </span>
+              </div>
+            </button>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
 export function PortfolioPage({ accountId, accountsLoading }: { accountId: string | null; accountsLoading?: boolean }) {
   const navigate = useNavigate();
   const openOrderTicket = useOrderTicketStore((state) => state.open);
@@ -211,6 +261,12 @@ export function PortfolioPage({ accountId, accountsLoading }: { accountId: strin
     != null
     ? allocation.find((item) => item.conid === selectedConid)
     : undefined;
+  const smallPositions = useMemo(
+    () => allocation
+      .filter((item) => !isCashAssetClass(item.asset_class) && item.value > 0 && item.percent > 0 && item.percent < 0.5)
+      .sort((a, b) => a.percent - b.percent),
+    [allocation],
+  );
 
   useEffect(() => {
     if (selectedConid != null && positions.length && !positions.some((position) => position.conid === selectedConid)) {
@@ -307,18 +363,28 @@ export function PortfolioPage({ accountId, accountsLoading }: { accountId: strin
         ) : isLoading ? (
           <div className="min-h-[360px] animate-pulse rounded-md border border-border bg-[var(--bg-2)]" />
         ) : (
-          <PortfolioChart
-            type={graphType}
-            allocation={allocation}
-            selectedConid={selectedConid}
-            displayMode={graphType === "treemap" ? displayMode : "total"}
-            leaderSortMode={leaderSortMode}
-            onSelect={handleSelectAllocation}
-            onClear={() => {
-              setSelectedConid(null);
-              setSelectedGroup(null);
-            }}
-          />
+          <>
+            <PortfolioChart
+              type={graphType}
+              allocation={allocation}
+              selectedConid={selectedConid}
+              displayMode={graphType === "treemap" ? displayMode : "total"}
+              leaderSortMode={leaderSortMode}
+              onSelect={handleSelectAllocation}
+              onClear={() => {
+                setSelectedConid(null);
+                setSelectedGroup(null);
+              }}
+            />
+            <SmallPositionsRail
+              items={smallPositions}
+              selectedConid={selectedConid}
+              onSelect={(item) => {
+                setSelectedGroup(null);
+                setSelectedConid(item.conid);
+              }}
+            />
+          </>
         )}
 
         {!portfolioError && !isLoading && selectedGroup ? (

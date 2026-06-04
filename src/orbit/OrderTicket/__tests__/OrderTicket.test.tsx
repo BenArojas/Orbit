@@ -12,6 +12,11 @@ const mockApi = vi.hoisted(() => ({
   moonmarketReplyOrder: vi.fn(),
   moonmarketModifyOrder: vi.fn(),
   moonmarketAccountFunds: vi.fn(),
+  moonmarketPortfolio: vi.fn(),
+  moonmarketRevalidatePositions: vi.fn(),
+  moonmarketOrderRules: vi.fn(),
+  moonmarketTrades: vi.fn(),
+  moonmarketLiveOrders: vi.fn(),
 }));
 
 const mockWs = vi.hoisted(() => ({
@@ -64,12 +69,24 @@ describe("OrderTicket", () => {
     mockApi.moonmarketReplyOrder.mockReset();
     mockApi.moonmarketModifyOrder.mockReset();
     mockApi.moonmarketAccountFunds.mockReset();
+    mockApi.moonmarketPortfolio.mockReset();
+    mockApi.moonmarketRevalidatePositions.mockReset();
+    mockApi.moonmarketOrderRules.mockReset();
+    mockApi.moonmarketTrades.mockReset();
+    mockApi.moonmarketLiveOrders.mockReset();
     mockApi.moonmarketAccountFunds.mockResolvedValue({
       account_id: "DU12345",
       buying_power: 40000,
       available_funds: 10000,
       cash: 10000,
       currency: "USD",
+    });
+    mockApi.moonmarketPortfolio.mockResolvedValue({
+      account_id: "DU12345",
+      total_market_value: 0,
+      total_unrealized_pnl: 0,
+      positions: [],
+      allocation: [],
     });
     mockWs.subscribe.mockReset();
     mockWs.unsubscribe.mockReset();
@@ -85,6 +102,37 @@ describe("OrderTicket", () => {
     mockApi.moonmarketPlaceOrders.mockResolvedValue({ account_id: "DU12345", result: { data: [{ id: "reply-1" }] } });
     mockApi.moonmarketReplyOrder.mockResolvedValue({ account_id: "DU12345", result: { data: [{ order_id: "order-1" }] } });
     mockApi.moonmarketModifyOrder.mockResolvedValue({ account_id: "DU12345", result: { data: [{ order_id: "order-1" }] } });
+    mockApi.moonmarketRevalidatePositions.mockResolvedValue({
+      account_id: "DU12345",
+      positions: [],
+    });
+    mockApi.moonmarketTrades.mockResolvedValue({
+      account_id: "DU12345",
+      days: 7,
+      summary: {
+        total_trades: 0,
+        total_volume: 0,
+        total_commissions: 0,
+        net_cash: 0,
+        buy_count: 0,
+        sell_count: 0,
+      },
+      trades: [],
+    });
+    mockApi.moonmarketLiveOrders.mockResolvedValue({
+      account_id: "DU12345",
+      orders: [],
+    });
+    mockApi.moonmarketOrderRules.mockResolvedValue({
+      account_id: "DU12345",
+      conid: 265598,
+      side: "BUY",
+      rules: {
+        orderTypes: ["market", "limit", "stop", "stop_limit", "trailing_stop", "trailing_stop_limit"],
+        orderTypesOutside: ["limit", "stop_limit", "trailing_stop_limit"],
+        tifTypes: ["DAY/o,a", "GTC/o,a"],
+      },
+    });
     mockApi.quote.mockResolvedValue({
       conid: 265598,
       symbol: "AAPL",
@@ -191,6 +239,37 @@ describe("OrderTicket", () => {
     expect(screen.getByLabelText(/stop loss/i)).toBeInTheDocument();
   });
 
+  it("defaults to sell when the target is already in the selected account positions", async () => {
+    mockApi.moonmarketPortfolio.mockResolvedValue({
+      account_id: "DU12345",
+      total_market_value: 1810,
+      total_unrealized_pnl: 0,
+      positions: [
+        {
+          conid: 265598,
+          symbol: "AAPL",
+          description: "Apple Inc",
+          asset_class: "STK",
+          quantity: 10,
+          last_price: 181,
+          average_cost: 180,
+          market_value: 1810,
+          unrealized_pnl: 10,
+          daily_pnl: null,
+          pnl_percent: 0.5,
+          daily_pnl_percent: null,
+          currency: "USD",
+        },
+      ],
+      allocation: [],
+    });
+    useOrderTicketStore.getState().open({ conid: 265598, symbol: "AAPL" });
+    renderTicket();
+
+    await waitFor(() => expect(screen.getByRole("button", { name: /sell/i })).toHaveAttribute("aria-pressed", "true"));
+    expect(screen.getByRole("button", { name: /buy/i })).toHaveAttribute("aria-pressed", "false");
+  });
+
   it("disables order mutations on a live account but leaves preview available", () => {
     useAccountStore.setState({
       accounts: [{ account_id: "U12345", label: "Live", selected: true, is_paper: false }],
@@ -217,6 +296,218 @@ describe("OrderTicket", () => {
     fireEvent.click(screen.getByRole("button", { name: /place/i }));
 
     await waitFor(() => expect(mockApi.moonmarketPlaceOrders).toHaveBeenCalled());
+  });
+
+  it("renders order preview as readable facts instead of raw JSON", async () => {
+    mockApi.moonmarketPreviewOrder.mockResolvedValue({
+      account_id: "DU12345",
+      result: {
+        amount: {
+          amount: "2,520.80 USD (10 Shares)",
+          commission: "1.00 USD",
+          total: "2,521.80 USD",
+        },
+        equity: { current: "1,000,000", change: "-1", after: "999,999" },
+        position: { current: "0", change: "10", after: "10" },
+        warn: "20/You are trying to submit an order without having market data.",
+      },
+    });
+    useOrderTicketStore.getState().open({ conid: 265598, symbol: "AAPL" });
+    renderTicket();
+
+    fireEvent.click(screen.getByRole("button", { name: /preview/i }));
+
+    expect(await screen.findByText("Estimated Total")).toBeInTheDocument();
+    expect(screen.getByText("2,521.80 USD")).toBeInTheDocument();
+    expect(screen.getByText("Commission")).toBeInTheDocument();
+    expect(screen.getByText("1.00 USD")).toBeInTheDocument();
+    expect(screen.getByText("Position After")).toBeInTheDocument();
+    expect(screen.getByText("10")).toBeInTheDocument();
+    expect(screen.getByText(/without having market data/i)).toBeInTheDocument();
+    expect(screen.queryByText(/"account_id"/i)).not.toBeInTheDocument();
+  });
+
+  it("shows IBKR confirmation prompts returned as result arrays", async () => {
+    mockApi.moonmarketPlaceOrders.mockResolvedValue({
+      account_id: "DU12345",
+      result: [
+        {
+          id: "reply-ibkr-1",
+          message: [
+            "You are submitting an order without market data. Are you sure you want to submit this order?",
+          ],
+          messageOptions: ["Yes", "No"],
+        },
+      ],
+    });
+    useOrderTicketStore.getState().open({ conid: 265598, symbol: "AAPL" });
+    renderTicket();
+
+    fireEvent.change(screen.getByLabelText(/limit price/i), { target: { value: "180" } });
+    fireEvent.click(screen.getByRole("button", { name: /place/i }));
+
+    expect(await screen.findByText(/without market data/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /confirm and submit/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /cancel/i })).toBeInTheDocument();
+  });
+
+  it("revalidates positions after a confirmed order is submitted", async () => {
+    mockApi.moonmarketPlaceOrders.mockResolvedValue({
+      account_id: "DU12345",
+      result: [
+        {
+          id: "reply-ibkr-1",
+          message: ["Confirm this order?"],
+          messageOptions: ["Yes", "No"],
+        },
+      ],
+    });
+    mockApi.moonmarketReplyOrder.mockResolvedValue({
+      account_id: "DU12345",
+      result: { data: [{ order_id: "order-1" }] },
+    });
+    useOrderTicketStore.getState().open({ conid: 265598, symbol: "AAPL" });
+    renderTicket();
+
+    fireEvent.change(screen.getByLabelText(/limit price/i), { target: { value: "180" } });
+    fireEvent.click(screen.getByRole("button", { name: /place/i }));
+    fireEvent.click(await screen.findByRole("button", { name: /confirm and submit/i }));
+
+    await waitFor(() => expect(mockApi.moonmarketReplyOrder).toHaveBeenCalledWith("DU12345", "reply-ibkr-1", true));
+    await waitFor(() => expect(mockApi.moonmarketRevalidatePositions).toHaveBeenCalledWith("DU12345"));
+    expect(await screen.findByText(/order tracker/i)).toBeInTheDocument();
+    expect(screen.getByText(/order-1/i)).toBeInTheDocument();
+  });
+
+  it("shows a market order as filled when matching trades arrive", async () => {
+    mockApi.moonmarketPlaceOrders.mockResolvedValue({ account_id: "DU12345", result: { data: [{ order_id: "order-mkt-1" }] } });
+    mockApi.moonmarketTrades.mockResolvedValue({
+      account_id: "DU12345",
+      days: 7,
+      summary: {
+        total_trades: 1,
+        total_volume: 3,
+        total_commissions: 1,
+        net_cash: -543.75,
+        buy_count: 1,
+        sell_count: 0,
+      },
+      trades: [
+        {
+          execution_id: "E-MKT-1",
+          account_id: "DU12345",
+          conid: 265598,
+          symbol: "AAPL",
+          description: "BOT 3 AAPL",
+          side: "BUY",
+          quantity: 3,
+          price: 181.25,
+          net_amount: -543.75,
+          commission: 1,
+          sec_type: "STK",
+          trade_time: "2026-06-04T19:40:00+00:00",
+          trade_time_ms: Date.now(),
+        },
+      ],
+    });
+    useOrderTicketStore.getState().open({ conid: 265598, symbol: "AAPL", side: "BUY" });
+    renderTicket();
+
+    fireEvent.change(screen.getByLabelText(/order type/i), { target: { value: "MKT" } });
+    fireEvent.change(screen.getByLabelText(/quantity/i), { target: { value: "3" } });
+    fireEvent.click(screen.getByRole("button", { name: /place/i }));
+
+    expect(await screen.findByText(/order filled/i)).toBeInTheDocument();
+    expect(screen.getByText(/3 shares/i)).toBeInTheDocument();
+    expect(screen.getByText(/\$181\.25 avg/i)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /update order/i })).not.toBeInTheDocument();
+  });
+
+  it("marks an order filled from live order status before trades arrive", async () => {
+    mockApi.moonmarketPlaceOrders.mockResolvedValue({ account_id: "DU12345", result: { data: [{ order_id: "order-live-filled-1" }] } });
+    mockApi.moonmarketLiveOrders.mockResolvedValue({
+      account_id: "DU12345",
+      orders: [
+        {
+          order_id: "order-live-filled-1",
+          conid: 265598,
+          symbol: "AAPL",
+          description: "BUY 3 AAPL MARKET",
+          side: "BUY",
+          order_type: "MKT",
+          quantity: 3,
+          remaining_quantity: 0,
+          limit_price: null,
+          tif: "DAY",
+          status: "Filled",
+        },
+      ],
+    });
+    useOrderTicketStore.getState().open({ conid: 265598, symbol: "AAPL", side: "BUY" });
+    renderTicket();
+
+    fireEvent.change(screen.getByLabelText(/order type/i), { target: { value: "MKT" } });
+    fireEvent.change(screen.getByLabelText(/quantity/i), { target: { value: "3" } });
+    fireEvent.click(screen.getByRole("button", { name: /place/i }));
+
+    expect(await screen.findByText(/order filled/i)).toBeInTheDocument();
+    expect(screen.getByText(/3 shares/i)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /update order/i })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^close$/i })).toBeInTheDocument();
+  });
+
+  it("tracks a submitted limit order and updates it from the same ticket", async () => {
+    mockApi.moonmarketPlaceOrders.mockResolvedValue({ account_id: "DU12345", result: { data: [{ order_id: "limit-1" }] } });
+    mockApi.moonmarketLiveOrders.mockResolvedValue({
+      account_id: "DU12345",
+      orders: [
+        {
+          order_id: "limit-1",
+          conid: 265598,
+          symbol: "AAPL",
+          description: "BUY 5 AAPL LIMIT 180.00",
+          side: "BUY",
+          order_type: "LMT",
+          quantity: 5,
+          remaining_quantity: 5,
+          limit_price: 180,
+          tif: "DAY",
+          status: "Submitted",
+        },
+      ],
+    });
+    useOrderTicketStore.getState().open({ conid: 265598, symbol: "AAPL", side: "BUY" });
+    renderTicket();
+
+    fireEvent.change(screen.getByLabelText(/quantity/i), { target: { value: "5" } });
+    fireEvent.change(screen.getByLabelText(/limit price/i), { target: { value: "180" } });
+    fireEvent.click(screen.getByRole("button", { name: /place/i }));
+
+    expect(await screen.findByText(/order tracker/i)).toBeInTheDocument();
+    expect(screen.getByText(/pending/i)).toBeInTheDocument();
+    expect(screen.getByText(/0\.61% away/i)).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText(/limit price/i), { target: { value: "179" } });
+    fireEvent.click(screen.getByRole("button", { name: /update order/i }));
+
+    await waitFor(() => expect(mockApi.moonmarketModifyOrder).toHaveBeenCalledWith(
+      "DU12345",
+      "limit-1",
+      expect.objectContaining({ orderType: "LMT", price: 179 }),
+    ));
+  });
+
+  it("clearly indicates the active buy or sell side", () => {
+    useOrderTicketStore.getState().open({ conid: 265598, symbol: "AAPL", side: "BUY" });
+    renderTicket();
+
+    expect(screen.getByRole("button", { name: /buy/i })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: /sell/i })).toHaveAttribute("aria-pressed", "false");
+
+    fireEvent.click(screen.getByRole("button", { name: /sell/i }));
+
+    expect(screen.getByRole("button", { name: /buy/i })).toHaveAttribute("aria-pressed", "false");
+    expect(screen.getByRole("button", { name: /sell/i })).toHaveAttribute("aria-pressed", "true");
   });
 
   it("places a take-profit-only child order when only take profit is enabled", async () => {
@@ -277,6 +568,24 @@ describe("OrderTicket", () => {
     expect(select).toHaveTextContent("Market");
   });
 
+  it("keeps stop-limit available when IBKR returns wire order type values", async () => {
+    mockApi.moonmarketOrderRules.mockResolvedValue({
+      account_id: "DU12345",
+      conid: 265598,
+      side: "SELL",
+      rules: {
+        orderTypes: ["MKT", "LMT", "STP", "STP LMT"],
+        orderTypesOutside: ["LMT", "STP LMT"],
+      },
+    });
+    useOrderTicketStore.getState().open({ conid: 265598, symbol: "AAPL", side: "SELL" });
+    renderTicket();
+
+    const select = screen.getByLabelText(/order type/i);
+    await waitFor(() => expect(select).not.toHaveTextContent("Trailing Stop"));
+    expect(select).toHaveTextContent("Stop Limit");
+  });
+
   it("reveals trailing fields and places a TRAIL order", async () => {
     useOrderTicketStore.getState().open({ conid: 265598, symbol: "AAPL", side: "SELL" });
     renderTicket();
@@ -298,6 +607,24 @@ describe("OrderTicket", () => {
 
     fireEvent.change(screen.getByLabelText(/order type/i), { target: { value: "TRAILLMT" } });
     expect(screen.getByLabelText(/limit offset/i)).toBeInTheDocument();
+  });
+
+  it("places a TRAILLMT order with limit offset and trailing distance", async () => {
+    useOrderTicketStore.getState().open({ conid: 265598, symbol: "AAPL", side: "SELL" });
+    renderTicket();
+
+    fireEvent.change(screen.getByLabelText(/order type/i), { target: { value: "TRAILLMT" } });
+    fireEvent.change(screen.getByLabelText(/quantity/i), { target: { value: "5" } });
+    fireEvent.change(screen.getByLabelText(/trail distance/i), { target: { value: "2" } });
+    fireEvent.change(screen.getByLabelText(/limit offset/i), { target: { value: "0.5" } });
+    fireEvent.click(screen.getByRole("button", { name: /place/i }));
+
+    await waitFor(() => expect(mockApi.moonmarketPlaceOrders).toHaveBeenCalled());
+    expect(mockApi.moonmarketPlaceOrders.mock.calls[0][0].orders[0]).toMatchObject({
+      orderType: "TRAILLMT",
+      price: 0.5,
+      trailingAmt: 2,
+    });
   });
 
   it("hydrates trailing fields from a modify draft", () => {
@@ -323,12 +650,65 @@ describe("OrderTicket", () => {
     renderTicket();
 
     expect(screen.getByLabelText(/order type/i)).toHaveValue("TRAILLMT");
-    expect(screen.getByLabelText(/tif/i)).toHaveValue("GTC");
+    expect(screen.getByLabelText(/time in force/i)).toHaveValue("GTC");
     expect(screen.getByLabelText(/trail by/i)).toHaveValue("amt");
     expect(screen.getByLabelText(/trail distance/i)).toHaveValue("2");
     expect(screen.getByLabelText(/limit offset/i)).toHaveValue("178");
-    expect(screen.getByLabelText(/aux price/i)).toHaveValue("183");
     expect(screen.getByLabelText(/outside regular trading hours/i)).toBeChecked();
+  });
+
+  it("only shows aux price when the selected order type requires it", () => {
+    useOrderTicketStore.getState().open({ conid: 265598, symbol: "AAPL", side: "BUY" });
+    renderTicket();
+
+    expect(screen.queryByLabelText(/aux price/i)).not.toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText(/order type/i), { target: { value: "STP_LIMIT" } });
+
+    expect(screen.getByLabelText(/stop price/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/limit price/i)).toBeInTheDocument();
+  });
+
+  it("sends stop trigger prices as auxPrice", async () => {
+    useOrderTicketStore.getState().open({ conid: 265598, symbol: "AAPL", side: "SELL" });
+    renderTicket();
+
+    fireEvent.change(screen.getByLabelText(/order type/i), { target: { value: "STP" } });
+    fireEvent.change(screen.getByLabelText(/quantity/i), { target: { value: "5" } });
+    fireEvent.change(screen.getByLabelText(/stop price/i), { target: { value: "175" } });
+    fireEvent.click(screen.getByRole("button", { name: /place/i }));
+
+    await waitFor(() => expect(mockApi.moonmarketPlaceOrders).toHaveBeenCalled());
+    expect(mockApi.moonmarketPlaceOrders.mock.calls[0][0].orders[0]).toMatchObject({
+      orderType: "STP",
+      auxPrice: 175,
+    });
+    expect(mockApi.moonmarketPlaceOrders.mock.calls[0][0].orders[0].price).toBeUndefined();
+  });
+
+  it("does not allow outside regular hours for market orders", () => {
+    useOrderTicketStore.getState().open({ conid: 265598, symbol: "AAPL", side: "BUY" });
+    renderTicket();
+
+    fireEvent.change(screen.getByLabelText(/order type/i), { target: { value: "MKT" } });
+
+    expect(screen.queryByLabelText(/outside regular trading hours/i)).not.toBeInTheDocument();
+  });
+
+  it("trusts an explicit empty IBKR outside-RTH rule list", async () => {
+    mockApi.moonmarketOrderRules.mockResolvedValue({
+      account_id: "DU12345",
+      conid: 265598,
+      side: "BUY",
+      rules: {
+        orderTypes: ["LMT"],
+        orderTypesOutside: [],
+      },
+    });
+    useOrderTicketStore.getState().open({ conid: 265598, symbol: "AAPL", side: "BUY" });
+    renderTicket();
+
+    await waitFor(() => expect(screen.queryByLabelText(/outside regular trading hours/i)).not.toBeInTheDocument());
   });
 
   it("passes the outside-RTH flag on placement when checked", async () => {

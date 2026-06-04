@@ -38,6 +38,11 @@ function normalizeOrderType(orderType: string | null): MoonMarketOrderType {
   return "LMT";
 }
 
+function normalizeTif(tif: string | null | undefined): MoonMarketOrderDraft["tif"] {
+  const normalized = tif?.toUpperCase();
+  return normalized === "GTC" || normalized === "IOC" ? normalized : "DAY";
+}
+
 function orderDraft(order: MoonMarketLiveOrder): MoonMarketOrderDraft | null {
   if (!order.conid || !order.quantity) {
     return null;
@@ -48,7 +53,7 @@ function orderDraft(order: MoonMarketLiveOrder): MoonMarketOrderDraft | null {
     side: normalizeSide(order.side),
     quantity: order.quantity,
     orderType: normalizeOrderType(order.order_type),
-    tif: order.tif === "GTC" || order.tif === "IOC" ? order.tif : "DAY",
+    tif: normalizeTif(order.tif),
     price: order.limit_price ?? undefined,
     auxPrice: order.aux_price ?? undefined,
     trailingType: order.trailing_type ?? undefined,

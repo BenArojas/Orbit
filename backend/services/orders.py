@@ -93,14 +93,17 @@ class OrderService:
     def _order_payload(self, order: MoonMarketOrderDraft) -> dict[str, object]:
         payload: dict[str, object] = {
             "conid": order.conid,
-            "orderType": order.order_type,
+            "orderType": "STP LMT" if order.order_type == "STP_LIMIT" else order.order_type,
             "side": order.side,
             "tif": order.tif,
             "quantity": order.quantity,
         }
-        if order.price is not None:
+        stop_price = order.aux_price if order.aux_price is not None else order.price
+        if order.order_type == "STP" and stop_price is not None:
+            payload["auxPrice"] = stop_price
+        elif order.price is not None:
             payload["price"] = order.price
-        if order.aux_price is not None:
+        if order.order_type != "STP" and order.aux_price is not None:
             payload["auxPrice"] = order.aux_price
         if order.trailing_type is not None:
             payload["trailingType"] = order.trailing_type

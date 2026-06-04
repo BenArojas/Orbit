@@ -22,7 +22,7 @@ Note: Watchlists are managed in IBKR — no local models needed.
 from __future__ import annotations
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
-from typing import Literal, Optional
+from typing import Any, Literal, Optional
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -279,6 +279,20 @@ class MoonMarketLiveOrdersResponse(BaseModel):
     """Response from GET /moonmarket/live-orders."""
     account_id: str
     orders: list[MoonMarketLiveOrder]
+
+
+class MoonMarketPositionsRevalidateResponse(BaseModel):
+    """Response from POST /moonmarket/accounts/{account_id}/positions/revalidate."""
+    account_id: str
+    positions: list[dict[str, Any]]
+
+
+class MoonMarketOrderRulesResponse(BaseModel):
+    """Raw IBKR contract order rules scoped to an account, conid, and side."""
+    account_id: str
+    conid: int
+    side: Literal["BUY", "SELL"]
+    rules: dict[str, Any]
 
 
 OptionRight = Literal["C", "P"]

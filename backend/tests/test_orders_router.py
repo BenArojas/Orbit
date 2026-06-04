@@ -159,7 +159,7 @@ def test_place_order_preserves_bracket_payload_for_paper_account():
             "quantity": 5,
             "orderType": "STP",
             "tif": "GTC",
-            "price": 165.0,
+            "auxPrice": 165.0,
             "isSingleGroup": True,
         },
     ]
@@ -171,6 +171,82 @@ def test_place_order_preserves_bracket_payload_for_paper_account():
 
     assert resp.status_code == 200
     assert fake.requests[-1][2] == {"json": {"orders": bracket}}
+
+
+def test_place_order_maps_stop_price_to_ibkr_aux_price():
+    fake = _FakeIbkr()
+    order = {
+        "conid": 265598,
+        "side": "SELL",
+        "quantity": 5,
+        "orderType": "STP",
+        "tif": "DAY",
+        "price": 175.0,
+    }
+
+    resp = _client(fake).post(
+        "/moonmarket/orders",
+        json={"account_id": "DU12345", "orders": [order]},
+    )
+
+    assert resp.status_code == 200
+    assert fake.requests[-1] == (
+        "POST",
+        "/iserver/account/DU12345/orders",
+        {
+            "json": {
+                "orders": [
+                    {
+                        "conid": 265598,
+                        "side": "SELL",
+                        "quantity": 5.0,
+                        "orderType": "STP",
+                        "tif": "DAY",
+                        "auxPrice": 175.0,
+                    }
+                ]
+            }
+        },
+    )
+
+
+def test_place_order_maps_internal_stop_limit_type_to_ibkr_wire_value():
+    fake = _FakeIbkr()
+    order = {
+        "conid": 265598,
+        "side": "SELL",
+        "quantity": 5,
+        "orderType": "STP_LIMIT",
+        "tif": "DAY",
+        "price": 174.0,
+        "auxPrice": 175.0,
+    }
+
+    resp = _client(fake).post(
+        "/moonmarket/orders",
+        json={"account_id": "DU12345", "orders": [order]},
+    )
+
+    assert resp.status_code == 200
+    assert fake.requests[-1] == (
+        "POST",
+        "/iserver/account/DU12345/orders",
+        {
+            "json": {
+                "orders": [
+                    {
+                        "conid": 265598,
+                        "side": "SELL",
+                        "quantity": 5.0,
+                        "orderType": "STP LMT",
+                        "tif": "DAY",
+                        "price": 174.0,
+                        "auxPrice": 175.0,
+                    }
+                ]
+            }
+        },
+    )
 
 
 def test_place_single_option_order_posts_one_order_for_paper_account():

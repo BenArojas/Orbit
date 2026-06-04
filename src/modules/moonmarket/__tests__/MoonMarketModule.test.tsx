@@ -214,6 +214,7 @@ describe("MoonMarketModule", () => {
           trailing_type: "amt",
           trailing_amt: 2,
           outside_rth: true,
+          tif: "GTC",
           status: "Submitted",
         },
       ],
@@ -463,7 +464,7 @@ describe("MoonMarketModule", () => {
         side: "BUY",
         quantity: 5,
         orderType: "TRAILLMT",
-        tif: "DAY",
+        tif: "GTC",
         price: 180,
         auxPrice: 178,
         trailingType: "amt",
@@ -474,5 +475,78 @@ describe("MoonMarketModule", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /cancel aapl order/i }));
     await waitFor(() => expect(mockApi.moonmarketCancelOrder).toHaveBeenCalledWith("DU12345", "123456789"));
+  });
+
+  it("surfaces tiny positions in a selectable rail when the chart cannot show them", async () => {
+    mockApi.moonmarketPortfolio.mockResolvedValueOnce({
+      account_id: "DU12345",
+      total_market_value: 1_000_600,
+      total_unrealized_pnl: -2.16,
+      positions: [
+        {
+          conid: -999,
+          symbol: "CASH",
+          description: "Cash balance",
+          asset_class: "CASH",
+          quantity: 998_793,
+          last_price: 1,
+          average_cost: 1,
+          market_value: 1_000_000,
+          unrealized_pnl: 0,
+          daily_pnl: null,
+          pnl_percent: 0,
+          daily_pnl_percent: null,
+          currency: "USD",
+        },
+        {
+          conid: 109911821,
+          symbol: "NOW",
+          description: "ServiceNow Inc",
+          asset_class: "STK",
+          quantity: -5,
+          last_price: 121.08,
+          average_cost: 121.5,
+          market_value: -605.4,
+          unrealized_pnl: -2.16,
+          daily_pnl: -2.16,
+          pnl_percent: -0.36,
+          daily_pnl_percent: -0.36,
+          currency: "USD",
+        },
+      ],
+      allocation: [
+        {
+          conid: -999,
+          symbol: "CASH",
+          label: "Cash balance",
+          value: 1_000_000,
+          percent: 99.94,
+          asset_class: "CASH",
+          unrealized_pnl: 0,
+          daily_pnl: null,
+          pnl_percent: 0,
+          daily_pnl_percent: null,
+        },
+        {
+          conid: 109911821,
+          symbol: "NOW",
+          label: "ServiceNow Inc",
+          value: 605.4,
+          percent: 0.06,
+          asset_class: "STK",
+          unrealized_pnl: -2.16,
+          daily_pnl: -2.16,
+          pnl_percent: -0.36,
+          daily_pnl_percent: -0.36,
+        },
+      ],
+    });
+
+    renderMoonMarket();
+
+    expect(await screen.findByText(/small positions/i)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /select small position now/i }));
+
+    expect(screen.getByTestId("moonmarket-position-inspector")).toHaveTextContent("NOW");
   });
 });

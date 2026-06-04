@@ -1,19 +1,23 @@
-import { useEffect, useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import type {
+  MoonMarketLiveOrder,
   MoonMarketOrderDraft,
   MoonMarketOrderSide,
   MoonMarketOrderType,
   MoonMarketTimeInForce,
   MoonMarketTrailingType,
+  MoonMarketTrade,
 } from "@/lib/api";
 import { api } from "@/lib/api";
 import { useWebSocket, type WsMessage } from "@/hooks/useWebSocket";
+import { cn } from "@/lib/utils";
 import { useAccountStore } from "./useAccountStore";
 import { useModifyOrder, usePlaceOrder, usePreviewOrder, useReplyOrder } from "./useOrderMutations";
 import type { OrderTicketTarget } from "./useOrderTicketStore";
-import { OrderResult } from "./OrderResult";
+import { useOrderTicketStore } from "./useOrderTicketStore";
+import { OrderResult, type OrderTrackerState } from "./OrderResult";
 import { ORDER_TYPE_LABELS, TIF_LABELS, TRAILING_TYPE_LABELS } from "./labels";
 import { cashForBuyingPowerPct, computeRiskReward, sharesForCash } from "./orderMath";
 
@@ -27,15 +31,30 @@ function resultData(result: unknown): unknown {
   return (result as { result: unknown }).result;
 }
 
-function firstReplyId(result: unknown): string | null {
+function resultRows(result: unknown): Array<Record<string, unknown>> {
   const payload = resultData(result);
-  if (!payload || typeof payload !== "object" || !("data" in payload)) return null;
-  const data = (payload as { data?: unknown }).data;
-  if (!Array.isArray(data)) return null;
-  const first = data[0];
-  if (!first || typeof first !== "object") return null;
-  const id = (first as Record<string, unknown>).id;
-  return typeof id === "string" ? id : null;
+  if (Array.isArray(payload)) return payload.filter((row) => row && typeof row === "object") as Array<Record<string, unknown>>;
+  if (payload && typeof payload === "object" && "data" in payload) {
+    const data = (payload as { data?: unknown }).data;
+    if (Array.isArray(data)) return data.filter((row) => row && typeof row === "object") as Array<Record<string, unknown>>;
+  }
+  return payload && typeof payload === "object" ? [payload as Record<string, unknown>] : [];
+}
+
+function firstReplyId(result: unknown): string | null {
+  for (const row of resultRows(result)) {
+    if (typeof row.id === "string") return row.id;
+  }
+  return null;
+}
+
+function firstOrderId(result: unknown): string | null {
+  for (const row of resultRows(result)) {
+    const id = row.order_id ?? row.orderId;
+    if (typeof id === "string" && id.trim()) return id;
+    if (typeof id === "number") return String(id);
+  }
+  return null;
 }
 
 function newClientOrderId(): string {
@@ -68,7 +87,85 @@ type LiveBook = {
   askSize: number | null;
 };
 
+type TrackedOrder = {
+  orderId: string;
+  order: MoonMarketOrderDraft;
+  submittedAt: number;
+};
+
+const ORDER_TYPE_CODES: MoonMarketOrderType[] = ["MKT", "LMT", "STP", "STP_LIMIT", "TRAIL", "TRAILLMT"];
+const FALLBACK_OUTSIDE_RTH_ORDER_TYPES = new Set<MoonMarketOrderType>(["LMT", "STP_LIMIT", "TRAILLMT"]);
+const IBKR_ORDER_TYPES: Record<string, MoonMarketOrderType> = {
+  market: "MKT",
+  mkt: "MKT",
+  limit: "LMT",
+  lmt: "LMT",
+  stop: "STP",
+  stp: "STP",
+  stop_limit: "STP_LIMIT",
+  stp_lmt: "STP_LIMIT",
+  stoplimit: "STP_LIMIT",
+  stop_limit_order: "STP_LIMIT",
+  trailing_stop: "TRAIL",
+  trail: "TRAIL",
+  trailing_stop_limit: "TRAILLMT",
+  traillmt: "TRAILLMT",
+};
+
+function mapOrderType(value: string): MoonMarketOrderType | null {
+  return IBKR_ORDER_TYPES[value.toLowerCase().replace(/[\s-]+/g, "_")] ?? null;
+}
+
+function orderTypesFromRules(values: unknown): MoonMarketOrderType[] {
+  if (!Array.isArray(values)) return [];
+  const seen = new Set<MoonMarketOrderType>();
+  for (const value of values) {
+    if (typeof value !== "string") continue;
+    const code = mapOrderType(value);
+    if (code) seen.add(code);
+  }
+  return ORDER_TYPE_CODES.filter((code) => seen.has(code));
+}
+
+function matchingLiveOrder(orders: MoonMarketLiveOrder[], trackedOrder: TrackedOrder | null): MoonMarketLiveOrder | null {
+  if (!trackedOrder) return null;
+  return orders.find((order) => order.order_id === trackedOrder.orderId) ?? null;
+}
+
+function matchingFill(trades: MoonMarketTrade[], trackedOrder: TrackedOrder | null): {
+  quantity: number;
+  averagePrice: number | null;
+} | null {
+  if (!trackedOrder) return null;
+  const since = trackedOrder.submittedAt - 5 * 60_000;
+  const matches = trades.filter((trade) => (
+    trade.conid === trackedOrder.order.conid
+    && trade.side === trackedOrder.order.side
+    && (trade.trade_time_ms == null || trade.trade_time_ms >= since)
+  ));
+  const quantity = matches.reduce((sum, trade) => sum + Math.abs(trade.quantity), 0);
+  if (quantity <= 0) return null;
+  const priceBasis = matches.reduce((sum, trade) => (
+    trade.price == null ? sum : sum + Math.abs(trade.quantity) * trade.price
+  ), 0);
+  return {
+    quantity,
+    averagePrice: priceBasis > 0 ? priceBasis / quantity : null,
+  };
+}
+
+function orderIsTerminal(status: string | null | undefined): boolean {
+  const normalized = status?.toLowerCase();
+  return normalized === "filled" || normalized === "cancelled" || normalized === "inactive" || normalized === "api cancelled";
+}
+
+function orderIsFilled(status: string | null | undefined): boolean {
+  return status?.toLowerCase() === "filled";
+}
+
 export function OrderForm({ target }: OrderFormProps) {
+  const queryClient = useQueryClient();
+  const closeTicket = useOrderTicketStore((state) => state.close);
   const selectedAccountId = useAccountStore((state) => state.selectedAccountId);
   const selectedAccount = useAccountStore((state) => state.selectedAccount());
   const assetClass = target.assetClass ?? "STK";
@@ -98,6 +195,9 @@ export function OrderForm({ target }: OrderFormProps) {
   const [previewResult, setPreviewResult] = useState<unknown>(null);
   const [actionResult, setActionResult] = useState<unknown>(null);
   const [replyId, setReplyId] = useState<string | null>(null);
+  const [trackedOrder, setTrackedOrder] = useState<TrackedOrder | null>(null);
+  const [sideTouched, setSideTouched] = useState(false);
+  const filledToastRef = useRef<string | null>(null);
 
   const previewMutation = usePreviewOrder();
   const placeMutation = usePlaceOrder();
@@ -125,6 +225,45 @@ export function OrderForm({ target }: OrderFormProps) {
     staleTime: 30_000,
   });
   const buyingPower = fundsQuery.data?.buying_power ?? null;
+  const portfolioQuery = useQuery({
+    queryKey: ["moonmarket", "portfolio", selectedAccountId],
+    queryFn: ({ signal }) => api.moonmarketPortfolio(selectedAccountId as string, signal),
+    enabled: !!selectedAccountId && !target.side && assetClass === "STK",
+    staleTime: 15_000,
+  });
+
+  const orderRulesQuery = useQuery({
+    queryKey: ["moonmarket", "order-rules", selectedAccountId, target.conid, side],
+    queryFn: ({ signal }) => api.moonmarketOrderRules(selectedAccountId as string, target.conid, side, signal),
+    enabled: !!selectedAccountId,
+    staleTime: 5 * 60_000,
+  });
+  const availableOrderTypes = useMemo(() => {
+    const fromRules = orderTypesFromRules(orderRulesQuery.data?.rules.orderTypes);
+    return fromRules.length ? fromRules : ORDER_TYPE_CODES;
+  }, [orderRulesQuery.data?.rules.orderTypes]);
+  const outsideRthOrderTypes = useMemo(() => {
+    const rawRules = orderRulesQuery.data?.rules.orderTypesOutside;
+    return new Set(Array.isArray(rawRules) ? orderTypesFromRules(rawRules) : [...FALLBACK_OUTSIDE_RTH_ORDER_TYPES]);
+  }, [orderRulesQuery.data?.rules.orderTypesOutside]);
+  const tradesQuery = useQuery({
+    queryKey: ["moonmarket", "trades", selectedAccountId, 7],
+    queryFn: ({ signal }) => api.moonmarketTrades(selectedAccountId as string, 7, signal),
+    enabled: !!selectedAccountId && !!trackedOrder,
+    refetchInterval: (query) => {
+      if (!trackedOrder) return false;
+      return matchingFill(query.state.data?.trades ?? [], trackedOrder) ? false : 3_000;
+    },
+  });
+  const liveOrdersQuery = useQuery({
+    queryKey: ["moonmarket", "live-orders", selectedAccountId],
+    queryFn: ({ signal }) => api.moonmarketLiveOrders(selectedAccountId as string, signal),
+    enabled: !!selectedAccountId && !!trackedOrder,
+    refetchInterval: (query) => {
+      const liveOrder = matchingLiveOrder(query.state.data?.orders ?? [], trackedOrder);
+      return liveOrder && !orderIsTerminal(liveOrder.status) ? 3_000 : false;
+    },
+  });
 
   useEffect(() => {
     setSide(target.side ?? "BUY");
@@ -147,7 +286,32 @@ export function OrderForm({ target }: OrderFormProps) {
     setPreviewResult(null);
     setActionResult(null);
     setReplyId(null);
+    setTrackedOrder(null);
+    setSideTouched(false);
+    filledToastRef.current = null;
   }, [target]);
+
+  useEffect(() => {
+    if (target.side || sideTouched || assetClass !== "STK") return;
+    const heldPosition = portfolioQuery.data?.positions.find((position) => (
+      position.conid === target.conid && position.quantity !== 0
+    ));
+    if (heldPosition) {
+      setSide("SELL");
+    }
+  }, [assetClass, portfolioQuery.data?.positions, sideTouched, target.conid, target.side]);
+
+  useEffect(() => {
+    if (!availableOrderTypes.includes(orderType)) {
+      setOrderType(availableOrderTypes[0] ?? "LMT");
+    }
+  }, [availableOrderTypes, orderType]);
+
+  useEffect(() => {
+    if (outsideRth && !outsideRthOrderTypes.has(orderType)) {
+      setOutsideRth(false);
+    }
+  }, [orderType, outsideRth, outsideRthOrderTypes]);
 
   useEffect(() => {
     subscribe(target.conid);
@@ -170,6 +334,10 @@ export function OrderForm({ target }: OrderFormProps) {
   const isTrailing = orderType === "TRAIL" || orderType === "TRAILLMT";
   const tifOptions = (Object.keys(TIF_LABELS) as Array<keyof typeof TIF_LABELS>)
     .filter((code) => !isTrailing || code !== "IOC");
+  const needsLimitPrice = orderType === "LMT" || orderType === "STP_LIMIT";
+  const needsStopPrice = orderType === "STP" || orderType === "STP_LIMIT";
+  const needsStopAuxPrice = orderType === "STP" || orderType === "STP_LIMIT";
+  const canUseOutsideRth = outsideRthOrderTypes.has(orderType);
 
   useEffect(() => {
     if (isTrailing && tif === "IOC") {
@@ -202,12 +370,71 @@ export function OrderForm({ target }: OrderFormProps) {
     quantity: effectiveQuantity,
     orderType,
     tif,
-    price: numberOrUndefined(price),
-    auxPrice: numberOrUndefined(auxPrice),
+    price: needsLimitPrice || orderType === "TRAILLMT" ? numberOrUndefined(price) : undefined,
+    auxPrice: needsStopAuxPrice ? numberOrUndefined(auxPrice) : undefined,
     trailingType: isTrailing ? trailingType : undefined,
     trailingAmt: isTrailing ? numberOrUndefined(trailingAmt) : undefined,
-    outsideRTH: outsideRth || undefined,
-  }), [assetClass, auxPrice, effectiveQuantity, isTrailing, orderType, outsideRth, price, side, target.conid, tif, trailingAmt, trailingType]);
+    outsideRTH: outsideRth && canUseOutsideRth ? true : undefined,
+  }), [assetClass, auxPrice, canUseOutsideRth, effectiveQuantity, isTrailing, needsLimitPrice, needsStopAuxPrice, orderType, outsideRth, price, side, target.conid, tif, trailingAmt, trailingType]);
+  const liveOrder = matchingLiveOrder(liveOrdersQuery.data?.orders ?? [], trackedOrder);
+  const fill = matchingFill(tradesQuery.data?.trades ?? [], trackedOrder);
+  const currentPrice = quote?.lastPrice ?? book.ask ?? book.bid ?? null;
+  const trackedLimitPrice = trackedOrder?.order.price ?? liveOrder?.limit_price ?? null;
+  const distancePercent = currentPrice != null && trackedLimitPrice != null && trackedLimitPrice > 0
+    ? Math.round((Math.abs(currentPrice - trackedLimitPrice) / trackedLimitPrice) * 10_000) / 100
+    : null;
+  const orderTracker = useMemo<OrderTrackerState | null>(() => {
+    if (!trackedOrder) return null;
+    if (fill || orderIsFilled(liveOrder?.status)) {
+      const liveFilledQuantity =
+        liveOrder?.quantity != null && liveOrder?.remaining_quantity != null
+          ? Math.max(0, liveOrder.quantity - liveOrder.remaining_quantity)
+          : liveOrder?.quantity ?? null;
+      return {
+        orderId: trackedOrder.orderId,
+        orderType: trackedOrder.order.orderType,
+        status: "filled",
+        quantity: trackedOrder.order.quantity,
+        filledQuantity: fill?.quantity ?? liveFilledQuantity ?? trackedOrder.order.quantity,
+        averagePrice: fill?.averagePrice ?? null,
+      };
+    }
+    return {
+      orderId: trackedOrder.orderId,
+      orderType: trackedOrder.order.orderType,
+      status: liveOrder ? "pending" : "submitted",
+      liveStatus: liveOrder?.status ?? "Pending",
+      quantity: trackedOrder.order.quantity,
+      currentPrice,
+      limitPrice: trackedLimitPrice,
+      distancePercent,
+      remainingQuantity: liveOrder?.remaining_quantity ?? trackedOrder.order.quantity,
+    };
+  }, [currentPrice, distancePercent, fill, liveOrder, trackedLimitPrice, trackedOrder]);
+
+  useEffect(() => {
+    if (!orderTracker || orderTracker.status !== "filled" || filledToastRef.current === orderTracker.orderId) return;
+    filledToastRef.current = orderTracker.orderId;
+    toast.success(`Order filled: ${orderTracker.filledQuantity ?? 0} shares at $${orderTracker.averagePrice?.toFixed(2) ?? "--"}`);
+  }, [orderTracker]);
+  const canUpdateTrackedOrder = Boolean(
+    trackedOrder?.orderId
+    && trackedOrder.order.orderType !== "MKT"
+    && orderTracker?.status !== "filled",
+  );
+
+  const refreshAccountAfterSubmitted = (result: unknown) => {
+    if (!selectedAccountId || !firstOrderId(result)) return;
+    void api.moonmarketRevalidatePositions(selectedAccountId)
+      .catch(() => undefined)
+      .finally(() => {
+        void queryClient.invalidateQueries({ queryKey: ["moonmarket", "portfolio", selectedAccountId] });
+        void queryClient.invalidateQueries({ queryKey: ["moonmarket", "live-orders", selectedAccountId] });
+        void queryClient.invalidateQueries({ queryKey: ["moonmarket", "funds", selectedAccountId] });
+        void queryClient.invalidateQueries({ queryKey: ["moonmarket", "trades", selectedAccountId] });
+        void queryClient.invalidateQueries({ queryKey: ["market", "quote", target.conid] });
+      });
+  };
 
   const buildOrders = (): MoonMarketOrderDraft[] => {
     if (optionTarget || (!takeProfitEnabled && !stopLossEnabled)) return [baseOrder];
@@ -275,17 +502,22 @@ export function OrderForm({ target }: OrderFormProps) {
       toast.error("Limit offset is required.");
       return;
     }
-    if (orderType === "TRAILLMT" && !numberOrUndefined(auxPrice)) {
-      toast.error("Aux price is required.");
-      return;
-    }
     const orders = buildOrders();
     if (!orders.length) return;
-    if (target.mode === "modify" && target.orderId) {
+    const modifyOrderId = target.mode === "modify" && target.orderId
+      ? target.orderId
+      : canUpdateTrackedOrder && trackedOrder?.orderId
+        ? trackedOrder.orderId
+        : null;
+    if (modifyOrderId) {
       modifyMutation.mutate(
-        { accountId: selectedAccountId, orderId: target.orderId, order: orders[0] },
+        { accountId: selectedAccountId, orderId: modifyOrderId, order: orders[0] },
         {
-          onSuccess: (result) => setActionResult(result),
+          onSuccess: (result) => {
+            setActionResult(result);
+            setTrackedOrder({ orderId: modifyOrderId, order: orders[0], submittedAt: Date.now() });
+            refreshAccountAfterSubmitted(result);
+          },
           onError: () => toast.error("Order modification failed."),
         },
       );
@@ -297,6 +529,11 @@ export function OrderForm({ target }: OrderFormProps) {
         onSuccess: (result) => {
           setActionResult(result);
           setReplyId(firstReplyId(result));
+          const orderId = firstOrderId(result);
+          if (orderId) {
+            setTrackedOrder({ orderId, order: orders[0], submittedAt: Date.now() });
+          }
+          refreshAccountAfterSubmitted(result);
         },
         onError: () => toast.error("Order placement failed."),
       },
@@ -315,6 +552,11 @@ export function OrderForm({ target }: OrderFormProps) {
         onSuccess: (result) => {
           setActionResult(result);
           setReplyId(firstReplyId(result));
+          const orderId = firstOrderId(result);
+          if (orderId) {
+            setTrackedOrder({ orderId, order: baseOrder, submittedAt: Date.now() });
+          }
+          refreshAccountAfterSubmitted(result);
         },
         onError: () => toast.error("Order confirmation failed."),
       },
@@ -351,32 +593,62 @@ export function OrderForm({ target }: OrderFormProps) {
           </div>
         </section>
         <div className="grid grid-cols-2 gap-2">
-          <button type="button" aria-pressed={side === "BUY"} onClick={() => setSide("BUY")} className="rounded-md border border-border px-3 py-2 text-[12px]">BUY</button>
-          <button type="button" aria-pressed={side === "SELL"} onClick={() => setSide("SELL")} className="rounded-md border border-border px-3 py-2 text-[12px]">SELL</button>
+          <button
+            type="button"
+            aria-pressed={side === "BUY"}
+            onClick={() => {
+              setSideTouched(true);
+              setSide("BUY");
+            }}
+            className={cn(
+              "rounded-md border px-3 py-2 text-[12px] font-semibold transition-colors",
+              side === "BUY"
+                ? "border-[var(--clr-green)] bg-[var(--clr-green)]/14 text-[var(--clr-green)] shadow-[0_0_14px_var(--glow-green)]"
+                : "border-border text-[var(--text-2)] hover:border-[var(--clr-green)]/50 hover:text-[var(--clr-green)]",
+            )}
+          >
+            BUY
+          </button>
+          <button
+            type="button"
+            aria-pressed={side === "SELL"}
+            onClick={() => {
+              setSideTouched(true);
+              setSide("SELL");
+            }}
+            className={cn(
+              "rounded-md border px-3 py-2 text-[12px] font-semibold transition-colors",
+              side === "SELL"
+                ? "border-[var(--clr-red)] bg-[var(--clr-red)]/14 text-[var(--clr-red)] shadow-[0_0_14px_var(--glow-red)]"
+                : "border-border text-[var(--text-2)] hover:border-[var(--clr-red)]/50 hover:text-[var(--clr-red)]",
+            )}
+          >
+            SELL
+          </button>
         </div>
-        <label className="block text-[11px] text-[var(--text-3)]">
+        <label className="block text-[11px] font-medium text-[var(--text-2)]">
           Size By
-          <select aria-label="Size by" value={sizeMode} onChange={(event) => setSizeMode(event.target.value as "shares" | "cash" | "bp")} className="mt-1 h-9 w-full rounded-md border border-border bg-[var(--bg-1)] px-2 text-[12px]">
+          <select aria-label="Size by" value={sizeMode} onChange={(event) => setSizeMode(event.target.value as "shares" | "cash" | "bp")} className="mt-1 h-9 w-full rounded-md border border-border bg-[var(--bg-1)] px-2 text-[12px] text-[var(--text-1)]">
             <option value="shares">Shares</option>
             <option value="cash">Cash ($)</option>
             <option value="bp">% of Buying Power</option>
           </select>
         </label>
         {sizeMode === "shares" ? (
-          <label className="block text-[11px] text-[var(--text-3)]">
+          <label className="block text-[11px] font-medium text-[var(--text-2)]">
             Quantity
-            <input aria-label="Quantity" value={quantity} onChange={(event) => setQuantity(event.target.value)} className="mt-1 h-9 w-full rounded-md border border-border bg-[var(--bg-1)] px-2 text-[12px]" />
+            <input aria-label="Quantity" value={quantity} onChange={(event) => setQuantity(event.target.value)} className="mt-1 h-9 w-full rounded-md border border-border bg-[var(--bg-1)] px-2 text-[12px] text-[var(--text-1)]" />
           </label>
         ) : sizeMode === "cash" ? (
-          <label className="block text-[11px] text-[var(--text-3)]">
+          <label className="block text-[11px] font-medium text-[var(--text-2)]">
             Cash Amount
-            <input aria-label="Cash amount" value={cashAmount} onChange={(event) => setCashAmount(event.target.value)} className="mt-1 h-9 w-full rounded-md border border-border bg-[var(--bg-1)] px-2 text-[12px]" />
+            <input aria-label="Cash amount" value={cashAmount} onChange={(event) => setCashAmount(event.target.value)} className="mt-1 h-9 w-full rounded-md border border-border bg-[var(--bg-1)] px-2 text-[12px] text-[var(--text-1)]" />
             <span className="mt-1 block text-[var(--text-3)]">{cashShares != null ? `≈ ${cashShares} shares` : "≈ — shares"}</span>
           </label>
         ) : (
-          <label className="block text-[11px] text-[var(--text-3)]">
+          <label className="block text-[11px] font-medium text-[var(--text-2)]">
             Percent of Buying Power
-            <input aria-label="Percent of buying power" value={bpPercent} onChange={(event) => setBpPercent(event.target.value)} className="mt-1 h-9 w-full rounded-md border border-border bg-[var(--bg-1)] px-2 text-[12px]" />
+            <input aria-label="Percent of buying power" value={bpPercent} onChange={(event) => setBpPercent(event.target.value)} className="mt-1 h-9 w-full rounded-md border border-border bg-[var(--bg-1)] px-2 text-[12px] text-[var(--text-1)]" />
             <span className="mt-1 block text-[var(--text-3)]">
               Buying power {buyingPower != null ? `$${formatQuoteNumber(buyingPower)}` : "—"}
               {" · "}
@@ -384,36 +656,43 @@ export function OrderForm({ target }: OrderFormProps) {
             </span>
           </label>
         )}
-        <label className="block text-[11px] text-[var(--text-3)]">
+        <label className="block text-[11px] font-medium text-[var(--text-2)]">
           Order Type
-          <select aria-label="Order Type" value={orderType} onChange={(event) => setOrderType(event.target.value as MoonMarketOrderType)} className="mt-1 h-9 w-full rounded-md border border-border bg-[var(--bg-1)] px-2 text-[12px]">
-            {(Object.keys(ORDER_TYPE_LABELS) as Array<keyof typeof ORDER_TYPE_LABELS>).map((code) => (
+          <select aria-label="Order Type" value={orderType} onChange={(event) => setOrderType(event.target.value as MoonMarketOrderType)} className="mt-1 h-9 w-full rounded-md border border-border bg-[var(--bg-1)] px-2 text-[12px] text-[var(--text-1)]">
+            {availableOrderTypes.map((code) => (
               <option key={code} value={code}>{ORDER_TYPE_LABELS[code]}</option>
             ))}
           </select>
+          <span className="mt-1 block text-[10px] font-normal text-[var(--text-3)]">
+            {orderRulesQuery.isError ? "Using fallback order rules." : "Filtered by IBKR contract rules."}
+          </span>
         </label>
-        <label className="block text-[11px] text-[var(--text-3)]">
-          TIF
-          <select aria-label="TIF" value={tif} onChange={(event) => setTif(event.target.value as MoonMarketTimeInForce)} className="mt-1 h-9 w-full rounded-md border border-border bg-[var(--bg-1)] px-2 text-[12px]">
+        <label className="block text-[11px] font-medium text-[var(--text-2)]">
+          Time in force
+          <select aria-label="Time in force" value={tif} onChange={(event) => setTif(event.target.value as MoonMarketTimeInForce)} className="mt-1 h-9 w-full rounded-md border border-border bg-[var(--bg-1)] px-2 text-[12px] text-[var(--text-1)]">
             {tifOptions.map((code) => (
               <option key={code} value={code}>{TIF_LABELS[code]}</option>
             ))}
           </select>
         </label>
-        {!isTrailing ? (
-          <label className="block text-[11px] text-[var(--text-3)]">
-            Limit Price
-            <input aria-label="Limit Price" value={price} onChange={(event) => setPrice(event.target.value)} className="mt-1 h-9 w-full rounded-md border border-border bg-[var(--bg-1)] px-2 text-[12px]" />
+        {needsStopPrice ? (
+          <label className="block text-[11px] font-medium text-[var(--text-2)]">
+            Stop Price
+            <input aria-label="Stop Price" value={auxPrice} onChange={(event) => setAuxPrice(event.target.value)} className="mt-1 h-9 w-full rounded-md border border-border bg-[var(--bg-1)] px-2 text-[12px] text-[var(--text-1)]" />
           </label>
         ) : null}
-        <label className="block text-[11px] text-[var(--text-3)]">
-          Aux Price
-          <input aria-label="Aux Price" value={auxPrice} onChange={(event) => setAuxPrice(event.target.value)} className="mt-1 h-9 w-full rounded-md border border-border bg-[var(--bg-1)] px-2 text-[12px]" />
-        </label>
-        <label className="flex items-center gap-2 text-[12px] text-[var(--text-3)]">
-          <input aria-label="Outside regular trading hours" type="checkbox" checked={outsideRth} onChange={(event) => setOutsideRth(event.target.checked)} />
-          Allow execution outside regular trading hours
-        </label>
+        {needsLimitPrice ? (
+          <label className="block text-[11px] font-medium text-[var(--text-2)]">
+            Limit Price
+            <input aria-label="Limit Price" value={price} onChange={(event) => setPrice(event.target.value)} className="mt-1 h-9 w-full rounded-md border border-border bg-[var(--bg-1)] px-2 text-[12px] text-[var(--text-1)]" />
+          </label>
+        ) : null}
+        {canUseOutsideRth ? (
+          <label className="flex items-center gap-2 text-[12px] font-medium text-[var(--text-2)]">
+            <input aria-label="Outside regular trading hours" type="checkbox" checked={outsideRth} onChange={(event) => setOutsideRth(event.target.checked)} />
+            Allow execution outside regular trading hours
+          </label>
+        ) : null}
         {isTrailing ? (
           <div className="grid gap-3 rounded-md border border-border bg-[var(--bg-1)] p-3">
             <label className="block text-[11px] text-[var(--text-3)]">
@@ -482,12 +761,20 @@ export function OrderForm({ target }: OrderFormProps) {
       </div>
       {liveBlocked ? <div className="border-t border-border px-4 py-2 text-[11px] text-[var(--clr-red)]">Live account order mutations are blocked in Orbit v1.</div> : null}
       <div className="flex gap-2 border-t border-border p-4">
-        <button type="button" onClick={handlePreview} disabled={!selectedAccountId || previewMutation.isPending} className="rounded-md border border-border px-3 py-2 text-[12px] disabled:opacity-50">Preview</button>
-        <button type="button" onClick={handlePlace} disabled={!selectedAccountId || liveBlocked || placeMutation.isPending || modifyMutation.isPending} className="rounded-md border border-[var(--clr-cyan)] px-3 py-2 text-[12px] text-[var(--clr-cyan)] disabled:opacity-50">
-          {target.mode === "modify" ? "Modify" : "Place"}
-        </button>
+        {orderTracker?.status === "filled" ? (
+          <button type="button" onClick={closeTicket} className="rounded-md border border-[var(--clr-green)] px-3 py-2 text-[12px] text-[var(--clr-green)]">
+            Close
+          </button>
+        ) : (
+          <>
+            <button type="button" onClick={handlePreview} disabled={!selectedAccountId || previewMutation.isPending} className="rounded-md border border-border px-3 py-2 text-[12px] disabled:opacity-50">Preview</button>
+            <button type="button" onClick={handlePlace} disabled={!selectedAccountId || liveBlocked || placeMutation.isPending || modifyMutation.isPending} className="rounded-md border border-[var(--clr-cyan)] px-3 py-2 text-[12px] text-[var(--clr-cyan)] disabled:opacity-50">
+              {target.mode === "modify" ? "Modify" : canUpdateTrackedOrder ? "Update Order" : "Place"}
+            </button>
+          </>
+        )}
       </div>
-      <OrderResult previewResult={previewResult} actionResult={actionResult} replyId={replyId} onConfirm={handleConfirm} confirming={replyMutation.isPending} liveBlocked={liveBlocked} />
+      <OrderResult previewResult={previewResult} actionResult={actionResult} replyId={replyId} orderTracker={orderTracker} onConfirm={handleConfirm} confirming={replyMutation.isPending} liveBlocked={liveBlocked} />
     </form>
   );
 }

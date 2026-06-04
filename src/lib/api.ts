@@ -244,13 +244,18 @@ export interface MoonMarketLiveOrder {
   trailing_type: MoonMarketTrailingType | null;
   trailing_amt: number | null;
   outside_rth: boolean;
-  tif: string | null;
+  tif: MoonMarketTimeInForce | string | null;
   status: string | null;
 }
 
 export interface MoonMarketLiveOrdersResponse {
   account_id: string;
   orders: MoonMarketLiveOrder[];
+}
+
+export interface MoonMarketPositionsRevalidateResponse {
+  account_id: string;
+  positions: Array<Record<string, unknown>>;
 }
 
 export type MoonMarketOrderSide = "BUY" | "SELL";
@@ -297,6 +302,20 @@ export interface MoonMarketOrdersRequest {
 export interface MoonMarketOrderActionResponse {
   account_id: string;
   result: Record<string, unknown> | Array<Record<string, unknown>>;
+}
+
+export interface MoonMarketOrderRulesResponse {
+  account_id: string;
+  conid: number;
+  side: MoonMarketOrderSide;
+  rules: {
+    orderTypes?: string[];
+    orderTypesOutside?: string[];
+    tifTypes?: string[];
+    forceOrderPreview?: boolean;
+    orderDefaults?: Record<string, unknown>;
+    [key: string]: unknown;
+  };
 }
 
 export interface MoonMarketOptionContract {
@@ -1486,6 +1505,22 @@ export const api = {
     request<MoonMarketLiveOrdersResponse>(
       "GET",
       `/moonmarket/live-orders?account_id=${encodeURIComponent(accountId)}`,
+      undefined,
+      signal,
+    ),
+
+  moonmarketRevalidatePositions: (accountId: string, signal?: AbortSignal) =>
+    request<MoonMarketPositionsRevalidateResponse>(
+      "POST",
+      `/moonmarket/accounts/${encodeURIComponent(accountId)}/positions/revalidate`,
+      undefined,
+      signal,
+    ),
+
+  moonmarketOrderRules: (accountId: string, conid: number, side: MoonMarketOrderSide, signal?: AbortSignal) =>
+    request<MoonMarketOrderRulesResponse>(
+      "GET",
+      `/moonmarket/accounts/${encodeURIComponent(accountId)}/contracts/${conid}/order-rules?side=${encodeURIComponent(side)}`,
       undefined,
       signal,
     ),

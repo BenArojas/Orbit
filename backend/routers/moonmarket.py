@@ -7,8 +7,10 @@ from models import (
     MoonMarketAccountFunds,
     MoonMarketAccountsResponse,
     MoonMarketLiveOrdersResponse,
+    MoonMarketOrderRulesResponse,
     MoonMarketPerformanceResponse,
     MoonMarketPortfolioResponse,
+    MoonMarketPositionsRevalidateResponse,
     MoonMarketTradesResponse,
 )
 from services.db import DatabaseService
@@ -100,6 +102,40 @@ async def moonmarket_live_orders(
 ) -> MoonMarketLiveOrdersResponse:
     try:
         return await MoonMarketService(ibkr).live_orders(account_id=account_id)
+    except MoonMarketAccountNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"error": "moonmarket_account_not_found", "message": str(exc)},
+        ) from exc
+
+
+@router.post("/accounts/{account_id}/positions/revalidate", response_model=MoonMarketPositionsRevalidateResponse)
+async def moonmarket_revalidate_positions(
+    account_id: str,
+    ibkr: IBKRService = Depends(require_ibkr_auth),
+) -> MoonMarketPositionsRevalidateResponse:
+    try:
+        return await MoonMarketService(ibkr).revalidate_positions(account_id)
+    except MoonMarketAccountNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"error": "moonmarket_account_not_found", "message": str(exc)},
+        ) from exc
+
+
+@router.get("/accounts/{account_id}/contracts/{conid}/order-rules", response_model=MoonMarketOrderRulesResponse)
+async def moonmarket_order_rules(
+    account_id: str,
+    conid: int,
+    side: str = Query(default="BUY", pattern="^(BUY|SELL)$"),
+    ibkr: IBKRService = Depends(require_ibkr_auth),
+) -> MoonMarketOrderRulesResponse:
+    try:
+        return await MoonMarketService(ibkr).order_rules(
+            account_id=account_id,
+            conid=conid,
+            side=side,
+        )
     except MoonMarketAccountNotFoundError as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

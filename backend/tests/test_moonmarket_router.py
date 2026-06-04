@@ -74,7 +74,7 @@ class _FakeIbkr:
                     "symbol": "AAPL",
                     "order_description": "BOT 5 AAPL",
                     "side": "B",
-                    "trade_time_r": 1779805920000,
+                    "trade_time_r": 1780500120000,
                     "size": 5,
                     "price": 185.12,
                     "commission": 1.0,
@@ -88,7 +88,7 @@ class _FakeIbkr:
                     "ticker": "SPY",
                     "orderDescription": "SLD 2 SPY",
                     "side": "SLD",
-                    "tradeTimeR": 1779809520000,
+                    "tradeTimeR": 1780500720000,
                     "quantity": 2,
                     "price": 550.5,
                     "commission": 1.25,
@@ -101,7 +101,7 @@ class _FakeIbkr:
                     "symbol": "MSFT",
                     "side": "BUY",
                     "size": 1,
-                    "trade_time_r": 1779813120000,
+                    "trade_time_r": 1780504320000,
                 },
                 {
                     "execution_id": "OLD-VALID",
@@ -110,7 +110,7 @@ class _FakeIbkr:
                     "symbol": "QQQ",
                     "order_description": "BOT 1 QQQ",
                     "side": "B",
-                    "trade_time_r": 1777593600000,
+                    "trade_time_r": 1779235200000,
                     "size": 1,
                     "price": 450.0,
                     "commission": 1.0,
@@ -130,7 +130,9 @@ class _FakeIbkr:
                         "orderDesc": "BUY 5 AAPL TRAIL LIMIT 180.00",
                         "side": "BUY",
                         "orderType": "TRAILLMT",
+                        "timeInForce": "GTC",
                         "quantity": 5,
+                        "totalSize": 5,
                         "remainingQuantity": 5,
                         "price": 180.0,
                         "auxPrice": 178.0,
@@ -181,6 +183,24 @@ class _FakeIbkr:
                     "cashbalance": 100.0,
                     "netliquidationvalue": 2200.0,
                 }
+            }
+        if endpoint == "/portfolio/DU12345/positions/invalidate":
+            return [
+                {
+                    "acctId": "DU12345",
+                    "conid": 265598,
+                    "contractDesc": "AAPL",
+                    "position": 10,
+                    "mktPrice": 252.08,
+                    "mktValue": 2520.8,
+                }
+            ]
+        if endpoint == "/iserver/contract/rules":
+            return {
+                "orderTypes": ["limit", "market", "stop", "stop_limit"],
+                "orderTypesOutside": ["limit", "stop_limit"],
+                "tifTypes": ["DAY/o,a", "GTC/o,a"],
+                "forceOrderPreview": True,
             }
         if endpoint == "/pa/performance":
             if kwargs.get("json", {}).get("period") == "1M":
@@ -317,6 +337,43 @@ def test_moonmarket_portfolio_pages_positions_and_computes_allocation():
     assert ("GET", "/portfolio/DU12345/ledger", {}) in fake.requests
 
 
+def test_moonmarket_revalidate_positions_invalidates_backend_cache():
+    fake = _FakeIbkr()
+    resp = _client(fake).post("/moonmarket/accounts/DU12345/positions/revalidate")
+
+    assert resp.status_code == 200
+    assert resp.json() == {
+        "account_id": "DU12345",
+        "positions": [
+            {
+                "acctId": "DU12345",
+                "conid": 265598,
+                "contractDesc": "AAPL",
+                "position": 10,
+                "mktPrice": 252.08,
+                "mktValue": 2520.8,
+            }
+        ],
+    }
+    assert ("POST", "/portfolio/DU12345/positions/invalidate", {"json": {}}) in fake.requests
+
+
+def test_moonmarket_order_rules_fetches_ibkr_contract_rules_for_account_side():
+    fake = _FakeIbkr()
+    resp = _client(fake).get("/moonmarket/accounts/DU12345/contracts/265598/order-rules?side=SELL")
+
+    assert resp.status_code == 200
+    assert resp.json()["account_id"] == "DU12345"
+    assert resp.json()["conid"] == 265598
+    assert resp.json()["side"] == "SELL"
+    assert resp.json()["rules"]["orderTypesOutside"] == ["limit", "stop_limit"]
+    assert (
+        "POST",
+        "/iserver/contract/rules",
+        {"json": {"conid": 265598, "exchange": "SMART", "isBuy": False}},
+    ) in fake.requests
+
+
 def test_position_from_row_captures_option_contract_desc():
     service = MoonMarketService(_FakeIbkr())
     position = service._position_from_row(
@@ -446,8 +503,8 @@ def test_moonmarket_trades_normalizes_summary_and_upserts_fills(monkeypatch):
         "net_amount": 1101.0,
         "commission": 1.25,
         "sec_type": "ETF",
-        "trade_time": "2026-05-26T15:32:00+00:00",
-        "trade_time_ms": 1779809520000,
+        "trade_time": "2026-06-03T15:32:00+00:00",
+        "trade_time_ms": 1780500720000,
     }
     assert body["trades"][1]["execution_id"] == "E-BUY-1"
     assert body["trades"][1]["side"] == "BUY"
