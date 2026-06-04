@@ -2,6 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { OrderTicket } from "../OrderTicket";
+import { OrderResult } from "../OrderResult";
 import { useAccountStore } from "../useAccountStore";
 import { useOrderTicketStore } from "../useOrderTicketStore";
 
@@ -1035,5 +1036,45 @@ describe("OrderTicket", () => {
     expect(screen.queryByText("Order Tracker")).not.toBeInTheDocument();
     expect(screen.queryByText("Order Filled")).not.toBeInTheDocument();
     expect(screen.queryByText("Close")).not.toBeInTheDocument();
+  });
+
+  it("does not show the green submitted success card when the order_status is rejected/inactive", () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <OrderResult
+          previewResult={null}
+          actionResult={{ result: [{ order_id: "o1", order_status: "Inactive" }] }}
+          replyId={null}
+          orderTracker={null}
+          onConfirm={() => {}}
+          confirming={false}
+          liveBlocked={false}
+        />
+      </QueryClientProvider>,
+    );
+
+    expect(screen.queryByText("Order Submitted")).not.toBeInTheDocument();
+    expect(screen.getByText(/Inactive/i)).toBeInTheDocument();
+  });
+
+  it("still shows the green submitted card for an accepted order without a terminal status", () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <OrderResult
+          previewResult={null}
+          actionResult={{ result: [{ order_id: "ok-1", order_status: "Submitted" }] }}
+          replyId={null}
+          orderTracker={null}
+          onConfirm={() => {}}
+          confirming={false}
+          liveBlocked={false}
+        />
+      </QueryClientProvider>,
+    );
+
+    expect(screen.getByText("Order Submitted")).toBeInTheDocument();
+    expect(screen.getByText(/ok-1/)).toBeInTheDocument();
   });
 });
