@@ -422,7 +422,7 @@ describe("OrderTicket", () => {
     expect(screen.getByRole("button", { name: /sell/i })).toHaveAttribute("aria-pressed", "false");
   });
 
-  it("disables order mutations on a live account but leaves preview available", () => {
+  it("keeps Place enabled on a live account and requires confirming the real-money dialog before placing", async () => {
     useAccountStore.setState({
       accounts: [{ account_id: "U12345", label: "Live", selected: true, is_paper: false }],
       selectedAccountId: "U12345",
@@ -433,7 +433,35 @@ describe("OrderTicket", () => {
 
     expect(screen.getByText("LIVE")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /preview/i })).toBeEnabled();
-    expect(screen.getByRole("button", { name: /place/i })).toBeDisabled();
+
+    fireEvent.change(screen.getByLabelText(/limit price/i), { target: { value: "180" } });
+    fireEvent.click(screen.getByRole("button", { name: "Place" }));
+
+    // Clicking Place opens the confirmation dialog instead of placing immediately.
+    expect(await screen.findByText(/real-money order/i)).toBeInTheDocument();
+    expect(mockApi.moonmarketPlaceOrders).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Place Live Order" }));
+    await waitFor(() => expect(mockApi.moonmarketPlaceOrders).toHaveBeenCalled());
+  });
+
+  it("does not place a live order when the real-money dialog is cancelled", async () => {
+    useAccountStore.setState({
+      accounts: [{ account_id: "U12345", label: "Live", selected: true, is_paper: false }],
+      selectedAccountId: "U12345",
+    });
+    useOrderTicketStore.getState().open({ conid: 265598, symbol: "AAPL" });
+
+    renderTicket();
+
+    fireEvent.change(screen.getByLabelText(/limit price/i), { target: { value: "180" } });
+    fireEvent.click(screen.getByRole("button", { name: "Place" }));
+
+    expect(await screen.findByText(/real-money order/i)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+
+    await waitFor(() => expect(screen.queryByText(/real-money order/i)).not.toBeInTheDocument());
+    expect(mockApi.moonmarketPlaceOrders).not.toHaveBeenCalled();
   });
 
   it("previews and places an order for a paper account", async () => {
@@ -1080,7 +1108,6 @@ describe("OrderTicket", () => {
           orderTracker={null}
           onConfirm={() => {}}
           confirming={false}
-          liveBlocked={false}
         />
       </QueryClientProvider>,
     );
@@ -1100,7 +1127,6 @@ describe("OrderTicket", () => {
           orderTracker={null}
           onConfirm={() => {}}
           confirming={false}
-          liveBlocked={false}
         />
       </QueryClientProvider>,
     );
@@ -1109,7 +1135,7 @@ describe("OrderTicket", () => {
     expect(screen.getByText(/ok-1/)).toBeInTheDocument();
   });
 
-  it("shows a cancel control for a tracked order, blocks it on live accounts, and clears the tracker on cancel", async () => {
+  it("shows a cancel control for a tracked order and clears the tracker on cancel", async () => {
     mockApi.moonmarketPlaceOrders.mockResolvedValue({ account_id: "DU12345", result: { data: [{ order_id: "limit-cancel-1" }] } });
     mockApi.moonmarketLiveOrders.mockResolvedValue({
       account_id: "DU12345",
@@ -1139,48 +1165,37 @@ describe("OrderTicket", () => {
     const cancelButton = await screen.findByRole("button", { name: /cancel order/i });
     expect(cancelButton).toBeEnabled();
 
-    act(() => {
-      useAccountStore.setState({
-        accounts: [{ account_id: "DU12345", label: "Live", selected: true, is_paper: false }],
-        selectedAccountId: "DU12345",
-      });
-    });
-    expect(screen.getByRole("button", { name: /cancel order/i })).toBeDisabled();
-
-    act(() => {
-      useAccountStore.setState({
-        accounts: [{ account_id: "DU12345", label: "Paper", selected: true, is_paper: true }],
-        selectedAccountId: "DU12345",
-      });
-    });
-    fireEvent.click(screen.getByRole("button", { name: /cancel order/i }));
+    fireEvent.click(cancelButton);
 
     await waitFor(() => expect(mockApi.moonmarketCancelOrder).toHaveBeenCalledWith("DU12345", "limit-cancel-1"));
     await waitFor(() => expect(screen.queryByText(/order tracker/i)).not.toBeInTheDocument());
   });
 
-  it("does not confirm an order on a live (non-paper) account", async () => {
+  it("requires confirming the real-money dialog before replying to an IBKR confirmation on a live account", async () => {
+    useAccountStore.setState({
+      accounts: [{ account_id: "U12345", label: "Live", selected: true, is_paper: false }],
+      selectedAccountId: "U12345",
+    });
     mockApi.moonmarketPlaceOrders.mockResolvedValue({
-      account_id: "DU12345",
+      account_id: "U12345",
       result: [{ id: "reply-confirm-live", message: ["Confirm this order?"], messageOptions: ["Yes", "No"] }],
     });
     useOrderTicketStore.getState().open({ conid: 265598, symbol: "AAPL", side: "BUY" });
     renderTicket();
 
     fireEvent.change(screen.getByLabelText(/limit price/i), { target: { value: "180" } });
-    fireEvent.click(screen.getByRole("button", { name: /place/i }));
 
+    // Placing the order on a live account first goes through the real-money dialog.
+    fireEvent.click(screen.getByRole("button", { name: "Place" }));
+    expect(await screen.findByText(/real-money order/i)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Place Live Order" }));
+
+    // IBKR responds with a reply prompt; confirming it re-opens the real-money dialog.
     const confirmButton = await screen.findByRole("button", { name: /confirm and submit/i });
-
-    act(() => {
-      useAccountStore.setState({
-        accounts: [{ account_id: "DU12345", label: "Live", selected: true, is_paper: false }],
-        selectedAccountId: "DU12345",
-      });
-    });
-    expect(confirmButton).toBeDisabled();
     fireEvent.click(confirmButton);
-
     expect(mockApi.moonmarketReplyOrder).not.toHaveBeenCalled();
+
+    fireEvent.click(await screen.findByRole("button", { name: "Confirm Live Order" }));
+    await waitFor(() => expect(mockApi.moonmarketReplyOrder).toHaveBeenCalled());
   });
 });

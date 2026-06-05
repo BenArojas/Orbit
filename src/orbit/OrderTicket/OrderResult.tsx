@@ -5,7 +5,6 @@ type OrderResultProps = {
   orderTracker: OrderTrackerState | null;
   onConfirm: (confirmed: boolean) => void;
   confirming: boolean;
-  liveBlocked: boolean;
 };
 
 export type OrderTrackerState = {
@@ -163,8 +162,7 @@ function ConfirmationCard({
   actionResult,
   onConfirm,
   confirming,
-  liveBlocked,
-}: Pick<OrderResultProps, "actionResult" | "onConfirm" | "confirming" | "liveBlocked">) {
+}: Pick<OrderResultProps, "actionResult" | "onConfirm" | "confirming">) {
   const row = resultRows(actionResult).find((item) => textValue(item.id));
   const message = cleanIbkrMessage(row?.message) ?? "IBKR needs confirmation before submitting this order.";
   if (!row) return null;
@@ -177,7 +175,7 @@ function ConfirmationCard({
         <button
           type="button"
           onClick={() => onConfirm(true)}
-          disabled={confirming || liveBlocked}
+          disabled={confirming}
           className="rounded-md border border-[var(--clr-green)]/60 bg-[var(--clr-green)]/10 px-3 py-2 text-[12px] font-semibold text-[var(--clr-green)] disabled:opacity-50"
         >
           {confirming ? "Submitting..." : "Confirm and Submit"}
@@ -280,7 +278,6 @@ export function OrderResult({
   orderTracker,
   onConfirm,
   confirming,
-  liveBlocked,
 }: OrderResultProps) {
   const knownAction =
     firstOrderId(actionResult) || resultError(actionResult) || resultRows(actionResult).some((row) => textValue(row.id));
@@ -296,7 +293,6 @@ export function OrderResult({
           actionResult={actionResult}
           onConfirm={onConfirm}
           confirming={confirming}
-          liveBlocked={liveBlocked}
         />
       ) : null}
       {actionResult && !knownAction ? (

@@ -18,6 +18,7 @@ import { useCancelOrder, useModifyOrder, usePlaceOrder, usePreviewOrder, useRepl
 import type { OrderTicketTarget } from "./useOrderTicketStore";
 import { useOrderTicketStore } from "./useOrderTicketStore";
 import { OrderResult, type OrderTrackerState } from "./OrderResult";
+import { LiveOrderConfirmDialog } from "./LiveOrderConfirmDialog";
 import { ORDER_TYPE_LABELS, TIF_LABELS, TRAILING_TYPE_LABELS } from "./labels";
 import { cashForBuyingPowerPct, computeRiskReward, sharesForCash } from "./orderMath";
 
@@ -219,7 +220,10 @@ export function OrderForm({ target }: OrderFormProps) {
   const replyMutation = useReplyOrder();
   const cancelMutation = useCancelOrder();
   const { subscribe, unsubscribe, addHandler } = useWebSocket();
-  const liveBlocked = selectedAccount ? !selectedAccount.is_paper : true;
+  const isLiveAccount = selectedAccount ? !selectedAccount.is_paper : false;
+  const [pendingLiveAction, setPendingLiveAction] = useState<
+    { run: () => void; message: string; confirmLabel: string } | null
+  >(null);
   const quoteQuery = useQuery({
     queryKey: ["market", "quote", target.conid],
     queryFn: ({ signal }) => api.quote(target.conid, signal),
@@ -303,6 +307,7 @@ export function OrderForm({ target }: OrderFormProps) {
     setReplyId(null);
     setTrackedOrder(null);
     setSideTouched(false);
+    setPendingLiveAction(null);
     filledToastRef.current = null;
     hasInteractedRef.current = false;
   }, [target]);
@@ -518,7 +523,7 @@ export function OrderForm({ target }: OrderFormProps) {
   };
 
   const handlePlace = () => {
-    if (!selectedAccountId || liveBlocked) return;
+    if (!selectedAccountId) return;
     if (effectiveQuantity <= 0) {
       toast.error("Quantity must be greater than zero.");
       return;
@@ -554,65 +559,86 @@ export function OrderForm({ target }: OrderFormProps) {
       : canUpdateTrackedOrder && trackedOrder?.orderId
         ? trackedOrder.orderId
         : null;
-    if (modifyOrderId) {
-      modifyMutation.mutate(
-        { accountId: selectedAccountId, orderId: modifyOrderId, order: orders[0] },
+    const submit = () => {
+      if (modifyOrderId) {
+        modifyMutation.mutate(
+          { accountId: selectedAccountId, orderId: modifyOrderId, order: orders[0] },
+          {
+            onSuccess: (result) => {
+              setActionResult(result);
+              setTrackedOrder({ orderId: modifyOrderId, order: orders[0], submittedAt: Date.now() });
+              refreshAccountAfterSubmitted(result);
+            },
+            onError: () => toast.error("Order modification failed."),
+          },
+        );
+        return;
+      }
+      placeMutation.mutate(
+        { account_id: selectedAccountId, orders },
         {
           onSuccess: (result) => {
             setActionResult(result);
-            setTrackedOrder({ orderId: modifyOrderId, order: orders[0], submittedAt: Date.now() });
+            const orderId = firstOrderId(result);
+            if (orderId) {
+              setReplyId(null);
+              setTrackedOrder({ orderId, order: orders[0], submittedAt: Date.now() });
+            } else {
+              setReplyId(firstReplyId(result));
+            }
             refreshAccountAfterSubmitted(result);
           },
-          onError: () => toast.error("Order modification failed."),
+          onError: () => toast.error("Order placement failed."),
         },
       );
+    };
+    if (isLiveAccount) {
+      setPendingLiveAction({
+        run: submit,
+        message: `${side} ${effectiveQuantity} ${target.symbol ?? `#${target.conid}`} ${orderType}.`,
+        confirmLabel: modifyOrderId ? "Submit Live Change" : "Place Live Order",
+      });
       return;
     }
-    placeMutation.mutate(
-      { account_id: selectedAccountId, orders },
-      {
-        onSuccess: (result) => {
-          setActionResult(result);
-          const orderId = firstOrderId(result);
-          if (orderId) {
-            setReplyId(null);
-            setTrackedOrder({ orderId, order: orders[0], submittedAt: Date.now() });
-          } else {
-            setReplyId(firstReplyId(result));
-          }
-          refreshAccountAfterSubmitted(result);
-        },
-        onError: () => toast.error("Order placement failed."),
-      },
-    );
+    submit();
   };
 
   const handleConfirm = (confirmed: boolean) => {
-    if (liveBlocked) return;
     if (!selectedAccountId || !replyId) return;
     if (!confirmed) {
       setReplyId(null);
       return;
     }
-    replyMutation.mutate(
-      { accountId: selectedAccountId, replyId, confirmed },
-      {
-        onSuccess: (result) => {
-          setActionResult(result);
-          setReplyId(firstReplyId(result));
-          const orderId = firstOrderId(result);
-          if (orderId) {
-            setTrackedOrder({ orderId, order: baseOrder, submittedAt: Date.now() });
-          }
-          refreshAccountAfterSubmitted(result);
+    const submit = () => {
+      replyMutation.mutate(
+        { accountId: selectedAccountId, replyId, confirmed },
+        {
+          onSuccess: (result) => {
+            setActionResult(result);
+            setReplyId(firstReplyId(result));
+            const orderId = firstOrderId(result);
+            if (orderId) {
+              setTrackedOrder({ orderId, order: baseOrder, submittedAt: Date.now() });
+            }
+            refreshAccountAfterSubmitted(result);
+          },
+          onError: () => toast.error("Order confirmation failed."),
         },
-        onError: () => toast.error("Order confirmation failed."),
-      },
-    );
+      );
+    };
+    if (isLiveAccount) {
+      setPendingLiveAction({
+        run: submit,
+        message: "Confirm and submit this order to IBKR.",
+        confirmLabel: "Confirm Live Order",
+      });
+      return;
+    }
+    submit();
   };
 
   const handleCancelTrackedOrder = () => {
-    if (!selectedAccountId || liveBlocked || !trackedOrder?.orderId) return;
+    if (!selectedAccountId || !trackedOrder?.orderId) return;
     cancelMutation.mutate(
       { accountId: selectedAccountId, orderId: trackedOrder.orderId },
       {
@@ -835,7 +861,7 @@ export function OrderForm({ target }: OrderFormProps) {
           </div>
         ) : null}
       </div>
-      {liveBlocked ? <div className="border-t border-border px-4 py-2 text-[11px] text-[var(--clr-red)]">Live account order mutations are blocked in Orbit v1.</div> : null}
+      {isLiveAccount ? <div className="border-t border-[var(--clr-red)]/30 px-4 py-2 text-[11px] text-[var(--clr-red)]">Live account — orders are sent with real money after confirmation.</div> : null}
       <div className="flex gap-2 border-t border-border p-4">
         {orderTracker?.status === "filled" ? (
           <button type="button" onClick={closeTicket} className="rounded-md border border-[var(--clr-green)] px-3 py-2 text-[12px] text-[var(--clr-green)]">
@@ -844,18 +870,30 @@ export function OrderForm({ target }: OrderFormProps) {
         ) : (
           <>
             <button type="button" onClick={handlePreview} disabled={!selectedAccountId || previewMutation.isPending} className="rounded-md border border-border px-3 py-2 text-[12px] disabled:opacity-50">Preview</button>
-            <button type="button" onClick={handlePlace} disabled={!selectedAccountId || liveBlocked || placeMutation.isPending || modifyMutation.isPending} className="rounded-md border border-[var(--clr-cyan)] px-3 py-2 text-[12px] text-[var(--clr-cyan)] disabled:opacity-50">
+            <button type="button" onClick={handlePlace} disabled={!selectedAccountId || placeMutation.isPending || modifyMutation.isPending} className="rounded-md border border-[var(--clr-cyan)] px-3 py-2 text-[12px] text-[var(--clr-cyan)] disabled:opacity-50">
               {target.mode === "modify" ? "Modify" : canUpdateTrackedOrder ? "Update Order" : "Place"}
             </button>
             {canCancelTrackedOrder ? (
-              <button type="button" onClick={handleCancelTrackedOrder} disabled={!selectedAccountId || liveBlocked || cancelMutation.isPending} className="rounded-md border border-[var(--clr-red)] px-3 py-2 text-[12px] text-[var(--clr-red)] disabled:opacity-50">
+              <button type="button" onClick={handleCancelTrackedOrder} disabled={!selectedAccountId || cancelMutation.isPending} className="rounded-md border border-[var(--clr-red)] px-3 py-2 text-[12px] text-[var(--clr-red)] disabled:opacity-50">
                 {cancelMutation.isPending ? "Cancelling..." : "Cancel Order"}
               </button>
             ) : null}
           </>
         )}
       </div>
-      <OrderResult previewResult={previewResult} actionResult={actionResult} replyId={replyId} orderTracker={orderTracker} onConfirm={handleConfirm} confirming={replyMutation.isPending} liveBlocked={liveBlocked} />
+      <OrderResult previewResult={previewResult} actionResult={actionResult} replyId={replyId} orderTracker={orderTracker} onConfirm={handleConfirm} confirming={replyMutation.isPending} />
+      <LiveOrderConfirmDialog
+        open={!!pendingLiveAction}
+        accountId={selectedAccountId}
+        message={pendingLiveAction?.message ?? ""}
+        confirmLabel={pendingLiveAction?.confirmLabel}
+        pending={placeMutation.isPending || modifyMutation.isPending || replyMutation.isPending}
+        onConfirm={() => {
+          pendingLiveAction?.run();
+          setPendingLiveAction(null);
+        }}
+        onCancel={() => setPendingLiveAction(null)}
+      />
     </form>
   );
 }
