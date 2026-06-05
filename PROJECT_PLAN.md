@@ -1,7 +1,7 @@
 # Orbit — Project Plan
 
-> Last updated: 2026-06-08
-> Status: Parallax core v1 is code-complete on `dev` through the rules/fib-trigger closeout pass. Phase 8 E2E remains the v1 sign-off gate. Phase 9, Phase 10, Phase 11, and Phase 12 are merged to `dev`. Orbit consolidation Plans #1–#7 are merged to local `dev`: options chain, Inflect v1/basis recovery,OrderTicket trailing/RTH/R-R/cash-sizing and sidecar client contract refactor are now included. Live/manual IBKR paper-account smoke testing remains the release gate.
+> Last updated: 2026-06-10
+> Status: Parallax core v1 is code-complete on `dev` through the rules/fib-trigger closeout pass. Phase 8 E2E remains the v1 sign-off gate. Phase 9, Phase 10, Phase 11, and Phase 12 are merged to `dev`. Orbit consolidation Plans #1–#7 are merged to local `dev`: options chain, Inflect v1/basis recovery, OrderTicket trailing/RTH/R-R/cash-sizing and sidecar client contract refactor are now included. Orbit v2 planning has started with separate Cloud + Hybrid AI and TWS Execution Assistant specs. Live/manual IBKR paper-account smoke testing remains the release gate before any live execution-assistant release.
 ---
 
 ## IBKR Gateway — What We Learned (2026-04-14)
@@ -40,13 +40,13 @@ These are locked in. Don't revisit unless something breaks.
 | Instrument scope | Any instrument IBKR supports | Focus is US equities/ETFs, but don't restrict — if IBKR has data, show it |
 | Desktop framework | Tauri v2 | Local-only, lightweight, cross-platform |
 | Charts | TradingView Lightweight Charts v5 | Familiar, open source, high quality |
-| AI model | Gemma 4 26B (user picks from installed) | Fully local, 4 tier options by hardware |
+| AI model | Local Ollama by default; optional v2 cloud providers only after explicit enable | Local-first remains the default; OpenAI, Anthropic, Gemini, and Grok support belongs to the Cloud + Hybrid AI spec |
 | AI input | Structured JSON (pre-computed signals) | Not raw OHLCV — cleaner, more reliable |
 | AI scope | Full chat + signal card | Signal card on first response, then follow-up chat |
 | Ollama lifecycle | Detect-only, never auto-install | Guide user, don't decide for them |
 | Persistence | SQLite (local) | Survives restarts, shared across Orbit modules |
 | Market data | IBKR Client Portal Web API (port 5001) | Staying with this — TWS API rejected (no scanner, callback model). ibind client. |
-| TWS usage | v2 execution engine only | TWS is not the v1 market-data path. A future trading bot can require TWS connection because that is a separate execution subsystem. |
+| TWS usage | v2 TWS-gated execution assistant only | TWS is not the v1 market-data path. Future execution workflows must remain user-armed decision support, not autonomous trading. |
 | Multi-timeframe | Single chart + timeframe switcher | Simpler UX |
 | Background scanner | Runs while app is open only | No system tray mode |
 | Dynamic watchlists | Auto-populated by trigger rules | Separate from master IBKR watchlist |
@@ -63,13 +63,15 @@ These notes are intentionally tracked in the project plan because they affect th
 - **Plan #6: MoonMarket Options Chain** ships single-leg option orders first. Selecting a call/put contract opens the shared OrderTicket as `OPTION`, but option brackets are disabled in the UI and rejected server-side if an option order payload tries to submit a multi-order group.
 - **OrderTicket enhancement pass:** trailing stops (`TRAIL`/`TRAILLMT`), outside-RTH, plain-English labels, risk/reward readout, cash sizing, and percent-of-buying-power sizing are merged to local `dev`.
 - **Deferred but required follow-up:** option bracket orders belong in a later MoonMarket trading-depth pass after single-leg option orders are validated against the IBKR paper account. Revisit this before any options trading polish or "bracket parity" work.
-- **Parallax v1 done gate:** no v2 feature is required before calling Parallax v1 done. The remaining gate is live/manual E2E validation plus a short polish pass listed under "Parallax v1 Sign-off Checklist".
+- **Parallax v1 status:** Parallax v1 has shipped. v2 work should not reopen shipped v1 scope unless a regression is found.
 - **Compare-mode color customization:** still belongs in v1 polish because the hardcoded white stock line is not visible enough in light mode.
-- **v2 strategic direction:** the major v2 themes are (1) a TWS-gated trading bot / tiered execution engine, (2) optional cloud LLM + hybrid local/frontier agentic inference, and (3) the fib learning / confluence roadmap. These do not change v1's local-first/no-cloud release rule.
+- **v2 strategic direction:** the major v2 themes are (1) optional cloud LLM + hybrid local/frontier agentic inference, (2) a TWS-gated execution assistant / trade manager, and (3) the fib learning / confluence roadmap. Local-first remains the default, but optional cloud AI is approved for v2 when explicitly enabled by the user.
 
-## Parallax v1 Sign-off Checklist (2026-06-01)
+## Parallax v1 Shipped Checklist (2026-06-01)
 
-Parallax should be considered **code-complete**, but not fully signed off, until these checks are done:
+Parallax v1 has shipped. This checklist is retained as historical release
+context and as a manual regression checklist when touching shipped Parallax
+flows.
 
 | Area | Status | Required before v1 done |
 |---|---|---|
@@ -310,9 +312,9 @@ Manual order-placement smoke test:
 
 ---
 
-### Phase 8: End-to-End Testing
+### Phase 8: End-to-End Testing — HISTORICAL V1 CHECKLIST
 
-> Goal: Verified correct behaviour across all critical flows with a live IBKR connection.
+> Goal: Verified correct behaviour across all critical flows with a live IBKR connection. Retained as historical v1 release context and a future regression checklist.
 
 | # | Task | Owner | Status | Notes |
 |---|---|---|---|---|
@@ -569,7 +571,7 @@ The Compare button on the Analysis toolbar replaces the chart area with a stack 
 
 ---
 
-### Future (v2 — Not In Scope Now)
+### Orbit v2 Roadmap
 
 These are deliberately outside the v1 release gate. v1 remains local-first and
 paper/live-safety guarded. v2 can add optional cloud and TWS-mode capabilities,
@@ -577,18 +579,21 @@ but only behind explicit settings and connection gates.
 
 **Primary v2 themes**
 
-1. **TWS-gated trading bot / execution engine**
+1. **TWS-gated execution assistant / trade manager**
    - Only available when TWS is connected and explicitly selected by the user.
    - Separate from the current Client Portal Web API decision-support path.
-   - Starts as a paper-only execution engine before any live-trading path.
+   - Starts as paper-only before any live path.
    - Handles tiered scale-outs, trailing/advanced order management, GTD, MOC/LOC,
      and multi-leg option strategy execution after single-leg validation.
    - Must have its own safety design: live-account guardrails, max order size,
      max daily loss, manual arming, kill switch, audit log, and replayable order
      intent history.
+   - Not autonomous trading: AI, scanners, and triggers cannot place, arm,
+     modify, or cancel orders. Every order must be created by, or execute
+     within, a user-reviewed and user-armed plan.
 
 2. **Cloud LLM provider support**
-   - Optional providers: Anthropic, OpenAI, and any later frontier model provider
+   - Optional providers: OpenAI, Anthropic, Gemini, Grok, and any later provider
      that fits the same interface.
    - Local Ollama remains the default and fallback.
    - API keys stay local: encrypted at rest, never logged, never sent anywhere
@@ -708,5 +713,5 @@ journal hooks (parallax-hub boundary respected).
 | Q7 | ~~Sector Rotation RRG calculation?~~ | 3.4 | RESOLVED: standard JdK method |
 | Q8 | ~~Can Ollama be bundled into Tauri?~~ | 4.12 | RESOLVED: detect-only, never auto-install. Guide user instead |
 | Q9 | ~~TWS API or IBKR Client Portal Web API for v1 market data/order ticket?~~ | ALL | RESOLVED: v1 stays with Client Portal Web API. TWS is not the v1 data path. |
-| Q10 | What should the TWS-gated trading bot support first? | v2 execution engine | OPEN — likely paper-only tiered scale-out engine first, then advanced order types, then live-account safety review. |
-| Q11 | How should hybrid local/cloud inference route tasks? | v2 AI | OPEN — define task classes, privacy/cost thresholds, provider fallback, and when frontier models are allowed to override local analysis. |
+| Q10 | What should the TWS-gated execution assistant support first? | v2 execution assistant | DRAFTED: stocks only, paper first, live behind explicit setting + session + plan arming, live plans pause on restart until re-armed. Separate spec branch required. |
+| Q11 | How should hybrid local/cloud inference route tasks? | v2 AI | DRAFTED: separate Cloud + Hybrid AI spec branch required. |
