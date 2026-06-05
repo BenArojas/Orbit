@@ -340,6 +340,18 @@ class MoonMarketSingleOptionStrikeResponse(BaseModel):
     data: dict[str, MoonMarketOptionContract]
 
 
+class MoonMarketOptionWindowResponse(BaseModel):
+    """Batch of call/put contract pairs for a strike window, loaded in one request.
+
+    The frontend fires one window request for the auto-load strike window instead
+    of one request per strike. ``strikes`` is keyed by the strike formatted as
+    ``"%.2f"`` so the client can match preloaded pairs back to its strike rows.
+    """
+    underlying_conid: int
+    expiration: str
+    strikes: dict[str, dict[str, MoonMarketOptionContract]] = Field(default_factory=dict)
+
+
 OrderSide = Literal["BUY", "SELL"]
 OrderType = Literal["MKT", "LMT", "STP", "STP_LIMIT", "TRAIL", "TRAILLMT"]
 TimeInForce = Literal["DAY", "GTC", "IOC"]

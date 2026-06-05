@@ -358,6 +358,12 @@ export interface MoonMarketSingleOptionStrikeResponse {
   data: { call?: MoonMarketOptionContract; put?: MoonMarketOptionContract };
 }
 
+export interface MoonMarketOptionWindowResponse {
+  underlying_conid: number;
+  expiration: string;
+  strikes: MoonMarketOptionsChainData;
+}
+
 // Inflect (trading journal)
 export interface InflectJournalEntry {
   trade_id: string;
@@ -1578,6 +1584,17 @@ export const api = {
       undefined,
       signal,
     ),
+
+  moonmarketOptionWindow: (underlyingConid: number, expiration: string, strikes: number[], signal?: AbortSignal) => {
+    const params = new URLSearchParams({ expiration });
+    for (const strike of strikes) params.append("strikes", String(strike));
+    return request<MoonMarketOptionWindowResponse>(
+      "GET",
+      `/moonmarket/options/window/${underlyingConid}?${params.toString()}`,
+      undefined,
+      signal,
+    );
+  },
 
   // Inflect (trading journal)
   inflectSetups: (signal?: AbortSignal) =>

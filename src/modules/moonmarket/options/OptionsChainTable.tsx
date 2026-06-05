@@ -1,5 +1,10 @@
 import type { MoonMarketOptionContract } from "@/lib/api";
 import { StrikeRow } from "./StrikeRow";
+import { useOptionWindow } from "./useOptionsChain";
+
+function strikeKey(strike: number): string {
+  return strike.toFixed(2);
+}
 
 const AUTO_LOAD_STRIKE_COUNT = 6;
 
@@ -56,6 +61,13 @@ export function OptionsChainTable({
   const autoLoadStrikes = underlyingPriceLoading || underlyingPriceError
     ? new Set<number>()
     : selectStrikesAroundPrice(allStrikes, underlyingPrice, AUTO_LOAD_STRIKE_COUNT);
+
+  // Fire ONE bundled window request for the auto-load strikes (server-side paced)
+  // instead of one request per strike. The no-spot gate above keeps this empty —
+  // and therefore disabled — until the underlying spot price is known.
+  const windowStrikes = [...autoLoadStrikes];
+  const windowQuery = useOptionWindow(underlyingConid, selectedExpiration, windowStrikes);
+  const preloadedByStrike = windowQuery.data?.strikes ?? {};
 
   return (
     <section className="min-h-0 rounded-md border border-border bg-[var(--bg-2)]">
@@ -124,7 +136,7 @@ export function OptionsChainTable({
               underlyingConid={underlyingConid}
               expiration={selectedExpiration ?? ""}
               strike={strike}
-              autoLoad={autoLoadStrikes.has(strike)}
+              preloaded={preloadedByStrike[strikeKey(strike)]}
               onSelect={onSelect}
             />
           ))}

@@ -29,3 +29,19 @@ export function useOptionStrike(
     queryFn: ({ signal }) => api.moonmarketOptionContract(underlyingConid, expiration, strike, signal),
   });
 }
+
+// Loads the whole auto-load strike window in one paced backend request instead
+// of one request per strike. Disabled until at least one strike is known.
+export function useOptionWindow(
+  underlyingConid: number | null,
+  expiration: string | null,
+  strikes: number[],
+) {
+  const sortedStrikes = [...strikes].sort((a, b) => a - b);
+  return useQuery({
+    queryKey: ["moonmarket", "options", "window", underlyingConid, expiration, sortedStrikes],
+    enabled: Boolean(underlyingConid && expiration && sortedStrikes.length),
+    queryFn: ({ signal }) =>
+      api.moonmarketOptionWindow(underlyingConid as number, expiration as string, sortedStrikes, signal),
+  });
+}
