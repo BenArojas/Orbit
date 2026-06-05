@@ -8,7 +8,7 @@ Orbit is the local desktop trading decision-support platform. It unifies:
 
 Orbit was previously called **IBKR Hub** during planning. Keep that name only as historical context; do not use it as the product name because it sounds official/affiliated with IBKR.
 
-Orbit connects to Interactive Brokers through the Client Portal Web API. It supports any instrument IBKR provides data for (stocks, ETFs, futures, forex, options, etc.). It is not a trading bot.
+Orbit connects to Interactive Brokers through the Client Portal Web API. It supports any instrument IBKR provides data for (stocks, ETFs, futures, forex, options, etc.). It does not support autonomous trading. v2 may add a TWS-gated execution assistant, trade manager, and decision-support execution workflow, but every trade plan must be explicitly reviewed and armed by the user.
 
 **Stack**: Tauri v2 + React 19/TS + Tailwind/shadcn | Python FastAPI sidecar (httpx + websockets for IBKR) + Polars + pandas-ta bridge + Ollama | SQLite
 
@@ -16,11 +16,12 @@ Orbit connects to Interactive Brokers through the Client Portal Web API. It supp
 
 1. **Tests for everything.** Every new feature, service, and endpoint gets tests. No PR without test coverage for the changed code.
 2. **Polars, never Pandas.** All dataframe operations use Polars. pandas-ta is the only exception (bridged).
-3. **No cloud dependencies.** This is a 100% local app. No external servers, subscriptions, or cloud services.
+3. **Local-first with optional cloud AI.** Orbit runs locally by default. Optional cloud AI is allowed only when explicitly enabled by the user. API keys stay local, encrypted, and never logged.
 4. **Typed errors only.** Never bare `except Exception`. Distinguish auth, network, rate-limit, and data errors.
 5. **All data flows through Python.** Frontend never talks to IBKR or Ollama directly; everything goes through the FastAPI sidecar.
 6. **conid is the universal key.** Never store or link instruments by ticker string across module boundaries; always use IBKR contract ID (`conid`).
 7. **Always create a new branch for each feature/fix.**
+8. **No autonomous trading.** AI, scanners, and triggers may draft ideas or alerts, but they must never place, arm, modify, or cancel orders. Every order must be created by, or execute within, a user-reviewed and user-armed plan.
 
 ## AI Coding Workflow
 
