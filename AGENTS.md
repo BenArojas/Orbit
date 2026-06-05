@@ -5,10 +5,12 @@ Orbit is the local desktop trading decision-support platform. It unifies:
 - **Parallax** — technical analysis, screening, watchlists, and alerts.
 - **MoonMarket** — portfolio, account, and trading workflows.
 - **Inflect** — trading journal, planned after Parallax and MoonMarket.
+- **TWS Execution Assistant** — working label for the v2 TWS-gated execution
+  assistant module until the product name is chosen.
 
 Orbit was previously called **IBKR Hub** during planning. Keep that name only as historical context; do not use it as the product name because it sounds official/affiliated with IBKR.
 
-Orbit connects to Interactive Brokers through the Client Portal Web API. It supports any instrument IBKR provides data for (stocks, ETFs, futures, forex, options, etc.). It does not support autonomous trading. v2 may add a TWS-gated execution assistant, trade manager, and decision-support execution workflow, but every trade plan must be explicitly reviewed and armed by the user.
+Orbit is local-first and connects to Interactive Brokers through the Client Portal Web API by default. Client Portal mode powers Parallax, MoonMarket, and Inflect. v2 may add an exclusive TWS mode for the TWS-gated execution assistant; when TWS mode is active, Parallax, MoonMarket, and Inflect are disabled because their data contracts are built around the Client Portal Web API. Orbit does not support autonomous trading: every trade plan must be explicitly reviewed and armed by the user.
 
 **Stack**: Tauri v2 + React 19/TS + Tailwind/shadcn | Python FastAPI sidecar (httpx + websockets for IBKR) + Polars + pandas-ta bridge + Ollama | SQLite
 

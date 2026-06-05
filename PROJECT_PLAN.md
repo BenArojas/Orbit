@@ -46,7 +46,7 @@ These are locked in. Don't revisit unless something breaks.
 | Ollama lifecycle | Detect-only, never auto-install | Guide user, don't decide for them |
 | Persistence | SQLite (local) | Survives restarts, shared across Orbit modules |
 | Market data | IBKR Client Portal Web API (port 5001) | Staying with this — TWS API rejected (no scanner, callback model). ibind client. |
-| TWS usage | v2 TWS-gated execution assistant only | TWS is not the v1 market-data path. Future execution workflows must remain user-armed decision support, not autonomous trading. |
+| TWS usage | v2 fourth-module execution assistant only | TWS is not the v1 market-data path. TWS mode is exclusive: it enables only the execution-assistant module and disables Parallax, MoonMarket, and Inflect until Client Portal mode is restored. |
 | Multi-timeframe | Single chart + timeframe switcher | Simpler UX |
 | Background scanner | Runs while app is open only | No system tray mode |
 | Dynamic watchlists | Auto-populated by trigger rules | Separate from master IBKR watchlist |
@@ -65,7 +65,7 @@ These notes are intentionally tracked in the project plan because they affect th
 - **Deferred but required follow-up:** option bracket orders belong in a later MoonMarket trading-depth pass after single-leg option orders are validated against the IBKR paper account. Revisit this before any options trading polish or "bracket parity" work.
 - **Parallax v1 status:** Parallax v1 has shipped. v2 work should not reopen shipped v1 scope unless a regression is found.
 - **Compare-mode color customization:** still belongs in v1 polish because the hardcoded white stock line is not visible enough in light mode.
-- **v2 strategic direction:** the major v2 themes are (1) optional cloud LLM + hybrid local/frontier agentic inference, (2) a TWS-gated execution assistant / trade manager, and (3) the fib learning / confluence roadmap. Local-first remains the default, but optional cloud AI is approved for v2 when explicitly enabled by the user.
+- **v2 strategic direction:** the major v2 themes are (1) optional cloud LLM + hybrid local/frontier agentic inference, (2) a TWS-gated fourth module for execution assistance / trade management, and (3) the fib learning / confluence roadmap. Local-first remains the default, but optional cloud AI is approved for v2 when explicitly enabled by the user.
 
 ## Parallax v1 Shipped Checklist (2026-06-01)
 
@@ -91,7 +91,7 @@ flows.
 - Dedicated news-candle fib anchor selection.
 - Cross-indicator confluence engine beyond current prompt facts.
 - Optional cloud LLM providers and hybrid local/cloud inference.
-- TWS-gated execution bot / tiered scale-out engine.
+- TWS-gated execution assistant / trade manager with tiered scale-out support.
 - System tray scanner.
 - Inflect journal linkage.
 
@@ -580,11 +580,19 @@ but only behind explicit settings and connection gates.
 **Primary v2 themes**
 
 1. **TWS-gated execution assistant / trade manager**
+   - Ships as a fourth Orbit module, using the working label `TWS Execution Assistant`
+     until the product name is chosen.
    - Only available when TWS is connected and explicitly selected by the user.
    - Separate from the current Client Portal Web API decision-support path.
+   - TWS mode is exclusive: Parallax, MoonMarket, and Inflect are disabled while
+     it is active because their feature contracts depend on Client Portal data.
    - Starts as paper-only before any live path.
    - Handles tiered scale-outs, trailing/advanced order management, GTD, MOC/LOC,
      and multi-leg option strategy execution after single-leg validation.
+   - Uses `ib_async` only behind an Orbit-owned `TwsBrokerAdapter`; `ib_async`
+     types must never leak into services, database models, API models, or UI.
+   - Treats NautilusTrader as the execution-architecture reference, not a runtime
+     dependency.
    - Must have its own safety design: live-account guardrails, max order size,
      max daily loss, manual arming, kill switch, audit log, and replayable order
      intent history.
@@ -713,5 +721,5 @@ journal hooks (parallax-hub boundary respected).
 | Q7 | ~~Sector Rotation RRG calculation?~~ | 3.4 | RESOLVED: standard JdK method |
 | Q8 | ~~Can Ollama be bundled into Tauri?~~ | 4.12 | RESOLVED: detect-only, never auto-install. Guide user instead |
 | Q9 | ~~TWS API or IBKR Client Portal Web API for v1 market data/order ticket?~~ | ALL | RESOLVED: v1 stays with Client Portal Web API. TWS is not the v1 data path. |
-| Q10 | What should the TWS-gated execution assistant support first? | v2 execution assistant | DRAFTED: stocks only, paper first, live behind explicit setting + session + plan arming, live plans pause on restart until re-armed. Separate spec branch required. |
+| Q10 | What should the TWS-gated execution assistant support first? | v2 execution assistant | DRAFTED: fourth Orbit module, TWS-exclusive session mode, stocks only, paper first, live behind explicit setting + session + plan arming, live plans pause on restart until re-armed. `ib_async` stays behind `TwsBrokerAdapter`; NautilusTrader is architecture reference only. |
 | Q11 | How should hybrid local/cloud inference route tasks? | v2 AI | DRAFTED: separate Cloud + Hybrid AI spec branch required. |

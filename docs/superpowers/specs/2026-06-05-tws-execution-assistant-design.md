@@ -6,11 +6,12 @@
 
 ## Goal
 
-Add a TWS-gated execution assistant for user-reviewed stock trade plans. The
-assistant can execute a user-armed plan using broker-native orders where
-possible and Orbit-managed monitoring where broker-native behavior is not
-enough. It is a trade manager and decision-support execution workflow, not
-autonomous trading.
+Add a fourth Orbit module for a TWS-gated execution assistant for user-reviewed
+stock trade plans. `TWS Execution Assistant` is the working label until the
+product name is chosen. The assistant can execute a user-armed plan using
+broker-native orders where possible and Orbit-managed monitoring where
+broker-native behavior is not enough. It is a trade manager and
+decision-support execution workflow, not autonomous trading.
 
 ## Approved Policy
 
@@ -59,6 +60,13 @@ Reference docs checked for this spec:
 - TWS API bracket orders: https://interactivebrokers.github.io/tws-api/bracket_order.html
 - TWS API basic orders: https://interactivebrokers.github.io/tws-api/basic_orders.html
 - TWS API order conditions: https://interactivebrokers.github.io/tws-api/order_conditions.html
+- `ib_async` docs: https://ib-api-reloaded.github.io/ib_async/readme.html
+- NautilusTrader architecture: https://nautilustrader.io/docs/latest/concepts/architecture/
+- NautilusTrader execution: https://nautilustrader.io/docs/latest/concepts/execution/
+- NautilusTrader live reconciliation: https://nautilustrader.io/docs/latest/concepts/live/
+- NautilusTrader orders: https://nautilustrader.io/docs/latest/concepts/orders/
+- NautilusTrader Interactive Brokers integration:
+  https://nautilustrader.io/docs/latest/integrations/ib/
 
 Key constraints:
 
@@ -70,11 +78,17 @@ Key constraints:
 - TWS API supports conditional orders, including price and percent-change
   conditions, but Orbit-managed plans must still use Orbit's own safety ledger.
 - Paper trading is the first required proving ground.
+- TWS is a different session/data contract from the Client Portal Web API. Orbit
+  must not let Client Portal modules render as if their data assumptions still
+  hold while TWS mode is active.
 
 ## Scope
 
 TWS Execution Assistant v1 includes:
 
+- A fourth Orbit launcher module/tile using the working label `TWS Execution
+  Assistant`.
+- Exclusive TWS session mode that disables Parallax, MoonMarket, and Inflect.
 - Stocks only (`secType=STK`).
 - Paper mode first.
 - Existing open position management.
@@ -96,6 +110,103 @@ Out of scope for v1:
 - Live execution without separate approval and gating.
 - Learning from trade outcomes. Parallax fib learning remains separate.
 - System tray always-on execution.
+- Embedding this workflow inside Parallax, MoonMarket, or Inflect.
+- Mixing TWS and Client Portal session assumptions in the same active module.
+
+## Orbit Module Boundary and Session Modes
+
+The TWS assistant is its own Orbit module. It does not live inside MoonMarket,
+Parallax, or Inflect. The launcher owns a single broker session mode:
+
+- `none`: no broker session is active; all broker-backed modules are disabled.
+- `client_portal`: Parallax, MoonMarket, and Inflect are enabled according to
+  their normal auth/build state. TWS Execution Assistant is disabled.
+- `tws`: only TWS Execution Assistant is enabled. Parallax, MoonMarket, and
+  Inflect are disabled with a clear "Client Portal mode required" message.
+
+Backend state uses the same single-mode contract. `BrokerSessionService` owns
+mode transitions and prevents both broker adapters from being active at the same
+time.
+
+Rules:
+
+- Switching from `client_portal` to `tws` requires explicit user confirmation.
+- Switching from `tws` to `client_portal` requires disconnecting the TWS adapter,
+  pausing active TWS plans, and clearing any live session arming.
+- Direct navigation to disabled module routes redirects to the launcher with the
+  disabled reason.
+- Shared identifiers remain allowed: `conid`, symbol display names, and
+  instrument metadata can be reused only through Orbit-owned models.
+- Cross-mode feature reuse is UX/reference reuse only. Backend data contracts
+  remain separate.
+
+## TWS Adapter Boundary
+
+Use `ib_async` only behind an Orbit-owned `TwsBrokerAdapter`. The spec is
+library-neutral; `ib_async` is the first implementation candidate after a
+paper-mode spike.
+
+`TwsBrokerAdapter` responsibilities:
+
+- Connect, disconnect, report health, and detect paper/live account mode.
+- Allocate and track TWS order ids.
+- Translate Orbit contracts/order intents into TWS contracts/orders.
+- Translate TWS callbacks, trades, fills, order statuses, and positions into
+  Orbit domain events.
+- Reconcile current TWS open orders, positions, and executions into Orbit's
+  execution ledger.
+- Surface typed adapter errors, never raw third-party exceptions.
+
+Hard boundary:
+
+- No `ib_async` classes or enums in Pydantic API models.
+- No `ib_async` classes or enums in SQLite rows or JSON blobs.
+- No `ib_async` imports in frontend code.
+- No `ib_async` imports in plan, risk, compiler, monitor, or audit services.
+- Only the adapter module may import `ib_async`.
+
+Required spike before locking the dependency:
+
+1. Connect to a TWS paper session.
+2. Read managed accounts, positions, open trades, and account mode.
+3. Place and cancel a tiny paper stock order.
+4. Place and cancel a tiny paper bracket order.
+5. Disconnect, reconnect, and reconcile open orders/fills.
+6. Verify that all outputs can be converted into Orbit-owned models.
+
+If the spike fails, fall back to official `ibapi` or reassess selected
+NautilusTrader adapter patterns without adopting NautilusTrader as a dependency.
+
+## NautilusTrader Architecture Reference
+
+NautilusTrader is a reference for execution architecture, not an Orbit runtime
+dependency.
+
+Patterns to adopt:
+
+- Domain-driven execution objects: Orbit-owned `OrderIntent`, `OrderLink`,
+  `ExecutionEvent`, `PositionSnapshot`, and `PlanState`.
+- Event-driven commands and events: submit/modify/cancel commands produce
+  persisted execution events.
+- Risk gate before adapter submission, similar to a risk engine.
+- Separate adapter boundary for venue-specific behavior.
+- Durable event log as the source for replay, audit, and restart recovery.
+- Startup reconciliation before plans resume.
+- Explicit handling for external or unmanaged broker orders.
+- Distinguish local denial from broker rejection.
+- Treat ambiguous submit outcomes as `in_flight` until reconciliation resolves
+  them.
+- Fail fast on corrupt prices, invalid quantities, impossible state
+  transitions, or invariant violations.
+- Trading states: `active`, `halted`, and `reducing_only`.
+
+Patterns not to adopt for v1:
+
+- Full trading-engine dependency.
+- Strategy/backtest/live parity as a product requirement.
+- Autonomous strategies.
+- Rust core or Nautilus runtime integration.
+- Multi-venue or multi-asset abstraction beyond stocks in TWS v1.
 
 ## Relationship to Existing OrderTicket
 
@@ -110,7 +221,8 @@ Orbit already has a shared OrderTicket using the Client Portal Web API:
 - cash and buying-power sizing
 - single-leg option order support, with option brackets deferred
 
-The TWS assistant does not replace the OrderTicket. It adds:
+The TWS assistant does not replace the OrderTicket and is not implemented inside
+MoonMarket. It adds:
 
 - a TWS connection adapter
 - durable trade-plan records
@@ -121,6 +233,13 @@ The TWS assistant does not replace the OrderTicket. It adds:
 
 The existing OrderTicket interaction pattern remains the reference for user
 review, preview, confirmation, and live/paper labeling.
+
+Implementation boundary:
+
+- MoonMarket order endpoints remain Client Portal only.
+- TWS assistant endpoints use their own route namespace and services.
+- Shared UI language is allowed, but order submission code is not shared across
+  broker modes unless it operates only on Orbit-owned domain models.
 
 ## Plan Types
 
@@ -292,15 +411,37 @@ Transitions:
 
 ## Architecture
 
+Frontend module:
+
+- `src/modules/tws-execution-assistant/`
+  - own module route, layout, status panels, plan builders, active-plan views,
+    and audit drawers
+  - reachable only in `tws` broker session mode
+
+Orbit shell:
+
+- `BrokerSessionProvider`
+  - owns `none | client_portal | tws`
+  - drives launcher tile enable/disable state
+  - blocks direct module route access when the active mode is incompatible
+- `OrbitLauncher`
+  - shows Parallax, MoonMarket, Inflect, and the working-label TWS assistant tile
+  - explains why disabled modules are unavailable in the current mode
+
 Backend services:
 
+- `BrokerSessionService`
+  - owns exclusive broker session mode and mode transitions
+  - prevents Client Portal and TWS adapters from being active together
 - `TwsConnectionService`
   - owns TWS socket lifecycle, client id, connection health, and account mode
   - exposes status to frontend
-- `TwsOrderAdapter`
+- `TwsBrokerAdapter`
   - wraps TWS API calls and callbacks
+  - first implementation candidate is `ib_async`
   - owns order id allocation and reconciliation
   - converts Orbit order intents into TWS contracts/orders
+  - converts raw TWS updates into Orbit-owned domain events
 - `ExecutionPlanService`
   - validates, stores, arms, pauses, resumes, cancels, and expires plans
   - owns state machine transitions
@@ -321,6 +462,7 @@ Backend services:
 
 Frontend surfaces:
 
+- fourth Orbit tile/module for the working-label TWS assistant
 - TWS connection/status panel
 - execution-assistant settings
 - plan builder for `EntryPlan`
@@ -336,6 +478,19 @@ Frontend surfaces:
 
 All tables are additive.
 
+- `broker_session_state`
+  - `id`
+  - `mode` (`none`, `client_portal`, `tws`)
+  - `status`
+  - `last_transition_at`
+  - `transition_reason`
+- `broker_session_events`
+  - `id`
+  - `from_mode`
+  - `to_mode`
+  - `event_type`
+  - `event_json`
+  - `created_at`
 - `execution_plans`
   - `plan_id`
   - `plan_type`
@@ -377,6 +532,14 @@ All tables are additive.
   - `status`
   - `created_at`
   - `updated_at`
+- `execution_broker_events`
+  - `id`
+  - `plan_id`
+  - `source` (`tws`)
+  - `event_type`
+  - `orbit_event_json`
+  - `external_ids_json`
+  - `created_at`
 - `execution_session_arms`
   - `id`
   - `mode`
@@ -398,7 +561,15 @@ Writes must use the existing `DatabaseService._run_write` invariant.
 
 ## Backend API
 
-New endpoints under `/execution-assistant`:
+New Orbit-level endpoints under `/orbit/session`:
+
+- `GET /mode`: current broker session mode and module availability.
+- `POST /mode/client-portal`: switch to Client Portal mode.
+- `POST /mode/tws`: switch to TWS mode.
+- `POST /mode/none`: disconnect active broker adapters and disable broker
+  modules.
+
+New execution endpoints under `/execution-assistant`:
 
 - `GET /status`: TWS connection, mode, kill-switch, session-arm state.
 - `POST /connect`: request TWS connection.
@@ -422,6 +593,7 @@ New endpoints under `/execution-assistant`:
 - `DELETE /kill-switch`: clear kill switch after user confirmation.
 
 Existing MoonMarket order endpoints remain for Client Portal order ticket flows.
+They must reject or stay unreachable when broker session mode is `tws`.
 
 ## Validation Rules
 
@@ -436,6 +608,7 @@ Plan validation must reject:
 - stop/target levels that contradict side
 - planned sell quantity greater than held or planned quantity
 - live mode without all live gates active
+- active broker session mode other than `tws`
 - risk over configured limits
 - expired plans
 - plans whose current position/order state diverges from their snapshot
@@ -458,6 +631,8 @@ Typed errors:
 - `TwsOrderIdError`
 - `TwsOrderRejectedError`
 - `TwsOrderStateMismatchError`
+- `TwsAmbiguousSubmitOutcomeError`
+- `BrokerSessionModeError`
 - `ExecutionPlanValidationError`
 - `ExecutionPlanStateError`
 - `ExecutionRiskLimitError`
@@ -484,6 +659,10 @@ On backend startup:
 
 Required coverage:
 
+- broker session mode transitions
+- launcher tile gating for `none`, `client_portal`, and `tws`
+- disabled-route redirects for incompatible session modes
+- `TwsBrokerAdapter` boundary tests proving third-party types do not leak
 - plan model validation
 - state machine transitions
 - live gate enforcement
@@ -494,7 +673,9 @@ Required coverage:
 - Orbit-managed trim ladder idempotency
 - partial fill reconciliation
 - stale state pauses with `requires_review`
-- TWS adapter with fake callbacks
+- TWS broker adapter with fake callbacks
+- ambiguous submit outcome stays `in_flight` until reconciliation resolves it
+- unmanaged/external TWS orders are detected without being claimed by a plan
 - audit log for all plan events
 - frontend plan builder
 - arming dialogs
@@ -507,18 +688,21 @@ testing uses an IBKR paper account first.
 ## Implementation Order
 
 1. Spec approval.
-2. TWS connection spike with fake adapter and paper-only status UI.
-3. Plan models, DB tables, and state machine.
-4. Risk limits and validation service.
-5. Broker-native compiler for stock brackets/trailing orders.
-6. Paper-only TWS order adapter and audit log.
-7. EntryPlan UI.
-8. ManagementPlan UI for existing positions.
-9. Orbit-managed trim monitor for paper plans.
-10. Restart reconciliation for paper plans.
-11. Kill switch.
-12. Manual paper-account smoke test.
-13. Live-mode design review before any live implementation.
+2. Orbit broker session mode contract and launcher gating.
+3. TWS module shell using the working label `TWS Execution Assistant`.
+4. `TwsBrokerAdapter` interface and fake adapter.
+5. `ib_async` paper-mode spike behind the adapter boundary.
+6. Plan models, DB tables, and state machine.
+7. Risk limits and validation service.
+8. Broker-native compiler for stock brackets/trailing orders.
+9. Paper-only TWS broker adapter integration and audit log.
+10. EntryPlan UI.
+11. ManagementPlan UI for existing positions.
+12. Orbit-managed trim monitor for paper plans.
+13. Restart reconciliation for paper plans.
+14. Kill switch.
+15. Manual paper-account smoke test.
+16. Live-mode design review before any live implementation.
 
 ## Deferred
 
