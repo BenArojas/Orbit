@@ -12,6 +12,7 @@ const mockApi = vi.hoisted(() => ({
   moonmarketPlaceOrders: vi.fn(),
   moonmarketReplyOrder: vi.fn(),
   moonmarketModifyOrder: vi.fn(),
+  moonmarketCancelOrder: vi.fn(),
   moonmarketAccountFunds: vi.fn(),
   moonmarketPortfolio: vi.fn(),
   moonmarketRevalidatePositions: vi.fn(),
@@ -170,6 +171,7 @@ describe("OrderTicket", () => {
     mockApi.moonmarketPlaceOrders.mockReset();
     mockApi.moonmarketReplyOrder.mockReset();
     mockApi.moonmarketModifyOrder.mockReset();
+    mockApi.moonmarketCancelOrder.mockReset();
     mockApi.moonmarketAccountFunds.mockReset();
     mockApi.moonmarketPortfolio.mockReset();
     mockApi.moonmarketRevalidatePositions.mockReset();
@@ -206,6 +208,7 @@ describe("OrderTicket", () => {
     mockApi.moonmarketPlaceOrders.mockResolvedValue({ account_id: "DU12345", result: { data: [{ id: "reply-1" }] } });
     mockApi.moonmarketReplyOrder.mockResolvedValue({ account_id: "DU12345", result: { data: [{ order_id: "order-1" }] } });
     mockApi.moonmarketModifyOrder.mockResolvedValue({ account_id: "DU12345", result: { data: [{ order_id: "order-1" }] } });
+    mockApi.moonmarketCancelOrder.mockResolvedValue({ account_id: "DU12345", result: { data: [{ order_id: "order-1", msg: "Request was submitted" }] } });
     mockApi.moonmarketRevalidatePositions.mockResolvedValue({
       account_id: "DU12345",
       positions: [],
@@ -1076,5 +1079,55 @@ describe("OrderTicket", () => {
 
     expect(screen.getByText("Order Submitted")).toBeInTheDocument();
     expect(screen.getByText(/ok-1/)).toBeInTheDocument();
+  });
+
+  it("shows a cancel control for a tracked order, blocks it on live accounts, and clears the tracker on cancel", async () => {
+    mockApi.moonmarketPlaceOrders.mockResolvedValue({ account_id: "DU12345", result: { data: [{ order_id: "limit-cancel-1" }] } });
+    mockApi.moonmarketLiveOrders.mockResolvedValue({
+      account_id: "DU12345",
+      orders: [
+        {
+          order_id: "limit-cancel-1",
+          conid: 265598,
+          symbol: "AAPL",
+          description: "BUY 5 AAPL LIMIT 180.00",
+          side: "BUY",
+          order_type: "LMT",
+          quantity: 5,
+          remaining_quantity: 5,
+          limit_price: 180,
+          tif: "DAY",
+          status: "Submitted",
+        },
+      ],
+    });
+    useOrderTicketStore.getState().open({ conid: 265598, symbol: "AAPL", side: "BUY" });
+    renderTicket();
+
+    fireEvent.change(screen.getByLabelText(/quantity/i), { target: { value: "5" } });
+    fireEvent.change(screen.getByLabelText(/limit price/i), { target: { value: "180" } });
+    fireEvent.click(screen.getByRole("button", { name: /place/i }));
+
+    const cancelButton = await screen.findByRole("button", { name: /cancel order/i });
+    expect(cancelButton).toBeEnabled();
+
+    act(() => {
+      useAccountStore.setState({
+        accounts: [{ account_id: "DU12345", label: "Live", selected: true, is_paper: false }],
+        selectedAccountId: "DU12345",
+      });
+    });
+    expect(screen.getByRole("button", { name: /cancel order/i })).toBeDisabled();
+
+    act(() => {
+      useAccountStore.setState({
+        accounts: [{ account_id: "DU12345", label: "Paper", selected: true, is_paper: true }],
+        selectedAccountId: "DU12345",
+      });
+    });
+    fireEvent.click(screen.getByRole("button", { name: /cancel order/i }));
+
+    await waitFor(() => expect(mockApi.moonmarketCancelOrder).toHaveBeenCalledWith("DU12345", "limit-cancel-1"));
+    await waitFor(() => expect(screen.queryByText(/order tracker/i)).not.toBeInTheDocument());
   });
 });
