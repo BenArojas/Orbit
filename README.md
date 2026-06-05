@@ -40,7 +40,7 @@ If you're looking for something specific, this is where it lives.
 |------|----------------|
 | [`backend/docs/gateway-lifecycle.md`](backend/docs/gateway-lifecycle.md) | How the IBKR Gateway lifecycle actually works — process trees, signals, the cleanup chain, pid-file recovery, the three recovery levels in the UI. Read this when you want to understand *why* the gateway code is the way it is. |
 | [`backend/docs/ibkr_market_data_fields.md`](backend/docs/ibkr_market_data_fields.md) | IBKR Client Portal market-data field IDs (e.g. `31` = last price, `7762` = volume). Reference when adding new fields to snapshot endpoints. |
-| [`reference/moonmarket/README.md`](reference/moonmarket/README.md) | Legacy MoonMarket source staged as read-only reference for the Orbit port. Not part of the app build. |
+| [`docs/archive/README.md`](docs/archive/README.md) | Index of archived design docs for shipped v1 features (moved here during v1 close-out cleanup). |
 
 ### Agent skills
 
