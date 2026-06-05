@@ -19,11 +19,11 @@
     "noUnusedLocals": true,
     "noUnusedParameters": true,
     "noFallthroughCasesInSwitch": true,
-    "baseUrl": ".",
     "paths": {
-      "@/*": ["./src/*"]
+      "@/*": ["./src/*"],
+      "@vendor/*": ["./vendor/*/src/index.ts"]
     },
   },
-  "include": ["src"],
+  "include": ["src", "vendor"],
   "references": [{ "path": "./tsconfig.node.json" }],
 }

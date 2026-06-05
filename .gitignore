@@ -12,6 +12,28 @@ dist
 dist-ssr
 *.local
 
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+*.db
+*.db-wal
+*.db-shm
+*.db-journal
+
+# uv
+uv.lock
+
+# PyInstaller build artifacts — never commit binaries
+dist-pyinstaller/
+dist-pyinstaller-arm64/
+dist-pyinstaller-x86_64/
+build-pyinstaller/
+build-pyinstaller-arm64/
+build-pyinstaller-x86_64/
+src-tauri/binaries/
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
@@ -22,3 +44,16 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+
+# FUSE filesystem tombstones (created when a file is unlinked while open)
+.fuse_hidden*
+
+# IBKR response samples (dev only, not committed)
+backend/dev_samples/*.json
+
+# Superpowers brainstorming mockups (transient — local visual companion)
+.superpowers/
+
+# Claude Code worktrees (transient — created by brainstorming/planning agents)
+.claude/worktrees/

@@ -1,0 +1,39 @@
+# serializer version: 1
+# name: TestPromptFactsEval.test_aapl_in_swing_snapshot
+  '''
+  === D (close=$180.00) ===
+  Verified Facts:
+    [D.ema.price_above_all] Price $180.00 is above every available EMA.
+    [D.rsi.above_50_rising] RSI 52.8, above 50 and rising 3 bars.
+    [D.fibonacci.position_inside_swing] Price $180.00 sits at 50% into the $165.00–$195.00 swing (UP).
+    [D.ema.price_near_9] Price $180.00 is at the EMA-9 ($179.30).
+    [D.fibonacci.price_near_0500] Price $180.00 is near the 0.5 retracement at $180.00.
+    [D.ema.stack_incomplete] EMA stack incomplete — have periods [9, 21], need [9, 21, 50, 200].
+    [D.fibonacci.target_extension_1618] Extension target 1.618: $213.54 (above the swing).
+    [D.fibonacci.target_extension_1500] Extension target 1.5: $210.00 (above the swing).
+    [D.fibonacci.target_extension_1272] Extension target 1.272: $203.16 (above the swing).
+  '''
+# ---
+# name: TestPromptFactsEval.test_nvda_ema_stack_snapshot
+  '''
+  === D (close=$730.00) ===
+  Verified Facts:
+    [D.ema.stack_bullish] EMA stack bullish: 9 ($725.00) > 21 ($710.00) > 50 ($675.00) > 200 ($530.00).
+    [D.ema.price_above_all] Price $730.00 is above every available EMA.
+    [D.rsi.above_50_rising] RSI 76.0, above 50 and rising 3 bars.
+  Cautions:
+    [D.rsi.overbought] RSI 76.0 above 70 — overbought.
+  '''
+# ---
+# name: TestPromptFactsEval.test_tsm_extension_snapshot
+  '''
+  === D (close=$166.20) ===
+  Verified Facts:
+    [D.ema.stack_bullish] EMA stack bullish: 9 ($165.40) > 21 ($163.70) > 50 ($160.20) > 200 ($148.20).
+    [D.ema.price_above_all] Price $166.20 is above every available EMA.
+    [D.rsi.above_50_rising] RSI 73.2, above 50 and rising 3 bars.
+    [D.ema.price_near_9] Price $166.20 is at the EMA-9 ($165.40).
+  Cautions:
+    [D.rsi.overbought] RSI 73.2 above 70 — overbought.
+  '''
+# ---
