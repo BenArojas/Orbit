@@ -14,6 +14,7 @@ const mockApi = vi.hoisted(() => ({
   moonmarketOptionExpirations: vi.fn(),
   moonmarketOptionChain: vi.fn(),
   moonmarketOptionContract: vi.fn(),
+  moonmarketOptionWindow: vi.fn(),
 }));
 
 vi.mock("@/lib/api", async (importOriginal) => {
@@ -52,6 +53,7 @@ describe("OptionsChainPage", () => {
     mockApi.moonmarketOptionExpirations.mockReset();
     mockApi.moonmarketOptionChain.mockReset();
     mockApi.moonmarketOptionContract.mockReset();
+    mockApi.moonmarketOptionWindow.mockReset();
     mockApi.quote.mockResolvedValue({
       conid: 265598,
       symbol: "AAPL",
@@ -78,43 +80,51 @@ describe("OptionsChainPage", () => {
       all_strikes: [175, 180, 185, 190, 195, 200, 205],
       chain: {},
     });
+    const buildPair = (expiration: string, strike: number) => ({
+      call: {
+        contractId: 7000 + strike,
+        underlyingConid: 265598,
+        expiration,
+        strike,
+        right: "C" as const,
+        type: "call" as const,
+        symbol: "AAPL",
+        lastPrice: 4.2,
+        bid: 4.1,
+        ask: 4.3,
+        volume: 150,
+        delta: 0.62,
+        bidSize: 12,
+        askSize: 15,
+      },
+      put: {
+        contractId: 8000 + strike,
+        underlyingConid: 265598,
+        expiration,
+        strike,
+        right: "P" as const,
+        type: "put" as const,
+        symbol: "AAPL",
+        lastPrice: 3.9,
+        bid: 3.8,
+        ask: 4,
+        volume: 110,
+        delta: -0.38,
+        bidSize: 10,
+        askSize: 14,
+      },
+    });
     mockApi.moonmarketOptionContract.mockImplementation(
       async (_underlyingConid: number, expiration: string, strike: number) => ({
         strike,
-        data: {
-          call: {
-            contractId: 7000 + strike,
-            underlyingConid: 265598,
-            expiration,
-            strike,
-            right: "C",
-            type: "call",
-            symbol: "AAPL",
-            lastPrice: 4.2,
-            bid: 4.1,
-            ask: 4.3,
-            volume: 150,
-            delta: 0.62,
-            bidSize: 12,
-            askSize: 15,
-          },
-          put: {
-            contractId: 8000 + strike,
-            underlyingConid: 265598,
-            expiration,
-            strike,
-            right: "P",
-            type: "put",
-            symbol: "AAPL",
-            lastPrice: 3.9,
-            bid: 3.8,
-            ask: 4,
-            volume: 110,
-            delta: -0.38,
-            bidSize: 10,
-            askSize: 14,
-          },
-        },
+        data: buildPair(expiration, strike),
+      }),
+    );
+    mockApi.moonmarketOptionWindow.mockImplementation(
+      async (_underlyingConid: number, expiration: string, strikes: number[]) => ({
+        underlying_conid: 265598,
+        expiration,
+        strikes: Object.fromEntries(strikes.map((strike) => [strike.toFixed(2), buildPair(expiration, strike)])),
       }),
     );
   });
@@ -134,12 +144,29 @@ describe("OptionsChainPage", () => {
     expect(mockApi.quote).toHaveBeenCalledWith(265598, expect.any(AbortSignal));
     expect(mockApi.moonmarketOptionExpirations).toHaveBeenCalledWith(265598, "AAPL", expect.any(AbortSignal));
     expect(mockApi.moonmarketOptionChain).toHaveBeenCalledWith(265598, "JUN24", expect.any(AbortSignal));
+    // Auto-load now goes through ONE bundled window request, not per-strike contract calls.
     await waitFor(() =>
-      expect(mockApi.moonmarketOptionContract).toHaveBeenCalledWith(265598, "JUN24", 200, expect.any(AbortSignal)),
+      expect(mockApi.moonmarketOptionWindow).toHaveBeenCalledWith(
+        265598,
+        "JUN24",
+        expect.arrayContaining([200, 205]),
+        expect.any(AbortSignal),
+      ),
     );
-    expect(mockApi.moonmarketOptionContract).toHaveBeenCalledWith(265598, "JUN24", 205, expect.any(AbortSignal));
-    expect(mockApi.moonmarketOptionContract).not.toHaveBeenCalledWith(265598, "JUN24", 175, expect.any(AbortSignal));
+    const windowStrikes = mockApi.moonmarketOptionWindow.mock.calls[0][2] as number[];
+    expect(windowStrikes).not.toContain(175);
+    expect(mockApi.moonmarketOptionContract).not.toHaveBeenCalledWith(265598, "JUN24", 200, expect.any(AbortSignal));
     expect(await screen.findByRole("button", { name: /select call 200/i })).toBeInTheDocument();
+  });
+
+  it("issues exactly one bundled window request for the auto-load strikes on initial load", async () => {
+    renderPage();
+
+    expect(await screen.findByRole("button", { name: /select call 200/i })).toBeInTheDocument();
+    expect(mockApi.moonmarketOptionWindow).toHaveBeenCalledTimes(1);
+    const windowStrikes = mockApi.moonmarketOptionWindow.mock.calls[0][2] as number[];
+    expect(windowStrikes.length).toBeGreaterThan(1);
+    expect(windowStrikes.length).toBeLessThanOrEqual(6);
   });
 
   it("manual-loads a strike row outside the initial visible window", async () => {
@@ -177,5 +204,6 @@ describe("OptionsChainPage", () => {
     expect(await screen.findByText(/couldn't determine spot price/i)).toBeInTheDocument();
     expect(screen.queryByTestId(/option-strike-/)).not.toBeInTheDocument();
     expect(mockApi.moonmarketOptionContract).not.toHaveBeenCalled();
+    expect(mockApi.moonmarketOptionWindow).not.toHaveBeenCalled();
   });
 });

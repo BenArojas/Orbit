@@ -231,6 +231,13 @@ class MoonMarketService:
         conid: int,
         side: str,
     ) -> MoonMarketOrderRulesResponse:
+        """Fetch contract order rules for a conid/side.
+
+        The account id is only the requesting context echoed back on the
+        response; it is NOT a server-side filter. IBKR's
+        ``/iserver/contract/rules`` endpoint takes no account parameter, so the
+        rules returned are the same regardless of which account is selected.
+        """
         resolved_account_id = await self._resolve_account_id(account_id)
         normalized_side = "SELL" if side.upper() == "SELL" else "BUY"
         payload = await self.ibkr._request(

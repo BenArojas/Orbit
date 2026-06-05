@@ -6,6 +6,7 @@ from deps import require_ibkr_auth
 from models import (
     MoonMarketOptionChainResponse,
     MoonMarketOptionExpirationsResponse,
+    MoonMarketOptionWindowResponse,
     MoonMarketSingleOptionStrikeResponse,
 )
 from services.ibkr import IBKRService
@@ -66,3 +67,18 @@ async def option_contract(
 ) -> MoonMarketSingleOptionStrikeResponse:
     pair = await _service(ibkr).contract_pair(underlying_conid, expiration, strike)
     return MoonMarketSingleOptionStrikeResponse(strike=strike, data=pair)
+
+
+@router.get("/window/{underlying_conid}", response_model=MoonMarketOptionWindowResponse)
+async def option_window(
+    underlying_conid: int,
+    expiration: str = Query(..., min_length=1),
+    strikes: list[float] = Query(..., min_length=1, max_length=12),
+    ibkr: IBKRService = Depends(require_ibkr_auth),
+) -> MoonMarketOptionWindowResponse:
+    data = await _service(ibkr).contract_window(underlying_conid, expiration, strikes)
+    return MoonMarketOptionWindowResponse(
+        underlying_conid=underlying_conid,
+        expiration=expiration,
+        strikes=data,
+    )

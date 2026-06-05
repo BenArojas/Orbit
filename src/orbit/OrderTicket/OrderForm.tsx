@@ -14,7 +14,7 @@ import { api } from "@/lib/api";
 import { useWebSocket, type WsMessage } from "@/hooks/useWebSocket";
 import { cn } from "@/lib/utils";
 import { useAccountStore } from "./useAccountStore";
-import { useModifyOrder, usePlaceOrder, usePreviewOrder, useReplyOrder } from "./useOrderMutations";
+import { useCancelOrder, useModifyOrder, usePlaceOrder, usePreviewOrder, useReplyOrder } from "./useOrderMutations";
 import type { OrderTicketTarget } from "./useOrderTicketStore";
 import { useOrderTicketStore } from "./useOrderTicketStore";
 import { OrderResult, type OrderTrackerState } from "./OrderResult";
@@ -208,6 +208,7 @@ export function OrderForm({ target }: OrderFormProps) {
   const placeMutation = usePlaceOrder();
   const modifyMutation = useModifyOrder();
   const replyMutation = useReplyOrder();
+  const cancelMutation = useCancelOrder();
   const { subscribe, unsubscribe, addHandler } = useWebSocket();
   const liveBlocked = selectedAccount ? !selectedAccount.is_paper : true;
   const quoteQuery = useQuery({
@@ -568,6 +569,7 @@ export function OrderForm({ target }: OrderFormProps) {
   };
 
   const handleConfirm = (confirmed: boolean) => {
+    if (liveBlocked) return;
     if (!selectedAccountId || !replyId) return;
     if (!confirmed) {
       setReplyId(null);
@@ -589,6 +591,28 @@ export function OrderForm({ target }: OrderFormProps) {
       },
     );
   };
+
+  const handleCancelTrackedOrder = () => {
+    if (!selectedAccountId || liveBlocked || !trackedOrder?.orderId) return;
+    cancelMutation.mutate(
+      { accountId: selectedAccountId, orderId: trackedOrder.orderId },
+      {
+        onSuccess: () => {
+          toast.success("Order cancelled.");
+          setTrackedOrder(null);
+          setActionResult(null);
+          setReplyId(null);
+          void queryClient.invalidateQueries({ queryKey: ["moonmarket", "portfolio", selectedAccountId] });
+          void queryClient.invalidateQueries({ queryKey: ["moonmarket", "funds", selectedAccountId] });
+          void queryClient.invalidateQueries({ queryKey: ["moonmarket", "live-orders", selectedAccountId] });
+          void queryClient.invalidateQueries({ queryKey: ["moonmarket", "trades", selectedAccountId] });
+        },
+        onError: () => toast.error("Order cancellation failed."),
+      },
+    );
+  };
+
+  const canCancelTrackedOrder = Boolean(trackedOrder?.orderId) && orderTracker?.status !== "filled";
 
   return (
     <form className="flex min-h-0 flex-1 flex-col" onSubmit={(event) => event.preventDefault()}>
@@ -798,6 +822,11 @@ export function OrderForm({ target }: OrderFormProps) {
             <button type="button" onClick={handlePlace} disabled={!selectedAccountId || liveBlocked || placeMutation.isPending || modifyMutation.isPending} className="rounded-md border border-[var(--clr-cyan)] px-3 py-2 text-[12px] text-[var(--clr-cyan)] disabled:opacity-50">
               {target.mode === "modify" ? "Modify" : canUpdateTrackedOrder ? "Update Order" : "Place"}
             </button>
+            {canCancelTrackedOrder ? (
+              <button type="button" onClick={handleCancelTrackedOrder} disabled={!selectedAccountId || liveBlocked || cancelMutation.isPending} className="rounded-md border border-[var(--clr-red)] px-3 py-2 text-[12px] text-[var(--clr-red)] disabled:opacity-50">
+                {cancelMutation.isPending ? "Cancelling..." : "Cancel Order"}
+              </button>
+            ) : null}
           </>
         )}
       </div>

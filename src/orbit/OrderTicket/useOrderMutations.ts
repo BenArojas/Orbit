@@ -39,6 +39,8 @@ export function useCancelOrder() {
       api.moonmarketCancelOrder(body.accountId, body.orderId),
     onSuccess: (_data, variables) => {
       void queryClient.invalidateQueries({ queryKey: ["moonmarket", "live-orders", variables.accountId] });
+      void queryClient.invalidateQueries({ queryKey: ["moonmarket", "funds", variables.accountId] });
+      void queryClient.invalidateQueries({ queryKey: ["moonmarket", "portfolio", variables.accountId] });
     },
   });
 }
@@ -50,6 +52,8 @@ export function useModifyOrder() {
       api.moonmarketModifyOrder(body.accountId, body.orderId, body.order),
     onSuccess: (_data, variables) => {
       void queryClient.invalidateQueries({ queryKey: ["moonmarket", "live-orders", variables.accountId] });
+      void queryClient.invalidateQueries({ queryKey: ["moonmarket", "funds", variables.accountId] });
+      void queryClient.invalidateQueries({ queryKey: ["moonmarket", "portfolio", variables.accountId] });
     },
   });
 }

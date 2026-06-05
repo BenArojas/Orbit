@@ -76,6 +76,22 @@ function firstOrderId(value: unknown): string | null {
   return null;
 }
 
+const NON_ACCEPTED_STATUSES = new Set(["rejected", "inactive", "cancelled", "canceled"]);
+
+// Reads the order status echoed back on a place/reply row, if any.
+function rowOrderStatus(value: unknown): string | null {
+  for (const row of resultRows(value)) {
+    const status = textValue(row.order_status) ?? textValue(row.status);
+    if (status) return status;
+  }
+  return null;
+}
+
+function statusIsAccepted(status: string | null): boolean {
+  if (!status) return true;
+  return !NON_ACCEPTED_STATUSES.has(status.toLowerCase());
+}
+
 function resultError(value: unknown): string | null {
   for (const row of resultRows(value)) {
     const error = cleanIbkrMessage(row.error);
@@ -182,6 +198,18 @@ function ConfirmationCard({
 function SubmittedCard({ actionResult }: { actionResult: unknown }) {
   const orderId = firstOrderId(actionResult);
   if (!orderId) return null;
+  const status = rowOrderStatus(actionResult);
+  if (!statusIsAccepted(status)) {
+    // Not a successful submission: render neutral styling and surface the status
+    // instead of the green "Order Submitted" success card.
+    return (
+      <section className="rounded-md border border-border bg-[var(--bg-1)] p-3">
+        <div className="text-[11px] font-semibold uppercase text-[var(--text-2)]">Order Not Accepted</div>
+        <div className="mt-2 font-data text-[12px] text-[var(--text-1)]">Order ID {orderId}</div>
+        <p className="mt-1 text-[11px] text-[var(--clr-orange)]">{status}</p>
+      </section>
+    );
+  }
   return (
     <section className="rounded-md border border-[var(--clr-green)]/50 bg-[var(--clr-green)]/10 p-3">
       <div className="text-[11px] font-semibold uppercase text-[var(--clr-green)]">Order Submitted</div>

@@ -2,6 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { OrderTicket } from "../OrderTicket";
+import { OrderResult } from "../OrderResult";
 import { useAccountStore } from "../useAccountStore";
 import { useOrderTicketStore } from "../useOrderTicketStore";
 
@@ -11,6 +12,7 @@ const mockApi = vi.hoisted(() => ({
   moonmarketPlaceOrders: vi.fn(),
   moonmarketReplyOrder: vi.fn(),
   moonmarketModifyOrder: vi.fn(),
+  moonmarketCancelOrder: vi.fn(),
   moonmarketAccountFunds: vi.fn(),
   moonmarketPortfolio: vi.fn(),
   moonmarketRevalidatePositions: vi.fn(),
@@ -169,6 +171,7 @@ describe("OrderTicket", () => {
     mockApi.moonmarketPlaceOrders.mockReset();
     mockApi.moonmarketReplyOrder.mockReset();
     mockApi.moonmarketModifyOrder.mockReset();
+    mockApi.moonmarketCancelOrder.mockReset();
     mockApi.moonmarketAccountFunds.mockReset();
     mockApi.moonmarketPortfolio.mockReset();
     mockApi.moonmarketRevalidatePositions.mockReset();
@@ -205,6 +208,7 @@ describe("OrderTicket", () => {
     mockApi.moonmarketPlaceOrders.mockResolvedValue({ account_id: "DU12345", result: { data: [{ id: "reply-1" }] } });
     mockApi.moonmarketReplyOrder.mockResolvedValue({ account_id: "DU12345", result: { data: [{ order_id: "order-1" }] } });
     mockApi.moonmarketModifyOrder.mockResolvedValue({ account_id: "DU12345", result: { data: [{ order_id: "order-1" }] } });
+    mockApi.moonmarketCancelOrder.mockResolvedValue({ account_id: "DU12345", result: { data: [{ order_id: "order-1", msg: "Request was submitted" }] } });
     mockApi.moonmarketRevalidatePositions.mockResolvedValue({
       account_id: "DU12345",
       positions: [],
@@ -1035,5 +1039,120 @@ describe("OrderTicket", () => {
     expect(screen.queryByText("Order Tracker")).not.toBeInTheDocument();
     expect(screen.queryByText("Order Filled")).not.toBeInTheDocument();
     expect(screen.queryByText("Close")).not.toBeInTheDocument();
+  });
+
+  it("does not show the green submitted success card when the order_status is rejected/inactive", () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <OrderResult
+          previewResult={null}
+          actionResult={{ result: [{ order_id: "o1", order_status: "Inactive" }] }}
+          replyId={null}
+          orderTracker={null}
+          onConfirm={() => {}}
+          confirming={false}
+          liveBlocked={false}
+        />
+      </QueryClientProvider>,
+    );
+
+    expect(screen.queryByText("Order Submitted")).not.toBeInTheDocument();
+    expect(screen.getByText(/Inactive/i)).toBeInTheDocument();
+  });
+
+  it("still shows the green submitted card for an accepted order without a terminal status", () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <OrderResult
+          previewResult={null}
+          actionResult={{ result: [{ order_id: "ok-1", order_status: "Submitted" }] }}
+          replyId={null}
+          orderTracker={null}
+          onConfirm={() => {}}
+          confirming={false}
+          liveBlocked={false}
+        />
+      </QueryClientProvider>,
+    );
+
+    expect(screen.getByText("Order Submitted")).toBeInTheDocument();
+    expect(screen.getByText(/ok-1/)).toBeInTheDocument();
+  });
+
+  it("shows a cancel control for a tracked order, blocks it on live accounts, and clears the tracker on cancel", async () => {
+    mockApi.moonmarketPlaceOrders.mockResolvedValue({ account_id: "DU12345", result: { data: [{ order_id: "limit-cancel-1" }] } });
+    mockApi.moonmarketLiveOrders.mockResolvedValue({
+      account_id: "DU12345",
+      orders: [
+        {
+          order_id: "limit-cancel-1",
+          conid: 265598,
+          symbol: "AAPL",
+          description: "BUY 5 AAPL LIMIT 180.00",
+          side: "BUY",
+          order_type: "LMT",
+          quantity: 5,
+          remaining_quantity: 5,
+          limit_price: 180,
+          tif: "DAY",
+          status: "Submitted",
+        },
+      ],
+    });
+    useOrderTicketStore.getState().open({ conid: 265598, symbol: "AAPL", side: "BUY" });
+    renderTicket();
+
+    fireEvent.change(screen.getByLabelText(/quantity/i), { target: { value: "5" } });
+    fireEvent.change(screen.getByLabelText(/limit price/i), { target: { value: "180" } });
+    fireEvent.click(screen.getByRole("button", { name: /place/i }));
+
+    const cancelButton = await screen.findByRole("button", { name: /cancel order/i });
+    expect(cancelButton).toBeEnabled();
+
+    act(() => {
+      useAccountStore.setState({
+        accounts: [{ account_id: "DU12345", label: "Live", selected: true, is_paper: false }],
+        selectedAccountId: "DU12345",
+      });
+    });
+    expect(screen.getByRole("button", { name: /cancel order/i })).toBeDisabled();
+
+    act(() => {
+      useAccountStore.setState({
+        accounts: [{ account_id: "DU12345", label: "Paper", selected: true, is_paper: true }],
+        selectedAccountId: "DU12345",
+      });
+    });
+    fireEvent.click(screen.getByRole("button", { name: /cancel order/i }));
+
+    await waitFor(() => expect(mockApi.moonmarketCancelOrder).toHaveBeenCalledWith("DU12345", "limit-cancel-1"));
+    await waitFor(() => expect(screen.queryByText(/order tracker/i)).not.toBeInTheDocument());
+  });
+
+  it("does not confirm an order on a live (non-paper) account", async () => {
+    mockApi.moonmarketPlaceOrders.mockResolvedValue({
+      account_id: "DU12345",
+      result: [{ id: "reply-confirm-live", message: ["Confirm this order?"], messageOptions: ["Yes", "No"] }],
+    });
+    useOrderTicketStore.getState().open({ conid: 265598, symbol: "AAPL", side: "BUY" });
+    renderTicket();
+
+    fireEvent.change(screen.getByLabelText(/limit price/i), { target: { value: "180" } });
+    fireEvent.click(screen.getByRole("button", { name: /place/i }));
+
+    const confirmButton = await screen.findByRole("button", { name: /confirm and submit/i });
+
+    act(() => {
+      useAccountStore.setState({
+        accounts: [{ account_id: "DU12345", label: "Live", selected: true, is_paper: false }],
+        selectedAccountId: "DU12345",
+      });
+    });
+    expect(confirmButton).toBeDisabled();
+    fireEvent.click(confirmButton);
+
+    expect(mockApi.moonmarketReplyOrder).not.toHaveBeenCalled();
   });
 });

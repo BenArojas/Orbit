@@ -147,3 +147,29 @@ def test_contract_loads_call_put_contracts_and_snapshots_quotes():
     assert body["data"]["call"]["delta"] == 0.62
     assert body["data"]["put"]["contractId"] == 7002
     assert body["data"]["put"]["delta"] == -0.38
+
+
+def test_window_loads_multiple_strike_pairs_in_one_request():
+    fake = _FakeIbkr()
+    resp = _client(fake).get(
+        "/moonmarket/options/window/265598?expiration=JUN24&strikes=180&strikes=185"
+    )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["underlying_conid"] == 265598
+    assert body["expiration"] == "JUN24"
+    assert sorted(body["strikes"].keys()) == ["180.00", "185.00"]
+    assert body["strikes"]["180.00"]["call"]["contractId"] == 7001
+    assert body["strikes"]["180.00"]["put"]["contractId"] == 7002
+    assert body["strikes"]["185.00"]["call"]["contractId"] == 7001
+    # Pacing path exercised: one snapshot burst per strike, not one giant burst.
+    snapshot_calls = [req for req in fake.requests if req[0] == "SNAPSHOT"]
+    assert len(snapshot_calls) == 2
+
+
+def test_window_requires_at_least_one_strike():
+    fake = _FakeIbkr()
+    resp = _client(fake).get("/moonmarket/options/window/265598?expiration=JUN24")
+
+    assert resp.status_code == 422
