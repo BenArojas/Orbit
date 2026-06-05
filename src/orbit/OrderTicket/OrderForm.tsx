@@ -569,6 +569,7 @@ export function OrderForm({ target }: OrderFormProps) {
   };
 
   const handleConfirm = (confirmed: boolean) => {
+    if (liveBlocked) return;
     if (!selectedAccountId || !replyId) return;
     if (!confirmed) {
       setReplyId(null);

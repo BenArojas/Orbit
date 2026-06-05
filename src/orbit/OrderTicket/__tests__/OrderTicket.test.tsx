@@ -1130,4 +1130,29 @@ describe("OrderTicket", () => {
     await waitFor(() => expect(mockApi.moonmarketCancelOrder).toHaveBeenCalledWith("DU12345", "limit-cancel-1"));
     await waitFor(() => expect(screen.queryByText(/order tracker/i)).not.toBeInTheDocument());
   });
+
+  it("does not confirm an order on a live (non-paper) account", async () => {
+    mockApi.moonmarketPlaceOrders.mockResolvedValue({
+      account_id: "DU12345",
+      result: [{ id: "reply-confirm-live", message: ["Confirm this order?"], messageOptions: ["Yes", "No"] }],
+    });
+    useOrderTicketStore.getState().open({ conid: 265598, symbol: "AAPL", side: "BUY" });
+    renderTicket();
+
+    fireEvent.change(screen.getByLabelText(/limit price/i), { target: { value: "180" } });
+    fireEvent.click(screen.getByRole("button", { name: /place/i }));
+
+    const confirmButton = await screen.findByRole("button", { name: /confirm and submit/i });
+
+    act(() => {
+      useAccountStore.setState({
+        accounts: [{ account_id: "DU12345", label: "Live", selected: true, is_paper: false }],
+        selectedAccountId: "DU12345",
+      });
+    });
+    expect(confirmButton).toBeDisabled();
+    fireEvent.click(confirmButton);
+
+    expect(mockApi.moonmarketReplyOrder).not.toHaveBeenCalled();
+  });
 });
