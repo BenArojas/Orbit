@@ -42,3 +42,9 @@ Skill names are still `parallax-*` because most conventions currently target the
 - `parallax-git` — branch structure, commit format, PR workflow, merge policy.
 - `parallax-hub` — Orbit module boundaries, shared database concerns, Parallax/MoonMarket/Inflect relationships.
 - `parallax-v2-roadmap` — deferred work and v2 scope.
+
+## Design Docs
+
+Active, forward-looking design lives in `docs/superpowers/plans/`, `docs/superpowers/specs/`, and `docs/ibkr-pacing.md`. These are the docs v2 still builds on (v1 master design, foundation, MoonMarket options, OrderTicket, Inflect journal, IBKR pacing).
+
+Plans/specs for **already-shipped v1 features** were moved to `docs/archive/` during the v1 close-out cleanup — see `docs/archive/README.md` for the index. They are historical reference (the rationale behind shipped code), not active design. Do not treat them as forgotten: check the archive index when you need the original "why" behind a shipped v1 feature.
