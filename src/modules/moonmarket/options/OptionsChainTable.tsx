@@ -1,3 +1,4 @@
+import { useMemo } from "react";
 import type { MoonMarketOptionContract } from "@/lib/api";
 import { StrikeRow } from "./StrikeRow";
 import { useOptionWindow } from "./useOptionsChain";
@@ -58,9 +59,16 @@ export function OptionsChainTable({
   error: unknown;
   onSelect: (option: MoonMarketOptionContract) => void;
 }) {
-  const autoLoadStrikes = underlyingPriceLoading || underlyingPriceError
-    ? new Set<number>()
-    : selectStrikesAroundPrice(allStrikes, underlyingPrice, AUTO_LOAD_STRIKE_COUNT);
+  // Memoize the auto-load window so we don't recompute the Set (and hand a fresh
+  // reference to every StrikeRow) on unrelated re-renders; recompute only when an
+  // input that actually changes the window changes.
+  const autoLoadStrikes = useMemo(
+    () =>
+      underlyingPriceLoading || underlyingPriceError
+        ? new Set<number>()
+        : selectStrikesAroundPrice(allStrikes, underlyingPrice, AUTO_LOAD_STRIKE_COUNT),
+    [allStrikes, underlyingPrice, underlyingPriceLoading, underlyingPriceError],
+  );
 
   // Fire ONE bundled window request for the auto-load strikes (server-side paced)
   // instead of one request per strike. The no-spot gate above keeps this empty —

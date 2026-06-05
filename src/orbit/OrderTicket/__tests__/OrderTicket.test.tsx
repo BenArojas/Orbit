@@ -1029,6 +1029,34 @@ describe("OrderTicket", () => {
     expect(mockApi.moonmarketPlaceOrders).not.toHaveBeenCalled();
   });
 
+  it("surfaces a zero limit price as an invalid input and blocks place", async () => {
+    useOrderTicketStore.getState().open({ conid: 265598, symbol: "AAPL", side: "BUY" });
+    renderTicket();
+
+    fireEvent.change(screen.getByLabelText(/quantity/i), { target: { value: "5" } });
+    fireEvent.change(screen.getByLabelText(/limit price/i), { target: { value: "0" } });
+    fireEvent.click(screen.getByRole("button", { name: /place/i }));
+
+    expect(await screen.findByText(/limit price must be greater than zero/i)).toBeInTheDocument();
+    expect(mockApi.moonmarketPlaceOrders).not.toHaveBeenCalled();
+  });
+
+  it("starts a tracker from a numeric order_id place response", async () => {
+    mockApi.moonmarketPlaceOrders.mockResolvedValue({
+      account_id: "DU12345",
+      result: [{ order_id: 123456 }],
+    });
+    useOrderTicketStore.getState().open({ conid: 265598, symbol: "AAPL", side: "BUY" });
+    renderTicket();
+
+    fireEvent.change(screen.getByLabelText(/limit price/i), { target: { value: "180" } });
+    fireEvent.click(screen.getByRole("button", { name: /place/i }));
+
+    expect(await screen.findByText(/order tracker/i)).toBeInTheDocument();
+    expect(screen.getByText(/123456/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /confirm and submit/i })).not.toBeInTheDocument();
+  });
+
   it("renders the error card and no success state when IBKR returns a rejection row", async () => {
     const { placeOrder } = renderTicket({
       placeResult: { result: [{ error: "10/Order rejected: insufficient margin" }] },

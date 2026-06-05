@@ -26,6 +26,15 @@ function numberOrUndefined(value: string): number | undefined {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
 }
 
+// A required price field is "invalid" when the user typed something that does
+// not parse to a positive number. numberOrUndefined silently drops <= 0 input,
+// so we detect that case here to surface inline feedback instead of swallowing it.
+function priceInputInvalid(value: string): boolean {
+  if (value.trim() === "") return false;
+  const parsed = Number(value);
+  return !Number.isFinite(parsed) || parsed <= 0;
+}
+
 function resultData(result: unknown): unknown {
   if (!result || typeof result !== "object" || !("result" in result)) return result;
   return (result as { result: unknown }).result;
@@ -345,6 +354,8 @@ export function OrderForm({ target }: OrderFormProps) {
   const needsStopPrice = orderType === "STP" || orderType === "STP_LIMIT";
   const needsStopAuxPrice = orderType === "STP" || orderType === "STP_LIMIT";
   const canUseOutsideRth = outsideRthOrderTypes.has(orderType);
+  const limitPriceInvalid = needsLimitPrice && priceInputInvalid(price);
+  const stopPriceInvalid = needsStopPrice && priceInputInvalid(auxPrice);
 
   useEffect(() => {
     if (isTrailing && tif === "IOC") {
@@ -526,6 +537,14 @@ export function OrderForm({ target }: OrderFormProps) {
     }
     if (orderType === "STP_LIMIT" && (!numberOrUndefined(price) || !numberOrUndefined(auxPrice))) {
       toast.error("Stop-limit orders require both a stop price and a limit price.");
+      return;
+    }
+    if (limitPriceInvalid) {
+      toast.error("Limit price must be greater than zero.");
+      return;
+    }
+    if (stopPriceInvalid) {
+      toast.error("Stop price must be greater than zero.");
       return;
     }
     const orders = buildOrders();
@@ -730,12 +749,18 @@ export function OrderForm({ target }: OrderFormProps) {
           <label className="block text-[11px] font-medium text-[var(--text-2)]">
             Stop Price
             <input aria-label="Stop Price" value={auxPrice} onChange={(event) => setAuxPrice(event.target.value)} className="mt-1 h-9 w-full rounded-md border border-border bg-[var(--bg-1)] px-2 text-[12px] text-[var(--text-1)]" />
+            {stopPriceInvalid ? (
+              <span className="mt-1 block text-[10px] font-normal text-[var(--clr-red)]">Stop price must be greater than zero.</span>
+            ) : null}
           </label>
         ) : null}
         {needsLimitPrice ? (
           <label className="block text-[11px] font-medium text-[var(--text-2)]">
             Limit Price
             <input aria-label="Limit Price" value={price} onChange={(event) => { hasInteractedRef.current = true; setPrice(event.target.value); }} className="mt-1 h-9 w-full rounded-md border border-border bg-[var(--bg-1)] px-2 text-[12px] text-[var(--text-1)]" />
+            {limitPriceInvalid ? (
+              <span className="mt-1 block text-[10px] font-normal text-[var(--clr-red)]">Limit price must be greater than zero.</span>
+            ) : null}
           </label>
         ) : null}
         {canUseOutsideRth ? (
