@@ -1,20 +1,12 @@
-"""MoonMarket order service for paper-account stock order mutations."""
+"""MoonMarket order service for stock and option order mutations."""
 
 from __future__ import annotations
 
 from models import MoonMarketOrderDraft
 from services.ibkr import IBKRService
-from services.moonmarket import MoonMarketAccountNotFoundError, MoonMarketService
+from services.moonmarket import MoonMarketService
 
 OrderResult = dict[str, object] | list[dict[str, object]]
-
-
-class LiveTradingBlockedError(PermissionError):
-    """Raised when v1 blocks an order mutation on a live account."""
-
-    def __init__(self, account_id: str) -> None:
-        super().__init__(f"Live trading is blocked for account {account_id}")
-        self.account_id = account_id
 
 
 class MoonMarketOrderNotFoundError(LookupError):
@@ -26,7 +18,7 @@ class OptionBracketNotSupportedError(ValueError):
 
 
 class OrderService:
-    """Order preview and paper-only order mutations through IBKR Client Portal."""
+    """Order preview and order mutations through IBKR Client Portal."""
 
     def __init__(self, ibkr: IBKRService) -> None:
         self.ibkr = ibkr
@@ -41,7 +33,7 @@ class OrderService:
         )
 
     async def place(self, account_id: str, orders: list[MoonMarketOrderDraft]) -> OrderResult:
-        await self._assert_paper_account(account_id)
+        await self.moonmarket._resolve_account_id(account_id)
         if len(orders) > 1 and any(order.asset_class == "OPT" for order in orders):
             raise OptionBracketNotSupportedError(
                 "Option bracket orders are deferred until after single-leg paper validation"
@@ -53,7 +45,7 @@ class OrderService:
         )
 
     async def reply(self, account_id: str, reply_id: str, confirmed: bool) -> OrderResult:
-        await self._assert_paper_account(account_id)
+        await self.moonmarket._resolve_account_id(account_id)
         return await self.ibkr._request(
             "POST",
             f"/iserver/reply/{reply_id}",
@@ -61,7 +53,7 @@ class OrderService:
         )
 
     async def cancel(self, account_id: str, order_id: str) -> OrderResult:
-        await self._assert_paper_account(account_id)
+        await self.moonmarket._resolve_account_id(account_id)
         return await self.ibkr._request(
             "DELETE",
             f"/iserver/account/{account_id}/order/{order_id}",
@@ -73,22 +65,12 @@ class OrderService:
         order_id: str,
         order: MoonMarketOrderDraft,
     ) -> OrderResult:
-        await self._assert_paper_account(account_id)
+        await self.moonmarket._resolve_account_id(account_id)
         return await self.ibkr._request(
             "POST",
             f"/iserver/account/{account_id}/order/{order_id}",
             json=self._order_payload(order),
         )
-
-    async def _assert_paper_account(self, account_id: str) -> None:
-        raw_accounts = await self.ibkr.brokerage_accounts()
-        for row in raw_accounts:
-            resolved = self.moonmarket._account_id(row)
-            if resolved == account_id:
-                if self.moonmarket._account_is_paper(row, account_id):
-                    return
-                raise LiveTradingBlockedError(account_id)
-        raise MoonMarketAccountNotFoundError(f"Unknown account_id: {account_id}")
 
     def _order_payload(self, order: MoonMarketOrderDraft) -> dict[str, object]:
         payload: dict[str, object] = {

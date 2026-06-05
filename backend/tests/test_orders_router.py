@@ -315,7 +315,7 @@ def test_cancel_and_modify_call_ibkr_for_paper_account():
     )
 
 
-def test_live_account_blocks_all_order_mutations():
+def test_live_account_allows_all_order_mutations():
     fake = _FakeIbkr()
     client = _client(fake)
 
@@ -326,8 +326,10 @@ def test_live_account_blocks_all_order_mutations():
         client.patch("/moonmarket/orders/U12345/order-1", json=_single_order()),
     ]
 
-    assert [resp.status_code for resp in responses] == [403, 403, 403, 403]
-    assert all(resp.json()["detail"]["error"] == "live_trading_blocked" for resp in responses)
+    assert [resp.status_code for resp in responses] == [200, 200, 200, 200]
+    assert ("POST", "/iserver/account/U12345/orders", {"json": {"orders": [_single_order()]}}) in fake.requests
+    assert ("POST", "/iserver/reply/reply-1", {"json": {"confirmed": True}}) in fake.requests
+    assert ("DELETE", "/iserver/account/U12345/order/order-1", {}) in fake.requests
 
 
 def _trail_order(conid: int = 265598) -> dict:

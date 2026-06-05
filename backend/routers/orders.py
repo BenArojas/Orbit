@@ -13,7 +13,6 @@ from models import (
 from services.ibkr import IBKRService
 from services.moonmarket import MoonMarketAccountNotFoundError
 from services.orders import (
-    LiveTradingBlockedError,
     OptionBracketNotSupportedError,
     OrderResult,
     OrderService,
@@ -34,17 +33,6 @@ def _account_not_found(exc: MoonMarketAccountNotFoundError) -> HTTPException:
     return HTTPException(
         status_code=status.HTTP_404_NOT_FOUND,
         detail={"error": "moonmarket_account_not_found", "message": str(exc)},
-    )
-
-
-def _live_blocked(exc: LiveTradingBlockedError) -> HTTPException:
-    return HTTPException(
-        status_code=status.HTTP_403_FORBIDDEN,
-        detail={
-            "error": "live_trading_blocked",
-            "message": "Live account order mutations are blocked in Orbit v1. Select an IBKR paper account.",
-            "account_id": exc.account_id,
-        },
     )
 
 
@@ -77,8 +65,6 @@ async def place_orders(
         return _result(request.account_id, result)
     except MoonMarketAccountNotFoundError as exc:
         raise _account_not_found(exc) from exc
-    except LiveTradingBlockedError as exc:
-        raise _live_blocked(exc) from exc
     except OptionBracketNotSupportedError as exc:
         raise _option_bracket_not_supported(exc) from exc
 
@@ -95,8 +81,6 @@ async def reply_to_order(
         return _result(account_id, result)
     except MoonMarketAccountNotFoundError as exc:
         raise _account_not_found(exc) from exc
-    except LiveTradingBlockedError as exc:
-        raise _live_blocked(exc) from exc
 
 
 @router.delete("/{account_id}/{order_id}", response_model=MoonMarketOrderActionResponse)
@@ -110,8 +94,6 @@ async def cancel_order(
         return _result(account_id, result)
     except MoonMarketAccountNotFoundError as exc:
         raise _account_not_found(exc) from exc
-    except LiveTradingBlockedError as exc:
-        raise _live_blocked(exc) from exc
 
 
 @router.patch("/{account_id}/{order_id}", response_model=MoonMarketOrderActionResponse)
@@ -126,5 +108,3 @@ async def modify_order(
         return _result(account_id, result)
     except MoonMarketAccountNotFoundError as exc:
         raise _account_not_found(exc) from exc
-    except LiveTradingBlockedError as exc:
-        raise _live_blocked(exc) from exc
