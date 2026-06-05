@@ -167,6 +167,8 @@ export function useLockedFibs(conid: number | null) {
 export function useLockFib() {
   const qc = useQueryClient();
   const clearDisplayedFib = useChartStore((s) => s.clearDisplayedFib);
+  const addLockedFib = useChartStore((s) => s.addLockedFib);
+  const removeActiveFib = useChartStore((s) => s.removeActiveFib);
   return useMutation({
     mutationFn: (req: LockFibonacciRequest) => api.lockFibonacci(req),
     // Synchronous optimistic write. `onMutate` runs the instant `mutate()`
@@ -205,6 +207,12 @@ export function useLockFib() {
         lockedFibsKey(req.conid),
         (prev) => (prev ? [...prev, optimistic] : [optimistic]),
       );
+      const primary = useChartStore
+        .getState()
+        .activeFibs.find((fib) => fib.id === "primary");
+      if (primary) {
+        addLockedFib(tempId, { ...primary.result, source: "locked" });
+      }
       return { previous, tempId };
     },
     onError: (_err, req, ctx) => {
@@ -212,6 +220,9 @@ export function useLockFib() {
       // doesn't leave a phantom fib on the chart.
       if (ctx?.previous !== undefined) {
         qc.setQueryData(lockedFibsKey(req.conid), ctx.previous);
+      }
+      if (ctx?.tempId != null) {
+        removeActiveFib(`lock-${ctx.tempId}`);
       }
     },
     onSuccess: (data, req, ctx) => {
