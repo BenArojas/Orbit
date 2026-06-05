@@ -7,23 +7,28 @@ function strikeKey(strike: number): string {
   return strike.toFixed(2);
 }
 
+type StrikeContracts = { call?: MoonMarketOptionContract; put?: MoonMarketOptionContract };
+
 export function StrikeRow({
   underlyingConid,
   expiration,
   strike,
-  autoLoad,
+  preloaded,
   onSelect,
 }: {
   underlyingConid: number;
   expiration: string;
   strike: number;
-  autoLoad: boolean;
+  preloaded?: StrikeContracts;
   onSelect: (option: MoonMarketOptionContract) => void;
 }) {
   const [manualLoad, setManualLoad] = useState(false);
   const rowKey = strikeKey(strike);
-  const contractQuery = useOptionStrike(underlyingConid, expiration, strike, autoLoad || manualLoad);
-  const contracts = contractQuery.data?.data;
+  const hasPreloaded = Boolean(preloaded?.call || preloaded?.put);
+  // When the bundled window query already supplied this strike's pair, render it
+  // directly and skip the per-strike query (only manual loads run their own query).
+  const contractQuery = useOptionStrike(underlyingConid, expiration, strike, !hasPreloaded && manualLoad);
+  const contracts = hasPreloaded ? preloaded : contractQuery.data?.data;
   const hasData = Boolean(contracts?.call || contracts?.put);
   const loading = contractQuery.isLoading || contractQuery.isFetching;
 

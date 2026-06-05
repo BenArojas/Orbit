@@ -79,6 +79,22 @@ describe("MoonMarket API client", () => {
     expect(vi.mocked(fetch).mock.calls[2][1]).toMatchObject({ method: "PATCH" });
   });
 
+  it("calls MoonMarket position revalidation endpoint", async () => {
+    await api.moonmarketRevalidatePositions("DU 123");
+
+    const [url, options] = vi.mocked(fetch).mock.calls[0];
+    expect(String(url)).toContain("/moonmarket/accounts/DU%20123/positions/revalidate");
+    expect(options).toMatchObject({ method: "POST" });
+  });
+
+  it("calls MoonMarket contract order rules endpoint", async () => {
+    await api.moonmarketOrderRules("DU 123", 265598, "SELL");
+
+    const [url, options] = vi.mocked(fetch).mock.calls[0];
+    expect(String(url)).toContain("/moonmarket/accounts/DU%20123/contracts/265598/order-rules?side=SELL");
+    expect(options).toMatchObject({ method: "GET" });
+  });
+
   it("encodes MoonMarket options chain endpoints", async () => {
     await api.moonmarketOptionExpirations(265598, "AAPL Class A");
     await api.moonmarketOptionChain(265598, "JUN24");

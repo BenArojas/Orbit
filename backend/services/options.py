@@ -83,6 +83,25 @@ class OptionService:
             )
         return result
 
+    async def contract_window(
+        self,
+        underlying_conid: int,
+        expiration: str,
+        strikes: list[float],
+    ) -> dict[str, dict[str, MoonMarketOptionContract]]:
+        """Load call/put pairs for a strike window in one request.
+
+        Strikes are fetched sequentially so each strike triggers its own IBKR
+        snapshot burst rather than one giant burst — this is the server-side
+        pacing that keeps the upstream gateway from rate-limiting the window load.
+        """
+        result: dict[str, dict[str, MoonMarketOptionContract]] = {}
+        for strike in strikes:
+            pair = await self.contract_pair(underlying_conid, expiration, strike)
+            if pair:
+                result[f"{strike:.2f}"] = pair
+        return result
+
     def _contract(
         self,
         row: dict[str, object],

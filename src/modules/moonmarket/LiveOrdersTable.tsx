@@ -1,7 +1,6 @@
 import { Pencil, XCircle } from "lucide-react";
 import { toast } from "sonner";
 import type { MoonMarketOrderDraft, MoonMarketOrderSide, MoonMarketOrderType } from "@/lib/api";
-import { useAccountStore } from "@/orbit/OrderTicket/useAccountStore";
 import { useOrderTicketStore } from "@/orbit/OrderTicket/useOrderTicketStore";
 import { useCancelOrder } from "@/orbit/OrderTicket/useOrderMutations";
 import { formatMoney, formatNumber } from "./format";
@@ -38,6 +37,11 @@ function normalizeOrderType(orderType: string | null): MoonMarketOrderType {
   return "LMT";
 }
 
+function normalizeTif(tif: string | null | undefined): MoonMarketOrderDraft["tif"] {
+  const normalized = tif?.toUpperCase();
+  return normalized === "GTC" || normalized === "IOC" ? normalized : "DAY";
+}
+
 function orderDraft(order: MoonMarketLiveOrder): MoonMarketOrderDraft | null {
   if (!order.conid || !order.quantity) {
     return null;
@@ -48,7 +52,7 @@ function orderDraft(order: MoonMarketLiveOrder): MoonMarketOrderDraft | null {
     side: normalizeSide(order.side),
     quantity: order.quantity,
     orderType: normalizeOrderType(order.order_type),
-    tif: order.tif === "GTC" || order.tif === "IOC" ? order.tif : "DAY",
+    tif: normalizeTif(order.tif),
     price: order.limit_price ?? undefined,
     auxPrice: order.aux_price ?? undefined,
     trailingType: order.trailing_type ?? undefined,
@@ -58,13 +62,11 @@ function orderDraft(order: MoonMarketLiveOrder): MoonMarketOrderDraft | null {
 }
 
 export function LiveOrdersTable({ accountId, orders }: { accountId: string | null; orders: MoonMarketLiveOrder[] }) {
-  const selectedAccount = useAccountStore((state) => state.selectedAccount());
   const openOrderTicket = useOrderTicketStore((state) => state.open);
   const cancelMutation = useCancelOrder();
-  const liveBlocked = selectedAccount ? !selectedAccount.is_paper : true;
 
   const cancelOrder = (order: MoonMarketLiveOrder) => {
-    if (!accountId || liveBlocked) {
+    if (!accountId) {
       return;
     }
 
@@ -141,7 +143,7 @@ export function LiveOrdersTable({ accountId, orders }: { accountId: string | nul
                         type="button"
                         aria-label={`Modify ${label} order`}
                         onClick={() => modifyOrder(order)}
-                        disabled={liveBlocked || !draft}
+                        disabled={!draft}
                         className="inline-flex h-7 items-center gap-1 rounded border border-border px-2 text-[10px] text-[var(--text-2)] hover:border-[var(--clr-cyan)] hover:text-[var(--clr-cyan)] disabled:opacity-40"
                       >
                         <Pencil className="h-3 w-3" />
@@ -151,7 +153,7 @@ export function LiveOrdersTable({ accountId, orders }: { accountId: string | nul
                         type="button"
                         aria-label={`Cancel ${label} order`}
                         onClick={() => cancelOrder(order)}
-                        disabled={liveBlocked || !accountId || cancelMutation.isPending}
+                        disabled={!accountId || cancelMutation.isPending}
                         className="inline-flex h-7 items-center gap-1 rounded border border-[var(--clr-red)]/50 px-2 text-[10px] text-[var(--clr-red)] hover:bg-[var(--clr-red)]/10 disabled:opacity-40"
                       >
                         <XCircle className="h-3 w-3" />

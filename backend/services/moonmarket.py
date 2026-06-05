@@ -20,8 +20,10 @@ from models import (
     MoonMarketAllocationItem,
     MoonMarketLiveOrder,
     MoonMarketLiveOrdersResponse,
+    MoonMarketOrderRulesResponse,
     MoonMarketPerformanceResponse,
     MoonMarketPortfolioResponse,
+    MoonMarketPositionsRevalidateResponse,
     MoonMarketPosition,
     MoonMarketSeries,
     MoonMarketTrade,
@@ -208,6 +210,52 @@ class MoonMarketService:
             if (order := self._live_order_from_row(row)) is not None
         ]
         return MoonMarketLiveOrdersResponse(account_id=resolved_account_id, orders=orders)
+
+    async def revalidate_positions(self, account_id: str) -> MoonMarketPositionsRevalidateResponse:
+        resolved_account_id = await self._resolve_account_id(account_id)
+        payload = await self.ibkr._request(
+            "POST",
+            f"/portfolio/{resolved_account_id}/positions/invalidate",
+            json={},
+        )
+        positions = payload if isinstance(payload, list) else []
+        return MoonMarketPositionsRevalidateResponse(
+            account_id=resolved_account_id,
+            positions=positions,
+        )
+
+    async def order_rules(
+        self,
+        *,
+        account_id: str,
+        conid: int,
+        side: str,
+    ) -> MoonMarketOrderRulesResponse:
+        """Fetch contract order rules for a conid/side.
+
+        The account id is only the requesting context echoed back on the
+        response; it is NOT a server-side filter. IBKR's
+        ``/iserver/contract/rules`` endpoint takes no account parameter, so the
+        rules returned are the same regardless of which account is selected.
+        """
+        resolved_account_id = await self._resolve_account_id(account_id)
+        normalized_side = "SELL" if side.upper() == "SELL" else "BUY"
+        payload = await self.ibkr._request(
+            "POST",
+            "/iserver/contract/rules",
+            json={
+                "conid": conid,
+                "exchange": "SMART",
+                "isBuy": normalized_side == "BUY",
+            },
+        )
+        rules = payload if isinstance(payload, dict) else {}
+        return MoonMarketOrderRulesResponse(
+            account_id=resolved_account_id,
+            conid=conid,
+            side=normalized_side,
+            rules=rules,
+        )
 
     async def _resolve_account_id(self, account_id: str | None) -> str:
         raw_accounts = await self.ibkr.brokerage_accounts()
@@ -420,7 +468,9 @@ class MoonMarketService:
             description=_first_text(row, ("description", "orderDesc", "order_description", "orderDescription")) or None,
             side=_first_text(row, ("side", "buySell"), "UNKNOWN"),
             order_type=_first_text(row, ("order_type", "orderType", "origOrderType", "type")) or None,
-            quantity=self._optional_float(_first_value(row, ("quantity", "totalQuantity", "total_quantity"))),
+            quantity=self._optional_float(
+                _first_value(row, ("quantity", "totalQuantity", "total_quantity", "totalSize"))
+            ),
             remaining_quantity=self._optional_float(
                 _first_value(row, ("remaining_quantity", "remainingQuantity", "remaining"))
             ),

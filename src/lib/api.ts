@@ -244,13 +244,18 @@ export interface MoonMarketLiveOrder {
   trailing_type: MoonMarketTrailingType | null;
   trailing_amt: number | null;
   outside_rth: boolean;
-  tif: string | null;
+  tif: MoonMarketTimeInForce | string | null;
   status: string | null;
 }
 
 export interface MoonMarketLiveOrdersResponse {
   account_id: string;
   orders: MoonMarketLiveOrder[];
+}
+
+export interface MoonMarketPositionsRevalidateResponse {
+  account_id: string;
+  positions: Array<Record<string, unknown>>;
 }
 
 export type MoonMarketOrderSide = "BUY" | "SELL";
@@ -299,6 +304,20 @@ export interface MoonMarketOrderActionResponse {
   result: Record<string, unknown> | Array<Record<string, unknown>>;
 }
 
+export interface MoonMarketOrderRulesResponse {
+  account_id: string;
+  conid: number;
+  side: MoonMarketOrderSide;
+  rules: {
+    orderTypes?: string[];
+    orderTypesOutside?: string[];
+    tifTypes?: string[];
+    forceOrderPreview?: boolean;
+    orderDefaults?: Record<string, unknown>;
+    [key: string]: unknown;
+  };
+}
+
 export interface MoonMarketOptionContract {
   contractId: number;
   underlyingConid: number;
@@ -337,6 +356,12 @@ export interface MoonMarketOptionChainResponse {
 export interface MoonMarketSingleOptionStrikeResponse {
   strike: number;
   data: { call?: MoonMarketOptionContract; put?: MoonMarketOptionContract };
+}
+
+export interface MoonMarketOptionWindowResponse {
+  underlying_conid: number;
+  expiration: string;
+  strikes: MoonMarketOptionsChainData;
 }
 
 // Inflect (trading journal)
@@ -1490,6 +1515,22 @@ export const api = {
       signal,
     ),
 
+  moonmarketRevalidatePositions: (accountId: string, signal?: AbortSignal) =>
+    request<MoonMarketPositionsRevalidateResponse>(
+      "POST",
+      `/moonmarket/accounts/${encodeURIComponent(accountId)}/positions/revalidate`,
+      undefined,
+      signal,
+    ),
+
+  moonmarketOrderRules: (accountId: string, conid: number, side: MoonMarketOrderSide, signal?: AbortSignal) =>
+    request<MoonMarketOrderRulesResponse>(
+      "GET",
+      `/moonmarket/accounts/${encodeURIComponent(accountId)}/contracts/${conid}/order-rules?side=${encodeURIComponent(side)}`,
+      undefined,
+      signal,
+    ),
+
   moonmarketPreviewOrder: (body: MoonMarketOrderPreviewRequest, signal?: AbortSignal) =>
     request<MoonMarketOrderActionResponse>("POST", "/moonmarket/orders/preview", body, signal),
 
@@ -1543,6 +1584,17 @@ export const api = {
       undefined,
       signal,
     ),
+
+  moonmarketOptionWindow: (underlyingConid: number, expiration: string, strikes: number[], signal?: AbortSignal) => {
+    const params = new URLSearchParams({ expiration });
+    for (const strike of strikes) params.append("strikes", String(strike));
+    return request<MoonMarketOptionWindowResponse>(
+      "GET",
+      `/moonmarket/options/window/${underlyingConid}?${params.toString()}`,
+      undefined,
+      signal,
+    );
+  },
 
   // Inflect (trading journal)
   inflectSetups: (signal?: AbortSignal) =>

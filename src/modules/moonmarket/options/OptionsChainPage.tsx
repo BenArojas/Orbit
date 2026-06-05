@@ -1,9 +1,18 @@
+import { useQuery } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
+import { api } from "@/lib/api";
 import type { MoonMarketOptionContract } from "@/lib/api";
 import { useOrderTicketStore } from "@/orbit/OrderTicket";
 import { OptionsChainTable } from "./OptionsChainTable";
 import { useOptionChain, useOptionExpirations } from "./useOptionsChain";
+
+function midpoint(bid: number | null | undefined, ask: number | null | undefined): number | null {
+  if (typeof bid === "number" && Number.isFinite(bid) && typeof ask === "number" && Number.isFinite(ask)) {
+    return (bid + ask) / 2;
+  }
+  return null;
+}
 
 export function OptionsChainPage() {
   const [params] = useSearchParams();
@@ -15,6 +24,12 @@ export function OptionsChainPage() {
   const [selectedExpiration, setSelectedExpiration] = useState<string | null>(null);
   const expiration = selectedExpiration ?? expirationsQuery.data?.expirations[0] ?? null;
   const chainQuery = useOptionChain(underlyingConid, expiration);
+  const quoteQuery = useQuery({
+    queryKey: ["market", "quote", underlyingConid],
+    enabled: Boolean(underlyingConid),
+    queryFn: ({ signal }) => api.quote(underlyingConid as number, signal),
+  });
+  const underlyingPrice = quoteQuery.data?.lastPrice ?? midpoint(quoteQuery.data?.bid, quoteQuery.data?.ask);
   const title = useMemo(() => symbol || "Options", [symbol]);
 
   if (!underlyingConid || !symbol) {
@@ -49,6 +64,12 @@ export function OptionsChainPage() {
           setSelectedExpiration(next);
         }}
         allStrikes={chainQuery.data?.all_strikes ?? []}
+        underlyingPrice={underlyingPrice}
+        underlyingPriceLoading={quoteQuery.isLoading}
+        underlyingPriceError={quoteQuery.isError || (!quoteQuery.isLoading && underlyingPrice == null)}
+        onRetryQuote={() => {
+          void quoteQuery.refetch();
+        }}
         loading={expirationsQuery.isLoading || chainQuery.isLoading}
         error={expirationsQuery.error || chainQuery.error}
         onSelect={handleSelect}

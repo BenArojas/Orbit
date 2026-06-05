@@ -22,7 +22,7 @@ Note: Watchlists are managed in IBKR — no local models needed.
 from __future__ import annotations
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
-from typing import Literal, Optional
+from typing import Any, Literal, Optional
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -281,6 +281,20 @@ class MoonMarketLiveOrdersResponse(BaseModel):
     orders: list[MoonMarketLiveOrder]
 
 
+class MoonMarketPositionsRevalidateResponse(BaseModel):
+    """Response from POST /moonmarket/accounts/{account_id}/positions/revalidate."""
+    account_id: str
+    positions: list[dict[str, Any]]
+
+
+class MoonMarketOrderRulesResponse(BaseModel):
+    """Raw IBKR contract order rules scoped to an account, conid, and side."""
+    account_id: str
+    conid: int
+    side: Literal["BUY", "SELL"]
+    rules: dict[str, Any]
+
+
 OptionRight = Literal["C", "P"]
 OptionType = Literal["call", "put"]
 
@@ -326,6 +340,18 @@ class MoonMarketSingleOptionStrikeResponse(BaseModel):
     data: dict[str, MoonMarketOptionContract]
 
 
+class MoonMarketOptionWindowResponse(BaseModel):
+    """Batch of call/put contract pairs for a strike window, loaded in one request.
+
+    The frontend fires one window request for the auto-load strike window instead
+    of one request per strike. ``strikes`` is keyed by the strike formatted as
+    ``"%.2f"`` so the client can match preloaded pairs back to its strike rows.
+    """
+    underlying_conid: int
+    expiration: str
+    strikes: dict[str, dict[str, MoonMarketOptionContract]] = Field(default_factory=dict)
+
+
 OrderSide = Literal["BUY", "SELL"]
 OrderType = Literal["MKT", "LMT", "STP", "STP_LIMIT", "TRAIL", "TRAILLMT"]
 TimeInForce = Literal["DAY", "GTC", "IOC"]
@@ -363,6 +389,13 @@ class MoonMarketOrderDraft(BaseModel):
                 raise ValueError("TRAILLMT orders require a limit price")
             if self.order_type == "TRAILLMT" and self.aux_price is None:
                 raise ValueError("TRAILLMT orders require auxPrice")
+        if self.order_type == "STP" and self.aux_price is None and self.price is None:
+            raise ValueError("STP orders require a stop price (auxPrice)")
+        if self.order_type == "STP_LIMIT":
+            if self.price is None:
+                raise ValueError("STP_LIMIT orders require a limit price")
+            if self.aux_price is None:
+                raise ValueError("STP_LIMIT orders require a stop price (auxPrice)")
         return self
 
 
