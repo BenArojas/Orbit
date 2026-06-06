@@ -41,6 +41,9 @@ src/
 - **TanStack Query v5** for all server data fetching — never fetch directly inside components
   - REST for screener data
   - WebSocket for live streaming data
+- **React Router v7** for Orbit top-level routes (`/`, `/parallax/*`, `/moonmarket/*`, `/inflect/*`)
+  - Keep module-local tabs and panels in module state unless they need a shareable URL.
+  - Do not replace Parallax's internal Zustand navigation with routes unless the work explicitly changes top-level navigation.
 
 ## Hooks
 
@@ -53,6 +56,7 @@ Hooks encapsulate data fetching (via TanStack Query), subscriptions, and reusabl
 ## Stack Reference
 
 - React 19 + TypeScript (strict mode)
+- React Router DOM v7
 - Tailwind CSS v4 + shadcn/ui
 - TradingView Lightweight Charts v5
 - Zustand (global state)

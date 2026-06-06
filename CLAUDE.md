@@ -30,11 +30,15 @@ Default workflow:
 
 1. **Resolve context first.** Inspect relevant docs, code, recent commits, and existing module patterns before proposing changes.
 2. **PRD/spec before large work.** For substantial work, turn resolved context into a spec in `docs/superpowers/specs/`. Do not re-interview the user when the context is already resolved.
-3. **Tracer bullets over layers.** Break work into narrow vertical slices that touch the real path end-to-end. Avoid horizontal tasks like "schema", then "API", then "UI" unless they are only preparatory steps inside one vertical slice.
-4. **TDD one behavior at a time.** Write one failing behavior test through a public interface, verify red, implement the minimum code, verify green, then refactor.
-5. **Design deep modules.** Keep meaningful complexity behind small, stable, testable interfaces. Tests should target those interfaces, not private implementation details.
-6. **Review critical choices.** Ask before changing architecture, module boundaries, trading safety behavior, data ownership, or public interfaces.
-7. **Stop after the slice.** After a tracer bullet passes, report what was proven and ask before widening scope.
+3. **Policy impact before approval.** Every implementation plan/spec must say whether policy changes are expected. Policy changes are allowed, but must be highlighted and discussed before execution approval.
+4. **Plan approval gate.** After writing or refreshing an `.md` plan/spec, stop and wait for user approval before executing it.
+5. **Project plan tracking.** After a plan is approved for execution, update `PROJECT_PLAN.md`; update it again when the mission is completed.
+6. **Tracer bullets over layers.** Break work into narrow vertical slices that touch the real path end-to-end. Avoid horizontal tasks like "schema", then "API", then "UI" unless they are only preparatory steps inside one vertical slice.
+7. **TDD one behavior at a time.** Write one failing behavior test through a public interface, verify red, implement the minimum code, verify green, then refactor.
+8. **Design deep modules.** Keep meaningful complexity behind small, stable, testable interfaces. Tests should target those interfaces, not private implementation details.
+9. **Review critical choices.** Ask before changing architecture, module boundaries, trading safety behavior, data ownership, or public interfaces.
+10. **Stop after the slice.** After a tracer bullet passes, report what was proven and ask before widening scope.
+11. **Merge gate.** When the user approves merging to `dev`, run `policy-drift-check`, update `PROJECT_PLAN.md`, handle plan/spec cleanup or archival, then merge/push to `dev`. Direct merge/push to `dev` is allowed for solo work. `main` still requires a PR.
 
 ## Agent Support
 
@@ -57,7 +61,12 @@ Skill names are still `parallax-*` because most conventions currently target the
 - `parallax-hub` — Orbit module boundaries, shared database concerns, Parallax/MoonMarket/Inflect relationships.
 - `parallax-v2-roadmap` — deferred work and v2 scope.
 - `orbit-ai-workflow` — PRD/spec, tracer-bullet issue, TDD, and deep-module workflow for AI-assisted coding.
-- `policy-drift-check` — branch policy audits before push/merge to `dev`, including active docs and mirrored skill updates.
+- `policy-drift-check` — merge-to-`dev` policy audits, including active docs and mirrored skill updates.
+
+Global workflow skills may also be used when available:
+
+- `project-plan-update` — update the main planning file after approved plans and completed missions.
+- `dev-merge-completion` — final merge-to-`dev` gate: policy drift, planning status, plan cleanup, merge/push.
 
 ## Design Docs
 

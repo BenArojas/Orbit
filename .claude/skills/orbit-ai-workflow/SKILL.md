@@ -27,6 +27,9 @@ Use this skill to keep AI-assisted work small, testable, and aligned with Orbit'
    - Use `docs/superpowers/specs/YYYY-MM-DD-<topic>-design.md` for substantial work.
    - Include problem, solution, user stories, implementation decisions, testing decisions, out-of-scope items, and module impact.
    - Sketch deep-module opportunities: public interface, hidden implementation, dependencies, tests.
+   - Include a `Policy impact` section:
+     - `None expected` when no Orbit rule, safety behavior, public contract, local/cloud boundary, agent instruction, skill, or active design doc is expected to change.
+     - `Proposed policy change` when the plan may require policy/doc/skill updates. Name the rule, affected files, and the reason for the change.
 
 3. **Break work into tracer-bullet slices**
    - Prefer vertical slices that prove one behavior end-to-end.
@@ -34,14 +37,20 @@ Use this skill to keep AI-assisted work small, testable, and aligned with Orbit'
    - Avoid horizontal plans like "build schema", "build API", "build UI" as separate deliverables.
    - Mark each slice as `AFK` when it can be implemented without a human checkpoint, or `HITL` when it changes product, design, architecture, safety, or module boundaries.
 
-4. **Implement with TDD**
+4. **Wait for execution approval**
+   - After the `.md` plan/spec is written or refreshed, stop and ask the user to approve execution.
+   - Do not start implementation until the user confirms the tracer-bullet slices are vertical enough.
+   - Policy changes are allowed, but they must be visible in the plan and discussed before approval. If a new policy change appears during execution, pause before implementing that part.
+   - After approval, use `project-plan-update` to record the mission in `PROJECT_PLAN.md` before coding.
+
+5. **Implement with TDD**
    - Test one behavior through a public interface.
    - Run the test and verify it fails for the expected reason.
    - Implement the minimum code to pass.
    - Run the focused test and then relevant broader checks.
    - Refactor only after green.
 
-5. **Stop at the slice boundary**
+6. **Stop at the slice boundary**
    - Report what the tracer bullet proved.
    - List files changed and verification run.
    - Ask before expanding to the next slice when scope, UI, architecture, trading safety, or public interfaces change.
@@ -72,4 +81,3 @@ Bad tests:
 - assert private helper calls
 - mock the module under test
 - test broad imagined behavior before the first slice works
-
