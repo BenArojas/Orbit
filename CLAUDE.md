@@ -57,7 +57,7 @@ Skill names are still `parallax-*` because most conventions currently target the
 - `parallax-hub` — Orbit module boundaries, shared database concerns, Parallax/MoonMarket/Inflect relationships.
 - `parallax-v2-roadmap` — deferred work and v2 scope.
 - `orbit-ai-workflow` — PRD/spec, tracer-bullet issue, TDD, and deep-module workflow for AI-assisted coding.
-- `trading-safety-policy` — live/paper order mutation policy, real-money confirmation behavior, and policy-doc drift checks.
+- `policy-drift-check` — branch policy audits before push/merge to `dev`, including active docs and mirrored skill updates.
 
 ## Design Docs
 
