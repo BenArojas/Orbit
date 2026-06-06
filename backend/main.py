@@ -395,6 +395,9 @@ app.include_router(moonmarket_router)
 from routers.orders import router as orders_router
 app.include_router(orders_router)
 
+from routers.trading_safety import router as trading_safety_router
+app.include_router(trading_safety_router)
+
 from routers.options import router as options_router
 app.include_router(options_router)
 

@@ -9,6 +9,7 @@ import type {
   MoonMarketTimeInForce,
   MoonMarketTrailingType,
   MoonMarketTrade,
+  TradingSafetyAction,
 } from "@/lib/api";
 import { api } from "@/lib/api";
 import { useWebSocket, type WsMessage } from "@/hooks/useWebSocket";
@@ -66,6 +67,12 @@ function firstOrderId(result: unknown): string | null {
     if (typeof id === "number") return String(id);
   }
   return null;
+}
+
+function fallbackLiveConfirmationMessage(action: TradingSafetyAction): string {
+  return action === "modify"
+    ? "Submit this live order change to IBKR."
+    : "Confirm and submit this order to IBKR.";
 }
 
 function newClientOrderId(): string {
@@ -522,7 +529,7 @@ export function OrderForm({ target }: OrderFormProps) {
     );
   };
 
-  const handlePlace = () => {
+  const handlePlace = async () => {
     if (!selectedAccountId) return;
     if (effectiveQuantity <= 0) {
       toast.error("Quantity must be greater than zero.");
@@ -593,17 +600,24 @@ export function OrderForm({ target }: OrderFormProps) {
       );
     };
     if (isLiveAccount) {
+      const action: TradingSafetyAction = modifyOrderId ? "modify" : "place";
+      const decision = await api.moonmarketTradingSafetyOrderAction(selectedAccountId, action)
+        .catch(() => null);
+      if (!decision?.allowed) {
+        toast.error("Trading safety check failed.");
+        return;
+      }
       setPendingLiveAction({
         run: submit,
-        message: `${side} ${effectiveQuantity} ${target.symbol ?? `#${target.conid}`} ${orderType}.`,
-        confirmLabel: modifyOrderId ? "Submit Live Change" : "Place Live Order",
+        message: decision.confirmation.message ?? fallbackLiveConfirmationMessage(action),
+        confirmLabel: decision.confirmation.confirm_label ?? (modifyOrderId ? "Submit Live Change" : "Place Live Order"),
       });
       return;
     }
     submit();
   };
 
-  const handleConfirm = (confirmed: boolean) => {
+  const handleConfirm = async (confirmed: boolean) => {
     if (!selectedAccountId || !replyId) return;
     if (!confirmed) {
       setReplyId(null);
@@ -627,34 +641,57 @@ export function OrderForm({ target }: OrderFormProps) {
       );
     };
     if (isLiveAccount) {
+      const decision = await api.moonmarketTradingSafetyOrderAction(selectedAccountId, "reply")
+        .catch(() => null);
+      if (!decision?.allowed) {
+        toast.error("Trading safety check failed.");
+        return;
+      }
       setPendingLiveAction({
         run: submit,
-        message: "Confirm and submit this order to IBKR.",
-        confirmLabel: "Confirm Live Order",
+        message: decision.confirmation.message ?? fallbackLiveConfirmationMessage("reply"),
+        confirmLabel: decision.confirmation.confirm_label ?? "Confirm Live Order",
       });
       return;
     }
     submit();
   };
 
-  const handleCancelTrackedOrder = () => {
+  const handleCancelTrackedOrder = async () => {
     if (!selectedAccountId || !trackedOrder?.orderId) return;
-    cancelMutation.mutate(
-      { accountId: selectedAccountId, orderId: trackedOrder.orderId },
-      {
-        onSuccess: () => {
-          toast.success("Order cancelled.");
-          setTrackedOrder(null);
-          setActionResult(null);
-          setReplyId(null);
-          void queryClient.invalidateQueries({ queryKey: ["moonmarket", "portfolio", selectedAccountId] });
-          void queryClient.invalidateQueries({ queryKey: ["moonmarket", "funds", selectedAccountId] });
-          void queryClient.invalidateQueries({ queryKey: ["moonmarket", "live-orders", selectedAccountId] });
-          void queryClient.invalidateQueries({ queryKey: ["moonmarket", "trades", selectedAccountId] });
+    const submit = () => {
+      cancelMutation.mutate(
+        { accountId: selectedAccountId, orderId: trackedOrder.orderId },
+        {
+          onSuccess: () => {
+            toast.success("Order cancelled.");
+            setTrackedOrder(null);
+            setActionResult(null);
+            setReplyId(null);
+            void queryClient.invalidateQueries({ queryKey: ["moonmarket", "portfolio", selectedAccountId] });
+            void queryClient.invalidateQueries({ queryKey: ["moonmarket", "funds", selectedAccountId] });
+            void queryClient.invalidateQueries({ queryKey: ["moonmarket", "live-orders", selectedAccountId] });
+            void queryClient.invalidateQueries({ queryKey: ["moonmarket", "trades", selectedAccountId] });
+          },
+          onError: () => toast.error("Order cancellation failed."),
         },
-        onError: () => toast.error("Order cancellation failed."),
-      },
-    );
+      );
+    };
+    if (isLiveAccount) {
+      const decision = await api.moonmarketTradingSafetyOrderAction(selectedAccountId, "cancel")
+        .catch(() => null);
+      if (!decision?.allowed) {
+        toast.error("Trading safety check failed.");
+        return;
+      }
+      setPendingLiveAction({
+        run: submit,
+        message: decision.confirmation.message ?? "Confirm before cancelling this live order at IBKR.",
+        confirmLabel: decision.confirmation.confirm_label ?? "Cancel Live Order",
+      });
+      return;
+    }
+    submit();
   };
 
   const canCancelTrackedOrder = Boolean(trackedOrder?.orderId) && orderTracker?.status !== "filled";

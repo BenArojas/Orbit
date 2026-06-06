@@ -253,6 +253,24 @@ export interface MoonMarketLiveOrdersResponse {
   orders: MoonMarketLiveOrder[];
 }
 
+export type TradingSafetyAction = "place" | "reply" | "cancel" | "modify";
+export type TradingSafetyMode = "paper_allowed" | "live_confirmation_required" | "rejected";
+
+export interface TradingSafetyConfirmation {
+  required: boolean;
+  title: string | null;
+  message: string | null;
+  confirm_label: string | null;
+}
+
+export interface TradingSafetyDecision {
+  account_id: string;
+  action: TradingSafetyAction;
+  allowed: boolean;
+  mode: TradingSafetyMode;
+  confirmation: TradingSafetyConfirmation;
+}
+
 export interface MoonMarketPositionsRevalidateResponse {
   account_id: string;
   positions: Array<Record<string, unknown>>;
@@ -1511,6 +1529,14 @@ export const api = {
     request<MoonMarketLiveOrdersResponse>(
       "GET",
       `/moonmarket/live-orders?account_id=${encodeURIComponent(accountId)}`,
+      undefined,
+      signal,
+    ),
+
+  moonmarketTradingSafetyOrderAction: (accountId: string, action: TradingSafetyAction, signal?: AbortSignal) =>
+    request<TradingSafetyDecision>(
+      "GET",
+      `/moonmarket/trading-safety/order-action?account_id=${encodeURIComponent(accountId)}&action=${encodeURIComponent(action)}`,
       undefined,
       signal,
     ),

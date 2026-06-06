@@ -150,6 +150,27 @@ class MoonMarketAccountsResponse(BaseModel):
     selected_account_id: Optional[str] = None
 
 
+TradingSafetyAction = Literal["place", "reply", "cancel", "modify"]
+TradingSafetyMode = Literal["paper_allowed", "live_confirmation_required", "rejected"]
+
+
+class TradingSafetyConfirmation(BaseModel):
+    """Confirmation copy for an order action safety decision."""
+    required: bool
+    title: Optional[str] = None
+    message: Optional[str] = None
+    confirm_label: Optional[str] = None
+
+
+class TradingSafetyDecision(BaseModel):
+    """Trading Safety policy decision for one account action."""
+    account_id: str
+    action: TradingSafetyAction
+    allowed: bool
+    mode: TradingSafetyMode
+    confirmation: TradingSafetyConfirmation
+
+
 class MoonMarketAccountFunds(BaseModel):
     """Normalized buying-power / cash snapshot for one account."""
     account_id: str

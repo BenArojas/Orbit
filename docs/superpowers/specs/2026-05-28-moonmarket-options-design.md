@@ -23,7 +23,7 @@ This plan keeps option trading intentionally narrow: **single-leg option orders 
 | Keying | `conid` remains the universal key. The underlying stock/ETF `conid` identifies the chain, and the selected option contract `conid` identifies the order target. Ticker is only an IBKR secdef search/display hint. |
 | Chain loading | Fetch expirations, fetch strike list for an expiration, then lazy-load call/put contract details for individual strikes. Do not snapshot every strike on initial load. |
 | OrderTicket | Reuse the global right-side OrderTicket. Add `assetClass: "STK" | "OPT"` and display metadata so the ticket can label option orders and disable bracket controls for options. |
-| Live guard | Keep Plan #5 behavior: preview is allowed, but place/confirm/cancel/modify are paper-only. |
+| Live policy | Keep Plan #5 behavior: preview and single-leg option mutations are allowed on paper and live accounts. Live-account frontend mutations require explicit real-money confirmation, and backend mutation routes evaluate Trading Safety before forwarding to IBKR. |
 | Option brackets | Deferred. Disable in the UI for `assetClass === "OPT"` and reject multi-order option submissions server-side. Track the follow-up in `PROJECT_PLAN.md`. |
 
 ---
@@ -103,7 +103,7 @@ Navigation entry points:
 - Full-chain real-time greeks refresh.
 - Standalone symbol search to open an options chain.
 - Chart price-level order prefill.
-- Live-account order mutations.
+- Autonomous option trading behavior.
 
 ---
 

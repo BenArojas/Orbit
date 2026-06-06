@@ -462,7 +462,7 @@ def test_cancel_and_modify_call_ibkr_for_paper_account():
     )
 
 
-def test_live_account_blocks_all_order_mutations():
+def test_live_account_allows_all_order_mutations():
     fake = _FakeIbkr()
     client = _client(fake)
 
@@ -473,8 +473,7 @@ def test_live_account_blocks_all_order_mutations():
         client.patch("/moonmarket/orders/U12345/order-1", json=_single_order()),
     ]
 
-    assert [resp.status_code for resp in responses] == [403, 403, 403, 403]
-    assert all(resp.json()["detail"]["error"] == "live_trading_blocked" for resp in responses)
+    assert [resp.status_code for resp in responses] == [200, 200, 200, 200]
 ```
 
 - [ ] **Step 2: Run the test and verify it fails**
@@ -547,7 +546,7 @@ Keep existing imports intact and avoid duplicate import lines.
 Create `backend/services/orders.py`:
 
 ```python
-"""MoonMarket order service for paper-account stock order mutations."""
+"""MoonMarket order service for stock and option order mutations."""
 
 from __future__ import annotations
 
@@ -558,20 +557,12 @@ from services.ibkr import IBKRService
 from services.moonmarket import MoonMarketAccountNotFoundError, MoonMarketService
 
 
-class LiveTradingBlockedError(PermissionError):
-    """Raised when v1 blocks an order mutation on a live account."""
-
-    def __init__(self, account_id: str) -> None:
-        super().__init__(f"Live trading is blocked for account {account_id}")
-        self.account_id = account_id
-
-
 class MoonMarketOrderNotFoundError(LookupError):
     """Raised when a modify request targets an order not present in live orders."""
 
 
 class OrderService:
-    """Order preview and paper-only order mutations through IBKR Client Portal."""
+    """Order preview and order mutations through IBKR Client Portal."""
 
     def __init__(self, ibkr: IBKRService) -> None:
         self.ibkr = ibkr
@@ -691,13 +682,12 @@ def _account_not_found(exc: MoonMarketAccountNotFoundError) -> HTTPException:
     )
 
 
-def _live_blocked(exc: LiveTradingBlockedError) -> HTTPException:
+def _trading_safety_rejected(message: str | None) -> HTTPException:
     return HTTPException(
         status_code=status.HTTP_403_FORBIDDEN,
         detail={
-            "error": "live_trading_blocked",
-            "message": "Live account order mutations are blocked in Orbit v1. Select an IBKR paper account.",
-            "account_id": exc.account_id,
+            "error": "trading_safety_rejected",
+            "message": message or "Trading Safety rejected this order action.",
         },
     )
 
@@ -1700,10 +1690,10 @@ export function OrderForm({ target }: OrderFormProps) {
           </div>
         ) : null}
       </div>
-      {liveBlocked ? <div className="border-t border-border px-4 py-2 text-[11px] text-[var(--clr-red)]">Live account order mutations are blocked in Orbit v1.</div> : null}
+      {isLiveAccount ? <div className="border-t border-border px-4 py-2 text-[11px] text-[var(--clr-red)]">Live account — orders are sent with real money after confirmation.</div> : null}
       <div className="flex gap-2 border-t border-border p-4">
         <button type="button" onClick={handlePreview} disabled={!selectedAccountId || previewMutation.isPending} className="rounded-md border border-border px-3 py-2 text-[12px] disabled:opacity-50">Preview</button>
-        <button type="button" onClick={handlePlace} disabled={!selectedAccountId || liveBlocked || placeMutation.isPending || modifyMutation.isPending} className="rounded-md border border-[var(--clr-cyan)] px-3 py-2 text-[12px] text-[var(--clr-cyan)] disabled:opacity-50">
+        <button type="button" onClick={handlePlace} disabled={!selectedAccountId || placeMutation.isPending || modifyMutation.isPending} className="rounded-md border border-[var(--clr-cyan)] px-3 py-2 text-[12px] text-[var(--clr-cyan)] disabled:opacity-50">
           {target.mode === "modify" ? "Modify" : "Place"}
         </button>
       </div>
@@ -2368,7 +2358,7 @@ Smoke path:
 3. Click Trade.
 4. Confirm the OrderTicket slides in from the right with the selected symbol/conid.
 5. Switch the shared account selector to a paper account and confirm the ticket shows PAPER.
-6. Switch to a live account and confirm the ticket shows LIVE and mutation controls are disabled.
+6. Switch to a live account and confirm the ticket shows LIVE and opens the real-money confirmation before mutation calls.
 7. Click Analyze from the inspector and confirm the app navigates to `/parallax` with the same conid in analysis.
 8. From Parallax Analysis, click Trade and confirm the same shared ticket opens.
 9. From Parallax Analysis, click View Portfolio and confirm the app navigates to `/moonmarket/portfolio`.
@@ -2380,7 +2370,7 @@ Check:
 
 - Reply endpoint is `POST /moonmarket/orders/{accountId}/reply/{replyId}`.
 - Preview is allowed for live and paper accounts.
-- Place, reply, cancel, and modify return 403 for live accounts from the server.
+- Place, reply, cancel, and modify evaluate Trading Safety before the server forwards to IBKR.
 - MoonMarket uses `useAccountStore`; no local selected-account state remains in `MoonMarketModule`.
 - `src/lib/api.ts` contains raw methods only; TanStack Query mutations live in `src/orbit/OrderTicket/useOrderMutations.ts`.
 - The OrderTicket is mounted once in `OrbitProviders`.
@@ -2410,11 +2400,11 @@ Expected: working tree is clean and the branch contains the task commits above.
 
 ## Completion Criteria
 
-- Backend tests prove paper/live account detection and paper-only order mutations.
+- Backend tests prove paper/live account detection, live mutation allowance, and Trading Safety rejection paths.
 - Frontend tests prove account store hydration, ticket open/close, live badge behavior, bracket field display, and module entry buttons.
 - MoonMarket and OrderTicket share one selected account.
 - The ticket is global, right-side, and mounted once.
 - MoonMarket to Parallax navigation passes only conid and symbol.
 - Parallax to MoonMarket navigation lands on the portfolio.
-- No live account can place, confirm, cancel, or modify orders through the API.
+- Live accounts can place, confirm, cancel, and modify orders through the API after Trading Safety policy evaluation.
 - Live Orders rows provide the cancel/modify surface for working orders; Portfolio keeps the approved chart plus inspector layout.

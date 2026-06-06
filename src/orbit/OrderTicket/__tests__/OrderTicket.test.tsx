@@ -10,6 +10,7 @@ const mockApi = vi.hoisted(() => ({
   quote: vi.fn(),
   moonmarketPreviewOrder: vi.fn(),
   moonmarketPlaceOrders: vi.fn(),
+  moonmarketTradingSafetyOrderAction: vi.fn(),
   moonmarketReplyOrder: vi.fn(),
   moonmarketModifyOrder: vi.fn(),
   moonmarketCancelOrder: vi.fn(),
@@ -169,6 +170,7 @@ describe("OrderTicket", () => {
     mockApi.moonmarketPreviewOrder.mockReset();
     mockApi.quote.mockReset();
     mockApi.moonmarketPlaceOrders.mockReset();
+    mockApi.moonmarketTradingSafetyOrderAction.mockReset();
     mockApi.moonmarketReplyOrder.mockReset();
     mockApi.moonmarketModifyOrder.mockReset();
     mockApi.moonmarketCancelOrder.mockReset();
@@ -206,6 +208,18 @@ describe("OrderTicket", () => {
     });
     mockApi.moonmarketPreviewOrder.mockResolvedValue({ account_id: "DU12345", result: { data: [{ amount: { total: "925.60" } }] } });
     mockApi.moonmarketPlaceOrders.mockResolvedValue({ account_id: "DU12345", result: { data: [{ id: "reply-1" }] } });
+    mockApi.moonmarketTradingSafetyOrderAction.mockResolvedValue({
+      account_id: "DU12345",
+      action: "place",
+      allowed: true,
+      mode: "paper_allowed",
+      confirmation: {
+        required: false,
+        title: null,
+        message: null,
+        confirm_label: null,
+      },
+    });
     mockApi.moonmarketReplyOrder.mockResolvedValue({ account_id: "DU12345", result: { data: [{ order_id: "order-1" }] } });
     mockApi.moonmarketModifyOrder.mockResolvedValue({ account_id: "DU12345", result: { data: [{ order_id: "order-1" }] } });
     mockApi.moonmarketCancelOrder.mockResolvedValue({ account_id: "DU12345", result: { data: [{ order_id: "order-1", msg: "Request was submitted" }] } });
@@ -427,6 +441,18 @@ describe("OrderTicket", () => {
       accounts: [{ account_id: "U12345", label: "Live", selected: true, is_paper: false }],
       selectedAccountId: "U12345",
     });
+    mockApi.moonmarketTradingSafetyOrderAction.mockResolvedValue({
+      account_id: "U12345",
+      action: "place",
+      allowed: true,
+      mode: "live_confirmation_required",
+      confirmation: {
+        required: true,
+        title: "Real-money order",
+        message: "Review and confirm before sending this live order to IBKR.",
+        confirm_label: "Place Live Order",
+      },
+    });
     useOrderTicketStore.getState().open({ conid: 265598, symbol: "AAPL" });
 
     renderTicket();
@@ -438,7 +464,8 @@ describe("OrderTicket", () => {
     fireEvent.click(screen.getByRole("button", { name: "Place" }));
 
     // Clicking Place opens the confirmation dialog instead of placing immediately.
-    expect(await screen.findByText(/real-money order/i)).toBeInTheDocument();
+    await waitFor(() => expect(mockApi.moonmarketTradingSafetyOrderAction).toHaveBeenCalledWith("U12345", "place"));
+    expect(await screen.findByText(/review and confirm before sending this live order to ibkr/i)).toBeInTheDocument();
     expect(mockApi.moonmarketPlaceOrders).not.toHaveBeenCalled();
 
     fireEvent.click(screen.getByRole("button", { name: "Place Live Order" }));
@@ -691,6 +718,79 @@ describe("OrderTicket", () => {
     await waitFor(() => expect(mockApi.moonmarketModifyOrder).toHaveBeenCalledWith(
       "DU12345",
       "limit-1",
+      expect.objectContaining({ orderType: "LMT", price: 179 }),
+    ));
+  });
+
+  it("requires policy-backed real-money confirmation before updating a live tracked order", async () => {
+    useAccountStore.setState({
+      accounts: [{ account_id: "U12345", label: "Live", selected: true, is_paper: false }],
+      selectedAccountId: "U12345",
+    });
+    mockApi.moonmarketPlaceOrders.mockResolvedValue({ account_id: "U12345", result: { data: [{ order_id: "live-update-1" }] } });
+    mockApi.moonmarketLiveOrders.mockResolvedValue({
+      account_id: "U12345",
+      orders: [
+        {
+          order_id: "live-update-1",
+          conid: 265598,
+          symbol: "AAPL",
+          description: "BUY 5 AAPL LIMIT 180.00",
+          side: "BUY",
+          order_type: "LMT",
+          quantity: 5,
+          remaining_quantity: 5,
+          limit_price: 180,
+          tif: "DAY",
+          status: "Submitted",
+        },
+      ],
+    });
+    mockApi.moonmarketTradingSafetyOrderAction
+      .mockResolvedValueOnce({
+        account_id: "U12345",
+        action: "place",
+        allowed: true,
+        mode: "live_confirmation_required",
+        confirmation: {
+          required: true,
+          title: "Real-money order",
+          message: "Review and confirm before sending this live order to IBKR.",
+          confirm_label: "Place Live Order",
+        },
+      })
+      .mockResolvedValueOnce({
+        account_id: "U12345",
+        action: "modify",
+        allowed: true,
+        mode: "live_confirmation_required",
+        confirmation: {
+          required: true,
+          title: "Real-money order",
+          message: "Review and confirm before changing this live order at IBKR.",
+          confirm_label: "Submit Live Change",
+        },
+      });
+    useOrderTicketStore.getState().open({ conid: 265598, symbol: "AAPL", side: "BUY" });
+    renderTicket();
+
+    fireEvent.change(screen.getByLabelText(/quantity/i), { target: { value: "5" } });
+    fireEvent.change(screen.getByLabelText(/limit price/i), { target: { value: "180" } });
+    fireEvent.click(screen.getByRole("button", { name: /place/i }));
+    fireEvent.click(await screen.findByRole("button", { name: "Place Live Order" }));
+
+    expect(await screen.findByText(/order tracker/i)).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText(/limit price/i), { target: { value: "179" } });
+    fireEvent.click(screen.getByRole("button", { name: /update order/i }));
+
+    await waitFor(() => expect(mockApi.moonmarketTradingSafetyOrderAction).toHaveBeenCalledWith("U12345", "modify"));
+    expect(await screen.findByText(/review and confirm before changing this live order at ibkr/i)).toBeInTheDocument();
+    expect(mockApi.moonmarketModifyOrder).not.toHaveBeenCalled();
+
+    fireEvent.click(await screen.findByRole("button", { name: "Submit Live Change" }));
+    await waitFor(() => expect(mockApi.moonmarketModifyOrder).toHaveBeenCalledWith(
+      "U12345",
+      "live-update-1",
       expect.objectContaining({ orderType: "LMT", price: 179 }),
     ));
   });
@@ -1171,6 +1271,74 @@ describe("OrderTicket", () => {
     await waitFor(() => expect(screen.queryByText(/order tracker/i)).not.toBeInTheDocument());
   });
 
+  it("requires policy-backed real-money confirmation before cancelling a live tracked order", async () => {
+    useAccountStore.setState({
+      accounts: [{ account_id: "U12345", label: "Live", selected: true, is_paper: false }],
+      selectedAccountId: "U12345",
+    });
+    mockApi.moonmarketPlaceOrders.mockResolvedValue({ account_id: "U12345", result: { data: [{ order_id: "live-cancel-1" }] } });
+    mockApi.moonmarketLiveOrders.mockResolvedValue({
+      account_id: "U12345",
+      orders: [
+        {
+          order_id: "live-cancel-1",
+          conid: 265598,
+          symbol: "AAPL",
+          description: "BUY 5 AAPL LIMIT 180.00",
+          side: "BUY",
+          order_type: "LMT",
+          quantity: 5,
+          remaining_quantity: 5,
+          limit_price: 180,
+          tif: "DAY",
+          status: "Submitted",
+        },
+      ],
+    });
+    mockApi.moonmarketTradingSafetyOrderAction
+      .mockResolvedValueOnce({
+        account_id: "U12345",
+        action: "place",
+        allowed: true,
+        mode: "live_confirmation_required",
+        confirmation: {
+          required: true,
+          title: "Real-money order",
+          message: "Review and confirm before sending this live order to IBKR.",
+          confirm_label: "Place Live Order",
+        },
+      })
+      .mockResolvedValueOnce({
+        account_id: "U12345",
+        action: "cancel",
+        allowed: true,
+        mode: "live_confirmation_required",
+        confirmation: {
+          required: true,
+          title: "Real-money order",
+          message: "Review and confirm before cancelling this live order at IBKR.",
+          confirm_label: "Cancel Live Order",
+        },
+      });
+    useOrderTicketStore.getState().open({ conid: 265598, symbol: "AAPL", side: "BUY" });
+    renderTicket();
+
+    fireEvent.change(screen.getByLabelText(/quantity/i), { target: { value: "5" } });
+    fireEvent.change(screen.getByLabelText(/limit price/i), { target: { value: "180" } });
+    fireEvent.click(screen.getByRole("button", { name: /place/i }));
+    fireEvent.click(await screen.findByRole("button", { name: "Place Live Order" }));
+
+    const cancelButton = await screen.findByRole("button", { name: /cancel order/i });
+    fireEvent.click(cancelButton);
+
+    await waitFor(() => expect(mockApi.moonmarketTradingSafetyOrderAction).toHaveBeenCalledWith("U12345", "cancel"));
+    expect(await screen.findByText(/review and confirm before cancelling this live order at ibkr/i)).toBeInTheDocument();
+    expect(mockApi.moonmarketCancelOrder).not.toHaveBeenCalled();
+
+    fireEvent.click(await screen.findByRole("button", { name: "Cancel Live Order" }));
+    await waitFor(() => expect(mockApi.moonmarketCancelOrder).toHaveBeenCalledWith("U12345", "live-cancel-1"));
+  });
+
   it("requires confirming the real-money dialog before replying to an IBKR confirmation on a live account", async () => {
     useAccountStore.setState({
       accounts: [{ account_id: "U12345", label: "Live", selected: true, is_paper: false }],
@@ -1180,6 +1348,31 @@ describe("OrderTicket", () => {
       account_id: "U12345",
       result: [{ id: "reply-confirm-live", message: ["Confirm this order?"], messageOptions: ["Yes", "No"] }],
     });
+    mockApi.moonmarketTradingSafetyOrderAction
+      .mockResolvedValueOnce({
+        account_id: "U12345",
+        action: "place",
+        allowed: true,
+        mode: "live_confirmation_required",
+        confirmation: {
+          required: true,
+          title: "Real-money order",
+          message: "Review and confirm before sending this live order to IBKR.",
+          confirm_label: "Place Live Order",
+        },
+      })
+      .mockResolvedValueOnce({
+        account_id: "U12345",
+        action: "reply",
+        allowed: true,
+        mode: "live_confirmation_required",
+        confirmation: {
+          required: true,
+          title: "Real-money order",
+          message: "Review and confirm before sending this live order reply to IBKR.",
+          confirm_label: "Confirm Live Reply",
+        },
+      });
     useOrderTicketStore.getState().open({ conid: 265598, symbol: "AAPL", side: "BUY" });
     renderTicket();
 
@@ -1193,9 +1386,11 @@ describe("OrderTicket", () => {
     // IBKR responds with a reply prompt; confirming it re-opens the real-money dialog.
     const confirmButton = await screen.findByRole("button", { name: /confirm and submit/i });
     fireEvent.click(confirmButton);
+    await waitFor(() => expect(mockApi.moonmarketTradingSafetyOrderAction).toHaveBeenCalledWith("U12345", "reply"));
+    expect(await screen.findByText(/review and confirm before sending this live order reply to ibkr/i)).toBeInTheDocument();
     expect(mockApi.moonmarketReplyOrder).not.toHaveBeenCalled();
 
-    fireEvent.click(await screen.findByRole("button", { name: "Confirm Live Order" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Confirm Live Reply" }));
     await waitFor(() => expect(mockApi.moonmarketReplyOrder).toHaveBeenCalled());
   });
 });
