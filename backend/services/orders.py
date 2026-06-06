@@ -3,10 +3,14 @@
 from __future__ import annotations
 
 from models import MoonMarketOrderDraft
+from services.client_portal_execution import (
+    ClientPortalExecutionAdapter,
+    OrderExecutionAdapter,
+    OrderPayload,
+    OrderResult,
+)
 from services.ibkr import IBKRService
 from services.moonmarket import MoonMarketService
-
-OrderResult = dict[str, object] | list[dict[str, object]]
 
 
 class MoonMarketOrderNotFoundError(LookupError):
@@ -20,17 +24,18 @@ class OptionBracketNotSupportedError(ValueError):
 class OrderService:
     """Order preview and order mutations through IBKR Client Portal."""
 
-    def __init__(self, ibkr: IBKRService) -> None:
+    def __init__(
+        self,
+        ibkr: IBKRService,
+        execution: OrderExecutionAdapter | None = None,
+    ) -> None:
         self.ibkr = ibkr
+        self.execution = execution or ClientPortalExecutionAdapter(ibkr)
         self.moonmarket = MoonMarketService(ibkr)
 
     async def preview(self, account_id: str, order: MoonMarketOrderDraft) -> OrderResult:
         await self.moonmarket._resolve_account_id(account_id)
-        return await self.ibkr._request(
-            "POST",
-            f"/iserver/account/{account_id}/orders/whatif",
-            json={"orders": [self._order_payload(order)]},
-        )
+        return await self.execution.preview_order(account_id, self._order_payload(order))
 
     async def place(self, account_id: str, orders: list[MoonMarketOrderDraft]) -> OrderResult:
         await self.moonmarket._resolve_account_id(account_id)
@@ -38,26 +43,18 @@ class OrderService:
             raise OptionBracketNotSupportedError(
                 "Option bracket orders are deferred until after single-leg paper validation"
             )
-        return await self.ibkr._request(
-            "POST",
-            f"/iserver/account/{account_id}/orders",
-            json={"orders": [self._order_payload(order) for order in orders]},
+        return await self.execution.place_orders(
+            account_id,
+            [self._order_payload(order) for order in orders],
         )
 
     async def reply(self, account_id: str, reply_id: str, confirmed: bool) -> OrderResult:
         await self.moonmarket._resolve_account_id(account_id)
-        return await self.ibkr._request(
-            "POST",
-            f"/iserver/reply/{reply_id}",
-            json={"confirmed": confirmed},
-        )
+        return await self.execution.reply_order(reply_id, confirmed)
 
     async def cancel(self, account_id: str, order_id: str) -> OrderResult:
         await self.moonmarket._resolve_account_id(account_id)
-        return await self.ibkr._request(
-            "DELETE",
-            f"/iserver/account/{account_id}/order/{order_id}",
-        )
+        return await self.execution.cancel_order(account_id, order_id)
 
     async def modify(
         self,
@@ -66,14 +63,10 @@ class OrderService:
         order: MoonMarketOrderDraft,
     ) -> OrderResult:
         await self.moonmarket._resolve_account_id(account_id)
-        return await self.ibkr._request(
-            "POST",
-            f"/iserver/account/{account_id}/order/{order_id}",
-            json=self._order_payload(order),
-        )
+        return await self.execution.modify_order(account_id, order_id, self._order_payload(order))
 
-    def _order_payload(self, order: MoonMarketOrderDraft) -> dict[str, object]:
-        payload: dict[str, object] = {
+    def _order_payload(self, order: MoonMarketOrderDraft) -> OrderPayload:
+        payload: OrderPayload = {
             "conid": order.conid,
             "orderType": "STP LMT" if order.order_type == "STP_LIMIT" else order.order_type,
             "side": order.side,

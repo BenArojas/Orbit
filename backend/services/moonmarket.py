@@ -30,6 +30,10 @@ from models import (
     MoonMarketTradeSummary,
     MoonMarketTradesResponse,
 )
+from services.client_portal_execution import (
+    ClientPortalExecutionAdapter,
+    MoonMarketExecutionAdapter,
+)
 from services.db import DatabaseService
 from services.ibkr import IBKRService
 
@@ -92,8 +96,13 @@ def _bool_value(value: Any) -> bool | None:
 class MoonMarketService:
     """Normalize MoonMarket data from IBKR Client Portal payloads."""
 
-    def __init__(self, ibkr: IBKRService) -> None:
+    def __init__(
+        self,
+        ibkr: IBKRService,
+        execution: MoonMarketExecutionAdapter | None = None,
+    ) -> None:
         self.ibkr = ibkr
+        self.execution = execution or ClientPortalExecutionAdapter(ibkr)
 
     async def accounts(self) -> MoonMarketAccountsResponse:
         raw_accounts = await self.ibkr.brokerage_accounts()
@@ -174,7 +183,7 @@ class MoonMarketService:
     ) -> MoonMarketTradesResponse:
         resolved_account_id = await self._resolve_account_id(account_id)
         bounded_days = max(1, min(int(days), 7))
-        payload = await self.ibkr._request("GET", "/iserver/account/trades", params={"days": bounded_days})
+        payload = await self.execution.trades(days=bounded_days)
         trade_rows = [
             (row, trade)
             for row in self._trade_rows(payload)
@@ -202,8 +211,7 @@ class MoonMarketService:
 
     async def live_orders(self, account_id: str | None = None) -> MoonMarketLiveOrdersResponse:
         resolved_account_id = await self._resolve_account_id(account_id)
-        await self.ibkr._request("GET", "/iserver/account/orders", params={"force": "true"})
-        payload = await self.ibkr._request("GET", "/iserver/account/orders")
+        payload = await self.execution.live_orders()
         orders = [
             order
             for row in self._order_rows(payload)
@@ -213,11 +221,7 @@ class MoonMarketService:
 
     async def revalidate_positions(self, account_id: str) -> MoonMarketPositionsRevalidateResponse:
         resolved_account_id = await self._resolve_account_id(account_id)
-        payload = await self.ibkr._request(
-            "POST",
-            f"/portfolio/{resolved_account_id}/positions/invalidate",
-            json={},
-        )
+        payload = await self.execution.revalidate_positions(resolved_account_id)
         positions = payload if isinstance(payload, list) else []
         return MoonMarketPositionsRevalidateResponse(
             account_id=resolved_account_id,
@@ -240,14 +244,9 @@ class MoonMarketService:
         """
         resolved_account_id = await self._resolve_account_id(account_id)
         normalized_side = "SELL" if side.upper() == "SELL" else "BUY"
-        payload = await self.ibkr._request(
-            "POST",
-            "/iserver/contract/rules",
-            json={
-                "conid": conid,
-                "exchange": "SMART",
-                "isBuy": normalized_side == "BUY",
-            },
+        payload = await self.execution.order_rules(
+            conid=conid,
+            is_buy=normalized_side == "BUY",
         )
         rules = payload if isinstance(payload, dict) else {}
         return MoonMarketOrderRulesResponse(
@@ -276,7 +275,7 @@ class MoonMarketService:
         rows: list[dict[str, Any]] = []
         page = 0
         while True:
-            payload = await self.ibkr._request("GET", f"/portfolio/{account_id}/positions/{page}")
+            payload = await self.execution.position_page(account_id, page)
             page_rows = self._position_page_rows(payload)
             if not page_rows:
                 break
@@ -286,7 +285,7 @@ class MoonMarketService:
 
     async def _fetch_cash_position(self, account_id: str) -> MoonMarketPosition | None:
         try:
-            payload = await self.ibkr._request("GET", f"/portfolio/{account_id}/ledger")
+            payload = await self.execution.ledger(account_id)
         except IBKRError as exc:
             log.warning("MoonMarket cash ledger unavailable for %s: %s", account_id, exc)
             return None
@@ -323,7 +322,7 @@ class MoonMarketService:
 
     async def account_funds(self, account_id: str) -> MoonMarketAccountFunds:
         resolved = await self._resolve_account_id(account_id)
-        payload = await self.ibkr._request("GET", f"/portfolio/{resolved}/summary")
+        payload = await self.execution.account_summary(resolved)
         summary = payload if isinstance(payload, dict) else {}
         return MoonMarketAccountFunds(
             account_id=resolved,
@@ -360,11 +359,7 @@ class MoonMarketService:
             if now - cached_at < PERFORMANCE_CACHE_TTL_SECONDS:
                 return payload
 
-        payload = await self.ibkr._request(
-            "POST",
-            "/pa/allperiods",
-            json={"acctIds": [account_id]},
-        )
+        payload = await self.execution.all_periods(account_id)
         _PERFORMANCE_ALL_PERIODS_CACHE[cache_key] = (now, payload)
         return payload
 
