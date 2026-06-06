@@ -94,9 +94,15 @@ This is marked `HITL` because it changes top-level route access behavior and mod
 
 Remove duplicated module labels, descriptions, and paths from `OrbitLauncher` by reading the module registry. Keep the existing launcher disabled-state behavior and visual layout.
 
-### Slice 3: Add non-auth readiness extension point (`HITL`)
+### Slice 3: Keep non-auth readiness inside module pages (`HITL decision recorded`)
 
-After the auth seam is proven, decide whether account readiness should move into `OrbitModuleEntry` for MoonMarket and Inflect or stay inside module pages. This requires a separate approval because it changes account-readiness ownership.
+Decision: account readiness stays inside MoonMarket and Inflect module pages. `OrbitModuleEntry` remains responsible only for shared route-access auth gating in this branch.
+
+Implication:
+
+- do not move account readiness into `OrbitModuleEntry`
+- keep `OrbitAccountProvider` and module-local page readiness behavior as-is
+- any future account-readiness consolidation would require a separate design pass
 
 ## Testing
 

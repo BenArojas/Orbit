@@ -7,8 +7,8 @@
  * (auto-opens until authenticated).
  */
 import { useNavigate } from "react-router-dom";
-import { Activity, Briefcase, NotebookPen } from "lucide-react";
 import { useGatewayContext } from "@/context/GatewayContext";
+import { orbitModules } from "./moduleEntry";
 import { AppIcon } from "./AppIcon";
 import { GatewayStatusPill } from "./GatewayStatusPill";
 
@@ -29,27 +29,16 @@ export function OrbitLauncher() {
       {/* Hero tiles */}
       <main className="flex flex-1 flex-col items-center justify-center gap-6">
         <div className="flex flex-wrap items-center justify-center gap-6">
-          <AppIcon
-            label="Parallax"
-            icon={Activity}
-            description="Technical analysis"
-            enabled={isAuthenticated}
-            onOpen={() => navigate("/parallax")}
-          />
-          <AppIcon
-            label="MoonMarket"
-            icon={Briefcase}
-            description="Portfolio & trading"
-            enabled={isAuthenticated}
-            onOpen={() => navigate("/moonmarket")}
-          />
-          <AppIcon
-            label="Inflect"
-            icon={NotebookPen}
-            description="Trading journal"
-            enabled={isAuthenticated}
-            onOpen={() => navigate("/inflect")}
-          />
+          {Object.values(orbitModules).map((module) => (
+            <AppIcon
+              key={module.id}
+              label={module.label}
+              icon={module.icon}
+              description={module.description}
+              enabled={isAuthenticated}
+              onOpen={() => navigate(module.path)}
+            />
+          ))}
         </div>
         {!isAuthenticated && (
           <p className="text-[11px] text-[var(--text-3)]">
