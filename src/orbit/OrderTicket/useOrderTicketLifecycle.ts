@@ -11,7 +11,7 @@ import type {
 } from "@/lib/api";
 import { api } from "@/lib/api";
 import { useWebSocket, type WsMessage } from "@/hooks/useWebSocket";
-import { useAccountStore } from "./useAccountStore";
+import { useOrbitAccountContext } from "@/orbit/accountContext";
 import type { OrderTicketTarget } from "./useOrderTicketStore";
 import {
   availableOrderTypesFromRules,
@@ -52,8 +52,14 @@ type LiveBook = {
 
 export function useOrderTicketLifecycle(target: OrderTicketTarget) {
   const queryClient = useQueryClient();
-  const selectedAccountId = useAccountStore((state) => state.selectedAccountId);
-  const selectedAccount = useAccountStore((state) => state.selectedAccount());
+  const {
+    selectedAccountId,
+    selectedAccount,
+    isLiveAccount,
+    isReady: isAccountReady,
+    readyState: accountReadyState,
+    error: accountError,
+  } = useOrbitAccountContext();
   const assetClass = target.assetClass ?? "STK";
   const optionTarget = assetClass === "OPT";
   const [side, setSide] = useState<MoonMarketOrderSide>(target.side ?? "BUY");
@@ -92,7 +98,6 @@ export function useOrderTicketLifecycle(target: OrderTicketTarget) {
   const replyMutation = useReplyOrder();
   const cancelMutation = useCancelOrder();
   const { subscribe, unsubscribe, addHandler } = useWebSocket();
-  const isLiveAccount = selectedAccount ? !selectedAccount.is_paper : false;
   const [pendingLiveAction, setPendingLiveAction] = useState<
     { run: () => void; message: string; confirmLabel: string } | null
   >(null);
@@ -536,6 +541,9 @@ export function useOrderTicketLifecycle(target: OrderTicketTarget) {
     modifyMutation,
     replyMutation,
     cancelMutation,
+    isAccountReady,
+    accountReadyState,
+    accountError,
     isLiveAccount,
     tifOptions,
     isTrailing,

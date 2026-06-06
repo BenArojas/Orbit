@@ -1,5 +1,5 @@
 import { X } from "lucide-react";
-import { useAccountStore } from "./useAccountStore";
+import { useOrbitAccountContext } from "@/orbit/accountContext";
 import { OrderForm } from "./OrderForm";
 import { useOrderTicketStore } from "./useOrderTicketStore";
 
@@ -7,12 +7,21 @@ export function OrderTicket() {
   const isOpen = useOrderTicketStore((state) => state.isOpen);
   const target = useOrderTicketStore((state) => state.target);
   const close = useOrderTicketStore((state) => state.close);
-  const selectedAccount = useAccountStore((state) => state.selectedAccount());
+  const { selectedAccount, readyState: accountReadyState } = useOrbitAccountContext();
 
   if (!isOpen || !target) return null;
 
   const assetClass = target.assetClass ?? "STK";
   const title = target.description ?? target.symbol ?? `#${target.conid}`;
+  const accountBadge = accountReadyState === "loading"
+    ? { label: "ACCOUNT LOADING", className: "border-border text-[var(--text-3)]" }
+    : accountReadyState === "error"
+      ? { label: "ACCOUNT ERROR", className: "border-[var(--clr-red)]/50 text-[var(--clr-red)]" }
+      : accountReadyState === "empty"
+        ? { label: "NO ACCOUNT", className: "border-border text-[var(--text-3)]" }
+        : selectedAccount?.is_paper
+          ? { label: "PAPER", className: "border-[var(--clr-green)]/50 text-[var(--clr-green)]" }
+          : { label: "LIVE", className: "border-[var(--clr-red)]/50 text-[var(--clr-red)]" };
 
   return (
     <div className="fixed inset-0 z-50 flex justify-end bg-black/35" role="presentation">
@@ -30,8 +39,8 @@ export function OrderTicket() {
               <span className="font-data text-[11px] text-[var(--text-3)]">#{target.conid}</span>
             </div>
             <div className="mt-2 flex flex-wrap gap-2">
-              <span className={selectedAccount?.is_paper ? "inline-flex rounded border border-[var(--clr-green)]/50 px-2 py-0.5 text-[10px] text-[var(--clr-green)]" : "inline-flex rounded border border-[var(--clr-red)]/50 px-2 py-0.5 text-[10px] text-[var(--clr-red)]"}>
-                {selectedAccount?.is_paper ? "PAPER" : "LIVE"}
+              <span className={`inline-flex rounded border px-2 py-0.5 text-[10px] ${accountBadge.className}`}>
+                {accountBadge.label}
               </span>
               <span className="inline-flex rounded border border-border px-2 py-0.5 text-[10px] text-[var(--text-3)]">
                 {assetClass === "OPT" ? "OPTION" : "STOCK"}

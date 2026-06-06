@@ -48,7 +48,7 @@ vi.mock("@/lib/api", () => ({
 }));
 
 import { MoonMarketModule } from "@/modules/moonmarket/MoonMarketModule";
-import { useAccountStore } from "@/orbit/OrderTicket/useAccountStore";
+import { OrbitAccountProvider, useAccountStore } from "@/orbit/accountContext";
 import { useSettingsStore } from "@/store";
 
 function renderMoonMarket(pathname = "/moonmarket") {
@@ -60,7 +60,9 @@ function renderMoonMarket(pathname = "/moonmarket") {
   });
   return render(
     <QueryClientProvider client={client}>
-      <MoonMarketModule />
+      <OrbitAccountProvider enabled>
+        <MoonMarketModule />
+      </OrbitAccountProvider>
     </QueryClientProvider>,
   );
 }

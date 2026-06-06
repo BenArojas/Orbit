@@ -3,10 +3,10 @@
  */
 
 import { beforeEach, describe, it, expect, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { InflectModule } from "../InflectModule";
-import { useAccountStore } from "@/orbit/OrderTicket/useAccountStore";
+import { OrbitAccountProvider, useAccountStore } from "@/orbit/accountContext";
 import { useInflectStore } from "@/store/inflect";
 
 const apiMocks = vi.hoisted(() => ({
@@ -35,7 +35,9 @@ function renderModule() {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={qc}>
-      <InflectModule />
+      <OrbitAccountProvider enabled>
+        <InflectModule />
+      </OrbitAccountProvider>
     </QueryClientProvider>,
   );
 }
@@ -87,7 +89,9 @@ describe("InflectModule", () => {
 
     rerender(
       <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
-        <InflectModule />
+        <OrbitAccountProvider enabled>
+          <InflectModule />
+        </OrbitAccountProvider>
       </QueryClientProvider>,
     );
 
@@ -111,5 +115,25 @@ describe("InflectModule", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "Inflect account data is unavailable.",
     );
+  });
+
+  it("hydrates and updates the shared account store from the selector", async () => {
+    apiMocks.moonmarketAccounts.mockResolvedValue({
+      selected_account_id: "DU1",
+      accounts: [
+        { account_id: "DU1", label: "Paper", selected: true, is_paper: true },
+        { account_id: "U1", label: "Live", selected: false, is_paper: false },
+      ],
+    });
+
+    renderModule();
+
+    await waitFor(() => expect(useAccountStore.getState().selectedAccountId).toBe("DU1"));
+
+    fireEvent.change(screen.getByRole("combobox", { name: /account/i }), {
+      target: { value: "U1" },
+    });
+
+    expect(useAccountStore.getState().selectedAccountId).toBe("U1");
   });
 });

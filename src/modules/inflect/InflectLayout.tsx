@@ -2,8 +2,8 @@ import type { ReactNode } from "react";
 import { CalendarDays, NotebookPen, RefreshCw, Table2 } from "lucide-react";
 import { BackToOrbitButton } from "@/components/ui/BackToOrbitButton";
 import { ThemeToggle } from "@/components/ui/ThemeToggle";
+import { useOrbitAccountContext } from "@/orbit/accountContext";
 import { cn } from "@/lib/utils";
-import type { MoonMarketAccount } from "@/modules/moonmarket/types";
 import type { InflectPage } from "./types";
 
 const NAV_ITEMS: { page: InflectPage; label: string; icon: typeof CalendarDays }[] = [
@@ -14,22 +14,17 @@ const NAV_ITEMS: { page: InflectPage; label: string; icon: typeof CalendarDays }
 export function InflectLayout({
   activePage,
   onPageChange,
-  accounts,
-  accountId,
-  onAccountChange,
   onSync,
   syncing,
   children,
 }: {
   activePage: InflectPage;
   onPageChange: (page: InflectPage) => void;
-  accounts: MoonMarketAccount[];
-  accountId: string | null;
-  onAccountChange: (accountId: string) => void;
   onSync: () => void;
   syncing: boolean;
   children: ReactNode;
 }) {
+  const { accounts, selectedAccountId, setSelectedAccountId } = useOrbitAccountContext();
   const subtitle = activePage === "trades" ? "Round-trip trade log" : "P&L journal calendar";
 
   return (
@@ -77,8 +72,8 @@ export function InflectLayout({
           <ThemeToggle />
           <select
             aria-label="Account"
-            value={accountId ?? ""}
-            onChange={(event) => onAccountChange(event.target.value)}
+            value={selectedAccountId ?? ""}
+            onChange={(event) => setSelectedAccountId(event.target.value)}
             disabled={!accounts.length}
             className="h-8 min-w-36 rounded-md border border-border bg-[var(--bg-2)] px-2 text-[11px] text-[var(--text-2)] outline-none disabled:opacity-50"
           >

@@ -82,6 +82,9 @@ export function OrderForm({ target }: OrderFormProps) {
     modifyMutation,
     replyMutation,
     cancelMutation,
+    isAccountReady,
+    accountReadyState,
+    accountError,
     isLiveAccount,
     tifOptions,
     isTrailing,
@@ -100,9 +103,30 @@ export function OrderForm({ target }: OrderFormProps) {
     hasInteractedRef,
   } = useOrderTicketLifecycle(target);
 
+  const accountStatusMessage = accountReadyState === "loading"
+    ? "Loading order account."
+    : accountReadyState === "error"
+      ? (accountError?.message ? `Order account data is unavailable: ${accountError.message}` : "Order account data is unavailable.")
+      : accountReadyState === "empty"
+        ? "No trading account is available for this order."
+        : null;
+
   return (
     <form className="flex min-h-0 flex-1 flex-col" onSubmit={(event) => event.preventDefault()}>
       <div className="flex-1 space-y-4 overflow-y-auto p-4">
+        {accountStatusMessage ? (
+          <div
+            role={accountReadyState === "error" ? "alert" : "status"}
+            className={cn(
+              "rounded-md border px-3 py-2 text-[11px]",
+              accountReadyState === "error"
+                ? "border-[var(--clr-red)]/50 bg-[var(--clr-red)]/10 text-[var(--clr-red)]"
+                : "border-border bg-[var(--bg-1)] text-[var(--text-3)]",
+            )}
+          >
+            {accountStatusMessage}
+          </div>
+        ) : null}
         <section className="rounded-md border border-border bg-[var(--bg-1)] p-3">
           <div className="mb-2 flex items-center justify-between text-[10px] uppercase tracking-wide text-[var(--text-3)]">
             <span>Bid / Ask Book</span>
@@ -310,12 +334,12 @@ export function OrderForm({ target }: OrderFormProps) {
           </button>
         ) : (
           <>
-            <button type="button" onClick={handlePreview} disabled={!selectedAccountId || previewMutation.isPending} className="rounded-md border border-border px-3 py-2 text-[12px] disabled:opacity-50">Preview</button>
-            <button type="button" onClick={handlePlace} disabled={!selectedAccountId || placeMutation.isPending || modifyMutation.isPending} className="rounded-md border border-[var(--clr-cyan)] px-3 py-2 text-[12px] text-[var(--clr-cyan)] disabled:opacity-50">
+            <button type="button" onClick={handlePreview} disabled={!isAccountReady || previewMutation.isPending} className="rounded-md border border-border px-3 py-2 text-[12px] disabled:opacity-50">Preview</button>
+            <button type="button" onClick={handlePlace} disabled={!isAccountReady || placeMutation.isPending || modifyMutation.isPending} className="rounded-md border border-[var(--clr-cyan)] px-3 py-2 text-[12px] text-[var(--clr-cyan)] disabled:opacity-50">
               {target.mode === "modify" ? "Modify" : canUpdateTrackedOrder ? "Update Order" : "Place"}
             </button>
             {canCancelTrackedOrder ? (
-              <button type="button" onClick={handleCancelTrackedOrder} disabled={!selectedAccountId || cancelMutation.isPending} className="rounded-md border border-[var(--clr-red)] px-3 py-2 text-[12px] text-[var(--clr-red)] disabled:opacity-50">
+              <button type="button" onClick={handleCancelTrackedOrder} disabled={!isAccountReady || cancelMutation.isPending} className="rounded-md border border-[var(--clr-red)] px-3 py-2 text-[12px] text-[var(--clr-red)] disabled:opacity-50">
                 {cancelMutation.isPending ? "Cancelling..." : "Cancel Order"}
               </button>
             ) : null}

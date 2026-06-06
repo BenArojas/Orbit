@@ -2,8 +2,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { renderHook, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type React from "react";
+import { OrbitAccountProvider } from "@/orbit/accountContext";
 import { useOrderTicketLifecycle } from "../useOrderTicketLifecycle";
-import { useAccountStore } from "../useAccountStore";
+import { useAccountStore } from "@/orbit/accountContext";
 
 const mockApi = vi.hoisted(() => ({
   quote: vi.fn(),
@@ -69,7 +70,11 @@ function makeClient(): QueryClient {
 
 function makeWrapper(client: QueryClient) {
   return function Wrapper({ children }: { children: React.ReactNode }) {
-    return <QueryClientProvider client={client}>{children}</QueryClientProvider>;
+    return (
+      <QueryClientProvider client={client}>
+        <OrbitAccountProvider enabled={false}>{children}</OrbitAccountProvider>
+      </QueryClientProvider>
+    );
   };
 }
 

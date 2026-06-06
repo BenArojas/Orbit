@@ -1,9 +1,10 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { OrbitAccountProvider } from "@/orbit/accountContext";
 import { OrderTicket } from "../OrderTicket";
 import { OrderResult } from "../OrderResult";
-import { useAccountStore } from "../useAccountStore";
+import { useAccountStore } from "@/orbit/accountContext";
 import { useOrderTicketStore } from "../useOrderTicketStore";
 
 const mockApi = vi.hoisted(() => ({
@@ -15,6 +16,7 @@ const mockApi = vi.hoisted(() => ({
   moonmarketModifyOrder: vi.fn(),
   moonmarketCancelOrder: vi.fn(),
   moonmarketAccountFunds: vi.fn(),
+  moonmarketAccounts: vi.fn(),
   moonmarketPortfolio: vi.fn(),
   moonmarketRevalidatePositions: vi.fn(),
   moonmarketOrderRules: vi.fn(),
@@ -67,6 +69,7 @@ type RenderTicketOptions = {
   liveOrders?: LiveOrderOverride[];
   trades?: TradeOverride[];
   placeResult?: unknown;
+  accountContextEnabled?: boolean;
 };
 
 function seedLiveOrder(order: LiveOrderOverride): import("@/lib/api").MoonMarketLiveOrder {
@@ -149,7 +152,9 @@ function renderTicket(options?: RenderTicketOptions) {
   });
   const rendered = render(
     <QueryClientProvider client={client}>
-      <OrderTicket />
+      <OrbitAccountProvider enabled={options?.accountContextEnabled}>
+        <OrderTicket />
+      </OrbitAccountProvider>
     </QueryClientProvider>,
   );
   const placeOrder = async (placeOptions?: { orderId?: string }) => {
@@ -175,6 +180,7 @@ describe("OrderTicket", () => {
     mockApi.moonmarketModifyOrder.mockReset();
     mockApi.moonmarketCancelOrder.mockReset();
     mockApi.moonmarketAccountFunds.mockReset();
+    mockApi.moonmarketAccounts.mockReset();
     mockApi.moonmarketPortfolio.mockReset();
     mockApi.moonmarketRevalidatePositions.mockReset();
     mockApi.moonmarketOrderRules.mockReset();
@@ -195,6 +201,10 @@ describe("OrderTicket", () => {
       total_unrealized_pnl: 0,
       positions: [],
       allocation: [],
+    });
+    mockApi.moonmarketAccounts.mockResolvedValue({
+      selected_account_id: "DU12345",
+      accounts: [{ account_id: "DU12345", label: "Paper", selected: true, is_paper: true }],
     });
     mockWs.subscribe.mockReset();
     mockWs.unsubscribe.mockReset();
@@ -294,6 +304,32 @@ describe("OrderTicket", () => {
     fireEvent.click(screen.getByLabelText(/stop loss/i));
     expect(screen.getByLabelText(/profit taker price/i)).toBeInTheDocument();
     expect(screen.getByLabelText(/stop loss price/i)).toBeInTheDocument();
+  });
+
+  it("shows account loading state and keeps actions disabled until account hydration is ready", () => {
+    useAccountStore.setState({ accounts: [], selectedAccountId: null });
+    mockApi.moonmarketAccounts.mockReturnValue(new Promise(() => {}));
+    useOrderTicketStore.getState().open({ conid: 265598, symbol: "AAPL", side: "BUY" });
+
+    renderTicket({ accountContextEnabled: true });
+
+    expect(screen.getByText("ACCOUNT LOADING")).toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent("Loading order account.");
+    expect(screen.getByRole("button", { name: /preview/i })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Place" })).toBeDisabled();
+  });
+
+  it("shows account hydration errors in the ticket and keeps actions disabled", async () => {
+    useAccountStore.setState({ accounts: [], selectedAccountId: null });
+    mockApi.moonmarketAccounts.mockRejectedValue(new Error("accounts unavailable"));
+    useOrderTicketStore.getState().open({ conid: 265598, symbol: "AAPL", side: "BUY" });
+
+    renderTicket({ accountContextEnabled: true });
+
+    expect(await screen.findByText("ACCOUNT ERROR")).toBeInTheDocument();
+    expect(await screen.findByRole("alert")).toHaveTextContent("Order account data is unavailable");
+    expect(screen.getByRole("button", { name: /preview/i })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Place" })).toBeDisabled();
   });
 
   it("shows the top bid/ask book in the ticket", async () => {
