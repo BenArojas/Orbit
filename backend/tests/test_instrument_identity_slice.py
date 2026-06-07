@@ -30,6 +30,44 @@ class _FakeIbkr:
             for conid in conids
         ]
 
+    async def search(self, symbol: str) -> list[dict]:
+        return [
+            {
+                "conid": 265598,
+                "symbol": "AAPL",
+                "companyHeader": "Apple Inc",
+                "secType": "STK",
+            }
+        ]
+
+    async def get_conid(self, symbol: str, sec_type: str = "") -> int:
+        return 265598
+
+
+class _RecordingIdentity:
+    def __init__(self) -> None:
+        self.search_rows: list[dict] = []
+        self.resolved_rows: list[dict] = []
+
+    async def cache_snapshot_identity(self, conid: int, row: dict) -> None:
+        return None
+
+    async def cache_search_identity(self, row: dict) -> None:
+        self.search_rows.append(row)
+
+    async def cache_resolved_identity(
+        self,
+        *,
+        conid: int,
+        symbol: str,
+        company_name: str,
+    ) -> None:
+        self.resolved_rows.append({
+            "conid": conid,
+            "symbol": symbol,
+            "company_name": company_name,
+        })
+
 
 @pytest.fixture
 async def db_service():
@@ -54,6 +92,14 @@ def _client(db: DatabaseService) -> TestClient:
     app.include_router(instruments_router)
     app.dependency_overrides[get_ibkr] = lambda: _FakeIbkr()
     app.dependency_overrides[get_db] = lambda: db
+    app.dependency_overrides[get_instrument_identity] = lambda: identity
+    return TestClient(app)
+
+
+def _client_with_identity(identity: _RecordingIdentity) -> TestClient:
+    app = FastAPI()
+    app.include_router(market_router)
+    app.dependency_overrides[get_ibkr] = lambda: _FakeIbkr()
     app.dependency_overrides[get_instrument_identity] = lambda: identity
     return TestClient(app)
 
@@ -87,3 +133,47 @@ async def test_instruments_endpoint_preserves_404_for_identity_cache_miss(db_ser
 
     assert response.status_code == 404
     assert "not found" in response.json()["detail"].lower()
+
+
+def test_search_delegates_identity_cache_writes_to_identity_service():
+    identity = _RecordingIdentity()
+
+    response = _client_with_identity(identity).get("/market/search?q=AAPL")
+
+    assert response.status_code == 200
+    assert response.json() == [
+        {
+            "conid": 265598,
+            "symbol": "AAPL",
+            "companyName": "Apple Inc",
+            "secType": "STK",
+        }
+    ]
+    assert identity.search_rows == [
+        {
+            "conid": 265598,
+            "symbol": "AAPL",
+            "companyHeader": "Apple Inc",
+            "secType": "STK",
+        }
+    ]
+
+
+def test_conid_resolution_delegates_identity_cache_write_to_identity_service():
+    identity = _RecordingIdentity()
+
+    response = _client_with_identity(identity).get("/market/conid/AAPL")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "conid": 265598,
+        "symbol": "AAPL",
+        "companyName": "Apple Inc",
+    }
+    assert identity.resolved_rows == [
+        {
+            "conid": 265598,
+            "symbol": "AAPL",
+            "company_name": "Apple Inc",
+        }
+    ]

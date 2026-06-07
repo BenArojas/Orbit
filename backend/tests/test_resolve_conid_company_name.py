@@ -95,13 +95,14 @@ class TestResolveConidCompanyName:
         from fastapi.testclient import TestClient
         from routers.market import router
         from deps import get_ibkr, get_db
+        from exceptions import IBKRConnectionError
 
         app = FastAPI()
         db_calls = []
 
         mock_ibkr = MagicMock()
         mock_ibkr.get_conid = AsyncMock(return_value=265598)
-        mock_ibkr.search = AsyncMock(side_effect=RuntimeError("IBKR down"))
+        mock_ibkr.search = AsyncMock(side_effect=IBKRConnectionError("IBKR down"))
 
         mock_db = MagicMock()
 

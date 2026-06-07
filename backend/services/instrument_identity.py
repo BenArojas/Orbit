@@ -46,6 +46,48 @@ class InstrumentIdentityService:
             ),
         )
 
+    async def cache_search_identity(self, row: dict[str, Any]) -> None:
+        conid = self._positive_int(row.get("conid"))
+        if conid is None:
+            return
+
+        symbol = self._first_text(row, ("symbol", "ticker", "55", "SYM"))
+        if not symbol:
+            return
+
+        await self.db.upsert_instrument(
+            conid=conid,
+            symbol=symbol,
+            company_name=self._first_text(
+                row,
+                ("companyHeader", "companyName", "company_name", "7051", "name", "N"),
+            ),
+            sec_type=self._first_text(
+                row,
+                ("secType", "sec_type", "assetClass", "asset_class"),
+                default="STK",
+            ),
+        )
+
+    async def cache_resolved_identity(
+        self,
+        *,
+        conid: int,
+        symbol: str,
+        company_name: str = "",
+        sec_type: str = "STK",
+    ) -> None:
+        normalized_symbol = symbol.strip().upper()
+        if not normalized_symbol:
+            return
+
+        await self.db.upsert_instrument(
+            conid=conid,
+            symbol=normalized_symbol,
+            company_name=company_name,
+            sec_type=sec_type or "STK",
+        )
+
     @staticmethod
     def _first_text(
         row: dict[str, Any],
@@ -57,3 +99,11 @@ class InstrumentIdentityService:
             if value is not None and str(value).strip():
                 return str(value).strip()
         return default
+
+    @staticmethod
+    def _positive_int(value: Any) -> int | None:
+        try:
+            parsed = int(value)
+        except (TypeError, ValueError):
+            return None
+        return parsed if parsed > 0 else None

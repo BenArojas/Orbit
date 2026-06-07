@@ -26,9 +26,8 @@ import logging
 from fastapi import APIRouter, Depends, Query
 
 from constants import DEFAULT_QUOTE_FIELDS_STR, PERIOD_BAR
-from deps import get_db, get_ibkr, get_instrument_identity
-from exceptions import SymbolNotFoundError
-from services.db import DatabaseService
+from deps import get_ibkr, get_instrument_identity
+from exceptions import IBKRError, SymbolNotFoundError
 from services.ibkr import IBKRService, _safe_float
 from services.instrument_identity import InstrumentIdentityService
 
@@ -262,7 +261,7 @@ async def get_candles(
 async def search_securities(
     q: str = Query(..., description="Symbol or company name to search"),
     ibkr: IBKRService = Depends(get_ibkr),
-    db: DatabaseService = Depends(get_db),
+    identity: InstrumentIdentityService = Depends(get_instrument_identity),
 ):
     """
     Search for securities by symbol or name.
@@ -289,11 +288,7 @@ async def search_securities(
             "companyName": company_name,
             "secType": sec_type,
         })
-        # Cache in instruments table (fire-and-forget, don't block response)
-        await db.upsert_instrument(
-            conid=int(conid), symbol=symbol,
-            company_name=company_name, sec_type=sec_type,
-        )
+        await identity.cache_search_identity(item)
 
     return items
 
@@ -316,7 +311,7 @@ async def resolve_conid(
         ),
     ),
     ibkr: IBKRService = Depends(get_ibkr),
-    db: DatabaseService = Depends(get_db),
+    identity: InstrumentIdentityService = Depends(get_instrument_identity),
 ):
     """
     Resolve a ticker symbol to an IBKR conid.
@@ -343,10 +338,10 @@ async def resolve_conid(
                 if item_conid and int(item_conid) == conid:
                     company_name = item.get("companyHeader", "")
                     break
-        except Exception:
+        except (IBKRError, TypeError, ValueError):
             pass  # company_name enrichment is best-effort
 
-        await db.upsert_instrument(
+        await identity.cache_resolved_identity(
             conid=conid,
             symbol=symbol.upper(),
             company_name=company_name,
