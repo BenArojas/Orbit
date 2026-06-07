@@ -65,7 +65,7 @@ async def delete_rule(rule_id: int, db: DatabaseService = Depends(get_db)):
 @router.get("/hits", response_model=list[TriggerHitResponse])
 async def list_hits(
     limit: int = 200,
-    status: str = Query("active", regex="^(active|dismissed|snoozed|all)$"),
+    status: str = Query("active", pattern="^(active|dismissed|snoozed|all)$"),
     watchlist: str | None = None,
     db: DatabaseService = Depends(get_db),
 ):

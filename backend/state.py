@@ -78,7 +78,7 @@ class IBKRState(BaseModel):
     # Lifecycle
     shutdown_event: asyncio.Event = Field(default_factory=asyncio.Event)
 
-    class Config:
+    class ConfigDict:
         arbitrary_types_allowed = True
 
     def reset(self) -> None:
