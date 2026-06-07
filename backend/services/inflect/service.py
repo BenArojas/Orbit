@@ -49,6 +49,7 @@ from models.inflect import (
 from services.db import DatabaseService
 from services.inflect.matcher import match_fills
 from services.inflect.pa_transactions import PaBackfillResult
+from services.instrument_identity import InstrumentIdentityService
 from services.moonmarket import MoonMarketService
 
 # Upper bound for "open-ended" fill windows (≈ year 2100 in epoch ms). The
@@ -71,10 +72,12 @@ class InflectService:
         ibkr,
         db: DatabaseService,
         moonmarket: MoonMarketService,
+        identity: InstrumentIdentityService | None = None,
     ) -> None:
         self.ibkr = ibkr
         self.db = db
         self.moonmarket = moonmarket
+        self.identity = identity or InstrumentIdentityService(db)
         self._position_cache: dict[tuple[str, int], float | None] = {}
 
     # ── Calendar ───────────────────────────────────────────────
@@ -309,7 +312,7 @@ class InflectService:
         conids = sorted({int(row["conid"]) for row in fills} | set(lot_conids))
         instruments = {
             int(row["conid"]): row
-            for row in await self.db.get_instruments_by_conids(conids)
+            for row in await self.identity.get_many(conids)
         }
         symbols: dict[int, str] = {}
         for row in fills:

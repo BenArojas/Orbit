@@ -56,6 +56,16 @@ class _FakeMoon:
         return SimpleNamespace(trades=list(self._trades))
 
 
+class _RecordingIdentity:
+    def __init__(self, rows):
+        self.rows = rows
+        self.calls: list[list[int]] = []
+
+    async def get_many(self, conids):
+        self.calls.append(list(conids))
+        return list(self.rows)
+
+
 def _memory_db() -> DatabaseService:
     db = DatabaseService(db_path=":memory:")
     db._conn = db._connect()
@@ -422,6 +432,48 @@ def test_symbols_returns_distinct_traded_conids_in_period():
         {"conid": 101, "symbol": "AAPL"},
         {"conid": 303, "symbol": "MSFT"},
     ]
+
+
+def test_symbols_uses_identity_service_for_cached_conid_display():
+    svc = _service()
+    _insert_fill(
+        svc.db,
+        execution_id="aapl-1",
+        conid=101,
+        side="BUY",
+        qty=1,
+        price=10,
+        ms=_et_ms(2026, 6, 1, 10),
+    )
+    svc.db._conn.execute(
+        "UPDATE fills SET symbol = ? WHERE execution_id = ?",
+        ("AAPL", "aapl-1"),
+    )
+    svc.db._conn.execute(
+        """
+        INSERT INTO basis_lots
+            (account_id, conid, side, quantity, entry_date, entry_price)
+        VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        ("DU1", 303, "LONG", 5, "2026-06-02", 30),
+    )
+    svc.db._conn.commit()
+    identity = _RecordingIdentity([
+        {"conid": 303, "symbol": "MSFT", "company_name": "Microsoft", "sec_type": "STK"},
+    ])
+    svc.identity = identity
+
+    resp = _client(svc).get(
+        "/inflect/symbols"
+        f"?account_id=DU1&from={_et_ms(2026, 6, 1, 0)}&to={_et_ms(2026, 6, 3, 0)}"
+    )
+
+    assert resp.status_code == 200
+    assert resp.json()["symbols"] == [
+        {"conid": 101, "symbol": "AAPL"},
+        {"conid": 303, "symbol": "MSFT"},
+    ]
+    assert identity.calls == [[101, 303]]
 
 
 def test_storage_endpoints_report_stats_and_require_cleanup_confirm():
