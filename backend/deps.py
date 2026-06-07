@@ -15,6 +15,7 @@ from services.screener import ScreenerService
 from services.sectors import SectorService
 from services.ai import AiService
 from services.gateway import GatewayLifecycle
+from services.instrument_identity import InstrumentIdentityService
 from services.ollama import OllamaLifecycle
 from services.scanner import ScannerService
 
@@ -27,6 +28,13 @@ def get_ibkr(request: Request) -> IBKRService:
 def get_db(request: Request) -> DatabaseService:
     """Get the database service singleton stashed on app.state during lifespan."""
     return request.app.state.db
+
+
+def get_instrument_identity(
+    db: DatabaseService = Depends(get_db),
+) -> InstrumentIdentityService:
+    """Get an instrument identity service for the active database dependency."""
+    return InstrumentIdentityService(db)
 
 
 def get_sectors(request: Request) -> SectorService:

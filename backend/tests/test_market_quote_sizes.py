@@ -23,7 +23,13 @@ class _FakeIbkr:
 
 
 class _FakeDb:
-    async def upsert_instrument(self, conid: int, symbol: str, company_name: str) -> None:
+    async def upsert_instrument(
+        self,
+        conid: int,
+        symbol: str,
+        company_name: str,
+        sec_type: str = "STK",
+    ) -> None:
         return None
 
 

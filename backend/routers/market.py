@@ -26,10 +26,11 @@ import logging
 from fastapi import APIRouter, Depends, Query
 
 from constants import DEFAULT_QUOTE_FIELDS_STR, PERIOD_BAR
-from deps import get_db, get_ibkr
+from deps import get_db, get_ibkr, get_instrument_identity
 from exceptions import SymbolNotFoundError
 from services.db import DatabaseService
 from services.ibkr import IBKRService, _safe_float
+from services.instrument_identity import InstrumentIdentityService
 
 log = logging.getLogger("parallax.routers.market")
 
@@ -43,7 +44,7 @@ router = APIRouter(prefix="/market", tags=["market"])
 async def get_quote(
     conid: int,
     ibkr: IBKRService = Depends(get_ibkr),
-    db: DatabaseService = Depends(get_db),
+    identity: InstrumentIdentityService = Depends(get_instrument_identity),
 ):
     """
     Fetch a full market data snapshot for a single instrument.
@@ -57,11 +58,7 @@ async def get_quote(
     symbol = data.get("55", "")
     company_name = data.get("7051", "")
 
-    # Cache instrument metadata if we got symbol info from the snapshot
-    if symbol:
-        await db.upsert_instrument(
-            conid=conid, symbol=symbol, company_name=company_name,
-        )
+    await identity.cache_snapshot_identity(conid, data)
 
     return {
         "conid": conid,

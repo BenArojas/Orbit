@@ -92,6 +92,14 @@ class SymbolNotFoundError(DataError):
         super().__init__(f"Symbol not found: {symbol}")
 
 
+class InstrumentCacheMissError(DataError):
+    """Requested conid is not present in the local instrument cache."""
+
+    def __init__(self, conid: int):
+        self.conid = conid
+        super().__init__(f"Instrument conid={conid} not found in local cache")
+
+
 class InvalidFibWeightsError(DataError):
     """
     Raised when a Fibonacci scoring-weights payload fails validation.
