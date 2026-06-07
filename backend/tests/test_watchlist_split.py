@@ -20,7 +20,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from deps import get_db, get_ibkr
+from deps import get_db, get_ibkr, get_instrument_identity
 from routers.watchlist import router as wl_router
 from services.ibkr import IBKRService
 
@@ -40,12 +40,38 @@ class _StubDb:
         self.upserts.append((conid, symbol, company_name))
 
 
+class _RecordingIdentity:
+    def __init__(self) -> None:
+        self.watchlist_rows: list[dict] = []
+
+    def normalize_watchlist_identity(self, row: dict) -> dict | None:
+        raw_conid = row.get("conid") or row.get("C")
+        if not raw_conid:
+            return None
+        try:
+            conid = int(raw_conid)
+        except (TypeError, ValueError):
+            return None
+        return {
+            "conid": conid,
+            "symbol": row.get("symbol", "") or row.get("SYM", "") or row.get("ticker", ""),
+            "companyName": row.get("name", "") or row.get("N", "") or row.get("companyHeader", ""),
+        }
+
+    async def cache_watchlist_identity(self, row: dict) -> None:
+        self.watchlist_rows.append(row)
+
+
 def _make_client(mock_ibkr: IBKRService, stub_db: _StubDb) -> TestClient:
     app = FastAPI()
+    identity = _RecordingIdentity()
     app.include_router(wl_router)
     app.dependency_overrides[get_ibkr] = lambda: mock_ibkr
     app.dependency_overrides[get_db] = lambda: stub_db
-    return TestClient(app)
+    app.dependency_overrides[get_instrument_identity] = lambda: identity
+    client = TestClient(app)
+    client.identity = identity
+    return client
 
 
 # ── /instruments ──────────────────────────────────────────────
@@ -76,8 +102,12 @@ def test_instruments_returns_symbol_and_company_without_snapshot():
     # Crucial: snapshot must NOT be invoked by the instruments endpoint.
     mock_ibkr.snapshot.assert_not_called()
 
-    # And we seeded the instruments cache for Orbit.
-    assert (265598, "AAPL", "Apple Inc.") in stub_db.upserts
+    # And we seeded the instruments cache for Orbit through identity service.
+    assert client.identity.watchlist_rows == [
+        {"conid": 265598, "symbol": "AAPL", "name": "Apple Inc."},
+        {"conid": 272093, "symbol": "MSFT", "name": "Microsoft Corp."},
+    ]
+    assert stub_db.upserts == []
 
 
 def test_instruments_skips_non_dict_entries():

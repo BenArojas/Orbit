@@ -88,6 +88,36 @@ class InstrumentIdentityService:
             sec_type=sec_type or "STK",
         )
 
+    def normalize_watchlist_identity(self, row: dict[str, Any]) -> dict | None:
+        conid = self._positive_int(row.get("conid") or row.get("C"))
+        if conid is None:
+            return None
+
+        return {
+            "conid": conid,
+            "symbol": self._first_text(row, ("symbol", "SYM", "ticker")),
+            "companyName": self._first_text(
+                row,
+                ("name", "N", "companyHeader", "companyName", "company_name"),
+            ),
+        }
+
+    async def cache_watchlist_identity(self, row: dict[str, Any]) -> None:
+        normalized = self.normalize_watchlist_identity(row)
+        if normalized is None or not normalized["symbol"]:
+            return
+
+        await self.db.upsert_instrument(
+            conid=normalized["conid"],
+            symbol=normalized["symbol"],
+            company_name=normalized["companyName"],
+            sec_type=self._first_text(
+                row,
+                ("secType", "sec_type", "assetClass", "asset_class"),
+                default="STK",
+            ),
+        )
+
     @staticmethod
     def _first_text(
         row: dict[str, Any],
