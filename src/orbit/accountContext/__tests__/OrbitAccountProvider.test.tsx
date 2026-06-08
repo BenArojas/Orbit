@@ -7,12 +7,12 @@ const mockApi = vi.hoisted(() => ({
   moonmarketAccounts: vi.fn(),
 }));
 
-vi.mock("@/lib/api", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib/api")>();
+vi.mock("@/modules/moonmarket/api", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/modules/moonmarket/api")>();
   return {
     ...actual,
-    api: {
-      ...actual.api,
+    moonmarketApi: {
+      ...actual.moonmarketApi,
       moonmarketAccounts: mockApi.moonmarketAccounts,
     },
   };

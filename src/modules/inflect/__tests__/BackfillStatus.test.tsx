@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { BackfillStatus } from "../BackfillStatus";
-import type { InflectBackfillStatusItem } from "@/lib/api";
+import type { InflectBackfillStatusItem } from "@/modules/inflect/api";
 
 function item(over: Partial<InflectBackfillStatusItem>): InflectBackfillStatusItem {
   return {

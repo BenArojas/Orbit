@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { api } from "@/lib/api";
+import { inflectApi } from "@/modules/inflect/api";
 import type { InflectTradeDateRange } from "./useInflectTrades";
 
 export function useInflectSymbols(
@@ -15,7 +15,7 @@ export function useInflectSymbols(
       range?.to ?? null,
     ],
     queryFn: ({ signal }) =>
-      api.inflectSymbols(
+      inflectApi.inflectSymbols(
         { accountId: accountId ?? undefined, from: range?.from, to: range?.to },
         signal,
       ),

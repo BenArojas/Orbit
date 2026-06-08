@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { api } from "./api";
+import { parallaxApi } from "@/modules/parallax/api";
 
 describe("API client", () => {
   beforeEach(() => {
@@ -19,6 +19,6 @@ describe("API client", () => {
       },
     } as unknown as Response);
 
-    await expect(api.dismissTriggerHit(42)).resolves.toBeUndefined();
+    await expect(parallaxApi.dismissTriggerHit(42)).resolves.toBeUndefined();
   });
 });

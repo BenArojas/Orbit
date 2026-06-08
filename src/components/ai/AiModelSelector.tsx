@@ -10,7 +10,7 @@
  */
 
 import { useState } from "react";
-import type { OllamaModelResponse } from "@/lib/api";
+import type { OllamaModelResponse } from "@/modules/parallax/api";
 
 interface AiModelSelectorProps {
   models: OllamaModelResponse[];

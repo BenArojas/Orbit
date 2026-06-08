@@ -1,4 +1,4 @@
-import type { TriggerCondition, TriggerConditionValue } from "@/lib/api";
+import type { TriggerCondition, TriggerConditionValue } from "@/modules/parallax/api";
 
 const numberFormatter = new Intl.NumberFormat("en-US", {
   maximumFractionDigits: 2,

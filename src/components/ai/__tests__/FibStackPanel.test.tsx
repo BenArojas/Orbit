@@ -26,7 +26,7 @@ import type {
   LockFibonacciRequest,
   LockedFibonacciResponse,
   TriggerRuleCreate,
-} from "@/lib/api";
+} from "@/modules/parallax/api";
 
 // ── Mock the API layer ───────────────────────────────────────
 
@@ -39,12 +39,12 @@ const mockCreateTriggerRule = vi.fn();
 const mockGetWatchlists = vi.fn();
 const mockGetRuleTemplates = vi.fn();
 
-vi.mock("@/lib/api", async (importOriginal) => {
-  const mod = await importOriginal<typeof import("@/lib/api")>();
+vi.mock("@/modules/parallax/api", async (importOriginal) => {
+  const mod = await importOriginal<typeof import("@/modules/parallax/api")>();
   return {
     ...mod,
-    api: {
-      ...mod.api,
+    parallaxApi: {
+      ...mod.parallaxApi,
       getLockedFibs: (conid: number) => mockGetLockedFibs(conid),
       lockFibonacci: (req: LockFibonacciRequest) => mockLockFib(req),
       unlockFibonacci: (id: number) => mockUnlockFib(id),

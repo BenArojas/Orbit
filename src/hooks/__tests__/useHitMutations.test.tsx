@@ -3,14 +3,14 @@ import { renderHook, act } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { useDismissHit, useSnoozeHit } from "../useHitMutations";
 
-vi.mock("@/lib/api", () => ({
-  api: {
+vi.mock("@/modules/parallax/api", () => ({
+  parallaxApi: {
     dismissTriggerHit: vi.fn().mockResolvedValue(undefined),
     snoozeTriggerHit: vi.fn().mockResolvedValue(undefined),
   },
 }));
 
-import { api } from "@/lib/api";
+import { parallaxApi } from "@/modules/parallax/api";
 
 function makeWrapper() {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -28,7 +28,7 @@ describe("useDismissHit", () => {
     await act(async () => {
       await result.current.mutateAsync(42);
     });
-    expect(api.dismissTriggerHit).toHaveBeenCalledWith(42);
+    expect(parallaxApi.dismissTriggerHit).toHaveBeenCalledWith(42);
     expect(spy).toHaveBeenCalledWith({ queryKey: ["trigger-hits"] });
     expect(spy).toHaveBeenCalledWith({ queryKey: ["stock-tags"] });
   });
@@ -41,7 +41,7 @@ describe("useSnoozeHit", () => {
     await act(async () => {
       await result.current.mutateAsync({ id: 7, minutes: 30 });
     });
-    expect(api.snoozeTriggerHit).toHaveBeenCalledWith(7, 30);
+    expect(parallaxApi.snoozeTriggerHit).toHaveBeenCalledWith(7, 30);
     expect(spy).toHaveBeenCalledWith({ queryKey: ["trigger-hits"] });
     expect(spy).toHaveBeenCalledWith({ queryKey: ["stock-tags"] });
   });

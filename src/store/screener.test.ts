@@ -9,7 +9,7 @@
  */
 
 import { describe, it, expect, beforeEach } from "vitest";
-import type { ScreenerResultRow, ScannerPreset } from "@/lib/api";
+import type { ScreenerResultRow, ScannerPreset } from "@/modules/parallax/api";
 import {
   useScreenerStore,
   SCREENER_PAGE_SIZE,

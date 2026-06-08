@@ -16,7 +16,7 @@
 
 import { useQuery, keepPreviousData } from "@tanstack/react-query";
 import { useEffect, useMemo, useState, useCallback, useRef } from "react";
-import { api, type FibonacciResult, type IndicatorComputeResponse } from "@/lib/api";
+import { parallaxApi, type FibonacciResult, type IndicatorComputeResponse } from "@/modules/parallax/api";
 import type { Timeframe, IndicatorId } from "@/store/chart";
 import { useChartStore } from "@/store/chart";
 import { fibonacciResultFromCandidate } from "@/lib/fib";
@@ -114,7 +114,7 @@ export function useChartData(
   const candlesQuery = useQuery<IndicatorComputeResponse>({
     queryKey: ["candles", conid, timeframe, loadedPeriod],
     queryFn: ({ signal }) =>
-      api.computeIndicators({
+      parallaxApi.computeIndicators({
         conid: conid!,
         timeframe,
         indicators: [],
@@ -129,7 +129,7 @@ export function useChartData(
   const indicatorsQuery = useQuery<IndicatorComputeResponse>({
     queryKey: ["indicators", conid, timeframe, indicatorKey, loadedPeriod],
     queryFn: ({ signal }) =>
-      api.computeIndicators({
+      parallaxApi.computeIndicators({
         conid: conid!,
         timeframe,
         indicators: indicatorIdsToBackendNames(activeIndicators),

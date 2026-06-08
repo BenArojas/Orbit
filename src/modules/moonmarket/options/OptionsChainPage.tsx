@@ -1,8 +1,8 @@
 import { useQuery } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { api } from "@/lib/api";
-import type { MoonMarketOptionContract } from "@/lib/api";
+import { parallaxApi } from "@/modules/parallax/api";
+import type { MoonMarketOptionContract } from "@/modules/moonmarket/api";
 import { useOrderTicketStore } from "@/orbit/OrderTicket";
 import { OptionsChainTable } from "./OptionsChainTable";
 import { useOptionChain, useOptionExpirations } from "./useOptionsChain";
@@ -27,7 +27,7 @@ export function OptionsChainPage() {
   const quoteQuery = useQuery({
     queryKey: ["market", "quote", underlyingConid],
     enabled: Boolean(underlyingConid),
-    queryFn: ({ signal }) => api.quote(underlyingConid as number, signal),
+    queryFn: ({ signal }) => parallaxApi.quote(underlyingConid as number, signal),
   });
   const underlyingPrice = quoteQuery.data?.lastPrice ?? midpoint(quoteQuery.data?.bid, quoteQuery.data?.ask);
   const title = useMemo(() => symbol || "Options", [symbol]);

@@ -12,7 +12,7 @@
 import { describe, it, expect } from "vitest";
 import { render, screen } from "@testing-library/react";
 import AtrBadge from "../AtrBadge";
-import type { IndicatorResult } from "@/lib/api";
+import type { IndicatorResult } from "@/modules/parallax/api";
 
 // ── Helpers ───────────────────────────────────────────────────
 

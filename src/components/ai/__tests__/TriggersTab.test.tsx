@@ -3,8 +3,8 @@ import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import TriggersTab from "../TriggersTab";
 
-vi.mock("@/lib/api", () => ({
-  api: {
+vi.mock("@/modules/parallax/api", () => ({
+  parallaxApi: {
     getTriggerRules: vi.fn(),
     updateTriggerRule: vi.fn(),
     createTriggerRule: vi.fn(),
@@ -15,7 +15,7 @@ vi.mock("@/lib/api", () => ({
   },
 }));
 
-import { api } from "@/lib/api";
+import { parallaxApi } from "@/modules/parallax/api";
 
 function renderTab() {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -29,9 +29,9 @@ function renderTab() {
 describe("TriggersTab", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.mocked(api.getTriggerRules).mockResolvedValue([]);
-    vi.mocked(api.getWatchlists).mockResolvedValue([]);
-    vi.mocked(api.getRuleTemplates).mockResolvedValue([]);
+    vi.mocked(parallaxApi.getTriggerRules).mockResolvedValue([]);
+    vi.mocked(parallaxApi.getWatchlists).mockResolvedValue([]);
+    vi.mocked(parallaxApi.getRuleTemplates).mockResolvedValue([]);
   });
 
   it("lets the user create a trigger for the active chart symbol", async () => {

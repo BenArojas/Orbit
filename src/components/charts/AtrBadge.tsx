@@ -9,7 +9,7 @@
  * (e.g. while loading or if the candle count is below the 14-bar minimum).
  */
 
-import type { IndicatorResult } from "@/lib/api";
+import type { IndicatorResult } from "@/modules/parallax/api";
 
 interface AtrBadgeProps {
   indicators: IndicatorResult[];

@@ -24,7 +24,7 @@ import { useCallback, useRef } from "react";
 import { useAiStore } from "@/store";
 import { useChartStore } from "@/store/chart";
 import { API_BASE } from "@/config/endpoints";
-import type { AiContextMode, FibonacciSnapshot } from "@/lib/api";
+import type { AiContextMode, FibonacciSnapshot } from "@/modules/parallax/api";
 
 /* ── Types ── */
 

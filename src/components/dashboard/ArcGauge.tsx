@@ -20,14 +20,14 @@
 import type { ElementType } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
-  api,
+  parallaxApi,
   type QuoteResponse,
   type ConidResponse,
   type TriggerRule,
   type TriggerHit,
   type MarketBreadthResponse,
   type SectorRotationResponse,
-} from "@/lib/api";
+} from "@/modules/parallax/api";
 import { useIbkrReady } from "@/context/GatewayContext";
 import { useIbkrReadyTier } from "@/hooks/useIbkrReadyTier";
 import { useNavigationStore } from "@/store";
@@ -193,7 +193,7 @@ export default function ArcGaugeRow() {
   // Resolve VIX conid at runtime (works across paper/live accounts)
   const { data: vixResolved } = useQuery<ConidResponse>({
     queryKey: ["conid", "VIX"],
-    queryFn: ({ signal }) => api.resolveConid("VIX", undefined, signal),
+    queryFn: ({ signal }) => parallaxApi.resolveConid("VIX", undefined, signal),
     staleTime: Infinity,
     enabled: tierReady,
   });
@@ -203,7 +203,7 @@ export default function ArcGaugeRow() {
   // VIX quote — Rule 1: staleTime = refetchInterval / 2 (live market data)
   const { data: vixQuote } = useQuery<QuoteResponse>({
     queryKey: ["quote", vixConid],
-    queryFn: ({ signal }) => api.quote(vixConid!, signal),
+    queryFn: ({ signal }) => parallaxApi.quote(vixConid!, signal),
     enabled: tierReady && vixConid != null,
     refetchInterval: 15_000,
     staleTime: 7_500,
@@ -212,7 +212,7 @@ export default function ArcGaugeRow() {
   // Market Strength — breadth proxy from /sectors/breadth
   const { data: breadth } = useQuery<MarketBreadthResponse>({
     queryKey: ["market-breadth"],
-    queryFn: ({ signal }) => api.marketBreadth(signal),
+    queryFn: ({ signal }) => parallaxApi .marketBreadth(signal),
     enabled: tierReady,
     // EMA-based breadth changes slowly. 2 min refetch is plenty + avoids
     // pressuring IBKR with 11 daily-bar requests too often.
@@ -223,7 +223,7 @@ export default function ArcGaugeRow() {
   // Sector Rotation — offensive vs defensive 1-month perf
   const { data: rotation } = useQuery<SectorRotationResponse>({
     queryKey: ["sector-rotation"],
-    queryFn: ({ signal }) => api.sectorRotation(signal),
+    queryFn: ({ signal }) => parallaxApi.sectorRotation(signal),
     enabled: tierReady,
     refetchInterval: 120_000,
     staleTime: 60_000,
@@ -233,14 +233,14 @@ export default function ArcGaugeRow() {
   // Rule 3: static data — mutations/WS events invalidate explicitly, no polling clock
   const { data: rules } = useQuery<TriggerRule[]>({
     queryKey: ["trigger-rules"],
-    queryFn: () => api.getTriggerRules(),
+    queryFn: () => parallaxApi.getTriggerRules(),
     staleTime: Infinity,
     refetchInterval: false,
   });
 
   const { data: hits } = useQuery<TriggerHit[]>({
     queryKey: ["trigger-hits"],
-    queryFn: () => api.getTriggerHits({ limit: 200 }),
+    queryFn: () => parallaxApi.getTriggerHits({ limit: 200 }),
     staleTime: Infinity,
     refetchInterval: false,
   });

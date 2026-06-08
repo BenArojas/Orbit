@@ -41,12 +41,12 @@ vi.mock("sonner", () => ({
   Toaster: () => null,
 }));
 
-vi.mock("@/lib/api", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib/api")>();
+vi.mock("@/modules/moonmarket/api", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/modules/moonmarket/api")>();
   return {
     ...actual,
-    api: {
-      ...actual.api,
+    moonmarketApi: {
+      ...actual.moonmarketApi,
       ...mockApi,
     },
   };
@@ -62,8 +62,8 @@ vi.mock("@/hooks/useWebSocket", () => ({
   }),
 }));
 
-type LiveOrderOverride = Partial<import("@/lib/api").MoonMarketLiveOrder> & { order_id: string };
-type TradeOverride = Partial<import("@/lib/api").MoonMarketTrade> & { execution_id: string; conid: number };
+type LiveOrderOverride = Partial<import("@/modules/moonmarket/api").MoonMarketLiveOrder> & { order_id: string };
+type TradeOverride = Partial<import("@/modules/moonmarket/api").MoonMarketTrade> & { execution_id: string; conid: number };
 
 type RenderTicketOptions = {
   liveOrders?: LiveOrderOverride[];
@@ -72,7 +72,7 @@ type RenderTicketOptions = {
   accountContextEnabled?: boolean;
 };
 
-function seedLiveOrder(order: LiveOrderOverride): import("@/lib/api").MoonMarketLiveOrder {
+function seedLiveOrder(order: LiveOrderOverride): import("@/modules/moonmarket/api").MoonMarketLiveOrder {
   return {
     order_id: order.order_id,
     conid: order.conid ?? 265598,
@@ -92,7 +92,7 @@ function seedLiveOrder(order: LiveOrderOverride): import("@/lib/api").MoonMarket
   };
 }
 
-function seedTrade(trade: TradeOverride): import("@/lib/api").MoonMarketTrade {
+function seedTrade(trade: TradeOverride): import("@/modules/moonmarket/api").MoonMarketTrade {
   return {
     execution_id: trade.execution_id,
     account_id: trade.account_id ?? "DU12345",

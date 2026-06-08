@@ -7,8 +7,8 @@ const mockApi = vi.hoisted(() => ({
   moonmarketLiveOrders: vi.fn(),
 }));
 
-vi.mock("@/lib/api", () => ({
-  api: mockApi,
+vi.mock("@/modules/moonmarket/api", () => ({
+  moonmarketApi: mockApi,
 }));
 
 import { TransactionsPage } from "@/modules/moonmarket/TransactionsPage";

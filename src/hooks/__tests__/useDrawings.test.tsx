@@ -15,7 +15,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { createElement } from "react";
 
 import { useDrawings, useCreateDrawing, useUpdateDrawing, useDeleteDrawing } from "../useDrawings";
-import type { Drawing } from "@/lib/api";
+import type { Drawing } from "@/modules/parallax/api";
 
 // ── Mocks ─────────────────────────────────────────────────────
 
@@ -24,8 +24,8 @@ const mockCreateDrawing = vi.fn();
 const mockUpdateDrawing = vi.fn();
 const mockDeleteDrawing = vi.fn();
 
-vi.mock("@/lib/api", () => ({
-  api: {
+vi.mock("@/modules/parallax/api", () => ({
+  parallaxApi: {
     getDrawings:   (...args: unknown[]) => mockGetDrawings(...args),
     createDrawing: (...args: unknown[]) => mockCreateDrawing(...args),
     updateDrawing: (...args: unknown[]) => mockUpdateDrawing(...args),

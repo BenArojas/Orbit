@@ -3,8 +3,8 @@ import { renderHook, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { useStockTags } from "../useStockTags";
 
-vi.mock("@/lib/api", () => ({
-  api: {
+vi.mock("@/modules/parallax/api", () => ({
+  parallaxApi: {
     getStockTags: vi.fn().mockResolvedValue({
       1: [{ rule_id: 7, rule_name: "Golden Pocket", indicators: ["rsi"], fired_at: "x" }],
       2: [],

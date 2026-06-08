@@ -2,7 +2,7 @@ import type {
   MoonMarketOrderType,
   MoonMarketTimeInForce,
   MoonMarketTrailingType,
-} from "@/lib/api";
+} from "@/modules/moonmarket/api";
 import { cn } from "@/lib/utils";
 import { LiveOrderConfirmDialog } from "./LiveOrderConfirmDialog";
 import { ORDER_TYPE_LABELS, TIF_LABELS, TRAILING_TYPE_LABELS } from "./labels";

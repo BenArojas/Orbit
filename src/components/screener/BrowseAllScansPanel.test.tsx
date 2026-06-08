@@ -16,7 +16,7 @@
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
-import type { ScannerPreset, ScannerScanType, ScannerLocation } from "@/lib/api";
+import type { ScannerPreset, ScannerScanType, ScannerLocation } from "@/modules/parallax/api";
 import BrowseAllScansPanel from "./BrowseAllScansPanel";
 
 // ── Hoist the useQuery mock ───────────────────────────────────

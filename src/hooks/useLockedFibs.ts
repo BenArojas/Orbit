@@ -15,13 +15,13 @@
 import { useEffect } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
-import { api } from "@/lib/api";
+import { parallaxApi } from "@/modules/parallax/api";
 import type {
   FibonacciLevel,
   FibonacciResult,
   LockFibonacciRequest,
   LockedFibonacciResponse,
-} from "@/lib/api";
+} from "@/modules/parallax/api";
 import { useChartStore } from "@/store/chart";
 import { useFibConfig } from "./useFibConfig";
 import { buildLevelsFromCandidate, GOLDEN_POCKET_RATIOS } from "@/lib/fib";
@@ -134,7 +134,7 @@ export type { FibonacciLevel };
 export function useLockedFibs(conid: number | null) {
   const query = useQuery<LockedFibonacciResponse[]>({
     queryKey: lockedFibsKey(conid ?? 0),
-    queryFn: () => api.getLockedFibs(conid!),
+    queryFn: () => parallaxApi.getLockedFibs(conid!),
     enabled: conid != null && conid > 0,
     staleTime: 60_000,  // 1 min
     gcTime: 10 * 60_000, // 10 min
@@ -170,7 +170,7 @@ export function useLockFib() {
   const addLockedFib = useChartStore((s) => s.addLockedFib);
   const removeActiveFib = useChartStore((s) => s.removeActiveFib);
   return useMutation({
-    mutationFn: (req: LockFibonacciRequest) => api.lockFibonacci(req),
+    mutationFn: (req: LockFibonacciRequest) => parallaxApi.lockFibonacci(req),
     // Synchronous optimistic write. `onMutate` runs the instant `mutate()`
     // is called — before the network request — so the just-drawn fib lands
     // in the lockedFibs cache (and from there into the chart store's
@@ -256,7 +256,7 @@ export function useClearLockedFibs() {
   const qc = useQueryClient();
   const replaceLockedFibs = useChartStore((s) => s.replaceLockedFibs);
   return useMutation({
-    mutationFn: (conid: number) => api.clearLockedFibs(conid),
+    mutationFn: (conid: number) => parallaxApi.clearLockedFibs(conid),
     onSuccess: (_data, conid) => {
       // Optimistic: empty the cached list and drop every locked entry
       // from the store so the chart re-paints with just the primary.
@@ -272,7 +272,7 @@ export function useUnlockFib() {
   const removeActiveFib = useChartStore((s) => s.removeActiveFib);
   return useMutation({
     mutationFn: ({ id }: { id: number; conid: number }) =>
-      api.unlockFibonacci(id),
+      parallaxApi.unlockFibonacci(id),
     onSuccess: (_data, { conid, id }) => {
       // 1. Optimistic cache write — drop the lock from the cached
       //    list FIRST so any synchronous re-renders that read it

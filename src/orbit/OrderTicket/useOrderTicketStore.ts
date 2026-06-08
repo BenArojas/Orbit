@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { MoonMarketOrderDraft, MoonMarketOrderSide } from "@/lib/api";
+import type { MoonMarketOrderDraft, MoonMarketOrderSide } from "@/modules/moonmarket/api";
 
 export type OrderTicketAssetClass = "STK" | "OPT";
 

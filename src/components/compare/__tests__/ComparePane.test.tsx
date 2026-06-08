@@ -8,8 +8,8 @@ import { useChartStore } from "@/store/chart";
 
 const mockResolveConid = vi.fn();
 
-vi.mock("@/lib/api", () => ({
-  api: {
+vi.mock("@/modules/parallax/api", () => ({
+  parallaxApi: {
     resolveConid: (...args: unknown[]) => mockResolveConid(...args),
   },
 }));

@@ -9,7 +9,7 @@
  */
 
 import { useQuery } from "@tanstack/react-query";
-import { api, type SectorPerformance } from "../../lib/api";
+import { parallaxApi, type SectorPerformance } from "@/modules/parallax/api";
 import { useIbkrReadyTier } from "@/hooks/useIbkrReadyTier";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { SectorPerformanceSkeleton } from "./skeletons";
@@ -30,7 +30,7 @@ export default function SectorPerformancePanel() {
 
   const { data: sectors, isLoading, error } = useQuery({
     queryKey: ["sectors", "performance"],
-    queryFn: ({ signal }) => api.sectorPerformance(signal),
+    queryFn: ({ signal }) => parallaxApi.sectorPerformance(signal),
     staleTime: 60_000,
     refetchInterval: 5 * 60_000,
     enabled: ready,

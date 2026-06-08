@@ -32,7 +32,7 @@ import {
   TableHead,
   TableCell,
 } from "@/components/ui/table";
-import type { ScreenerResultRow, StockTagMap } from "@/lib/api";
+import type { ScreenerResultRow, StockTagMap } from "@/modules/parallax/api";
 import {
   useScreenerStore,
   SCREENER_PAGE_SIZE,

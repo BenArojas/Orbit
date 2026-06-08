@@ -27,10 +27,10 @@ import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { ChevronDown, ChevronRight, X, Sparkles, Search } from "lucide-react";
 import {
-  api,
+  parallaxApi,
   type ScannerPreset,
   type ScannerScanType,
-} from "@/lib/api";
+} from "@/modules/parallax/api";
 import {
   useScreenerStore,
   DEFAULT_LOCATION_CODE,
@@ -100,7 +100,7 @@ export default function BrowseAllScansPanel({ isOpen, onClose, onPick }: Props) 
 
   const { data: scans = [], isLoading } = useQuery({
     queryKey: ["screener-all-scan-types"],
-    queryFn: () => api.screenerAllScanTypes(),
+    queryFn: () => parallaxApi.screenerAllScanTypes(),
     staleTime: 60 * 60 * 1000,
     enabled: isOpen, // don't fetch until the panel is opened
   });
@@ -109,7 +109,7 @@ export default function BrowseAllScansPanel({ isOpen, onClose, onPick }: Props) 
   // can decide whether to reset on pick. Same query the page uses, dedup'd.
   const { data: locations = [] } = useQuery({
     queryKey: ["screener-locations"],
-    queryFn: () => api.screenerLocations(),
+    queryFn: () => parallaxApi.screenerLocations(),
     staleTime: 60 * 60 * 1000,
     enabled: isOpen,
   });

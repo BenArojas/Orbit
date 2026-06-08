@@ -27,7 +27,7 @@ import type {
   FibonacciResult,
   FibonacciCandidate,
   FibonacciCandidateStatus,
-} from "@/lib/api";
+} from "@/modules/parallax/api";
 
 // ── Mock the API layer ───────────────────────────────────────
 
@@ -42,12 +42,12 @@ const DEFAULT_WEIGHTS = {
 const mockGetFibConfig: ReturnType<typeof vi.fn> = vi.fn();
 const mockUpdateFibConfig: ReturnType<typeof vi.fn> = vi.fn();
 
-vi.mock("@/lib/api", async (importOriginal) => {
-  const mod = await importOriginal<typeof import("@/lib/api")>();
+vi.mock("@/modules/parallax/api", async (importOriginal) => {
+  const mod = await importOriginal<typeof import("@/modules/parallax/api")>();
   return {
     ...mod,
-    api: {
-      ...mod.api,
+    parallaxApi: {
+      ...mod.parallaxApi,
       getFibConfig: () => mockGetFibConfig(),
       updateFibConfig: (req: { weights: Record<string, number> }) =>
         mockUpdateFibConfig(req),

@@ -9,13 +9,13 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { api } from "@/lib/api";
+import { inflectApi } from "@/modules/inflect/api";
 import type { InflectJournalUpsertRequest } from "@/modules/inflect/types";
 
 export function useInflectTrade(tradeId: string | null, accountId?: string) {
   return useQuery({
     queryKey: ["inflect", "trade", tradeId, accountId ?? null],
-    queryFn: ({ signal }) => api.inflectTrade(tradeId as string, accountId, signal),
+    queryFn: ({ signal }) => inflectApi.inflectTrade(tradeId as string, accountId, signal),
     enabled: tradeId != null,
   });
 }
@@ -24,7 +24,7 @@ export function useSaveTradeJournal(accountId?: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: ({ tradeId, body }: { tradeId: string; body: InflectJournalUpsertRequest }) =>
-      api.inflectSaveJournal(tradeId, body, accountId),
+      inflectApi.inflectSaveJournal(tradeId, body, accountId),
     onSuccess: (_entry, { tradeId }) => {
       qc.invalidateQueries({ queryKey: ["inflect", "trade", tradeId] });
       qc.invalidateQueries({ queryKey: ["inflect", "trades"] });

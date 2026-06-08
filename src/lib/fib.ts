@@ -19,7 +19,7 @@ import type {
   FibonacciCandidate,
   FibonacciLevel,
   FibonacciResult,
-} from "./api";
+} from "@/modules/parallax/api";
 
 /** Levels that fall inside the "golden pocket" reaction zone. */
 export const GOLDEN_POCKET_RATIOS: ReadonlySet<number> = new Set([

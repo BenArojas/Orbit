@@ -10,7 +10,7 @@
 
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useEffect } from "react";
-import { api } from "@/lib/api";
+import { parallaxApi } from "@/modules/parallax/api";
 import { useAiStore } from "@/store";
 
 /** Refetch interval when Ollama is NOT ready (user might be installing) */
@@ -41,7 +41,7 @@ export function useAiStatus() {
   //   Ready mode (60s interval): staleTime 30s for the same reason.
   const statusQuery = useQuery({
     queryKey: ["ai", "status"],
-    queryFn: () => api.aiStatus(),
+    queryFn: () => parallaxApi.aiStatus(),
     refetchInterval: isReady ? POLL_INTERVAL_READY : POLL_INTERVAL_SETUP,
     staleTime: isReady ? 30_000 : 5_000,
   });
@@ -59,7 +59,7 @@ export function useAiStatus() {
   // the refresh mutation invalidates explicitly. No polling clock needed.
   const modelsQuery = useQuery({
     queryKey: ["ai", "models"],
-    queryFn: () => api.aiModels(),
+    queryFn: () => parallaxApi.aiModels(),
     enabled: ollamaState === "running" || ollamaState === "no_models" || ollamaState === "ready",
     staleTime: Infinity,
     refetchInterval: false,
@@ -74,7 +74,7 @@ export function useAiStatus() {
   // ── Select model ──
 
   const selectModelMutation = useMutation({
-    mutationFn: (model: string) => api.aiSelectModel({ model }),
+    mutationFn: (model: string) => parallaxApi.aiSelectModel({ model }),
     onSuccess: (data) => {
       setOllamaStatus(data);
       // Invalidate status so everything re-syncs
@@ -85,7 +85,7 @@ export function useAiStatus() {
   // ── Refresh (re-scan after user pulls a model) ──
 
   const refreshMutation = useMutation({
-    mutationFn: () => api.aiRefresh(),
+    mutationFn: () => parallaxApi.aiRefresh(),
     onSuccess: (data) => {
       setOllamaStatus(data);
       queryClient.invalidateQueries({ queryKey: ["ai", "models"] });

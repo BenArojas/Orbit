@@ -2,8 +2,8 @@ import { describe, expect, it, vi } from "vitest";
 import { renderHook, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
-vi.mock("@/lib/api", () => ({
-  api: {
+vi.mock("@/modules/inflect/api", () => ({
+  inflectApi: {
     inflectSymbols: vi.fn().mockResolvedValue({
       account_id: "DU1",
       symbols: [{ conid: 265598, symbol: "AAPL" }],
@@ -11,7 +11,7 @@ vi.mock("@/lib/api", () => ({
   },
 }));
 
-import { api } from "@/lib/api";
+import { inflectApi } from "@/modules/inflect/api";
 import { useInflectSymbols } from "../useInflectSymbols";
 
 function makeWrapper() {
@@ -32,7 +32,7 @@ describe("useInflectSymbols", () => {
 
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
 
-    expect(api.inflectSymbols).toHaveBeenCalledWith(
+    expect(inflectApi.inflectSymbols).toHaveBeenCalledWith(
       { accountId: "DU1", from: 1_000, to: 2_000 },
       expect.anything(),
     );

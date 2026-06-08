@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Trash2 } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { api, type RuleTemplate, type TriggerCondition } from "@/lib/api";
+import { parallaxApi, type RuleTemplate, type TriggerCondition } from "@/modules/parallax/api";
 
 interface Props {
   onPick: (t: {
@@ -17,11 +17,11 @@ export function TemplatePicker({ onPick }: Props) {
   const qc = useQueryClient();
   const { data: templates } = useQuery<RuleTemplate[]>({
     queryKey: ["rule-templates"],
-    queryFn: () => api.getRuleTemplates(),
+    queryFn: () => parallaxApi.getRuleTemplates(),
     staleTime: Infinity,
   });
   const remove = useMutation({
-    mutationFn: (id: number) => api.deleteRuleTemplate(id),
+    mutationFn: (id: number) => parallaxApi.deleteRuleTemplate(id),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["rule-templates"] }),
   });
 

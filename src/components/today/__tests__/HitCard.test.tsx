@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import { HitCard } from "../HitCard";
-import type { TriggerHit } from "@/lib/api";
+import type { TriggerHit } from "@/modules/parallax/api";
 
 const hit: TriggerHit = {
   id: 1,

@@ -16,7 +16,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, act } from "@testing-library/react";
 import SubChartPanel from "../SubChartPanel";
 import { useCrosshairStore } from "@/store";
-import type { IndicatorResult } from "@/lib/api";
+import type { IndicatorResult } from "@/modules/parallax/api";
 
 // ── Mock lightweight-charts ───────────────────────────────────
 

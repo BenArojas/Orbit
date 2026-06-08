@@ -13,7 +13,7 @@
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
-import type { FilterCatalogueEntry, ScannerPreset } from "@/lib/api";
+import type { FilterCatalogueEntry, ScannerPreset } from "@/modules/parallax/api";
 import type { ActiveFilter } from "@/store/screener";
 import ScreenerFilterBar from "./ScreenerFilterBar";
 

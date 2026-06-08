@@ -1,6 +1,13 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { api } from "./api";
+/**
+ * Contract tests for MoonMarket endpoint paths and request encoding.
+ *
+ * These tests intentionally mock fetch at the transport boundary. Runtime
+ * behavior such as 204 parsing and ApiError handling is covered by
+ * src/lib/sidecarClient.test.ts.
+ */
 
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { moonmarketApi } from "@/modules/moonmarket/api";
 function okJson(body: unknown = {}): Response {
   return {
     ok: true,
@@ -18,7 +25,7 @@ describe("MoonMarket API client", () => {
   });
 
   it("calls the MoonMarket accounts endpoint", async () => {
-    await api.moonmarketAccounts();
+    await moonmarketApi.moonmarketAccounts();
 
     const [url, options] = vi.mocked(fetch).mock.calls[0];
     expect(String(url)).toContain("/moonmarket/accounts");
@@ -26,8 +33,8 @@ describe("MoonMarket API client", () => {
   });
 
   it("encodes account ids for portfolio and performance endpoints", async () => {
-    await api.moonmarketPortfolio("DU 123");
-    await api.moonmarketPerformance("DU 123", "YTD");
+    await moonmarketApi.moonmarketPortfolio("DU 123");
+    await moonmarketApi.moonmarketPerformance("DU 123", "YTD");
 
     const portfolioUrl = String(vi.mocked(fetch).mock.calls[0][0]);
     const performanceUrl = String(vi.mocked(fetch).mock.calls[1][0]);
@@ -37,8 +44,8 @@ describe("MoonMarket API client", () => {
   });
 
   it("encodes account ids and days for trades and live orders endpoints", async () => {
-    await api.moonmarketTrades("DU 123", 7);
-    await api.moonmarketLiveOrders("DU 123");
+    await moonmarketApi.moonmarketTrades("DU 123", 7);
+    await moonmarketApi.moonmarketLiveOrders("DU 123");
 
     const tradesUrl = String(vi.mocked(fetch).mock.calls[0][0]);
     const liveOrdersUrl = String(vi.mocked(fetch).mock.calls[1][0]);
@@ -50,8 +57,8 @@ describe("MoonMarket API client", () => {
   it("calls MoonMarket order preview and placement endpoints", async () => {
     const order = { conid: 265598, side: "BUY" as const, quantity: 5, orderType: "LMT" as const, tif: "DAY" as const, price: 180 };
 
-    await api.moonmarketPreviewOrder({ account_id: "DU 123", order });
-    await api.moonmarketPlaceOrders({ account_id: "DU 123", orders: [order] });
+    await moonmarketApi.moonmarketPreviewOrder({ account_id: "DU 123", order });
+    await moonmarketApi.moonmarketPlaceOrders({ account_id: "DU 123", orders: [order] });
 
     const previewUrl = String(vi.mocked(fetch).mock.calls[0][0]);
     const previewOptions = vi.mocked(fetch).mock.calls[0][1];
@@ -68,9 +75,9 @@ describe("MoonMarket API client", () => {
   it("encodes MoonMarket order reply, cancel, and modify endpoints", async () => {
     const order = { conid: 265598, side: "BUY" as const, quantity: 5, orderType: "LMT" as const, tif: "DAY" as const, price: 181 };
 
-    await api.moonmarketReplyOrder("DU 123", "reply/1", true);
-    await api.moonmarketCancelOrder("DU 123", "order/1");
-    await api.moonmarketModifyOrder("DU 123", "order/1", order);
+    await moonmarketApi.moonmarketReplyOrder("DU 123", "reply/1", true);
+    await moonmarketApi.moonmarketCancelOrder("DU 123", "order/1");
+    await moonmarketApi.moonmarketModifyOrder("DU 123", "order/1", order);
 
     expect(String(vi.mocked(fetch).mock.calls[0][0])).toContain("/moonmarket/orders/DU%20123/reply/reply%2F1");
     expect(JSON.parse(String(vi.mocked(fetch).mock.calls[0][1]?.body))).toEqual({ confirmed: true });
@@ -80,7 +87,7 @@ describe("MoonMarket API client", () => {
   });
 
   it("encodes the MoonMarket trading safety order-action endpoint", async () => {
-    await api.moonmarketTradingSafetyOrderAction("DU 123", "place");
+    await moonmarketApi.moonmarketTradingSafetyOrderAction("DU 123", "place");
 
     const [url, options] = vi.mocked(fetch).mock.calls[0];
     expect(String(url)).toContain("/moonmarket/trading-safety/order-action?account_id=DU%20123&action=place");
@@ -88,7 +95,7 @@ describe("MoonMarket API client", () => {
   });
 
   it("calls MoonMarket position revalidation endpoint", async () => {
-    await api.moonmarketRevalidatePositions("DU 123");
+    await moonmarketApi.moonmarketRevalidatePositions("DU 123");
 
     const [url, options] = vi.mocked(fetch).mock.calls[0];
     expect(String(url)).toContain("/moonmarket/accounts/DU%20123/positions/revalidate");
@@ -96,7 +103,7 @@ describe("MoonMarket API client", () => {
   });
 
   it("calls MoonMarket contract order rules endpoint", async () => {
-    await api.moonmarketOrderRules("DU 123", 265598, "SELL");
+    await moonmarketApi.moonmarketOrderRules("DU 123", 265598, "SELL");
 
     const [url, options] = vi.mocked(fetch).mock.calls[0];
     expect(String(url)).toContain("/moonmarket/accounts/DU%20123/contracts/265598/order-rules?side=SELL");
@@ -104,9 +111,9 @@ describe("MoonMarket API client", () => {
   });
 
   it("encodes MoonMarket options chain endpoints", async () => {
-    await api.moonmarketOptionExpirations(265598, "AAPL Class A");
-    await api.moonmarketOptionChain(265598, "JUN24");
-    await api.moonmarketOptionContract(265598, "JUN24", 180);
+    await moonmarketApi.moonmarketOptionExpirations(265598, "AAPL Class A");
+    await moonmarketApi.moonmarketOptionChain(265598, "JUN24");
+    await moonmarketApi.moonmarketOptionContract(265598, "JUN24", 180);
 
     expect(String(vi.mocked(fetch).mock.calls[0][0])).toContain(
       "/moonmarket/options/expirations/265598?symbol=AAPL%20Class%20A",

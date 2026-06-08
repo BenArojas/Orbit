@@ -27,8 +27,8 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 // ── Module mocks (must come before any import that uses them) ─────────────
 
-vi.mock("@/lib/api", () => ({
-  api: {
+vi.mock("@/modules/parallax/api", () => ({
+  parallaxApi: {
     resolveConid: vi.fn(),
     quotesBundled: vi.fn(),
     candlesBundled: vi.fn(),
@@ -56,10 +56,10 @@ vi.mock("./skeletons", () => ({
 
 // ── Imports after mocks ───────────────────────────────────────────────────
 
-import { api } from "@/lib/api";
 import { usePulseConfigStore, useNavigationStore } from "@/store";
 import MarketPulse from "@/components/dashboard/MarketPulse";
-import type { PulseItem } from "@/lib/api";
+import type { PulseItem } from "@/modules/parallax/api";
+import {parallaxApi} from "@/modules/parallax/api";
 
 // ── Fixtures ──────────────────────────────────────────────────────────────
 
@@ -135,14 +135,14 @@ describe("MarketPulse — Task 3.1 bundled endpoints", () => {
     );
 
     // Wire API mocks.
-    (api.resolveConid as ReturnType<typeof vi.fn>).mockImplementation(
+    (parallaxApi.resolveConid as ReturnType<typeof vi.fn>).mockImplementation(
       (symbol: string) =>
         Promise.resolve({ conid: CONIDS[symbol] ?? 1, symbol }),
     );
-    (api.quotesBundled as ReturnType<typeof vi.fn>).mockResolvedValue(
+    (parallaxApi.quotesBundled as ReturnType<typeof vi.fn>).mockResolvedValue(
       QUOTES_RESPONSE,
     );
-    (api.candlesBundled as ReturnType<typeof vi.fn>).mockResolvedValue(
+    (parallaxApi.candlesBundled as ReturnType<typeof vi.fn>).mockResolvedValue(
       CANDLES_RESPONSE,
     );
   });
@@ -156,17 +156,17 @@ describe("MarketPulse — Task 3.1 bundled endpoints", () => {
     renderPulse(qc);
 
     await waitFor(() => {
-      expect(api.quotesBundled).toHaveBeenCalledTimes(1);
+      expect(parallaxApi.quotesBundled).toHaveBeenCalledTimes(1);
     });
 
     // Sparkline + the bundled candles call were removed. Live ticks
     // (from useLiveQuotes via the WS singleton) now provide ongoing
     // updates; no second HTTP fetch fires on cold load.
-    expect(api.candlesBundled).not.toHaveBeenCalled();
+    expect(parallaxApi.candlesBundled).not.toHaveBeenCalled();
 
     // The bundled quotes call must have received ALL three conids,
     // not per-ticker.
-    const quotesCall = (api.quotesBundled as ReturnType<typeof vi.fn>).mock.calls[0];
+    const quotesCall = (parallaxApi.quotesBundled as ReturnType<typeof vi.fn>).mock.calls[0];
     const passedConids: number[] = quotesCall[0];
     expect(passedConids).toHaveLength(3);
     expect(passedConids).toContain(CONIDS.SPY);
@@ -195,7 +195,7 @@ describe("MarketPulse — Task 3.1 bundled endpoints", () => {
 
   it("shows skeletons for all items before the bundled response arrives", async () => {
     // Make quotesBundled hang so we can inspect the loading state.
-    (api.quotesBundled as ReturnType<typeof vi.fn>).mockImplementation(
+    (parallaxApi.quotesBundled as ReturnType<typeof vi.fn>).mockImplementation(
       () => new Promise(() => {}), // never resolves
     );
 
@@ -229,14 +229,14 @@ describe("MarketPulse — Task 3.1 bundled endpoints", () => {
     // Should render the empty-bar div, not any PulseItem buttons.
     expect(container.querySelector("button")).toBeNull();
     // No bundled calls should have been made.
-    expect(api.quotesBundled).not.toHaveBeenCalled();
-    expect(api.candlesBundled).not.toHaveBeenCalled();
+    expect(parallaxApi.quotesBundled).not.toHaveBeenCalled();
+    expect(parallaxApi.candlesBundled).not.toHaveBeenCalled();
   });
 
   it("does not fire bundled queries while conid resolution is pending", async () => {
     // Make resolveConid hang — simulates cold-start IBKR conid lookups
     // (first run, SQLite cache empty) or a slow IBKR search response.
-    (api.resolveConid as ReturnType<typeof vi.fn>).mockImplementation(
+    (parallaxApi.resolveConid as ReturnType<typeof vi.fn>).mockImplementation(
       () => new Promise(() => {}), // never resolves
     );
 
@@ -247,15 +247,15 @@ describe("MarketPulse — Task 3.1 bundled endpoints", () => {
     // allResolved=false, meaning the bundled queries must stay disabled.
     await new Promise((r) => setTimeout(r, 50));
 
-    expect(api.quotesBundled).not.toHaveBeenCalled();
-    expect(api.candlesBundled).not.toHaveBeenCalled();
+    expect(parallaxApi.quotesBundled).not.toHaveBeenCalled();
+    expect(parallaxApi.candlesBundled).not.toHaveBeenCalled();
   });
 
   // ── Task 3.3: candles deferred until quotes settle ──────────
 
   it("Task 3.3: candles query does not fire while quotes are still loading", async () => {
     // Quotes hang — simulates a slow IBKR snapshot response on cold start.
-    (api.quotesBundled as ReturnType<typeof vi.fn>).mockImplementation(
+    (parallaxApi.quotesBundled as ReturnType<typeof vi.fn>).mockImplementation(
       () => new Promise(() => {}), // never resolves
     );
 
@@ -264,11 +264,11 @@ describe("MarketPulse — Task 3.1 bundled endpoints", () => {
 
     // Wait for conid resolution to complete (fast — mocked to resolve immediately).
     await waitFor(() => {
-      expect(api.quotesBundled).toHaveBeenCalledTimes(1);
+      expect(parallaxApi.quotesBundled).toHaveBeenCalledTimes(1);
     });
 
     // Quotes are pending (quotesData == null) → candles must still be disabled.
-    expect(api.candlesBundled).not.toHaveBeenCalled();
+    expect(parallaxApi.candlesBundled).not.toHaveBeenCalled();
   });
 
   it("candles query never fires anymore (sparkline removed; live ticks replaced polling)", async () => {
@@ -277,11 +277,11 @@ describe("MarketPulse — Task 3.1 bundled endpoints", () => {
 
     // Quotes resolve.
     await waitFor(() => {
-      expect(api.quotesBundled).toHaveBeenCalledTimes(1);
+      expect(parallaxApi.quotesBundled).toHaveBeenCalledTimes(1);
     });
 
     // No candles call follows — historical sparkline was removed.
     // Live updates flow through useLiveQuotes / the WS singleton instead.
-    expect(api.candlesBundled).not.toHaveBeenCalled();
+    expect(parallaxApi.candlesBundled).not.toHaveBeenCalled();
   });
 });

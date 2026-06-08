@@ -3,8 +3,8 @@ import { renderHook, act } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { useCreateWatchlist, useDeleteWatchlist } from "../useWatchlistMutations";
 
-vi.mock("@/lib/api", () => ({
-  api: {
+vi.mock("@/modules/parallax/api", () => ({
+  parallaxApi: {
     createWatchlist: vi.fn().mockResolvedValue({ id: "123", name: "My List" }),
     deleteWatchlist: vi.fn().mockResolvedValue(undefined),
   },
@@ -14,7 +14,7 @@ vi.mock("sonner", () => ({
   toast: { success: vi.fn(), error: vi.fn() },
 }));
 
-import { api } from "@/lib/api";
+import { parallaxApi } from "@/modules/parallax/api";
 
 function makeWrapper() {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -32,7 +32,7 @@ describe("useCreateWatchlist", () => {
     await act(async () => {
       await result.current.mutateAsync("My List");
     });
-    expect(api.createWatchlist).toHaveBeenCalledWith("My List");
+    expect(parallaxApi.createWatchlist).toHaveBeenCalledWith("My List");
     expect(spy).toHaveBeenCalledWith({ queryKey: ["watchlists"] });
   });
 });
@@ -44,7 +44,7 @@ describe("useDeleteWatchlist", () => {
     await act(async () => {
       await result.current.mutateAsync("123");
     });
-    expect(api.deleteWatchlist).toHaveBeenCalledWith("123");
+    expect(parallaxApi.deleteWatchlist).toHaveBeenCalledWith("123");
     expect(spy).toHaveBeenCalledWith({ queryKey: ["watchlists"] });
   });
 });

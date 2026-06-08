@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { api } from "@/lib/api";
+import { inflectApi } from "@/modules/inflect/api";
 import type { BasisLotUpsertRequest } from "@/modules/inflect/types";
 
 function invalidateBasisRepair(
@@ -20,7 +20,7 @@ export function useBasisLots(accountId: string | null, conid: number | null | un
   return useQuery({
     queryKey: ["inflect", "basis-lots", accountId, conid ?? null],
     queryFn: ({ signal }) =>
-      api.inflectBasisLots({ accountId: accountId as string, conid: conid as number }, signal),
+      inflectApi.inflectBasisLots({ accountId: accountId as string, conid: conid as number }, signal),
     enabled: Boolean(accountId && conid != null),
   });
 }
@@ -29,7 +29,7 @@ export function useBasisAudit(accountId: string | null, conid: number | null | u
   return useQuery({
     queryKey: ["inflect", "basis-audit", accountId, conid ?? null],
     queryFn: ({ signal }) =>
-      api.inflectBasisAudit({ accountId: accountId as string, conid: conid as number }, signal),
+      inflectApi.inflectBasisAudit({ accountId: accountId as string, conid: conid as number }, signal),
     enabled: Boolean(accountId && conid != null),
   });
 }
@@ -38,7 +38,7 @@ export function useCreateBasisLot(accountId: string | null) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (body: BasisLotUpsertRequest) =>
-      api.inflectCreateBasisLot(accountId as string, body),
+      inflectApi.inflectCreateBasisLot(accountId as string, body),
     onSuccess: (lot) => {
       invalidateBasisRepair(qc, lot.account_id, lot.conid);
       toast.success("Basis lot saved");
@@ -51,7 +51,7 @@ export function useUpdateBasisLot(accountId: string | null) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: ({ lotId, body }: { lotId: number; body: BasisLotUpsertRequest }) =>
-      api.inflectUpdateBasisLot(lotId, accountId as string, body),
+      inflectApi.inflectUpdateBasisLot(lotId, accountId as string, body),
     onSuccess: (lot) => {
       invalidateBasisRepair(qc, lot.account_id, lot.conid);
       toast.success("Basis lot updated");
@@ -64,7 +64,7 @@ export function useDeleteBasisLot(accountId: string | null) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: ({ lotId }: { lotId: number; conid: number }) =>
-      api.inflectDeleteBasisLot(lotId, accountId as string),
+      inflectApi.inflectDeleteBasisLot(lotId, accountId as string),
     onSuccess: (_result, variables) => {
       if (accountId) {
         invalidateBasisRepair(qc, accountId, variables.conid);

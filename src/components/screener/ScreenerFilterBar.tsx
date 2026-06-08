@@ -18,7 +18,7 @@ import { useState, useRef, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Plus, X, Play, Loader2, ChevronDown, RotateCcw, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { api, type FilterCatalogueEntry, type ScannerLocation } from "@/lib/api";
+import { parallaxApi, type FilterCatalogueEntry, type ScannerLocation } from "@/modules/parallax/api";
 import { useScreenerStore, type ActiveFilter } from "@/store/screener";
 import { PresetSkeleton } from "./ScreenerSkeleton";
 import NumericFilterInput from "./NumericFilterInput";
@@ -499,13 +499,13 @@ export default function ScreenerFilterBar({
 
   const { data: presets, isLoading: presetsLoading } = useQuery({
     queryKey: ["screener-presets"],
-    queryFn: () => api.screenerPresets(),
+    queryFn: () => parallaxApi.screenerPresets(),
     staleTime: 60_000 * 60,
   });
 
   const { data: catalogue = [] } = useQuery({
     queryKey: ["screener-filter-catalogue"],
-    queryFn: () => api.screenerFilterCatalogue(),
+    queryFn: () => parallaxApi.screenerFilterCatalogue(),
     staleTime: Infinity, // catalogue is static
   });
 
@@ -513,7 +513,7 @@ export default function ScreenerFilterBar({
   // the IBKR instrument it pairs with. Cached for 1h (rarely changes).
   const { data: locations = [] } = useQuery({
     queryKey: ["screener-locations"],
-    queryFn: () => api.screenerLocations(),
+    queryFn: () => parallaxApi.screenerLocations(),
     staleTime: 60 * 60 * 1000,
   });
 

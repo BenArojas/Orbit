@@ -44,7 +44,7 @@ import {
   ColorType,
 } from "lightweight-charts";
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
-import type { IndicatorResult, IndicatorValue } from "@/lib/api";
+import type { IndicatorResult, IndicatorValue } from "@/modules/parallax/api";
 import { useCrosshairStore } from "@/store";
 import { readChartTheme } from "./chartTheme";
 

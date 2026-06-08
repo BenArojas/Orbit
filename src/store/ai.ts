@@ -16,7 +16,7 @@
 
 import { create } from "zustand";
 import type { SignalData } from "@/components/ai";
-import type { AiStatusResponse, OllamaModelResponse } from "@/lib/api";
+import type { AiStatusResponse, OllamaModelResponse } from "@/modules/parallax/api";
 
 /* ── Types ── */
 

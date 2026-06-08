@@ -17,7 +17,7 @@ import { useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { X, ArrowRight, Plus, TrendingUp, TrendingDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { api } from "@/lib/api";
+import { parallaxApi } from "@/modules/parallax/api";
 import { useScreenerStore } from "@/store/screener";
 import { useNavigationStore } from "@/store";
 import { SlideOverSkeleton } from "./ScreenerSkeleton";
@@ -230,7 +230,7 @@ export default function ScreenerPeekPanel() {
   // Fetch full contract details + enrichment
   const { data: contract, isLoading } = useQuery({
     queryKey: ["contract-info", peekConid],
-    queryFn: () => api.screenerContractInfo(peekConid!),
+    queryFn: () => parallaxApi.screenerContractInfo(peekConid!),
     enabled: ibkrReady && !!peekConid,
     staleTime: 60_000 * 30, // 30 min — static details + computed history don't drift fast
   });

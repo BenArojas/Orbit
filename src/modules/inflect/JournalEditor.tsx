@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { api } from "@/lib/api";
+import { inflectApi } from "@/modules/inflect/api";
 import { useSaveTradeJournal } from "@/hooks/useTradeJournal";
 import type { InflectJournalEntry } from "./types";
 
@@ -23,7 +23,7 @@ export function JournalEditor({
 }) {
   const setupsQuery = useQuery({
     queryKey: ["inflect", "setups"],
-    queryFn: ({ signal }) => api.inflectSetups(signal),
+    queryFn: ({ signal }) => inflectApi.inflectSetups(signal),
     staleTime: Infinity,
   });
   const setups = setupsQuery.data?.setups ?? [];

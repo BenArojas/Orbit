@@ -20,7 +20,7 @@ import { useMemo } from "react";
 
 import { useChartStore } from "@/store/chart";
 import { FIB_STACK_SOFT_CAP, FIB_STACK_HARD_CAP } from "@/store/chart";
-import type { FibonacciResult, TriggerRuleCreate } from "@/lib/api";
+import type { FibonacciResult, TriggerRuleCreate } from "@/modules/parallax/api";
 import { RuleModal } from "@/components/triggers";
 import {
   useLockedFibs,

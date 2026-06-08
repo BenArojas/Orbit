@@ -1,5 +1,5 @@
 import { useState } from "react";
-import type { MoonMarketOptionContract } from "@/lib/api";
+import type { MoonMarketOptionContract } from "@/modules/moonmarket/api";
 import { OptionContractCell } from "./OptionContractCell";
 import { useOptionStrike } from "./useOptionsChain";
 

@@ -11,7 +11,7 @@
  */
 
 import { useQuery } from "@tanstack/react-query";
-import { api } from "@/lib/api";
+import { parallaxApi } from "@/modules/parallax/api";
 
 export interface UseInstrumentResult {
   symbol: string | null;
@@ -22,7 +22,7 @@ export interface UseInstrumentResult {
 export function useInstrument(conid: number | null): UseInstrumentResult {
   const { data, isLoading } = useQuery({
     queryKey: ["instrument", conid],
-    queryFn: ({ signal }) => api.getInstrument(conid!, signal),
+    queryFn: ({ signal }) => parallaxApi.getInstrument(conid!, signal),
     enabled: conid != null,
     staleTime: 5 * 60_000, // 5 min — instrument metadata is stable
     retry: false,          // don't retry if the instrument isn't cached yet

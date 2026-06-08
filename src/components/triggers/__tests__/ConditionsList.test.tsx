@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import { ConditionsList } from "../ConditionsList";
 import { formatTriggerCondition } from "../formatTriggerCondition";
-import type { TriggerCondition } from "@/lib/api";
+import type { TriggerCondition } from "@/modules/parallax/api";
 
 const baseCondition: TriggerCondition = {
   indicator: "rsi",

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { MoonMarketAllocationItem } from "@/lib/api";
+import type { MoonMarketAllocationItem } from "@/modules/moonmarket/api";
 import {
   allocationMetricValue,
   displayAssetClass,

@@ -22,7 +22,7 @@
  */
 
 import { create } from "zustand";
-import type { IbkrFilterItem, ScreenerResultRow, ScannerPreset } from "@/lib/api";
+import type { IbkrFilterItem, ScreenerResultRow, ScannerPreset } from "@/modules/parallax/api";
 
 /** Rows per page (hardcoded — no page-size selector any more) */
 export const SCREENER_PAGE_SIZE = 25;

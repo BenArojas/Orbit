@@ -13,7 +13,7 @@ import { useEffect, useId, useMemo, useRef, useState } from "react";
 
 import { readChartTheme } from "@/components/charts/chartTheme";
 import { useCrosshairStore } from "@/store";
-import type { CandleData } from "@/lib/api";
+import type { CandleData } from "@/modules/parallax/api";
 import { DEFAULT_COMPARE_COLORS, type CompareColors, type Layout } from "@/store/compare";
 import type { CompareLiveTick } from "@/hooks/useCompareData";
 

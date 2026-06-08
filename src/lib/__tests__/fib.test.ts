@@ -15,7 +15,7 @@ import {
   fibonacciResultFromCandidate,
   GOLDEN_POCKET_RATIOS,
 } from "../fib";
-import type { FibonacciCandidate } from "../api";
+import type { FibonacciCandidate } from "@/modules/parallax/api";
 
 // ── Canonical ratio sets (mirror backend defaults) ──────────
 

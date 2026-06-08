@@ -21,9 +21,9 @@ vi.mock("@/lib/query", () => {
 });
 
 // Mock the backend API so no real fetch goes out.
-vi.mock("@/lib/api", () => {
+vi.mock("@/modules/parallax/api", () => {
   return {
-    api: {
+    parallaxApi: {
       getPulseConfig: vi.fn(),
       setPulseConfig: vi.fn(),
       resetPulseConfig: vi.fn(),
@@ -31,12 +31,12 @@ vi.mock("@/lib/api", () => {
   };
 });
 
-import { api } from "@/lib/api";
+import { parallaxApi } from "@/modules/parallax/api";
 // @ts-expect-error — the mock exports __removeQueries under the hood.
 import { __removeQueries } from "@/lib/query";
 import { usePulseConfigStore, DEFAULT_PULSE_ITEMS } from "./pulseConfig";
 
-const mockedApi = api as unknown as {
+const mockedApi = parallaxApi as unknown as {
   getPulseConfig: ReturnType<typeof vi.fn>;
   setPulseConfig: ReturnType<typeof vi.fn>;
   resetPulseConfig: ReturnType<typeof vi.fn>;

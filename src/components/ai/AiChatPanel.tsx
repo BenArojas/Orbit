@@ -26,13 +26,12 @@ import { useAiStatus } from "@/hooks/useAiStatus";
 import { useAiStream } from "@/hooks/useAiStream";
 import { useAiAnalyzeStream } from "@/hooks/useAiAnalyzeStream";
 import AiConfigPanel, { type AiTimeframe, type AiIndicator } from "./AiConfigPanel";
-import type { AiContextMode } from "@/lib/api";
 import ActionSignalCard from "./ActionSignalCard";
 import AiSetupGuide from "./AiSetupGuide";
 import AiModelSelector from "./AiModelSelector";
 import ResponseTimeBadge from "./ResponseTimeBadge";
 import FibStackPanel from "./fib/FibStackPanel";
-import type { FibonacciResult } from "@/lib/api";
+import type { AiContextMode,FibonacciResult } from "@/modules/parallax/api";
 
 /* ── Types ── */
 
