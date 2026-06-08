@@ -8,12 +8,6 @@
 import { sidecarRequest } from "@/lib/sidecarClient";
 
 // ── Journal / setups ────────────────────────────────────────
-// ── Trades / calendar ───────────────────────────────────────
-// ── Sync / backfill ─────────────────────────────────────────
-// ── Basis recovery ──────────────────────────────────────────
-// ── Storage maintenance ─────────────────────────────────────
-// ── API functions ───────────────────────────────────────────
-
 export interface InflectJournalEntry {
   trade_id: string;
   account_id: string;
@@ -30,11 +24,10 @@ export interface InflectJournalUpsertRequest {
   notes: string | null;
   tags: string[];
 }
-
 export interface InflectSetupsResponse {
   setups: string[];
 }
-
+// ── Trades / calendar ───────────────────────────────────────
 export interface InflectFill {
   execution_id: string;
   conid: number;
@@ -113,12 +106,13 @@ export interface InflectCalendarResponse {
   days_traded: number;
 }
 
+  export type InflectTradeStatus = "OPEN" | "CLOSED" | "INCOMPLETE_BASIS";
+// ── Sync / backfill ─────────────────────────────────────────
 export interface InflectSyncResponse {
   account_id: string;
   synced: number;
 }
 
-export type InflectTradeStatus = "OPEN" | "CLOSED" | "INCOMPLETE_BASIS";
 
 export type InflectBackfillQueueStatus =
   | "pending"
@@ -145,7 +139,7 @@ export interface InflectBackfillStatusResponse {
   account_id: string;
   items: InflectBackfillStatusItem[];
 }
-
+// ── Basis recovery ──────────────────────────────────────────
 export interface BasisLot {
   id: number;
   account_id: string;
@@ -186,7 +180,7 @@ export interface BasisAuditResponse {
   conid: number;
   items: BasisAuditEntry[];
 }
-
+// ── Storage maintenance ─────────────────────────────────────
 export interface InflectStorageStatsResponse {
   file_size_bytes: number;
   table_counts: Record<string, number>;
@@ -205,6 +199,7 @@ export interface InflectStorageCleanupResponse {
   export_recommended: boolean;
   message: string;
 }
+// ── API functions ───────────────────────────────────────────
 
 export const inflectApi = {
     inflectSetups: (signal?: AbortSignal) =>

@@ -14,16 +14,6 @@ import { sidecarRequest } from "@/lib/sidecarClient";
 import { Timeframe } from "@/store/chart";
 
 // ── Market / instruments ────────────────────────────────────
-// ── Candles / indicators ────────────────────────────────────
-// ── Fibonacci config / locks ────────────────────────────────
-// ── Drawings ────────────────────────────────────────────────
-// ── Sectors / pulse dashboard ───────────────────────────────
-// ── Watchlists ──────────────────────────────────────────────
-// ── Triggers / templates / hits ─────────────────────────────
-// ── AI analysis / model lifecycle ───────────────────────────
-// ── Screener ────────────────────────────────────────────────
-// ── API functions ───────────────────────────────────────────
-
 export interface QuoteResponse {
   conid: number;
   symbol: string;
@@ -65,6 +55,10 @@ export interface SearchResult {
   secType: string;
 }
 
+export interface QuotesBundledResponse {
+    items: QuoteResponse[];
+}
+// ── Candles / indicators ────────────────────────────────────
 export interface CandleData {
   time: number;
   open: number;
@@ -73,93 +67,18 @@ export interface CandleData {
   close: number;
   volume: number;
 }
-/**
- * news_candle detection methods (Phase 6.6). Only meaningful when
- * `indicator === "news_candle"`.
- */
-export type NewsCandleMethod =
-    | "volume_spike"
-    | "range_spike"
-    | "gap"
-    | "long_wick";
-
-export type TriggerCondition = {
-    indicator: string;
-    condition: "above" | "below" | "crosses_above" | "crosses_below" | "fires";
-    threshold: number | null;
-    news_candle_method?: "volume_spike" | "range_spike" | "gap" | "long_wick" | null;
-};
-
-export type TriggerRule = {
-    id: number;
-    name: string;
-    enabled: boolean;
-    timeframe: string;
-    scan_interval_seconds: number;
-    watchlist_name: string | null;
-    conid: number | null;
-    symbol: string | null;
-    template_id: number | null;
-    ibkr_mirror_target: string | null;
-    conditions: TriggerCondition[];
-    created_at: string;
-    updated_at: string;
-};
-
-export type TriggerRuleCreate = Omit<TriggerRule, "id" | "created_at" | "updated_at">;
-
-export type TriggerRuleUpdate = Partial<TriggerRuleCreate>;
-
-export interface WatchlistConfig {
-    name: string;
-    auto_expire_days: number | null;
-    updated_at: string | null;
-}
-
-export interface WatchlistConfigUpdate {
-    auto_expire_days: number | null;
-}
-
-export type TriggerConditionValue = {
-    indicator: string;
-    condition: string;
-    threshold: number | null;
-    actual_value: number;
-    news_candle_method?: string | null;
-};
-
-export type TriggerHit = {
-    id: number;
-    rule_id: number;
-    rule_name: string | null;
+/** One candle series entry in the bundled candles response. */
+export interface CandlesBundledItem {
     conid: number;
-    symbol: string;
-    triggered_at: string;
-    watchlist_name: string | null;
-    condition_values: TriggerConditionValue[];
-    dismissed_at: string | null;
-    snoozed_until: string | null;
-    source_watchlist: string | null;
-    target_watchlist: string | null;
-    moved_back: boolean;
-    expires_at: string | null;
-};
+    candles: CandleData[];
+}
 
-export type RuleTemplate = {
-    id: number;
-    name: string;
-    description: string | null;
-    category: string;
-    is_builtin: boolean;
-    default_timeframe: string;
-    conditions: TriggerCondition[];
-    created_at: string;
-};
-
-export type StockTagMap = Record<
-    number,
-    { rule_id: number; rule_name: string; indicators: string[]; fired_at: string }[]
->;
+/** Bundled candles response — one item per requested conid, plus any per-conid errors. */
+export interface CandlesBundledResponse {
+    items: CandlesBundledItem[];
+    /** Keyed by conid (as string). Non-empty when one or more history fetches failed. */
+    errors: Record<string, string>;
+}
 
 export interface IndicatorRequest {
     conid: number;
@@ -187,7 +106,17 @@ export interface IndicatorResult {
     values: IndicatorValue[];
     params: Record<string, number | string>;
 }
-
+export interface IndicatorComputeResponse {
+    conid: number;
+    /** Echoed from request — lets the frontend verify cache correctness */
+    timeframe: Timeframe;
+    /** @deprecated Kept for backwards compat — use timeframe */
+    period: string;
+    candles: CandleData[];
+    indicators: IndicatorResult[];
+    fibonacci: FibonacciResult | null;
+}
+// ── Fibonacci config / locks ────────────────────────────────
 export interface FibonacciLevel {
     level: number;
     price: number;
@@ -269,17 +198,6 @@ export interface FibonacciResult {
     no_active_fib_reason: string | null;
 }
 
-export interface IndicatorComputeResponse {
-    conid: number;
-    /** Echoed from request — lets the frontend verify cache correctness */
-    timeframe: Timeframe;
-    /** @deprecated Kept for backwards compat — use timeframe */
-    period: string;
-    candles: CandleData[];
-    indicators: IndicatorResult[];
-    fibonacci: FibonacciResult | null;
-}
-
 // ── Fibonacci Config (Branch 3) ─────────────────────────
 
 /**
@@ -341,8 +259,7 @@ export interface LockedFibonacciResponse {
     locked_at: string;
 }
 
-// ── Chart Drawings (drawing-tools-plan.md Branch 1) ─────
-
+// ── Drawings ────────────────────────────────────────────────
 /** Drawing kind strings — mirrors backend _VALID_KINDS set. */
 export type DrawingKind =
     | "horizontal_line"
@@ -395,9 +312,7 @@ export interface UpdateDrawingRequest {
     anchors?: DrawingAnchor[];
     style?: DrawingStylePayload;
 }
-
-// ── Sectors (Phase 3 — tasks 3.3, 3.4) ──────────────────
-
+// ── Sectors / pulse dashboard ───────────────────────────────
 export interface SectorPerformance {
     symbol: string;
     name: string;
@@ -452,8 +367,23 @@ export interface SectorRotationResponse {
     offensive: { symbol: string; pct: number | null }[];
     defensive: { symbol: string; pct: number | null }[];
 }
+export interface PulseItem {
+    label: string;
+    resolve: string;
+    /**
+     * Optional IBKR secType hint — one of "", "STK", "IND", "BOND".
+     * "" means "no hint" (resolver falls through STK → unfiltered).
+     * Use "STK" to force an equity/ETF match (e.g. GLD as the ARCA
+     * ETF rather than HKFE futures). Use "IND" for indices.
+     */
+    sec_type?: string;
+}
 
-// ── Watchlists (Phase 3 — task 3.5) ─────────────────────
+export interface PulseConfigResponse {
+    items: PulseItem[];
+}
+
+// ── Watchlists ──────────────────────────────────────────────
 
 export interface WatchlistInfo {
     id: string;
@@ -507,9 +437,91 @@ export interface WatchlistQuote {
 export interface WatchlistQuotesResponse {
     items: WatchlistQuote[];
 }
+export interface WatchlistConfig {
+    name: string;
+    auto_expire_days: number | null;
+    updated_at: string | null;
+}
 
-// ── AI Analysis (Phase 4 — tasks 4.9–4.12) ────────────────
+export interface WatchlistConfigUpdate {
+    auto_expire_days: number | null;
+}
+// ── Triggers / templates / hits ─────────────────────────────
 
+export type NewsCandleMethod =
+    | "volume_spike"
+    | "range_spike"
+    | "gap"
+    | "long_wick";
+
+export type TriggerCondition = {
+    indicator: string;
+    condition: "above" | "below" | "crosses_above" | "crosses_below" | "fires";
+    threshold: number | null;
+    news_candle_method?: "volume_spike" | "range_spike" | "gap" | "long_wick" | null;
+};
+
+export type TriggerRule = {
+    id: number;
+    name: string;
+    enabled: boolean;
+    timeframe: string;
+    scan_interval_seconds: number;
+    watchlist_name: string | null;
+    conid: number | null;
+    symbol: string | null;
+    template_id: number | null;
+    ibkr_mirror_target: string | null;
+    conditions: TriggerCondition[];
+    created_at: string;
+    updated_at: string;
+};
+
+export type TriggerRuleCreate = Omit<TriggerRule, "id" | "created_at" | "updated_at">;
+
+export type TriggerRuleUpdate = Partial<TriggerRuleCreate>;
+
+export type TriggerConditionValue = {
+    indicator: string;
+    condition: string;
+    threshold: number | null;
+    actual_value: number;
+    news_candle_method?: string | null;
+};
+
+export type TriggerHit = {
+    id: number;
+    rule_id: number;
+    rule_name: string | null;
+    conid: number;
+    symbol: string;
+    triggered_at: string;
+    watchlist_name: string | null;
+    condition_values: TriggerConditionValue[];
+    dismissed_at: string | null;
+    snoozed_until: string | null;
+    source_watchlist: string | null;
+    target_watchlist: string | null;
+    moved_back: boolean;
+    expires_at: string | null;
+};
+
+export type RuleTemplate = {
+    id: number;
+    name: string;
+    description: string | null;
+    category: string;
+    is_builtin: boolean;
+    default_timeframe: string;
+    conditions: TriggerCondition[];
+    created_at: string;
+};
+
+export type StockTagMap = Record<
+    number,
+    { rule_id: number; rule_name: string; indicators: string[]; fired_at: string }[]
+>;
+// ── AI analysis / model lifecycle ───────────────────────────
 export type AiContextMode = "none" | "summary" | "ohlcv" | "patterns";
 
 export interface AnalyzeRequest {
@@ -639,9 +651,7 @@ export interface SetupGuideResponse {
 export interface ModelSelectRequest {
     model: string;
 }
-
-// ── Screener (Phase 5 — tasks 5.1–5.6) ────────────────────
-
+// ── Screener ────────────────────────────────────────────────
 export interface ScannerPreset {
     instrument: string;
     scan_type: string;
@@ -816,46 +826,8 @@ export interface AiFilterResponse {
     raw_query: string;
 }
 
-// ── Bundled market-data responses (Phase 8 / Task 3.1) ────────────────────
-// Returned by GET /market/quotes?conids=... and GET /market/candles?conids=...
 
-/** Bundled quote response — one item per requested conid. */
-export interface QuotesBundledResponse {
-    items: QuoteResponse[];
-}
-
-/** One candle series entry in the bundled candles response. */
-export interface CandlesBundledItem {
-    conid: number;
-    candles: CandleData[];
-}
-
-/** Bundled candles response — one item per requested conid, plus any per-conid errors. */
-export interface CandlesBundledResponse {
-    items: CandlesBundledItem[];
-    /** Keyed by conid (as string). Non-empty when one or more history fetches failed. */
-    errors: Record<string, string>;
-}
-
-// ── Pulse Config (Phase 8.9+) ───────────────────────────────
-// User-configurable ticker list for the dashboard's Market Pulse bar.
-
-export interface PulseItem {
-    label: string;
-    resolve: string;
-    /**
-     * Optional IBKR secType hint — one of "", "STK", "IND", "BOND".
-     * "" means "no hint" (resolver falls through STK → unfiltered).
-     * Use "STK" to force an equity/ETF match (e.g. GLD as the ARCA
-     * ETF rather than HKFE futures). Use "IND" for indices.
-     */
-    sec_type?: string;
-}
-
-export interface PulseConfigResponse {
-    items: PulseItem[];
-}
-
+// ── API functions ───────────────────────────────────────────
 
 export const parallaxApi = {
     // Market Data

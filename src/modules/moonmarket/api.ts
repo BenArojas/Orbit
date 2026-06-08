@@ -25,19 +25,6 @@ export interface MoonMarketAccountFunds {
   cash: number | null;
   currency: string;
 }
-export interface MoonMarketAllocationItem {
-  conid: number;
-  symbol: string;
-  label: string;
-  contract_desc?: string | null;
-  value: number;
-  percent: number;
-  asset_class: string;
-  unrealized_pnl: number;
-  daily_pnl: number | null;
-  pnl_percent: number | null;
-  daily_pnl_percent: number | null;
-}
 
 // Portfolio/performance types
 export interface MoonMarketPosition {
@@ -56,7 +43,6 @@ export interface MoonMarketPosition {
   daily_pnl_percent: number | null;
   currency: string;
 }
-
 export interface MoonMarketPerformanceResponse {
   account_id: string;
   period: string;
@@ -92,13 +78,11 @@ export interface MoonMarketSeries {
 }
 
 // Trades/live orders types
-
 export type MoonMarketOrderSide = "BUY" | "SELL";
 export type MoonMarketOrderType = "MKT" | "LMT" | "STP" | "STP_LIMIT" | "TRAIL" | "TRAILLMT";
 export type MoonMarketTimeInForce = "DAY" | "GTC" | "IOC";
 export type MoonMarketTrailingType = "amt" | "%";
 export type MoonMarketOrderAssetClass = "STK" | "OPT";
-
 export interface MoonMarketOrderDraft {
   conid: number;
   assetClass?: MoonMarketOrderAssetClass;
@@ -119,31 +103,14 @@ export interface MoonMarketOrderPreviewRequest {
   account_id: string;
   order: MoonMarketOrderDraft;
 }
-
 export interface MoonMarketOrdersRequest {
   account_id: string;
   orders: MoonMarketOrderDraft[];
 }
-
 export interface MoonMarketOrderActionResponse {
   account_id: string;
   result: Record<string, unknown> | Array<Record<string, unknown>>;
 }
-
-export interface MoonMarketOrderRulesResponse {
-  account_id: string;
-  conid: number;
-  side: MoonMarketOrderSide;
-  rules: {
-    orderTypes?: string[];
-    orderTypesOutside?: string[];
-    tifTypes?: string[];
-    forceOrderPreview?: boolean;
-    orderDefaults?: Record<string, unknown>;
-    [key: string]: unknown;
-  };
-}
-
 export interface MoonMarketTrade {
   execution_id: string;
   account_id: string;
@@ -159,7 +126,6 @@ export interface MoonMarketTrade {
   trade_time: string;
   trade_time_ms: number | null;
 }
-
 export interface MoonMarketTradeSummary {
   total_trades: number;
   total_volume: number;
@@ -168,8 +134,6 @@ export interface MoonMarketTradeSummary {
   buy_count: number;
   sell_count: number;
 }
-
-
 export interface MoonMarketTradesResponse {
   account_id: string;
   days: number;
@@ -225,10 +189,6 @@ export interface MoonMarketOrderRulesResponse {
 export interface MoonMarketOrderPreviewRequest {
   account_id: string;
   order: MoonMarketOrderDraft;
-}
-export interface MoonMarketOrderActionResponse {
-  account_id: string;
-  result: Record<string, unknown> | Array<Record<string, unknown>>;
 }
 export interface MoonMarketOrdersRequest {
   account_id: string;
@@ -292,44 +252,6 @@ export interface MoonMarketOptionWindowResponse {
   expiration: string;
   strikes: MoonMarketOptionsChainData;
 }
-export interface MoonMarketOptionContract {
-  contractId: number;
-  underlyingConid: number;
-  expiration: string;
-  strike: number;
-  right: "C" | "P";
-  type: "call" | "put";
-  symbol: string;
-  lastPrice: number | null;
-  bid: number | null;
-  ask: number | null;
-  volume: number | null;
-  delta: number | null;
-  bidSize: number | null;
-  askSize: number | null;
-}
-export interface MoonMarketOptionExpirationsResponse {
-  underlying_conid: number;
-  symbol: string;
-  expirations: string[];
-}
-export interface MoonMarketOptionChainResponse {
-  underlying_conid: number;
-  expiration: string;
-  all_strikes: number[];
-  chain: MoonMarketOptionsChainData;
-}
-
-export interface MoonMarketSingleOptionStrikeResponse {
-  strike: number;
-  data: { call?: MoonMarketOptionContract; put?: MoonMarketOptionContract };
-}
-export interface MoonMarketOptionWindowResponse {
-  underlying_conid: number;
-  expiration: string;
-  strikes: MoonMarketOptionsChainData;
-}
-
 
 export const moonmarketApi = {
   moonmarketAccounts: (signal?: AbortSignal) =>
