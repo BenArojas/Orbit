@@ -5,7 +5,7 @@
  * JSON/no-content parsing, ApiError construction, abort passthrough, and
  * offline error translation.
  *
- * Product API modules should call sidecarRequest/request from here and should
+ * Product API modules should call sidecarRequest from here and should
  * not call fetch directly.
  */
 

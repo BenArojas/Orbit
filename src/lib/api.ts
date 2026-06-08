@@ -14,16 +14,12 @@
  * All HTTP transport behavior is owned by "@/lib/sidecarClient".
  */
 
-// Shared shell response types. Product-module response types belong in their module API files.
-// Orbit-level sidecar endpoints. Product modules should use their module-local API files.
 
 
 import { sidecarRequest } from "@/lib/sidecarClient";
 
 
-// ── Types ───────────────────────────────────────────────────
-// Mirror the Pydantic models from backend/models/__init__.py.
-// If you change a backend model, update the matching type here.
+// Shared shell response types. Product-module response types belong in their module API files.
 
 export interface HealthResponse {
   status: "ok" | "degraded";
@@ -83,8 +79,7 @@ export interface AuthStatusResponse {
 
 
 // ── API functions ───────────────────────────────────────────
-// Each function maps to one backend endpoint.
-// TanStack Query hooks call these — components never call them directly.
+// Orbit-level sidecar endpoints. Product modules should use their module-local API files.
 
 // Health & Auth
 export const api = {

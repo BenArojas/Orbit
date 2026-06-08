@@ -78,35 +78,7 @@ export interface MoonMarketSeries {
 }
 
 // Trades/live orders types
-export type MoonMarketOrderSide = "BUY" | "SELL";
-export type MoonMarketOrderType = "MKT" | "LMT" | "STP" | "STP_LIMIT" | "TRAIL" | "TRAILLMT";
-export type MoonMarketTimeInForce = "DAY" | "GTC" | "IOC";
-export type MoonMarketTrailingType = "amt" | "%";
-export type MoonMarketOrderAssetClass = "STK" | "OPT";
-export interface MoonMarketOrderDraft {
-  conid: number;
-  assetClass?: MoonMarketOrderAssetClass;
-  side: MoonMarketOrderSide;
-  quantity: number;
-  orderType: MoonMarketOrderType;
-  tif: MoonMarketTimeInForce;
-  price?: number;
-  auxPrice?: number;
-  trailingType?: MoonMarketTrailingType;
-  trailingAmt?: number;
-  outsideRTH?: boolean;
-  cOID?: string;
-  parentId?: string;
-  isSingleGroup?: boolean;
-}
-export interface MoonMarketOrderPreviewRequest {
-  account_id: string;
-  order: MoonMarketOrderDraft;
-}
-export interface MoonMarketOrdersRequest {
-  account_id: string;
-  orders: MoonMarketOrderDraft[];
-}
+
 export interface MoonMarketOrderActionResponse {
   account_id: string;
   result: Record<string, unknown> | Array<Record<string, unknown>>;
@@ -162,9 +134,37 @@ export interface MoonMarketLiveOrdersResponse {
   account_id: string;
   orders: MoonMarketLiveOrder[];
 }
+export interface MoonMarketOrderPreviewRequest {
+  account_id: string;
+  order: MoonMarketOrderDraft;
+}
+export interface MoonMarketOrdersRequest {
+  account_id: string;
+  orders: MoonMarketOrderDraft[];
+}
 
 // Trading/order types
-
+export type MoonMarketOrderSide = "BUY" | "SELL";
+export type MoonMarketOrderType = "MKT" | "LMT" | "STP" | "STP_LIMIT" | "TRAIL" | "TRAILLMT";
+export type MoonMarketTimeInForce = "DAY" | "GTC" | "IOC";
+export type MoonMarketTrailingType = "amt" | "%";
+export type MoonMarketOrderAssetClass = "STK" | "OPT";
+export interface MoonMarketOrderDraft {
+  conid: number;
+  assetClass?: MoonMarketOrderAssetClass;
+  side: MoonMarketOrderSide;
+  quantity: number;
+  orderType: MoonMarketOrderType;
+  tif: MoonMarketTimeInForce;
+  price?: number;
+  auxPrice?: number;
+  trailingType?: MoonMarketTrailingType;
+  trailingAmt?: number;
+  outsideRTH?: boolean;
+  cOID?: string;
+  parentId?: string;
+  isSingleGroup?: boolean;
+}
 export type TradingSafetyAction = "place" | "reply" | "cancel" | "modify";
 export type TradingSafetyMode = "paper_allowed" | "live_confirmation_required" | "rejected";
 export interface TradingSafetyConfirmation {
@@ -185,14 +185,6 @@ export interface MoonMarketOrderRulesResponse {
     orderDefaults?: Record<string, unknown>;
     [key: string]: unknown;
   };
-}
-export interface MoonMarketOrderPreviewRequest {
-  account_id: string;
-  order: MoonMarketOrderDraft;
-}
-export interface MoonMarketOrdersRequest {
-  account_id: string;
-  orders: MoonMarketOrderDraft[];
 }
 
 export interface MoonMarketPositionsRevalidateResponse {

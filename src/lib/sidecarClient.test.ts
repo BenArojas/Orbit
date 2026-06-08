@@ -10,6 +10,16 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError, sidecarRequest } from "@/lib/sidecarClient";
 import { NetworkOfflineError } from "@/lib/network";
 
+function noContentResponse(): Response {
+  return {
+    ok: true,
+    status: 204,
+    json: async () => {
+      throw new SyntaxError("Unexpected end of JSON input");
+    },
+  } as unknown as Response;
+}
+
 function response(body: unknown, init: Partial<Response> = {}): Response {
   return {
     ok: init.ok ?? true,
@@ -42,13 +52,7 @@ describe("sidecarRequest", () => {
   });
 
   it("treats 204 No Content as successful undefined", async () => {
-    vi.mocked(fetch).mockResolvedValue({
-      ok: true,
-      status: 204,
-      json: async () => {
-        throw new SyntaxError("Unexpected end of JSON input");
-      },
-    } as Response);
+    vi.mocked(fetch).mockResolvedValue(noContentResponse());
 
     await expect(sidecarRequest("DELETE", "/trigger-hits/42")).resolves.toBeUndefined();
   });
