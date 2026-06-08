@@ -8,7 +8,7 @@
  */
 
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { api, type TriggerRule, type TriggerHit } from "@/lib/api";
+import { parallaxApi, type TriggerRule, type TriggerHit } from "@/modules/parallax/api";
 import { RuleModal } from "@/components/triggers";
 
 export function TodayRulesPanel() {
@@ -16,13 +16,13 @@ export function TodayRulesPanel() {
 
   const { data: rules } = useQuery<TriggerRule[]>({
     queryKey: ["trigger-rules"],
-    queryFn: () => api.getTriggerRules(),
+    queryFn: () => parallaxApi.getTriggerRules(),
     staleTime: Infinity,
   });
 
   const { data: hits } = useQuery<TriggerHit[]>({
     queryKey: ["trigger-hits", "timeline"],
-    queryFn: () => api.getTriggerHits({ status: "all", limit: 200 }),
+    queryFn: () => parallaxApi.getTriggerHits({ status: "all", limit: 200 }),
     staleTime: 30_000,
   });
 
@@ -33,12 +33,12 @@ export function TodayRulesPanel() {
 
   const toggle = useMutation({
     mutationFn: ({ id, enabled }: { id: number; enabled: boolean }) =>
-      api.updateTriggerRule(id, { enabled }),
+      parallaxApi.updateTriggerRule(id, { enabled }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["trigger-rules"] }),
   });
 
   const remove = useMutation({
-    mutationFn: (id: number) => api.deleteTriggerRule(id),
+    mutationFn: (id: number) => parallaxApi.deleteTriggerRule(id),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["trigger-rules"] }),
   });
 

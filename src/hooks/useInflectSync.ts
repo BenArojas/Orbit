@@ -9,12 +9,12 @@
 
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { api } from "@/lib/api";
+import { inflectApi } from "@/modules/inflect/api";
 
 export function useInflectSync(accountId?: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (signal?: AbortSignal) => api.inflectSync(accountId, signal),
+    mutationFn: (signal?: AbortSignal) => inflectApi.inflectSync(accountId, signal),
     onSuccess: (res) => {
       qc.invalidateQueries({ queryKey: ["inflect", "calendar"] });
       qc.invalidateQueries({ queryKey: ["inflect", "trades"] });

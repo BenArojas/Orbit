@@ -10,8 +10,8 @@ vi.mock("sonner", () => ({
   },
 }));
 
-vi.mock("@/lib/api", () => ({
-  api: {
+vi.mock("@/modules/parallax/api", () => ({
+  parallaxApi: {
     getWatchlists: vi.fn().mockResolvedValue([]),
     getRuleTemplates: vi.fn().mockResolvedValue([]),
     createTriggerRule: vi.fn(),

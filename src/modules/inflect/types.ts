@@ -16,7 +16,7 @@ import type {
   BasisAuditResponse,
   BasisLot,
   BasisLotUpsertRequest,
-} from "@/lib/api";
+} from "@/modules/inflect/api";
 
 export type {
   BasisAuditEntry,

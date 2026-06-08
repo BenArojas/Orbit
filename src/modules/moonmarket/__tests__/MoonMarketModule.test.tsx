@@ -43,8 +43,8 @@ const mockApi = vi.hoisted(() => ({
   moonmarketOptionContract: vi.fn(),
 }));
 
-vi.mock("@/lib/api", () => ({
-  api: mockApi,
+vi.mock("@/modules/moonmarket/api", () => ({
+  moonmarketApi: mockApi,
 }));
 
 import { MoonMarketModule } from "@/modules/moonmarket/MoonMarketModule";

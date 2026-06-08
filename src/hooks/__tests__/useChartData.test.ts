@@ -17,8 +17,8 @@ import { useChartData } from "../useChartData";
 
 const mockComputeIndicators = vi.fn();
 
-vi.mock("@/lib/api", () => ({
-  api: {
+vi.mock("@/modules/parallax/api", () => ({
+  parallaxApi: {
     computeIndicators: (...args: unknown[]) => mockComputeIndicators(...args),
   },
 }));

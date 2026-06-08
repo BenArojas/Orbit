@@ -29,7 +29,7 @@ import {
   CrosshairMode,
 } from "lightweight-charts";
 import { useEffect, useId, useRef } from "react";
-import type { CandleData, IndicatorResult, FibonacciResult } from "@/lib/api";
+import type { CandleData, IndicatorResult, FibonacciResult } from "@/modules/parallax/api";
 import type { IndicatorId } from "@/store/chart";
 import { useChartStore } from "@/store/chart";
 import { useCrosshairStore } from "@/store";

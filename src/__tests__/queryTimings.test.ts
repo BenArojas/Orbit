@@ -94,8 +94,8 @@ vi.mock("@/store", () => ({
   }),
 }));
 
-vi.mock("@/lib/api", () => ({
-  api: {
+vi.mock("@/modules/parallax/api", () => ({
+  parallaxApi: {
     aiStatus: vi.fn().mockResolvedValue({}),
     aiModels: vi.fn().mockResolvedValue([]),
     aiSelectModel: vi.fn().mockResolvedValue({}),

@@ -9,7 +9,7 @@
 
 import { useEffect } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { api, type TriggerHit } from "@/lib/api";
+import { parallaxApi, type TriggerHit } from "@/modules/parallax/api";
 import { useNavigationStore } from "@/store/navigation";
 import { useWebSocket, type WsMessage } from "@/hooks/useWebSocket";
 import { formatTriggerConditionValue } from "@/components/triggers/formatTriggerCondition";
@@ -30,7 +30,7 @@ export function TodayTimeline() {
 
   const { data: hits } = useQuery<TriggerHit[]>({
     queryKey: ["trigger-hits", "timeline"],
-    queryFn: () => api.getTriggerHits({ status: "all", limit: 200 }),
+    queryFn: () => parallaxApi.getTriggerHits({ status: "all", limit: 200 }),
     staleTime: 30_000,
     refetchInterval: 60_000,
   });

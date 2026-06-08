@@ -14,8 +14,8 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
-import { api } from "@/lib/api";
-import type { FibConfig, UpdateFibConfigRequest } from "@/lib/api";
+import { parallaxApi } from "@/modules/parallax/api";
+import type { FibConfig, UpdateFibConfigRequest } from "@/modules/parallax/api";
 
 // ── Query key factory ────────────────────────────────────────
 
@@ -40,13 +40,13 @@ export function useFibConfig(): UseFibConfigReturn {
 
   const query = useQuery<FibConfig>({
     queryKey: FIB_CONFIG_KEY,
-    queryFn: () => api.getFibConfig(),
+    queryFn: () => parallaxApi.getFibConfig(),
     staleTime: Infinity,
     gcTime: Infinity,
   });
 
   const mutation = useMutation({
-    mutationFn: (req: UpdateFibConfigRequest) => api.updateFibConfig(req),
+    mutationFn: (req: UpdateFibConfigRequest) => parallaxApi.updateFibConfig(req),
     onSuccess: (config) => {
       // Replace the cached config with the server's normalized response
       // (avoids a redundant refetch right after PUT) ...

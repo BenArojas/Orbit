@@ -12,7 +12,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen } from "@testing-library/react";
 import ScreenerAiPanel, { classifySuggestion } from "./ScreenerAiPanel";
 import type { ActiveFilter } from "@/store/screener";
-import type { AiFilterSuggestion } from "@/lib/api";
+import type { AiFilterSuggestion } from "@/modules/parallax/api";
 
 // ── Module mocks ──────────────────────────────────────────────
 

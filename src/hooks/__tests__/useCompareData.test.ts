@@ -10,8 +10,8 @@ const mockSubscribe = vi.fn();
 const mockUnsubscribe = vi.fn();
 const mockAddHandler = vi.fn();
 
-vi.mock("@/lib/api", () => ({
-  api: {
+vi.mock("@/modules/parallax/api", () => ({
+  parallaxApi: {
     computeIndicators: (...args: unknown[]) => mockComputeIndicators(...args),
   },
 }));

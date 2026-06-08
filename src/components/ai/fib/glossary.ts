@@ -9,7 +9,7 @@
  * Branch 3, plan decisions 3A/3B.
  */
 
-import type { FibFactorName } from "@/lib/api";
+import type { FibFactorName } from "@/modules/parallax/api";
 
 export interface FibGlossaryEntry {
   /** Short human-readable label rendered in the FibScoreCard rows. */

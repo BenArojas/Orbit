@@ -2,8 +2,8 @@ import { describe, expect, it, vi } from "vitest";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
-vi.mock("@/lib/api", () => ({
-  api: {
+vi.mock("@/modules/inflect/api", () => ({
+  inflectApi: {
     inflectStorage: vi.fn().mockResolvedValue({
       file_size_bytes: 4096,
       table_counts: { fills: 2 },
@@ -21,7 +21,7 @@ vi.mock("@/lib/api", () => ({
 
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
-import { api } from "@/lib/api";
+import { inflectApi } from "@/modules/inflect/api";
 import { useInflectStorage, useInflectStorageCleanup } from "../useInflectStorage";
 
 function makeWrapper() {
@@ -47,8 +47,8 @@ describe("useInflectStorage", () => {
       });
     });
 
-    expect(api.inflectStorage).toHaveBeenCalled();
-    expect(api.inflectStorageCleanup).toHaveBeenCalledWith({
+    expect(inflectApi.inflectStorage).toHaveBeenCalled();
+    expect(inflectApi.inflectStorageCleanup).toHaveBeenCalledWith({
       before_date: "2026-06-01",
       confirm: true,
     });

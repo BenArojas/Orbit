@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import type { MoonMarketOptionContract } from "@/lib/api";
+import type { MoonMarketOptionContract } from "@/modules/moonmarket/api";
 import { StrikeRow } from "./StrikeRow";
 import { useOptionWindow } from "./useOptionsChain";
 

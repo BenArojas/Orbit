@@ -8,7 +8,7 @@
  */
 
 import { useQuery } from "@tanstack/react-query";
-import { api } from "@/lib/api";
+import { inflectApi } from "@/modules/inflect/api";
 import type { InflectTradeStatus } from "@/modules/inflect/types";
 
 export interface InflectTradeDateRange {
@@ -38,7 +38,7 @@ export function useInflectTrades(
       range?.from ?? null,
       range?.to ?? null,
     ],
-    queryFn: ({ signal }) => api.inflectTrades({ accountId, status, ...range }, signal),
+    queryFn: ({ signal }) => inflectApi.inflectTrades({ accountId, status, ...range }, signal),
     enabled,
   });
 }

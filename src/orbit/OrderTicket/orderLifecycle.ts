@@ -6,7 +6,7 @@ import type {
   MoonMarketTimeInForce,
   MoonMarketTrade,
   MoonMarketTrailingType,
-} from "@/lib/api";
+} from "@/modules/moonmarket/api";
 import type { OrderTicketAssetClass } from "./useOrderTicketStore";
 
 export type OrderLifecycleInput = {

@@ -46,7 +46,7 @@ import { GripVertical, Plus, Trash2, RotateCcw } from "lucide-react";
 import { toast } from "sonner";
 
 import { usePulseConfigStore } from "@/store";
-import type { PulseItem } from "@/lib/api";
+import type { PulseItem } from "@/modules/parallax/api";
 import {
   Dialog,
   DialogContent,

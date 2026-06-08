@@ -18,8 +18,8 @@ import WatchlistTab from "../WatchlistTab";
 
 // ── Mock the api module ────────────────────────────────────────────────────
 
-vi.mock("@/lib/api", () => ({
-  api: {
+vi.mock("@/modules/parallax/api", () => ({
+  parallaxApi: {
     getWatchlists: vi.fn(),
     watchlistMembership: vi.fn(),
     watchlistAddInstrument: vi.fn(),
@@ -27,7 +27,7 @@ vi.mock("@/lib/api", () => ({
   },
 }));
 
-import { api } from "@/lib/api";
+import { parallaxApi } from "@/modules/parallax/api";
 
 // ── Helpers ───────────────────────────────────────────────────────────────
 
@@ -61,11 +61,11 @@ describe("WatchlistTab", () => {
   });
 
   it("renders a checkbox per watchlist", async () => {
-    vi.mocked(api.getWatchlists).mockResolvedValue([
+    vi.mocked(parallaxApi.getWatchlists).mockResolvedValue([
       { id: "wl1", name: "RS Leaders" },
       { id: "wl2", name: "Watchlist 2" },
     ]);
-    vi.mocked(api.watchlistMembership).mockResolvedValue({
+    vi.mocked(parallaxApi.watchlistMembership).mockResolvedValue({
       conid: 265598,
       watchlist_ids: [],
     });
@@ -81,11 +81,11 @@ describe("WatchlistTab", () => {
   });
 
   it("checkbox is checked for watchlists that contain the conid", async () => {
-    vi.mocked(api.getWatchlists).mockResolvedValue([
+    vi.mocked(parallaxApi.getWatchlists).mockResolvedValue([
       { id: "wl1", name: "RS Leaders" },
       { id: "wl2", name: "Watchlist 2" },
     ]);
-    vi.mocked(api.watchlistMembership).mockResolvedValue({
+    vi.mocked(parallaxApi.watchlistMembership).mockResolvedValue({
       conid: 265598,
       watchlist_ids: ["wl1"],
     });
@@ -99,29 +99,29 @@ describe("WatchlistTab", () => {
   });
 
   it("checking a box calls watchlistAddInstrument", async () => {
-    vi.mocked(api.getWatchlists).mockResolvedValue([{ id: "wl1", name: "RS Leaders" }]);
-    vi.mocked(api.watchlistMembership).mockResolvedValue({
+    vi.mocked(parallaxApi.getWatchlists).mockResolvedValue([{ id: "wl1", name: "RS Leaders" }]);
+    vi.mocked(parallaxApi.watchlistMembership).mockResolvedValue({
       conid: 265598,
       watchlist_ids: [],
     });
-    vi.mocked(api.watchlistAddInstrument).mockResolvedValue({ added: true, conid: 265598 });
+    vi.mocked(parallaxApi.watchlistAddInstrument).mockResolvedValue({ added: true, conid: 265598 });
 
     renderTab();
     await waitFor(() => screen.getByText("RS Leaders"));
 
     fireEvent.click(screen.getByRole("checkbox"));
     await waitFor(() => {
-      expect(api.watchlistAddInstrument).toHaveBeenCalledWith("wl1", 265598);
+      expect(parallaxApi.watchlistAddInstrument).toHaveBeenCalledWith("wl1", 265598);
     });
   });
 
   it("add invalidates watchlist-instruments cache so dashboard sidebar stays in sync", async () => {
-    vi.mocked(api.getWatchlists).mockResolvedValue([{ id: "wl1", name: "RS Leaders" }]);
-    vi.mocked(api.watchlistMembership).mockResolvedValue({
+    vi.mocked(parallaxApi.getWatchlists).mockResolvedValue([{ id: "wl1", name: "RS Leaders" }]);
+    vi.mocked(parallaxApi.watchlistMembership).mockResolvedValue({
       conid: 265598,
       watchlist_ids: [],
     });
-    vi.mocked(api.watchlistAddInstrument).mockResolvedValue({ added: true, conid: 265598 });
+    vi.mocked(parallaxApi.watchlistAddInstrument).mockResolvedValue({ added: true, conid: 265598 });
 
     const qc = makeQc();
     const invalidateSpy = vi.spyOn(qc, "invalidateQueries");
@@ -142,29 +142,29 @@ describe("WatchlistTab", () => {
   });
 
   it("unchecking a box calls watchlistRemoveInstrument", async () => {
-    vi.mocked(api.getWatchlists).mockResolvedValue([{ id: "wl1", name: "RS Leaders" }]);
-    vi.mocked(api.watchlistMembership).mockResolvedValue({
+    vi.mocked(parallaxApi.getWatchlists).mockResolvedValue([{ id: "wl1", name: "RS Leaders" }]);
+    vi.mocked(parallaxApi.watchlistMembership).mockResolvedValue({
       conid: 265598,
       watchlist_ids: ["wl1"],
     });
-    vi.mocked(api.watchlistRemoveInstrument).mockResolvedValue({ removed: true, conid: 265598 });
+    vi.mocked(parallaxApi.watchlistRemoveInstrument).mockResolvedValue({ removed: true, conid: 265598 });
 
     renderTab();
     await waitFor(() => screen.getByText("RS Leaders"));
 
     fireEvent.click(screen.getByRole("checkbox"));
     await waitFor(() => {
-      expect(api.watchlistRemoveInstrument).toHaveBeenCalledWith("wl1", 265598);
+      expect(parallaxApi.watchlistRemoveInstrument).toHaveBeenCalledWith("wl1", 265598);
     });
   });
 
   it("remove invalidates watchlist-instruments cache so dashboard sidebar stays in sync", async () => {
-    vi.mocked(api.getWatchlists).mockResolvedValue([{ id: "wl1", name: "RS Leaders" }]);
-    vi.mocked(api.watchlistMembership).mockResolvedValue({
+    vi.mocked(parallaxApi.getWatchlists).mockResolvedValue([{ id: "wl1", name: "RS Leaders" }]);
+    vi.mocked(parallaxApi.watchlistMembership).mockResolvedValue({
       conid: 265598,
       watchlist_ids: ["wl1"],
     });
-    vi.mocked(api.watchlistRemoveInstrument).mockResolvedValue({ removed: true, conid: 265598 });
+    vi.mocked(parallaxApi.watchlistRemoveInstrument).mockResolvedValue({ removed: true, conid: 265598 });
 
     const qc = makeQc();
     const invalidateSpy = vi.spyOn(qc, "invalidateQueries");
@@ -185,8 +185,8 @@ describe("WatchlistTab", () => {
   });
 
   it("shows empty message when no watchlists exist", async () => {
-    vi.mocked(api.getWatchlists).mockResolvedValue([]);
-    vi.mocked(api.watchlistMembership).mockResolvedValue({
+    vi.mocked(parallaxApi.getWatchlists).mockResolvedValue([]);
+    vi.mocked(parallaxApi.watchlistMembership).mockResolvedValue({
       conid: 265598,
       watchlist_ids: [],
     });

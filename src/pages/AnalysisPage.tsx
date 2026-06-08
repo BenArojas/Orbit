@@ -27,7 +27,7 @@ import { useNavigate } from "react-router-dom";
 import { useMutation } from "@tanstack/react-query";
 import { useChartStore, useAiStore, type Timeframe, type IndicatorId } from "@/store";
 import { useDrawingsStore } from "@/store/drawings";
-import { api } from "@/lib/api";
+import { parallaxApi } from "@/modules/parallax/api";
 import { toast } from "sonner";
 import { ChartContainer, SubChartPanel, AtrBadge, DrawingToolbar, SUB_CHART_BACKEND_NAMES, type SubChartType } from "@/components/charts";
 import { useChartData } from "@/hooks/useChartData";
@@ -117,7 +117,7 @@ export default function AnalysisPage() {
   // Pre-load the AI model into memory when the user navigates here.
   // Non-fatal: if Ollama isn't ready the warmup endpoint returns 204 silently.
   useEffect(() => {
-    api.aiWarmup().catch(() => {/* non-fatal */});
+    parallaxApi.aiWarmup().catch(() => {/* non-fatal */});
   }, []);
 
   // Reset the AI chat (signal + messages + sessionId) whenever the user
@@ -286,7 +286,7 @@ export default function AnalysisPage() {
   // ── Symbol resolution (via useMutation per CLAUDE.md convention) ──
 
   const resolveConidMutation = useMutation({
-    mutationFn: (sym: string) => api.resolveConid(sym),
+    mutationFn: (sym: string) => parallaxApi.resolveConid(sym),
     onSuccess: (result) => {
       setActiveConid(result.conid);
       setActiveSymbol(result.symbol);

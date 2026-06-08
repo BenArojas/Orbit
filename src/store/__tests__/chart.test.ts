@@ -16,7 +16,7 @@ import {
   FIB_STACK_SOFT_CAP,
   useChartStore,
 } from "../chart";
-import type { FibonacciCandidate, FibonacciResult } from "@/lib/api";
+import type { FibonacciCandidate, FibonacciResult } from "@/modules/parallax/api";
 
 // ── Helpers ──────────────────────────────────────────────────
 

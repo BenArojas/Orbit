@@ -15,7 +15,7 @@
 
 import { useState, useCallback, useEffect, useRef } from "react";
 import type { IndicatorId } from "@/store/chart";
-import type { AiContextMode } from "@/lib/api";
+import type { AiContextMode } from "@/modules/parallax/api";
 
 /* ── Types ── */
 

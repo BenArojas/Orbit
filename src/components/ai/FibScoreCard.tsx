@@ -19,7 +19,7 @@ import type {
   FibFactorName,
   FibonacciCandidate,
   FibonacciResult,
-} from "@/lib/api";
+} from "@/modules/parallax/api";
 import { useChartStore } from "@/store/chart";
 import { useFibConfig } from "@/hooks/useFibConfig";
 

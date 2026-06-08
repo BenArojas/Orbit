@@ -12,11 +12,11 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
-  api,
+  parallaxApi,
   type TriggerCondition,
   type TriggerRuleCreate,
   type WatchlistInfo,
-} from "@/lib/api";
+} from "@/modules/parallax/api";
 import { ConditionsList } from "./ConditionsList";
 import { TemplatePicker } from "./TemplatePicker";
 
@@ -56,7 +56,7 @@ export function RuleModal({ trigger, initial, onClose }: Props) {
 
   const { data: watchlists } = useQuery({
     queryKey: ["watchlists"],
-    queryFn: ({ signal }) => api.getWatchlists(signal),
+    queryFn: ({ signal }) => parallaxApi.getWatchlists(signal),
     enabled: open,
     staleTime: Infinity,
   });
@@ -64,8 +64,8 @@ export function RuleModal({ trigger, initial, onClose }: Props) {
   const submit = useMutation({
     mutationFn: (body: TriggerRuleCreate) =>
       initial?.id
-        ? api.updateTriggerRule(initial.id, body)
-        : api.createTriggerRule(body),
+        ? parallaxApi.updateTriggerRule(initial.id, body)
+        : parallaxApi.createTriggerRule(body),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["trigger-rules"] });
       toast.success(initial?.id ? "Rule updated" : "Rule created");
@@ -80,7 +80,7 @@ export function RuleModal({ trigger, initial, onClose }: Props) {
 
   const saveTemplate = useMutation({
     mutationFn: () =>
-      api.createRuleTemplate({
+      parallaxApi.createRuleTemplate({
         name: form.name,
         description: null,
         category: "custom",
@@ -338,7 +338,7 @@ function StockResolver({
   const resolve = async () => {
     setErr(null);
     try {
-      const r = await api.resolveConid(text.toUpperCase());
+      const r = await parallaxApi.resolveConid(text.toUpperCase());
       onResolved(r.symbol, r.conid);
     } catch (e) {
       setErr(`Could not resolve "${text}"`);

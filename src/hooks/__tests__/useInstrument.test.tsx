@@ -2,8 +2,8 @@ import { describe, expect, it, vi } from "vitest";
 import { renderHook, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
-vi.mock("@/lib/api", () => ({
-  api: {
+vi.mock("@/modules/parallax/api", () => ({
+  parallaxApi: {
     getInstrument: vi.fn().mockResolvedValue({
       conid: 265598,
       symbol: "AAPL",
@@ -14,7 +14,7 @@ vi.mock("@/lib/api", () => ({
   },
 }));
 
-import { api } from "@/lib/api";
+import { parallaxApi } from "@/modules/parallax/api";
 import { useInstrument } from "../useInstrument";
 
 function makeWrapper() {
@@ -33,7 +33,7 @@ describe("useInstrument", () => {
 
     await waitFor(() => expect(result.current.symbol).toBe("AAPL"));
 
-    expect(api.getInstrument).toHaveBeenCalledWith(265598, expect.anything());
+    expect(parallaxApi.getInstrument).toHaveBeenCalledWith(265598, expect.anything());
     expect(result.current.companyName).toBe("Apple Inc");
     expect(result.current.isLoading).toBe(false);
   });

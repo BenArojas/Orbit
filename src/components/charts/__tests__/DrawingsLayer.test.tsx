@@ -31,7 +31,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { createElement, createRef } from "react";
 
 import DrawingsLayer from "../DrawingsLayer";
-import type { Drawing } from "@/lib/api";
+import type { Drawing } from "@/modules/parallax/api";
 import { useDrawingsStore } from "@/store/drawings";
 
 // ── Stub DrawingManager ───────────────────────────────────────

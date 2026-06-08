@@ -32,7 +32,7 @@
 
 import { useState, useCallback, useEffect } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { api, type ScanRequest, type ScannerLocation } from "@/lib/api";
+import { parallaxApi, type ScanRequest, type ScannerLocation } from "@/modules/parallax/api";
 import { useScreenerStore, type ActiveFilter } from "@/store/screener";
 
 /**
@@ -250,7 +250,7 @@ export default function ScreenerPage() {
 
   // Pre-load the AI model into memory when the user navigates here.
   useEffect(() => {
-    api.aiWarmup().catch(() => {/* non-fatal */});
+    parallaxApi.aiWarmup().catch(() => {/* non-fatal */});
   }, []);
   // Path C — Browse all scans slide-over open state
   const [browseOpen, setBrowseOpen] = useState(false);
@@ -273,7 +273,7 @@ export default function ScreenerPage() {
   // Presets are also fetched in ScreenerFilterBar — React Query deduplicates.
   const { data: presets } = useQuery({
     queryKey: ["screener-presets"],
-    queryFn: () => api.screenerPresets(),
+    queryFn: () => parallaxApi.screenerPresets(),
     staleTime: 60_000 * 60,
   });
 
@@ -281,7 +281,7 @@ export default function ScreenerPage() {
   // Used here to look up the instrument code paired with the chosen location.
   const { data: locations = [] } = useQuery({
     queryKey: ["screener-locations"],
-    queryFn: () => api.screenerLocations(),
+    queryFn: () => parallaxApi.screenerLocations(),
     staleTime: 60 * 60 * 1000,
   });
 
@@ -291,7 +291,7 @@ export default function ScreenerPage() {
   const [lastScanWasEmpty, setLastScanWasEmpty] = useState(false);
 
   const scanMutation = useMutation({
-    mutationFn: (req: ScanRequest) => api.screenerScan(req),
+    mutationFn: (req: ScanRequest) => parallaxApi.screenerScan(req),
     onMutate: () => {
       setScanning(true);
       setLastScanWasEmpty(false);

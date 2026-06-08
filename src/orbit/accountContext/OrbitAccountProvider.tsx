@@ -7,7 +7,8 @@ import {
 } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useIbkrReady } from "@/context/GatewayContext";
-import { api, type MoonMarketAccount } from "@/lib/api";
+import { type MoonMarketAccount } from "@/modules/moonmarket/api";
+import {moonmarketApi} from "@/modules/moonmarket/api";
 import { useAccountStore } from "./useAccountStore";
 
 export type OrbitAccountMode = "paper" | "live" | "unknown";
@@ -47,7 +48,7 @@ export function OrbitAccountProvider({ children, enabled }: OrbitAccountProvider
 
   const accountsQuery = useQuery({
     queryKey: ["orbit", "accounts"],
-    queryFn: ({ signal }) => api.moonmarketAccounts(signal),
+    queryFn: ({ signal }) => moonmarketApi.moonmarketAccounts(signal),
     enabled: queryEnabled,
     staleTime: 60_000,
   });

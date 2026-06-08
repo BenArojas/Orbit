@@ -11,8 +11,8 @@ import { describe, it, expect, vi } from "vitest";
 import { renderHook, act, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
-vi.mock("@/lib/api", () => ({
-  api: {
+vi.mock("@/modules/inflect/api", () => ({
+  inflectApi: {
     inflectCalendar: vi.fn().mockResolvedValue({
       account_id: "DU1", year: 2026, month: 6, days: [], weeks: [],
       total_net_pnl: 0, days_traded: 0,
@@ -29,7 +29,7 @@ vi.mock("@/lib/api", () => ({
 
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
-import { api } from "@/lib/api";
+import { inflectApi } from "@/modules/inflect/api";
 import { useInflectCalendar } from "../useInflectCalendar";
 import { selectedDateRangeMs, useInflectTrades } from "../useInflectTrades";
 import { useInflectSync } from "../useInflectSync";
@@ -49,7 +49,7 @@ describe("useInflectCalendar", () => {
     const { Wrapper } = makeWrapper();
     const { result } = renderHook(() => useInflectCalendar(2026, 6, "DU1"), { wrapper: Wrapper });
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
-    expect(api.inflectCalendar).toHaveBeenCalledWith(2026, 6, "DU1", expect.anything());
+    expect(inflectApi.inflectCalendar).toHaveBeenCalledWith(2026, 6, "DU1", expect.anything());
   });
 });
 
@@ -58,7 +58,7 @@ describe("useInflectTrades", () => {
     const { Wrapper } = makeWrapper();
     const { result } = renderHook(() => useInflectTrades("DU1", "CLOSED"), { wrapper: Wrapper });
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
-    expect(api.inflectTrades).toHaveBeenCalledWith(
+    expect(inflectApi.inflectTrades).toHaveBeenCalledWith(
       { accountId: "DU1", status: "CLOSED" },
       expect.anything(),
     );
@@ -71,7 +71,7 @@ describe("useInflectTrades", () => {
       wrapper: Wrapper,
     });
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
-    expect(api.inflectTrades).toHaveBeenCalledWith(
+    expect(inflectApi.inflectTrades).toHaveBeenCalledWith(
       { accountId: "DU1", status: "CLOSED", from: range.from, to: range.to },
       expect.anything(),
     );
@@ -88,14 +88,14 @@ describe("useInflectTrade", () => {
   it("does not fetch when tradeId is null", () => {
     const { Wrapper } = makeWrapper();
     renderHook(() => useInflectTrade(null, "DU1"), { wrapper: Wrapper });
-    expect(api.inflectTrade).not.toHaveBeenCalled();
+    expect(inflectApi.inflectTrade).not.toHaveBeenCalled();
   });
 
   it("fetches when a tradeId is provided", async () => {
     const { Wrapper } = makeWrapper();
     const { result } = renderHook(() => useInflectTrade("DU1:1:e1", "DU1"), { wrapper: Wrapper });
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
-    expect(api.inflectTrade).toHaveBeenCalledWith("DU1:1:e1", "DU1", expect.anything());
+    expect(inflectApi.inflectTrade).toHaveBeenCalledWith("DU1:1:e1", "DU1", expect.anything());
   });
 });
 
@@ -109,7 +109,7 @@ describe("useSaveTradeJournal", () => {
         body: { setup: "Breakout", notes: null, tags: [] },
       });
     });
-    expect(api.inflectSaveJournal).toHaveBeenCalledWith(
+    expect(inflectApi.inflectSaveJournal).toHaveBeenCalledWith(
       "DU1:1:e1", { setup: "Breakout", notes: null, tags: [] }, "DU1",
     );
     expect(spy).toHaveBeenCalledWith({ queryKey: ["inflect", "trade", "DU1:1:e1"] });
@@ -125,7 +125,7 @@ describe("useInflectSync", () => {
     await act(async () => {
       await result.current.mutateAsync(undefined);
     });
-    expect(api.inflectSync).toHaveBeenCalledWith("DU1", undefined);
+    expect(inflectApi.inflectSync).toHaveBeenCalledWith("DU1", undefined);
     expect(spy).toHaveBeenCalledWith({ queryKey: ["inflect", "calendar"] });
     expect(spy).toHaveBeenCalledWith({ queryKey: ["inflect", "trades"] });
   });

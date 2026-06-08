@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { MoonMarketAccount } from "@/lib/api";
+import type { MoonMarketAccount } from "@/modules/moonmarket/api";
 
 type AccountState = {
   accounts: MoonMarketAccount[];

@@ -18,7 +18,7 @@
  */
 
 import { useQuery } from "@tanstack/react-query";
-import { api, type RRGDataPoint } from "../../lib/api";
+import { parallaxApi, type RRGDataPoint } from "@/modules/parallax/api";
 import { useIbkrReadyTier } from "@/hooks/useIbkrReadyTier";
 import { RRGSkeleton } from "./skeletons";
 
@@ -36,7 +36,7 @@ export default function RRGPanel() {
   const ready = useIbkrReadyTier(2);
   const { data: rrg, isLoading, error } = useQuery({
     queryKey: ["sectors", "rrg"],
-    queryFn: ({ signal }) => api.sectorRRG(signal),
+    queryFn: ({ signal }) => parallaxApi.sectorRRG(signal),
     staleTime: 60_000,
     refetchInterval: 5 * 60_000,
     enabled: ready,

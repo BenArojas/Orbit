@@ -2,13 +2,13 @@ import { describe, expect, it, vi } from "vitest";
 import { renderHook, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
-vi.mock("@/lib/api", () => ({
-  api: {
+vi.mock("@/modules/inflect/api", () => ({
+  inflectApi: {
     inflectBackfillStatus: vi.fn().mockResolvedValue({ account_id: "DU1", items: [] }),
   },
 }));
 
-import { api } from "@/lib/api";
+import { inflectApi } from "@/modules/inflect/api";
 import { useInflectBackfill } from "../useInflectBackfill";
 
 function makeWrapper() {
@@ -25,7 +25,7 @@ describe("useInflectBackfill", () => {
     renderHook(() => useInflectBackfill({ accountId: "DU1", conid: 265598, enabled: false }), {
       wrapper: Wrapper,
     });
-    expect(api.inflectBackfillStatus).not.toHaveBeenCalled();
+    expect(inflectApi.inflectBackfillStatus).not.toHaveBeenCalled();
   });
 
   it("fetches per-conid backfill status when enabled", async () => {
@@ -36,7 +36,7 @@ describe("useInflectBackfill", () => {
     );
 
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
-    expect(api.inflectBackfillStatus).toHaveBeenCalledWith(
+    expect(inflectApi.inflectBackfillStatus).toHaveBeenCalledWith(
       { accountId: "DU1", conid: 265598 },
       expect.anything(),
     );

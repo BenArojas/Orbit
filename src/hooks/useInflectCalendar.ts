@@ -8,11 +8,11 @@
  */
 
 import { useQuery } from "@tanstack/react-query";
-import { api } from "@/lib/api";
+import { inflectApi } from "@/modules/inflect/api";
 
 export function useInflectCalendar(year: number, month: number, accountId?: string) {
   return useQuery({
     queryKey: ["inflect", "calendar", accountId ?? null, year, month],
-    queryFn: ({ signal }) => api.inflectCalendar(year, month, accountId, signal),
+    queryFn: ({ signal }) => inflectApi.inflectCalendar(year, month, accountId, signal),
   });
 }

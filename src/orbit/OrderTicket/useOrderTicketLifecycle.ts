@@ -8,8 +8,8 @@ import type {
   MoonMarketTimeInForce,
   MoonMarketTrailingType,
   TradingSafetyAction,
-} from "@/lib/api";
-import { api } from "@/lib/api";
+} from "@/modules/moonmarket/api";
+import { moonmarketApi } from "@/modules/moonmarket/api";
 import { useWebSocket, type WsMessage } from "@/hooks/useWebSocket";
 import { useOrbitAccountContext } from "@/orbit/accountContext";
 import type { OrderTicketTarget } from "./useOrderTicketStore";
@@ -28,6 +28,7 @@ import {
 } from "./orderLifecycle";
 import { useCancelOrder, useModifyOrder, usePlaceOrder, usePreviewOrder, useReplyOrder } from "./useOrderMutations";
 import { cashForBuyingPowerPct, computeRiskReward, sharesForCash } from "./orderMath";
+import { parallaxApi } from "@/modules/parallax/api";
 
 function fallbackLiveConfirmationMessage(action: TradingSafetyAction): string {
   return action === "modify"
@@ -104,7 +105,7 @@ export function useOrderTicketLifecycle(target: OrderTicketTarget) {
 
   const quoteQuery = useQuery({
     queryKey: ["market", "quote", target.conid],
-    queryFn: ({ signal }) => api.quote(target.conid, signal),
+    queryFn: ({ signal }) => parallaxApi.quote(target.conid, signal),
     staleTime: 10_000,
   });
   const quote = quoteQuery.data;
@@ -117,21 +118,21 @@ export function useOrderTicketLifecycle(target: OrderTicketTarget) {
 
   const fundsQuery = useQuery({
     queryKey: ["moonmarket", "funds", selectedAccountId],
-    queryFn: ({ signal }) => api.moonmarketAccountFunds(selectedAccountId as string, signal),
+    queryFn: ({ signal }) => moonmarketApi.moonmarketAccountFunds(selectedAccountId as string, signal),
     enabled: !!selectedAccountId,
     staleTime: 30_000,
   });
   const buyingPower = fundsQuery.data?.buying_power ?? null;
   const portfolioQuery = useQuery({
     queryKey: ["moonmarket", "portfolio", selectedAccountId],
-    queryFn: ({ signal }) => api.moonmarketPortfolio(selectedAccountId as string, signal),
+    queryFn: ({ signal }) => moonmarketApi.moonmarketPortfolio(selectedAccountId as string, signal),
     enabled: !!selectedAccountId && !target.side && assetClass === "STK",
     staleTime: 15_000,
   });
 
   const orderRulesQuery = useQuery({
     queryKey: ["moonmarket", "order-rules", selectedAccountId, target.conid, side],
-    queryFn: ({ signal }) => api.moonmarketOrderRules(selectedAccountId as string, target.conid, side, signal),
+    queryFn: ({ signal }) => moonmarketApi.moonmarketOrderRules(selectedAccountId as string, target.conid, side, signal),
     enabled: !!selectedAccountId,
     staleTime: 5 * 60_000,
   });
@@ -144,13 +145,13 @@ export function useOrderTicketLifecycle(target: OrderTicketTarget) {
 
   const tradesQuery = useQuery({
     queryKey: ["moonmarket", "trades", selectedAccountId, 7],
-    queryFn: ({ signal }) => api.moonmarketTrades(selectedAccountId as string, 7, signal),
+    queryFn: ({ signal }) => moonmarketApi.moonmarketTrades(selectedAccountId as string, 7, signal),
     enabled: !!selectedAccountId && !!trackedOrder,
     refetchInterval: (query) => {
       if (!trackedOrder || !selectedAccountId) return false;
       const cachedLiveOrders = (
         queryClient.getQueryData(["moonmarket", "live-orders", selectedAccountId]) as
-          | { orders?: import("@/lib/api").MoonMarketLiveOrder[] }
+          | { orders?: import("@/modules/moonmarket/api").MoonMarketLiveOrder[] }
           | undefined
       )?.orders ?? [];
       return deriveOrderTracker({
@@ -164,7 +165,7 @@ export function useOrderTicketLifecycle(target: OrderTicketTarget) {
 
   const liveOrdersQuery = useQuery({
     queryKey: ["moonmarket", "live-orders", selectedAccountId],
-    queryFn: ({ signal }) => api.moonmarketLiveOrders(selectedAccountId as string, signal),
+    queryFn: ({ signal }) => moonmarketApi.moonmarketLiveOrders(selectedAccountId as string, signal),
     enabled: !!selectedAccountId && !!trackedOrder,
     refetchInterval: (query) => {
       const liveOrder = trackedOrder
@@ -317,7 +318,7 @@ export function useOrderTicketLifecycle(target: OrderTicketTarget) {
       invalidate();
       return;
     }
-    void api.moonmarketRevalidatePositions(selectedAccountId)
+    void moonmarketApi.moonmarketRevalidatePositions(selectedAccountId)
       .catch(() => undefined)
       .finally(invalidate);
   }
@@ -391,7 +392,7 @@ export function useOrderTicketLifecycle(target: OrderTicketTarget) {
     };
     if (isLiveAccount) {
       const action: TradingSafetyAction = modifyOrderId ? "modify" : "place";
-      const decision = await api.moonmarketTradingSafetyOrderAction(selectedAccountId, action)
+      const decision = await moonmarketApi.moonmarketTradingSafetyOrderAction(selectedAccountId, action)
         .catch(() => null);
       if (!decision?.allowed) {
         toast.error("Trading safety check failed.");
@@ -431,7 +432,7 @@ export function useOrderTicketLifecycle(target: OrderTicketTarget) {
       );
     };
     if (isLiveAccount) {
-      const decision = await api.moonmarketTradingSafetyOrderAction(selectedAccountId, "reply")
+      const decision = await moonmarketApi.moonmarketTradingSafetyOrderAction(selectedAccountId, "reply")
         .catch(() => null);
       if (!decision?.allowed) {
         toast.error("Trading safety check failed.");
@@ -465,7 +466,7 @@ export function useOrderTicketLifecycle(target: OrderTicketTarget) {
       );
     };
     if (isLiveAccount) {
-      const decision = await api.moonmarketTradingSafetyOrderAction(selectedAccountId, "cancel")
+      const decision = await moonmarketApi.moonmarketTradingSafetyOrderAction(selectedAccountId, "cancel")
         .catch(() => null);
       if (!decision?.allowed) {
         toast.error("Trading safety check failed.");

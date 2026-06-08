@@ -27,7 +27,7 @@ import {
   FIB_COLOR_PALETTE,
   type ActiveFib,
 } from "@/store/chart";
-import type { FibonacciLevel, FibonacciResult } from "@/lib/api";
+import type { FibonacciLevel, FibonacciResult } from "@/modules/parallax/api";
 
 // ── Stubs ────────────────────────────────────────────────────
 

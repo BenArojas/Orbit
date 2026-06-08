@@ -15,8 +15,8 @@
  */
 
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { api } from "@/lib/api";
-import type { TriggerRule, TriggerCondition, TriggerRuleCreate } from "@/lib/api";
+import { parallaxApi } from "@/modules/parallax/api";
+import type { TriggerRule, TriggerCondition, TriggerRuleCreate } from "@/modules/parallax/api";
 import { Button } from "@/components/ui/button";
 import { RuleModal } from "@/components/triggers";
 import { formatTriggerCondition } from "@/components/triggers/formatTriggerCondition";
@@ -113,13 +113,13 @@ export default function TriggersTab({
 
   const { data: allRules, isLoading, isError } = useQuery({
     queryKey: ["trigger-rules"],
-    queryFn: () => api.getTriggerRules(),
+    queryFn: () => parallaxApi.getTriggerRules(),
     staleTime: 15_000,
   });
 
   const toggleMutation = useMutation({
     mutationFn: ({ id, enabled }: { id: number; enabled: boolean }) =>
-      api.updateTriggerRule(id, { enabled }),
+      parallaxApi.updateTriggerRule(id, { enabled }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["trigger-rules"] });
     },

@@ -2,10 +2,10 @@ import { describe, it, expect, vi } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { TemplatePicker } from "../TemplatePicker";
-import { api } from "@/lib/api";
+import { parallaxApi } from "@/modules/parallax/api";
 
-vi.mock("@/lib/api", () => ({
-  api: {
+vi.mock("@/modules/parallax/api", () => ({
+  parallaxApi: {
     getRuleTemplates: vi.fn().mockResolvedValue([
       {
         id: 1,
@@ -84,7 +84,7 @@ describe("TemplatePicker", () => {
     fireEvent.click(screen.getByRole("button", { name: /delete my pullback/i }));
 
     await waitFor(() =>
-      expect(api.deleteRuleTemplate).toHaveBeenCalledWith(2),
+      expect(parallaxApi.deleteRuleTemplate).toHaveBeenCalledWith(2),
     );
     expect(onPick).not.toHaveBeenCalled();
   });

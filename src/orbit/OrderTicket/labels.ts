@@ -2,7 +2,7 @@ import type {
   MoonMarketOrderType,
   MoonMarketTimeInForce,
   MoonMarketTrailingType,
-} from "@/lib/api";
+} from "@/modules/moonmarket/api";
 
 export const ORDER_TYPE_LABELS: Record<MoonMarketOrderType, string> = {
   MKT: "Market",

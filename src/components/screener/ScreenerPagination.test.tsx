@@ -12,7 +12,7 @@
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
-import type { ScreenerResultRow } from "@/lib/api";
+import type { ScreenerResultRow } from "@/modules/parallax/api";
 import ScreenerPagination from "./ScreenerPagination";
 
 vi.mock("@/store/screener", async () => {

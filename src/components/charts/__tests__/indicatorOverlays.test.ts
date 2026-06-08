@@ -4,7 +4,7 @@
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { addVolumeOverlay, removeVolumeOverlay } from "../indicatorOverlays";
-import type { CandleData } from "@/lib/api";
+import type { CandleData } from "@/modules/parallax/api";
 
 // ── Mock lightweight-charts ───────────────────────────────────
 

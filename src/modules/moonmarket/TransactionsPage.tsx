@@ -3,7 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Activity, Banknote, ListChecks, ReceiptText, Scale } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Pulse } from "@/components/dashboard/skeletons";
-import { api } from "@/lib/api";
+import { moonmarketApi } from "@/modules/moonmarket/api";
 import { formatMoney, formatNumber } from "./format";
 import { LiveOrdersTable } from "./LiveOrdersTable";
 import { TransactionCharts } from "./TransactionCharts";
@@ -72,7 +72,7 @@ export function TransactionsPage({ accountId }: { accountId: string | null }) {
   const tradesQuery = useQuery({
     queryKey: ["moonmarket", "trades", accountId, 7],
     enabled: Boolean(accountId),
-    queryFn: ({ signal }) => api.moonmarketTrades(accountId as string, 7, signal),
+    queryFn: ({ signal }) => moonmarketApi.moonmarketTrades(accountId as string, 7, signal),
     refetchInterval: (query) => {
       const data = query.state.data;
       if (!accountId || data?.trades.length) return false;
@@ -85,7 +85,7 @@ export function TransactionsPage({ accountId }: { accountId: string | null }) {
   const ordersQuery = useQuery({
     queryKey: ["moonmarket", "live-orders", accountId],
     enabled: Boolean(accountId),
-    queryFn: ({ signal }) => api.moonmarketLiveOrders(accountId as string, signal),
+    queryFn: ({ signal }) => moonmarketApi.moonmarketLiveOrders(accountId as string, signal),
   });
 
   const tradesResponse = tradesQuery.data;

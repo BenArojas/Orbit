@@ -15,8 +15,8 @@ const apiMocks = vi.hoisted(() => ({
   inflectSync: vi.fn(),
 }));
 
-vi.mock("@/lib/api", () => ({
-  api: apiMocks,
+vi.mock("@/modules/inflect/api", () => ({
+  inflectApi: apiMocks,
 }));
 
 vi.mock("sonner", () => ({

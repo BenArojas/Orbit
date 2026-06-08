@@ -9,7 +9,7 @@
  */
 import { useEffect } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { api, type StockTagMap } from "@/lib/api";
+import { parallaxApi, type StockTagMap } from "@/modules/parallax/api";
 import { useWebSocket, type WsMessage } from "./useWebSocket";
 
 export function useStockTags(conids: number[]) {
@@ -29,7 +29,7 @@ export function useStockTags(conids: number[]) {
 
   return useQuery<StockTagMap>({
     queryKey: ["stock-tags", conidsKey],
-    queryFn: ({ signal }) => api.getStockTags(conids, signal),
+    queryFn: ({ signal }) => parallaxApi.getStockTags(conids, signal),
     enabled: conids.length > 0,
     staleTime: 15_000,
     refetchInterval: 30_000,

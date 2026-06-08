@@ -1,6 +1,6 @@
 import { Pencil, XCircle } from "lucide-react";
 import { toast } from "sonner";
-import type { MoonMarketOrderDraft, MoonMarketOrderSide, MoonMarketOrderType } from "@/lib/api";
+import type { MoonMarketOrderDraft, MoonMarketOrderSide, MoonMarketOrderType } from "@/modules/moonmarket/api";
 import { useOrderTicketStore } from "@/orbit/OrderTicket/useOrderTicketStore";
 import { useCancelOrder } from "@/orbit/OrderTicket/useOrderMutations";
 import { formatMoney, formatNumber } from "./format";

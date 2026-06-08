@@ -8,7 +8,7 @@
  * Used by the watchlist sidebar, screener results, and the Today page —
  * single source of truth so the visual language stays consistent.
  */
-import type { StockTagMap } from "@/lib/api";
+import type { StockTagMap } from "@/modules/parallax/api";
 import { dominantFamily, FAMILY_COLOR } from "./triggerColors";
 
 type Tag = StockTagMap[number][number];
