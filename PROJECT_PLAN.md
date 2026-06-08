@@ -1,7 +1,7 @@
 # Orbit — Project Plan
 
-> Last updated: 2026-06-03
-> Status: Parallax core v1 is code-complete on `dev` through the rules/fib-trigger closeout pass. Phase 8 E2E remains the v1 sign-off gate. Phase 9, Phase 10, Phase 11, and Phase 12 are merged to `dev`. Orbit consolidation Plans #1–#7 are merged to local `dev`: options chain, Inflect v1/basis recovery, and OrderTicket trailing/RTH/R-R/cash-sizing are now included. Live/manual IBKR paper-account smoke testing remains the release gate.
+> Last updated: 2026-06-08
+> Status: Parallax core v1 is code-complete on `dev` through the rules/fib-trigger closeout pass. Phase 8 E2E remains the v1 sign-off gate. Phase 9, Phase 10, Phase 11, and Phase 12 are merged to `dev`. Orbit consolidation Plans #1–#7 are merged to local `dev`: options chain, Inflect v1/basis recovery,OrderTicket trailing/RTH/R-R/cash-sizing and sidecar client contract refactor are now included. Live/manual IBKR paper-account smoke testing remains the release gate.
 ---
 
 ## IBKR Gateway — What We Learned (2026-04-14)
@@ -110,6 +110,7 @@ This section tracks the newer Orbit work that renamed the former IBKR Hub concep
 | Plan #7 — OrderTicket trailing/RTH/R-R/cash sizing | DONE on local `dev` | Adds IBKR-native `TRAIL`/`TRAILLMT`, trailing amount/type validation, outside-RTH, plain-English labels, risk/reward readout, cash sizing, percent-of-buying-power sizing via `/moonmarket/accounts/{account_id}/funds`, and IBKR-aligned modify hydration for trailing live orders. Key commits: `dbad056` through `33a05d4`. |
 | Architecture follow-up — Orbit module entry seam | DONE on `feature/orbit-module-entry-seam` | Direct `/parallax`, `/moonmarket`, and `/inflect` routes now cross one shared Orbit auth-entry seam and stay on their URLs with a locked connect state when unauthenticated. `OrbitLauncher` reads the shared module registry for tile labels, descriptions, icons, and paths. Spec: `docs/superpowers/specs/2026-06-06-orbit-module-entry-seam-design.md`. Verified with focused Orbit route/launcher tests plus `tsc --noEmit`. |
 | Architecture follow-up — Instrument Identity module | CODE COMPLETE on `feature/instrument-identity-module` | Quote, search, `/market/conid/{symbol}`, watchlist instrument writes, `/instruments/{conid}` reads, and Inflect cached-symbol fallback now route through `InstrumentIdentityService`; `useInstrument()` consumes the unchanged API shape. Spec: `docs/superpowers/specs/2026-06-06-instrument-identity-module-design.md`. Verified with focused backend identity/watchlist/Inflect/conid-cache tests, hook test, and `tsc --noEmit`. |
+| - **Architecture follow-up — Sidecar client contracts by module:** DONE on `dev` via PR #29. Frontend sidecar access is now split by ownership: shared transport/runtime lives in `src/lib/sidecarClient.ts`, Orbit shell/gateway/auth endpoints remain in the slim `src/lib/api.ts`, and product contracts live in `src/modules/moonmarket/api.ts`, `src/modules/inflect/api.ts`, and `src/modules/parallax/api.ts`. Added direct sidecar runtime tests and moved MoonMarket endpoint contract tests into the MoonMarket module. Spec: `docs/superpowers/specs/2026-06-07-sidecar-client-contracts-design.md`.
 
 **Next Orbit work after current local `dev`:**
 
