@@ -1,5 +1,28 @@
-import { request } from "@/lib/sidecarClient";
+/**
+ * Parallax sidecar contract.
+ *
+ * Owns Parallax-facing market, chart, indicator, watchlist, trigger, screener,
+ * AI, drawing, and Fibonacci endpoint contracts. Transport mechanics stay in
+ * "@/lib/sidecarClient".
+ *
+ * Keep shared-adjacent contracts here only when Parallax is the current owner
+ * of the frontend behavior. If a contract becomes Orbit-shell-owned later,
+ * move it to a smaller shared seam instead of expanding "@/lib/api".
+ */
+
+import { sidecarRequest } from "@/lib/sidecarClient";
 import { Timeframe } from "@/store/chart";
+
+// ── Market / instruments ────────────────────────────────────
+// ── Candles / indicators ────────────────────────────────────
+// ── Fibonacci config / locks ────────────────────────────────
+// ── Drawings ────────────────────────────────────────────────
+// ── Sectors / pulse dashboard ───────────────────────────────
+// ── Watchlists ──────────────────────────────────────────────
+// ── Triggers / templates / hits ─────────────────────────────
+// ── AI analysis / model lifecycle ───────────────────────────
+// ── Screener ────────────────────────────────────────────────
+// ── API functions ───────────────────────────────────────────
 
 export interface QuoteResponse {
   conid: number;
@@ -837,13 +860,13 @@ export interface PulseConfigResponse {
 export const parallaxApi = {
     // Market Data
       quote: (conid: number, signal?: AbortSignal) =>
-        request<QuoteResponse>("GET", `/market/quote/${conid}`, undefined, signal),
+        sidecarRequest<QuoteResponse>("GET", `/market/quote/${conid}`, undefined, signal),
 
     candles: (conid: number, period = "3M", signal?: AbortSignal) =>
-    request<CandleData[]>("GET", `/market/candles/${conid}?period=${period}`, undefined, signal),
+    sidecarRequest<CandleData[]>("GET", `/market/candles/${conid}?period=${period}`, undefined, signal),
 
     quotesBundled: (conids: number[], signal?: AbortSignal) =>
-        request<QuotesBundledResponse>(
+        sidecarRequest<QuotesBundledResponse>(
             "GET",
             `/market/quotes?conids=${conids.join(",")}`,
             undefined,
@@ -851,7 +874,7 @@ export const parallaxApi = {
         ),
 
     candlesBundled: (conids: number[], period = "5D", signal?: AbortSignal) =>
-        request<CandlesBundledResponse>(
+        sidecarRequest<CandlesBundledResponse>(
             "GET",
             `/market/candles?conids=${conids.join(",")}&period=${period}`,
             undefined,
@@ -859,11 +882,11 @@ export const parallaxApi = {
         ),
 
     search: (query: string, signal?: AbortSignal) =>
-        request<SearchResult[]>("GET", `/market/search?q=${encodeURIComponent(query)}`, undefined, signal),
+        sidecarRequest<SearchResult[]>("GET", `/market/search?q=${encodeURIComponent(query)}`, undefined, signal),
 
     resolveConid: (symbol: string, secType?: string, signal?: AbortSignal) => {
         const qs = secType ? `?sec_type=${encodeURIComponent(secType)}` : "";
-        return request<ConidResponse>(
+        return sidecarRequest<ConidResponse>(
             "GET",
             `/market/conid/${encodeURIComponent(symbol)}${qs}`,
             undefined,
@@ -873,44 +896,44 @@ export const parallaxApi = {
 
     /** Fetch a cached instrument record by conid. Returns null if not cached. */
     getInstrument: (conid: number, signal?: AbortSignal) =>
-        request<InstrumentCacheResponse | null>("GET", `/instruments/${conid}`, undefined, signal),
+        sidecarRequest<InstrumentCacheResponse | null>("GET", `/instruments/${conid}`, undefined, signal),
 
 
     // Indicators
     computeIndicators: (req: IndicatorRequest, signal?: AbortSignal) =>
-        request<IndicatorComputeResponse>("POST", "/indicators/compute", req, signal),
+        sidecarRequest<IndicatorComputeResponse>("POST", "/indicators/compute", req, signal),
 
     // Sectors (Phase 3)
     sectorPerformance: (signal?: AbortSignal) =>
-        request<SectorPerformance[]>("GET", "/sectors/performance", undefined, signal),
+        sidecarRequest<SectorPerformance[]>("GET", "/sectors/performance", undefined, signal),
 
     sectorRRG: (signal?: AbortSignal) =>
-        request<RRGDataPoint[]>("GET", "/sectors/rrg", undefined, signal),
+        sidecarRequest<RRGDataPoint[]>("GET", "/sectors/rrg", undefined, signal),
 
     sectorOverview: (signal?: AbortSignal) =>
-        request<SectorOverviewResponse>("GET", "/sectors/overview", undefined, signal),
+        sidecarRequest<SectorOverviewResponse>("GET", "/sectors/overview", undefined, signal),
 
     // Arc-gauge feeds (Phase 8 / Task 8.9)
     marketBreadth: (signal?: AbortSignal) =>
-        request<MarketBreadthResponse>("GET", "/sectors/breadth", undefined, signal),
+        sidecarRequest<MarketBreadthResponse>("GET", "/sectors/breadth", undefined, signal),
 
     sectorRotation: (signal?: AbortSignal) =>
-        request<SectorRotationResponse>("GET", "/sectors/rotation", undefined, signal),
+        sidecarRequest<SectorRotationResponse>("GET", "/sectors/rotation", undefined, signal),
 
     // Watchlists (Phase 3)
     getWatchlists: (signal?: AbortSignal) =>
-        request<WatchlistInfo[]>("GET", "/watchlist/lists", undefined, signal),
+        sidecarRequest<WatchlistInfo[]>("GET", "/watchlist/lists", undefined, signal),
 
     createWatchlist: (name: string) =>
-        request<{ id: string; name: string }>("POST", "/watchlist/lists", { name }),
+        sidecarRequest<{ id: string; name: string }>("POST", "/watchlist/lists", { name }),
 
     deleteWatchlist: (watchlistId: string) =>
-        request<void>("DELETE", `/watchlist/lists/${encodeURIComponent(watchlistId)}`),
+        sidecarRequest<void>("DELETE", `/watchlist/lists/${encodeURIComponent(watchlistId)}`),
 
     // Phase 8.9 / Commit C — split endpoints so the sidebar can render names
     // immediately and backfill prices on a slower second query.
     getWatchlistInstruments: (watchlistId: string, signal?: AbortSignal) =>
-        request<WatchlistInstrumentsResponse>(
+        sidecarRequest<WatchlistInstrumentsResponse>(
             "GET",
             `/watchlist/${encodeURIComponent(watchlistId)}/instruments`,
             undefined,
@@ -918,7 +941,7 @@ export const parallaxApi = {
         ),
 
     getWatchlistQuotes: (watchlistId: string, conids: number[], signal?: AbortSignal) =>
-        request<WatchlistQuotesResponse>(
+        sidecarRequest<WatchlistQuotesResponse>(
             "GET",
             `/watchlist/${encodeURIComponent(watchlistId)}/quotes?conids=${conids.join(",")}`,
             undefined,
@@ -926,36 +949,36 @@ export const parallaxApi = {
         ),
 
     watchlistAddInstrument: (watchlistId: string, conid: number) =>
-        request<{ added: boolean; conid: number }>(
+        sidecarRequest<{ added: boolean; conid: number }>(
             "POST",
             `/watchlist/${encodeURIComponent(watchlistId)}/instruments`,
             { conid },
         ),
 
     watchlistRemoveInstrument: (watchlistId: string, conid: number) =>
-        request<{ removed: boolean; conid: number }>(
+        sidecarRequest<{ removed: boolean; conid: number }>(
             "DELETE",
             `/watchlist/${encodeURIComponent(watchlistId)}/instruments/${conid}`,
         ),
 
     watchlistMembership: (conid: number) =>
-        request<{ conid: number; watchlist_ids: string[] }>(
+        sidecarRequest<{ conid: number; watchlist_ids: string[] }>(
             "GET",
             `/watchlist/membership?conid=${conid}`,
         ),
 
     // Triggers (CRUD)
     getTriggerRules: () =>
-        request<TriggerRule[]>("GET", "/triggers/rules"),
+        sidecarRequest<TriggerRule[]>("GET", "/triggers/rules"),
 
     createTriggerRule: (rule: TriggerRuleCreate) =>
-        request<TriggerRule>("POST", "/triggers/rules", rule),
+        sidecarRequest<TriggerRule>("POST", "/triggers/rules", rule),
 
     updateTriggerRule: (id: number, patch: TriggerRuleUpdate) =>
-        request<TriggerRule>("PATCH", `/triggers/rules/${id}`, patch),
+        sidecarRequest<TriggerRule>("PATCH", `/triggers/rules/${id}`, patch),
 
     deleteTriggerRule: (id: number) =>
-        request<void>("DELETE", `/triggers/rules/${id}`),
+        sidecarRequest<void>("DELETE", `/triggers/rules/${id}`),
 
     getTriggerHits: (
         opts: {
@@ -969,17 +992,17 @@ export const parallaxApi = {
         if (opts.status) params.set("status", opts.status);
         if (opts.watchlist) params.set("watchlist", opts.watchlist);
         const q = params.toString();
-        return request<TriggerHit[]>("GET", `/triggers/hits${q ? `?${q}` : ""}`);
+        return sidecarRequest<TriggerHit[]>("GET", `/triggers/hits${q ? `?${q}` : ""}`);
     },
 
     dismissTriggerHit: (id: number) =>
-        request<void>("POST", `/triggers/hits/${id}/dismiss`),
+        sidecarRequest<void>("POST", `/triggers/hits/${id}/dismiss`),
 
     snoozeTriggerHit: (id: number, duration_minutes: number) =>
-        request<void>("POST", `/triggers/hits/${id}/snooze`, { duration_minutes }),
+        sidecarRequest<void>("POST", `/triggers/hits/${id}/snooze`, { duration_minutes }),
 
     getStockTags: (conids: number[], signal?: AbortSignal) =>
-        request<StockTagMap>(
+        sidecarRequest<StockTagMap>(
             "GET",
             `/triggers/tags?conids=${conids.join(",")}`,
             undefined,
@@ -987,7 +1010,7 @@ export const parallaxApi = {
         ),
 
     getRuleTemplates: () =>
-        request<RuleTemplate[]>("GET", "/triggers/templates"),
+        sidecarRequest<RuleTemplate[]>("GET", "/triggers/templates"),
 
     createRuleTemplate: (tpl: {
         name: string;
@@ -995,119 +1018,119 @@ export const parallaxApi = {
         category?: string;
         default_timeframe?: string;
         conditions: TriggerCondition[];
-    }) => request<RuleTemplate>("POST", "/triggers/templates", tpl),
+    }) => sidecarRequest<RuleTemplate>("POST", "/triggers/templates", tpl),
 
     deleteRuleTemplate: (id: number) =>
-        request<void>("DELETE", `/triggers/templates/${id}`),
+        sidecarRequest<void>("DELETE", `/triggers/templates/${id}`),
 
     // Watchlist Config (Phase 6.8) — per-target-watchlist expiry override
     getWatchlistConfigs: () =>
-        request<WatchlistConfig[]>("GET", "/watchlist-config"),
+        sidecarRequest<WatchlistConfig[]>("GET", "/watchlist-config"),
 
     getWatchlistConfig: (name: string) =>
-        request<WatchlistConfig>("GET", `/watchlist-config/${encodeURIComponent(name)}`),
+        sidecarRequest<WatchlistConfig>("GET", `/watchlist-config/${encodeURIComponent(name)}`),
 
     putWatchlistConfig: (name: string, body: WatchlistConfigUpdate) =>
-        request<WatchlistConfig>("PUT", `/watchlist-config/${encodeURIComponent(name)}`, body),
+        sidecarRequest<WatchlistConfig>("PUT", `/watchlist-config/${encodeURIComponent(name)}`, body),
 
     deleteWatchlistConfig: (name: string) =>
-        request<void>("DELETE", `/watchlist-config/${encodeURIComponent(name)}`),
+        sidecarRequest<void>("DELETE", `/watchlist-config/${encodeURIComponent(name)}`),
 
     // AI Analysis (Phase 4)
     aiStatus: () =>
-        request<AiStatusResponse>("GET", "/ai/status"),
+        sidecarRequest<AiStatusResponse>("GET", "/ai/status"),
 
     aiModels: () =>
-        request<OllamaModelResponse[]>("GET", "/ai/models"),
+        sidecarRequest<OllamaModelResponse[]>("GET", "/ai/models"),
 
     aiSelectModel: (req: ModelSelectRequest) =>
-        request<AiStatusResponse>("POST", "/ai/models/select", req),
+        sidecarRequest<AiStatusResponse>("POST", "/ai/models/select", req),
 
     aiSetupGuide: () =>
-        request<SetupGuideResponse>("GET", "/ai/setup-guide"),
+        sidecarRequest<SetupGuideResponse>("GET", "/ai/setup-guide"),
 
     aiRefresh: () =>
-        request<AiStatusResponse>("POST", "/ai/refresh"),
+        sidecarRequest<AiStatusResponse>("POST", "/ai/refresh"),
 
     aiWarmup: () =>
-        request<void>("POST", "/ai/warmup"),
+        sidecarRequest<void>("POST", "/ai/warmup"),
 
     aiAnalyze: (req: AnalyzeRequest) =>
-        request<AnalyzeResponse>("POST", "/ai/analyze", req),
+        sidecarRequest<AnalyzeResponse>("POST", "/ai/analyze", req),
 
     aiChat: (req: ChatRequest) =>
-        request<ChatResponse>("POST", "/ai/chat", req),
+        sidecarRequest<ChatResponse>("POST", "/ai/chat", req),
 
     // Fibonacci Locks (Phase 4)
     lockFibonacci: (req: LockFibonacciRequest) =>
-        request<LockedFibonacciResponse>("POST", "/fibonacci/lock", req),
+        sidecarRequest<LockedFibonacciResponse>("POST", "/fibonacci/lock", req),
 
     unlockFibonacci: (id: number) =>
-        request<{ deleted: boolean; id: number }>("DELETE", `/fibonacci/lock/${id}`),
+        sidecarRequest<{ deleted: boolean; id: number }>("DELETE", `/fibonacci/lock/${id}`),
 
     clearLockedFibs: (conid: number) =>
-        request<{ deleted: number; conid: number }>("DELETE", `/fibonacci/locks/${conid}`),
+        sidecarRequest<{ deleted: number; conid: number }>("DELETE", `/fibonacci/locks/${conid}`),
 
     getLockedFibs: (conid: number) =>
-        request<LockedFibonacciResponse[]>("GET", `/fibonacci/locks/${conid}`),
+        sidecarRequest<LockedFibonacciResponse[]>("GET", `/fibonacci/locks/${conid}`),
 
     // Fibonacci Config (Branch 3) — canonical ratios + user-editable
     // scoring weights. Frontend caches once per session.
     getFibConfig: () =>
-        request<FibConfig>("GET", "/fibonacci/config"),
+        sidecarRequest<FibConfig>("GET", "/fibonacci/config"),
 
     updateFibConfig: (req: UpdateFibConfigRequest) =>
-        request<FibConfig>("PUT", "/fibonacci/config", req),
+        sidecarRequest<FibConfig>("PUT", "/fibonacci/config", req),
 
     // Pulse Config (Phase 8.9+) — user-configurable Market Pulse tickers
     getPulseConfig: () =>
-        request<PulseConfigResponse>("GET", "/pulse-config"),
+        sidecarRequest<PulseConfigResponse>("GET", "/pulse-config"),
 
     setPulseConfig: (items: PulseItem[]) =>
-        request<PulseConfigResponse>("PUT", "/pulse-config", { items }),
+        sidecarRequest<PulseConfigResponse>("PUT", "/pulse-config", { items }),
 
     resetPulseConfig: () =>
-        request<PulseConfigResponse>("POST", "/pulse-config/reset"),
+        sidecarRequest<PulseConfigResponse>("POST", "/pulse-config/reset"),
 
     // Screener (Phase 5)
     screenerScan: (req: ScanRequest) =>
-        request<ScanResponse>("POST", "/screener/scan", req),
+        sidecarRequest<ScanResponse>("POST", "/screener/scan", req),
 
     screenerPresets: () =>
-        request<ScannerPreset[]>("GET", "/screener/presets"),
+        sidecarRequest<ScannerPreset[]>("GET", "/screener/presets"),
 
     /** Curated Location dropdown options — instrument+location pairs from
      *  the backend (single source of truth for region selection). */
     screenerLocations: () =>
-        request<ScannerLocation[]>("GET", "/screener/locations"),
+        sidecarRequest<ScannerLocation[]>("GET", "/screener/locations"),
 
     /** Full IBKR scan-type catalogue with our category bucketing — powers
      *  the "Browse all scans" slide-over panel. */
     screenerAllScanTypes: () =>
-        request<ScannerScanType[]>("GET", "/screener/all-scan-types"),
+        sidecarRequest<ScannerScanType[]>("GET", "/screener/all-scan-types"),
 
     /** Canonical filter catalogue — fetched once per session, staleTime 1h */
     screenerFilterCatalogue: () =>
-        request<FilterCatalogueEntry[]>("GET", "/screener/filter-catalogue"),
+        sidecarRequest<FilterCatalogueEntry[]>("GET", "/screener/filter-catalogue"),
 
     screenerParams: () =>
-        request<ScannerParamsResponse>("GET", "/screener/params"),
+        sidecarRequest<ScannerParamsResponse>("GET", "/screener/params"),
 
     screenerContractInfo: (conid: number) =>
-        request<ContractInfoResponse>("GET", `/screener/contract/${conid}`),
+        sidecarRequest<ContractInfoResponse>("GET", `/screener/contract/${conid}`),
 
     screenerAiFilters: (req: AiFilterRequest) =>
-        request<AiFilterResponse>("POST", "/screener/ai-filters", req),
+        sidecarRequest<AiFilterResponse>("POST", "/screener/ai-filters", req),
     // Chart Drawings (drawing-tools-plan.md Branch 1)
     createDrawing: (req: CreateDrawingRequest) =>
-        request<Drawing>("POST", "/drawings", req),
+        sidecarRequest<Drawing>("POST", "/drawings", req),
 
     updateDrawing: (id: number, req: UpdateDrawingRequest) =>
-        request<Drawing>("PUT", `/drawings/${id}`, req),
+        sidecarRequest<Drawing>("PUT", `/drawings/${id}`, req),
 
     deleteDrawing: (id: number) =>
-        request<{ deleted: boolean; id: number }>("DELETE", `/drawings/${id}`),
+        sidecarRequest<{ deleted: boolean; id: number }>("DELETE", `/drawings/${id}`),
 
     getDrawings: (conid: number) =>
-        request<Drawing[]>("GET", `/drawings/${conid}`),
+        sidecarRequest<Drawing[]>("GET", `/drawings/${conid}`),
 }

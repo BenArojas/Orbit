@@ -1,5 +1,13 @@
+/**
+ * Contract tests for MoonMarket endpoint paths and request encoding.
+ *
+ * These tests intentionally mock fetch at the transport boundary. Runtime
+ * behavior such as 204 parsing and ApiError handling is covered by
+ * src/lib/sidecarClient.test.ts.
+ */
+
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import {moonmarketApi} from "@/modules/moonmarket/api";
+import { moonmarketApi } from "@/modules/moonmarket/api";
 function okJson(body: unknown = {}): Response {
   return {
     ok: true,

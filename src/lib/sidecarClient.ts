@@ -1,3 +1,15 @@
+/**
+ * Deep sidecar transport runtime.
+ *
+ * This is the only frontend module that owns base URL construction, fetch,
+ * JSON/no-content parsing, ApiError construction, abort passthrough, and
+ * offline error translation.
+ *
+ * Product API modules should call sidecarRequest/request from here and should
+ * not call fetch directly.
+ */
+
+
 import { API_BASE } from "@/config/endpoints";
 import { ensureOnline, NetworkOfflineError, showOfflineToast } from "./network";
 
@@ -13,7 +25,7 @@ export class ApiError extends Error {
   }
 }
 
-export async function request<T>(
+export async function sidecarRequest<T>(
   method: string,
   path: string,
   body?: unknown,

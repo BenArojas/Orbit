@@ -1,5 +1,18 @@
-import { request } from "@/lib/sidecarClient";
+/**
+ * Inflect sidecar contract.
+ *
+ * Owns Inflect endpoint paths, query-string encoding, request payload types,
+ * and response types. Transport mechanics stay in "@/lib/sidecarClient".
+ */
 
+import { sidecarRequest } from "@/lib/sidecarClient";
+
+// ── Journal / setups ────────────────────────────────────────
+// ── Trades / calendar ───────────────────────────────────────
+// ── Sync / backfill ─────────────────────────────────────────
+// ── Basis recovery ──────────────────────────────────────────
+// ── Storage maintenance ─────────────────────────────────────
+// ── API functions ───────────────────────────────────────────
 
 export interface InflectJournalEntry {
   trade_id: string;
@@ -195,12 +208,12 @@ export interface InflectStorageCleanupResponse {
 
 export const inflectApi = {
     inflectSetups: (signal?: AbortSignal) =>
-        request<InflectSetupsResponse>("GET", "/inflect/setups", undefined, signal),
+        sidecarRequest<InflectSetupsResponse>("GET", "/inflect/setups", undefined, signal),
     
       inflectCalendar: (year: number, month: number, accountId?: string, signal?: AbortSignal) => {
         const params = new URLSearchParams({ year: String(year), month: String(month) });
         if (accountId) params.set("account_id", accountId);
-        return request<InflectCalendarResponse>("GET", `/inflect/calendar?${params.toString()}`, undefined, signal);
+        return sidecarRequest<InflectCalendarResponse>("GET", `/inflect/calendar?${params.toString()}`, undefined, signal);
       },
     
       inflectTrades: (
@@ -213,12 +226,12 @@ export const inflectApi = {
         if (opts.to != null) params.set("to", String(opts.to));
         if (opts.status) params.set("status", opts.status);
         const qs = params.toString();
-        return request<InflectTradesResponse>("GET", `/inflect/trades${qs ? `?${qs}` : ""}`, undefined, signal);
+        return sidecarRequest<InflectTradesResponse>("GET", `/inflect/trades${qs ? `?${qs}` : ""}`, undefined, signal);
       },
     
       inflectTrade: (tradeId: string, accountId?: string, signal?: AbortSignal) => {
         const qs = accountId ? `?account_id=${encodeURIComponent(accountId)}` : "";
-        return request<InflectTrade>("GET", `/inflect/trades/${encodeURIComponent(tradeId)}${qs}`, undefined, signal);
+        return sidecarRequest<InflectTrade>("GET", `/inflect/trades/${encodeURIComponent(tradeId)}${qs}`, undefined, signal);
       },
     
       inflectSymbols: (
@@ -230,7 +243,7 @@ export const inflectApi = {
         if (opts.from != null) params.set("from", String(opts.from));
         if (opts.to != null) params.set("to", String(opts.to));
         const qs = params.toString();
-        return request<InflectSymbolsResponse>(
+        return sidecarRequest<InflectSymbolsResponse>(
           "GET",
           `/inflect/symbols${qs ? `?${qs}` : ""}`,
           undefined,
@@ -245,7 +258,7 @@ export const inflectApi = {
         signal?: AbortSignal,
       ) => {
         const qs = accountId ? `?account_id=${encodeURIComponent(accountId)}` : "";
-        return request<InflectJournalEntry>(
+        return sidecarRequest<InflectJournalEntry>(
           "PUT",
           `/inflect/trades/${encodeURIComponent(tradeId)}/journal${qs}`,
           body,
@@ -255,7 +268,7 @@ export const inflectApi = {
     
       inflectSync: (accountId?: string, signal?: AbortSignal) => {
         const qs = accountId ? `?account_id=${encodeURIComponent(accountId)}` : "";
-        return request<InflectSyncResponse>("POST", `/inflect/sync${qs}`, undefined, signal);
+        return sidecarRequest<InflectSyncResponse>("POST", `/inflect/sync${qs}`, undefined, signal);
       },
     
       inflectBackfillStatus: (
@@ -264,7 +277,7 @@ export const inflectApi = {
       ) => {
         const params = new URLSearchParams({ account_id: opts.accountId });
         if (opts.conid != null) params.set("conid", String(opts.conid));
-        return request<InflectBackfillStatusResponse>(
+        return sidecarRequest<InflectBackfillStatusResponse>(
           "GET",
           `/inflect/backfill-status?${params.toString()}`,
           undefined,
@@ -280,7 +293,7 @@ export const inflectApi = {
           account_id: opts.accountId,
           conid: String(opts.conid),
         });
-        return request<BasisLot[]>(
+        return sidecarRequest<BasisLot[]>(
           "GET",
           `/inflect/basis-lots?${params.toString()}`,
           undefined,
@@ -289,21 +302,21 @@ export const inflectApi = {
       },
     
       inflectCreateBasisLot: (accountId: string, body: BasisLotUpsertRequest) =>
-        request<BasisLot>(
+        sidecarRequest<BasisLot>(
           "POST",
           `/inflect/basis-lots?account_id=${encodeURIComponent(accountId)}`,
           body,
         ),
     
       inflectUpdateBasisLot: (lotId: number, accountId: string, body: BasisLotUpsertRequest) =>
-        request<BasisLot>(
+        sidecarRequest<BasisLot>(
           "PUT",
           `/inflect/basis-lots/${lotId}?account_id=${encodeURIComponent(accountId)}`,
           body,
         ),
     
       inflectDeleteBasisLot: (lotId: number, accountId: string) =>
-        request<{ deleted: boolean }>(
+        sidecarRequest<{ deleted: boolean }>(
           "DELETE",
           `/inflect/basis-lots/${lotId}?account_id=${encodeURIComponent(accountId)}`,
         ),
@@ -316,7 +329,7 @@ export const inflectApi = {
           account_id: opts.accountId,
           conid: String(opts.conid),
         });
-        return request<BasisAuditResponse>(
+        return sidecarRequest<BasisAuditResponse>(
           "GET",
           `/inflect/basis-audit?${params.toString()}`,
           undefined,
@@ -325,10 +338,10 @@ export const inflectApi = {
       },
     
       inflectStorage: (signal?: AbortSignal) =>
-        request<InflectStorageStatsResponse>("GET", "/inflect/storage", undefined, signal),
+        sidecarRequest<InflectStorageStatsResponse>("GET", "/inflect/storage", undefined, signal),
     
       inflectStorageCleanup: (body: InflectStorageCleanupRequest) =>
-        request<InflectStorageCleanupResponse>(
+        sidecarRequest<InflectStorageCleanupResponse>(
           "POST",
           "/inflect/storage/cleanup",
           body,

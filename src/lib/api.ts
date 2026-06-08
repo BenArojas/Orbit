@@ -1,21 +1,24 @@
 /**
- * API client for the Orbit Python sidecar.
+ * Shared Orbit shell API seam for the Python sidecar.
  *
- * All HTTP requests to the backend go through this module.
- * Components never call fetch() directly — they use TanStack Query
- * hooks that call these functions under the hood.
+ * Product-module endpoint contracts should live in their owning modules:
  *
- * Base URL points to the Python FastAPI sidecar running on localhost:8000.
- * In dev mode the frontend runs on :1420 (Vite) and proxies to :8000.
- * In production, Tauri launches the sidecar automatically.
+ * - MoonMarket: "@/modules/moonmarket/api"
+ * - Inflect: "@/modules/inflect/api"
+ * - Parallax: "@/modules/parallax/api"
  *
- * Orbit integration:
- *   These types and endpoints are shared by Orbit modules. The base URL stays
- *   the same; MoonMarket endpoints live under the /moonmarket/* prefix.
+ * This file intentionally remains as a small compatibility/shared-shell layer
+ * for Orbit-level concerns such as health, auth, and IBKR Gateway lifecycle.
+ * New product endpoints should not be added here.
+ *
+ * All HTTP transport behavior is owned by "@/lib/sidecarClient".
  */
 
+// Shared shell response types. Product-module response types belong in their module API files.
+// Orbit-level sidecar endpoints. Product modules should use their module-local API files.
 
-import { request } from "@/lib/sidecarClient";
+
+import { sidecarRequest } from "@/lib/sidecarClient";
 
 
 // ── Types ───────────────────────────────────────────────────
@@ -75,18 +78,6 @@ export interface AuthStatusResponse {
 
 
 
-// ── API Error ───────────────────────────────────────────────
-
-export class ApiError extends Error {
-  constructor(
-    public status: number,
-    public body: Record<string, unknown>,
-  ) {
-    super(body.message as string || `API error ${status}`);
-    this.name = "ApiError";
-  }
-}
-
 // ── Core fetch helper ───────────────────────────────────────
 
 
@@ -97,39 +88,39 @@ export class ApiError extends Error {
 
 // Health & Auth
 export const api = {
-  health: () => request<HealthResponse>("GET", "/health"),
-  authStatus: () => request<AuthStatusResponse>("GET", "/auth/status"),
-  logout: () => request<void>("POST", "/auth/logout"),
+  health: () => sidecarRequest<HealthResponse>("GET", "/health"),
+  authStatus: () => sidecarRequest<AuthStatusResponse>("GET", "/auth/status"),
+  logout: () => sidecarRequest<void>("POST", "/auth/logout"),
 
   // Gateway (IBKR Client Portal lifecycle)
   gatewayStatus: () =>
-    request<GatewayStatusResponse>("GET", "/gateway/status"),
+    sidecarRequest<GatewayStatusResponse>("GET", "/gateway/status"),
 
   gatewayProvision: (force = false) =>
-    request<GatewayStatusResponse>("POST", `/gateway/provision?force=${force}`),
+    sidecarRequest<GatewayStatusResponse>("POST", `/gateway/provision?force=${force}`),
 
   gatewayStart: () =>
-    request<GatewayStatusResponse>("POST", "/gateway/start"),
+    sidecarRequest<GatewayStatusResponse>("POST", "/gateway/start"),
 
   gatewayStop: () =>
-    request<GatewayStatusResponse>("POST", "/gateway/stop"),
+    sidecarRequest<GatewayStatusResponse>("POST", "/gateway/stop"),
 
   gatewayReprovision: () =>
-    request<GatewayStatusResponse>("POST", "/gateway/reprovision"),
+    sidecarRequest<GatewayStatusResponse>("POST", "/gateway/reprovision"),
 
   // R1 — soft logout: POST IBKR /v1/api/logout, drop session, leave JVM alive.
   // Fastest recovery (~1 s); user can re-login immediately without a Java cold start.
   gatewayLogout: () =>
-    request<GatewayStatusResponse>("POST", "/gateway/logout"),
+    sidecarRequest<GatewayStatusResponse>("POST", "/gateway/logout"),
 
   // R2 — stop tickle + WS + gateway, clear in-memory state, restart gateway.
   // Files on disk are untouched.
   gatewayResetSession: () =>
-    request<GatewayStatusResponse>("POST", "/gateway/reset-session"),
+    sidecarRequest<GatewayStatusResponse>("POST", "/gateway/reset-session"),
 
   // R3 — reset-session + delete root/logs, root/Jts, *.cookie, *.session.
   // Preserves the JRE, Gateway binaries, and conf.yaml.
   gatewayFactoryReset: () =>
-    request<GatewayStatusResponse>("POST", "/gateway/factory-reset"),
+    sidecarRequest<GatewayStatusResponse>("POST", "/gateway/factory-reset"),
 
 } as const;

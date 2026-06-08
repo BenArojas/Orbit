@@ -9,7 +9,7 @@
  */
 
 import { QueryClient } from "@tanstack/react-query";
-import { ApiError } from "./api";
+import { ApiError } from "@/lib/sidecarClient";
 import { NetworkOfflineError } from "./network";
 
 // ── Query timing matrix (Phase 8 / Task 3.5) ──────────────────────────────
