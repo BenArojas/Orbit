@@ -170,6 +170,27 @@ class TradingSafetyDecision(BaseModel):
     mode: TradingSafetyMode
     confirmation: TradingSafetyConfirmation
 
+    @model_validator(mode="after")
+    def _mode_and_confirmation_align(self) -> "TradingSafetyDecision":
+        if self.mode == "rejected":
+            if self.allowed:
+                raise ValueError("rejected decisions must not be allowed")
+        elif self.mode == "live_confirmation_required":
+            if not self.allowed:
+                raise ValueError("live_confirmation_required decisions must be allowed")
+            if not self.confirmation.required:
+                raise ValueError("live_confirmation_required decisions need confirmation.required")
+            if not self.confirmation.message or not self.confirmation.confirm_label:
+                raise ValueError(
+                    "live_confirmation_required decisions need confirmation message and confirm_label"
+                )
+        elif self.mode == "paper_allowed":
+            if not self.allowed:
+                raise ValueError("paper_allowed decisions must be allowed")
+            if self.confirmation.required:
+                raise ValueError("paper_allowed decisions must not require confirmation")
+        return self
+
 
 class MoonMarketAccountFunds(BaseModel):
     """Normalized buying-power / cash snapshot for one account."""

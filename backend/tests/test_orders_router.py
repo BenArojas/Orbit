@@ -164,6 +164,88 @@ def test_place_order_posts_single_order_for_paper_account():
     )
 
 
+def test_trading_safety_unknown_account_returns_404():
+    fake = _FakeIbkr()
+    resp = _client(fake).get(
+        "/moonmarket/trading-safety/order-action?account_id=U99999&action=place"
+    )
+
+    assert resp.status_code == 404
+    assert resp.json()["detail"]["error"] == "moonmarket_account_not_found"
+
+
+def test_trading_safety_never_treats_account_missing_from_snapshot_as_paper():
+    """An account absent from the evaluated snapshot must never default to paper.
+
+    Regression: when the account list omitted the account but a follow-up
+    lookup saw it, the policy silently returned paper_allowed for a live
+    account. The policy must fail closed with a 404 instead.
+    """
+    fake = _FakeIbkr()
+    original = fake.brokerage_accounts
+    calls = {"count": 0}
+
+    async def inconsistent_snapshot():
+        calls["count"] += 1
+        if calls["count"] == 1:
+            return []
+        return await original()
+
+    fake.brokerage_accounts = inconsistent_snapshot
+    resp = _client(fake).get(
+        "/moonmarket/trading-safety/order-action?account_id=U12345&action=place"
+    )
+
+    assert resp.status_code == 404
+    assert resp.json()["detail"]["error"] == "moonmarket_account_not_found"
+
+
+def test_trading_safety_decision_rejects_inconsistent_mode_and_confirmation():
+    import pytest
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        TradingSafetyDecision(
+            account_id="U12345",
+            action="place",
+            allowed=True,
+            mode="rejected",
+            confirmation=TradingSafetyConfirmation(required=False),
+        )
+
+    with pytest.raises(ValidationError):
+        TradingSafetyDecision(
+            account_id="U12345",
+            action="place",
+            allowed=True,
+            mode="live_confirmation_required",
+            confirmation=TradingSafetyConfirmation(required=False),
+        )
+
+    with pytest.raises(ValidationError):
+        TradingSafetyDecision(
+            account_id="U12345",
+            action="place",
+            allowed=True,
+            mode="live_confirmation_required",
+            confirmation=TradingSafetyConfirmation(
+                required=True,
+                title="Real-money order",
+                message=None,
+                confirm_label=None,
+            ),
+        )
+
+    with pytest.raises(ValidationError):
+        TradingSafetyDecision(
+            account_id="DU12345",
+            action="place",
+            allowed=True,
+            mode="paper_allowed",
+            confirmation=TradingSafetyConfirmation(required=True),
+        )
+
+
 def test_place_order_stops_before_ibkr_when_trading_safety_rejects(monkeypatch):
     class _DenyPolicy:
         async def evaluate_order_action(self, account_id: str, action: str):

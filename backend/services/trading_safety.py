@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from models import TradingSafetyAction, TradingSafetyConfirmation, TradingSafetyDecision
 from services.ibkr import IBKRService
-from services.moonmarket import MoonMarketService
+from services.moonmarket import MoonMarketAccountNotFoundError, MoonMarketService
 
 
 class TradingSafetyPolicy:
@@ -21,9 +21,11 @@ class TradingSafetyPolicy:
         accounts = await self.moonmarket.accounts()
         account = next((item for item in accounts.accounts if item.account_id == account_id), None)
         if account is None:
-            await self.moonmarket._resolve_account_id(account_id)
+            # Fail closed: an account we cannot classify must never be treated
+            # as paper. The routers map this to a 404.
+            raise MoonMarketAccountNotFoundError(f"Unknown account_id: {account_id}")
 
-        if account and not account.is_paper:
+        if not account.is_paper:
             return TradingSafetyDecision(
                 account_id=account_id,
                 action=action,
