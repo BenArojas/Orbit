@@ -513,6 +513,18 @@ describe("OrderTicket", () => {
       accounts: [{ account_id: "U12345", label: "Live", selected: true, is_paper: false }],
       selectedAccountId: "U12345",
     });
+    mockApi.moonmarketTradingSafetyOrderAction.mockResolvedValue({
+      account_id: "U12345",
+      action: "place",
+      allowed: true,
+      mode: "live_confirmation_required",
+      confirmation: {
+        required: true,
+        title: "Real-money order",
+        message: "Review and confirm before sending this live order to IBKR.",
+        confirm_label: "Place Live Order",
+      },
+    });
     useOrderTicketStore.getState().open({ conid: 265598, symbol: "AAPL" });
 
     renderTicket();
@@ -524,6 +536,84 @@ describe("OrderTicket", () => {
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
 
     await waitFor(() => expect(screen.queryByText(/real-money order/i)).not.toBeInTheDocument());
+    expect(mockApi.moonmarketPlaceOrders).not.toHaveBeenCalled();
+  });
+
+  it("blocks live placement with a reachability error when the trading safety service is unavailable", async () => {
+    useAccountStore.setState({
+      accounts: [{ account_id: "U12345", label: "Live", selected: true, is_paper: false }],
+      selectedAccountId: "U12345",
+    });
+    mockApi.moonmarketTradingSafetyOrderAction.mockRejectedValue(new Error("connect ECONNREFUSED"));
+    useOrderTicketStore.getState().open({ conid: 265598, symbol: "AAPL" });
+    renderTicket();
+
+    fireEvent.change(screen.getByLabelText(/limit price/i), { target: { value: "180" } });
+    fireEvent.click(screen.getByRole("button", { name: "Place" }));
+
+    await waitFor(() => expect(mockToast.error).toHaveBeenCalledWith(
+      expect.stringMatching(/could not reach the trading safety service/i),
+    ));
+    expect(screen.queryByText(/real-money order/i)).not.toBeInTheDocument();
+    expect(mockApi.moonmarketPlaceOrders).not.toHaveBeenCalled();
+  });
+
+  it("surfaces the policy rejection reason when trading safety rejects a live placement", async () => {
+    useAccountStore.setState({
+      accounts: [{ account_id: "U12345", label: "Live", selected: true, is_paper: false }],
+      selectedAccountId: "U12345",
+    });
+    mockApi.moonmarketTradingSafetyOrderAction.mockResolvedValue({
+      account_id: "U12345",
+      action: "place",
+      allowed: false,
+      mode: "rejected",
+      confirmation: {
+        required: false,
+        title: null,
+        message: "Live trading is disabled for this account.",
+        confirm_label: null,
+      },
+    });
+    useOrderTicketStore.getState().open({ conid: 265598, symbol: "AAPL" });
+    renderTicket();
+
+    fireEvent.change(screen.getByLabelText(/limit price/i), { target: { value: "180" } });
+    fireEvent.click(screen.getByRole("button", { name: "Place" }));
+
+    await waitFor(() => expect(mockToast.error).toHaveBeenCalledWith(
+      "Live trading is disabled for this account.",
+    ));
+    expect(mockApi.moonmarketPlaceOrders).not.toHaveBeenCalled();
+  });
+
+  it("blocks live placement when an allowed decision is missing its confirmation copy", async () => {
+    useAccountStore.setState({
+      accounts: [{ account_id: "U12345", label: "Live", selected: true, is_paper: false }],
+      selectedAccountId: "U12345",
+    });
+    mockApi.moonmarketTradingSafetyOrderAction.mockResolvedValue({
+      account_id: "U12345",
+      action: "place",
+      allowed: true,
+      mode: "live_confirmation_required",
+      confirmation: {
+        required: true,
+        title: "Real-money order",
+        message: null,
+        confirm_label: null,
+      },
+    });
+    useOrderTicketStore.getState().open({ conid: 265598, symbol: "AAPL" });
+    renderTicket();
+
+    fireEvent.change(screen.getByLabelText(/limit price/i), { target: { value: "180" } });
+    fireEvent.click(screen.getByRole("button", { name: "Place" }));
+
+    await waitFor(() => expect(mockToast.error).toHaveBeenCalledWith(
+      expect.stringMatching(/incomplete confirmation/i),
+    ));
+    expect(screen.queryByRole("button", { name: "Place Live Order" })).not.toBeInTheDocument();
     expect(mockApi.moonmarketPlaceOrders).not.toHaveBeenCalled();
   });
 

@@ -30,10 +30,48 @@ import { useCancelOrder, useModifyOrder, usePlaceOrder, usePreviewOrder, useRepl
 import { cashForBuyingPowerPct, computeRiskReward, sharesForCash } from "./orderMath";
 import { parallaxApi } from "@/modules/parallax/api";
 
-function fallbackLiveConfirmationMessage(action: TradingSafetyAction): string {
-  return action === "modify"
-    ? "Submit this live order change to IBKR."
-    : "Confirm and submit this order to IBKR.";
+/**
+ * Outcome of evaluating the backend Trading Safety policy for a live action.
+ * Confirmation copy is owned by the backend decision; the UI never invents it.
+ */
+type LiveGateResult =
+  | { status: "confirm"; message: string; confirmLabel: string }
+  | { status: "proceed" }
+  | { status: "blocked"; reason: string };
+
+async function evaluateLiveGate(
+  accountId: string,
+  action: TradingSafetyAction,
+): Promise<LiveGateResult> {
+  let decision: Awaited<ReturnType<typeof moonmarketApi.moonmarketTradingSafetyOrderAction>>;
+  try {
+    decision = await moonmarketApi.moonmarketTradingSafetyOrderAction(accountId, action);
+  } catch {
+    return {
+      status: "blocked",
+      reason: "Could not reach the trading safety service. Live order actions are blocked until it responds.",
+    };
+  }
+  if (!decision.allowed) {
+    return {
+      status: "blocked",
+      reason: decision.confirmation.message ?? "Trading safety rejected this order action.",
+    };
+  }
+  if (!decision.confirmation.required) {
+    return { status: "proceed" };
+  }
+  if (!decision.confirmation.message || !decision.confirmation.confirm_label) {
+    return {
+      status: "blocked",
+      reason: "Trading safety returned an incomplete confirmation. Live order action blocked.",
+    };
+  }
+  return {
+    status: "confirm",
+    message: decision.confirmation.message,
+    confirmLabel: decision.confirmation.confirm_label,
+  };
 }
 
 function newClientOrderId(): string {
@@ -392,18 +430,15 @@ export function useOrderTicketLifecycle(target: OrderTicketTarget) {
     };
     if (isLiveAccount) {
       const action: TradingSafetyAction = modifyOrderId ? "modify" : "place";
-      const decision = await moonmarketApi.moonmarketTradingSafetyOrderAction(selectedAccountId, action)
-        .catch(() => null);
-      if (!decision?.allowed) {
-        toast.error("Trading safety check failed.");
+      const gate = await evaluateLiveGate(selectedAccountId, action);
+      if (gate.status === "blocked") {
+        toast.error(gate.reason);
         return;
       }
-      setPendingLiveAction({
-        run: submit,
-        message: decision.confirmation.message ?? fallbackLiveConfirmationMessage(action),
-        confirmLabel: decision.confirmation.confirm_label ?? (modifyOrderId ? "Submit Live Change" : "Place Live Order"),
-      });
-      return;
+      if (gate.status === "confirm") {
+        setPendingLiveAction({ run: submit, message: gate.message, confirmLabel: gate.confirmLabel });
+        return;
+      }
     }
     submit();
   };
@@ -432,18 +467,15 @@ export function useOrderTicketLifecycle(target: OrderTicketTarget) {
       );
     };
     if (isLiveAccount) {
-      const decision = await moonmarketApi.moonmarketTradingSafetyOrderAction(selectedAccountId, "reply")
-        .catch(() => null);
-      if (!decision?.allowed) {
-        toast.error("Trading safety check failed.");
+      const gate = await evaluateLiveGate(selectedAccountId, "reply");
+      if (gate.status === "blocked") {
+        toast.error(gate.reason);
         return;
       }
-      setPendingLiveAction({
-        run: submit,
-        message: decision.confirmation.message ?? fallbackLiveConfirmationMessage("reply"),
-        confirmLabel: decision.confirmation.confirm_label ?? "Confirm Live Order",
-      });
-      return;
+      if (gate.status === "confirm") {
+        setPendingLiveAction({ run: submit, message: gate.message, confirmLabel: gate.confirmLabel });
+        return;
+      }
     }
     submit();
   };
@@ -466,18 +498,15 @@ export function useOrderTicketLifecycle(target: OrderTicketTarget) {
       );
     };
     if (isLiveAccount) {
-      const decision = await moonmarketApi.moonmarketTradingSafetyOrderAction(selectedAccountId, "cancel")
-        .catch(() => null);
-      if (!decision?.allowed) {
-        toast.error("Trading safety check failed.");
+      const gate = await evaluateLiveGate(selectedAccountId, "cancel");
+      if (gate.status === "blocked") {
+        toast.error(gate.reason);
         return;
       }
-      setPendingLiveAction({
-        run: submit,
-        message: decision.confirmation.message ?? "Confirm before cancelling this live order at IBKR.",
-        confirmLabel: decision.confirmation.confirm_label ?? "Cancel Live Order",
-      });
-      return;
+      if (gate.status === "confirm") {
+        setPendingLiveAction({ run: submit, message: gate.message, confirmLabel: gate.confirmLabel });
+        return;
+      }
     }
     submit();
   };
