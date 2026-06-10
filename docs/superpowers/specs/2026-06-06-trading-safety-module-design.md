@@ -19,6 +19,12 @@ The product policy has changed: live-account mutations are allowed. The remainin
 - Orbit remains decision support, not an autonomous trading bot.
 - The backend should expose a single localized policy decision instead of scattering live-vs-paper rules through order services, routers, UI copy, and tests.
 
+### Fail-closed rules (2026-06-10)
+
+- Unknown or unclassifiable accounts fail closed: `evaluate_order_action` raises `MoonMarketAccountNotFoundError` (routers map it to 404). An account missing from the MoonMarket snapshot is never treated as paper.
+- `TradingSafetyDecision` enforces internal consistency via a pydantic `model_validator`: `rejected` ⇒ not allowed; `live_confirmation_required` ⇒ allowed with `confirmation.required`, `message`, and `confirm_label` present; `paper_allowed` ⇒ allowed without confirmation.
+- The frontend never invents confirmation copy. OrderTicket's live gate blocks the action (with an error toast) when the trading-safety service is unreachable, the decision rejects, or an allowed decision is missing its confirmation message/label. Confirmation dialog copy always comes from the backend decision.
+
 ## Suggested Solution
 
 Create a Trading Safety module that owns the order mutation policy vocabulary and expose that policy through one small sidecar endpoint.

@@ -31,8 +31,11 @@ Start with `backend/services/client_portal_execution.py`.
 - `ClientPortalExecutionAdapter.position_page(account_id, page)`
 - `ClientPortalExecutionAdapter.ledger(account_id)`
 - `ClientPortalExecutionAdapter.all_periods(account_id)`
+- `ClientPortalExecutionAdapter.portfolio_positions(account_id)` — Inflect's aggregate current-position read (`/portfolio2/.../positions`), exposed through the `InflectExecutionAdapter` protocol (added 2026-06-10).
 
 The interface hides Client Portal endpoint paths, HTTP verbs, order-list wrappers, reply payload shape, and future pacing or transport-specific rules.
+
+`InflectService` reads current positions through the `InflectExecutionAdapter` protocol instead of calling `ibkr._request` directly; the default wiring uses `ClientPortalExecutionAdapter`.
 
 `OrderService` keeps order-domain validation and payload normalization, but sends already-normalized payloads through the adapter.
 `MoonMarketService` keeps account resolution and response normalization, but asks the adapter for live-order, contract-rule, account-summary, position-revalidation, trades, portfolio-page, ledger, and all-periods payloads instead of building Client Portal calls itself.
