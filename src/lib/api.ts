@@ -18,6 +18,10 @@
 
 import { sidecarRequest } from "@/lib/sidecarClient";
 
+// Re-export the canonical transport error so shell-level callers can catch it
+// without reaching into the transport module.
+export { ApiError } from "@/lib/sidecarClient";
+
 
 // Shared shell response types. Product-module response types belong in their module API files.
 

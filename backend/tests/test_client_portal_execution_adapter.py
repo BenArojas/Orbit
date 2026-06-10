@@ -361,3 +361,41 @@ async def test_moonmarket_service_reads_trades_portfolio_and_performance_through
     assert execution.ledger_calls == ["DU123"]
     assert execution.all_periods_calls == ["DU123"]
     assert ibkr.requests == []
+
+
+@pytest.mark.asyncio
+async def test_adapter_portfolio_positions_uses_portfolio2_endpoint():
+    ibkr = _FakeIbkr()
+    adapter = ClientPortalExecutionAdapter(ibkr)
+
+    await adapter.portfolio_positions("DU123")
+
+    assert ibkr.requests == [("GET", "/portfolio2/DU123/positions", {})]
+
+
+@pytest.mark.asyncio
+async def test_inflect_current_position_reads_through_execution_adapter():
+    from services.db import DatabaseService
+    from services.inflect.service import InflectService
+
+    class _RecordingInflectExecution:
+        def __init__(self) -> None:
+            self.portfolio_positions_calls: list[str] = []
+
+        async def portfolio_positions(self, account_id: str):
+            self.portfolio_positions_calls.append(account_id)
+            return [{"conid": 1, "position": 5}]
+
+    db = DatabaseService(db_path=":memory:")
+    db._conn = db._connect()
+    db._create_tables()
+    db._migrate()
+    ibkr = _FakeIbkr()
+    execution = _RecordingInflectExecution()
+    service = InflectService(ibkr=ibkr, db=db, moonmarket=None, execution=execution)
+
+    position = await service.current_position("DU123", 1)
+
+    assert position == 5.0
+    assert execution.portfolio_positions_calls == ["DU123"]
+    assert ibkr.requests == []
