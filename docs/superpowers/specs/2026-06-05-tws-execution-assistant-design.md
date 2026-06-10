@@ -13,6 +13,38 @@ broker-native orders where possible and Orbit-managed monitoring where
 broker-native behavior is not enough. It is a trade manager and
 decision-support execution workflow, not autonomous trading.
 
+## Key Dev Architecture Assumptions
+
+This spec was drafted before the v1 foundation refactor (2026-06-06). The
+following modules are now in place on `dev` and inform this design:
+
+- **OrderTicket Lifecycle Module** (`src/orbit/OrderTicket/orderLifecycle.ts`):
+  domain logic for draft construction, bracket rules, validation, and fill
+  tracking. TWS plans may study but not reuse order submission code.
+- **Orbit Account Context** (`src/orbit/accountContext/OrbitAccountProvider.tsx`):
+  centralized account selection via `useOrbitAccountContext()`. When TWS mode is
+  active, account switching is blocked without disconnecting TWS.
+- **Client Portal Execution Adapter** (`backend/services/client_portal_execution.py`):
+  hides Client Portal endpoint paths and payload quirks. An equivalent
+  `TwsBrokerAdapter` is required for TWS mode behind the same intent-level
+  interface style.
+- **Instrument Identity Service** (`backend/services/instrument_identity.py`):
+  owns conid-to-display metadata and cache-write rules. TWS contract details
+  must route through this service for cache consistency.
+- **Trading Safety Module** (`backend/services/trading_safety.py` plus the
+  frontend live gate in `src/orbit/OrderTicket/`): owns live/paper mutation
+  policy with typed decisions that fail closed on unknown accounts. TWS plan
+  arming must use the same safety module for live gates.
+- **Orbit Module Entry Seam** (`src/orbit/moduleEntry/` and the `orbitModules`
+  registry): module registration, readiness, and gating. The TWS assistant must
+  register here with mode-gating logic (available only when broker session mode
+  is `tws`).
+- **Sidecar Client Contract Split**: frontend API is split into core transport
+  (`src/lib/sidecarClient.ts`), Orbit shell (`src/lib/api.ts`), and module-local
+  API files. The TWS assistant must define its own contract file
+  (`src/modules/tws-execution-assistant/api.ts`) and not call `sidecarRequest`
+  directly outside it.
+
 ## Approved Policy
 
 - No autonomous trading.
@@ -27,6 +59,10 @@ decision-support execution workflow, not autonomous trading.
 - Live mode comes later behind explicit settings enable, per-session arming, and
   per-plan arming.
 - Live plans after restart load as `paused_requires_rearm`.
+- Live arming gates are evaluated by the shared Trading Safety module
+  (`backend/services/trading_safety.py`), which fails closed on unknown
+  accounts. Policy changes go through the `policy-drift-check` gate before any
+  merge to `dev`.
 
 ## Definitions
 
@@ -210,16 +246,36 @@ Patterns not to adopt for v1:
 
 ## Relationship to Existing OrderTicket
 
-Orbit already has a shared OrderTicket using the Client Portal Web API:
+Orbit already has a shared OrderTicket using the Client Portal Web API,
+implemented in `src/orbit/OrderTicket/` with lifecycle logic extracted into
+reusable modules:
+
+- `orderLifecycle.ts` — domain logic for draft building, bracket rules,
+  validation, result parsing, and fill tracking
+- `useOrderTicketLifecycle.ts` — React hook orchestration, including the
+  trading-safety live gate
+- supporting state stores and UI components
+
+Current OrderTicket capabilities:
 
 - stock preview/place/cancel/modify
-- paper/live guards
+- paper/live guards through the Trading Safety decision endpoint
 - brackets
 - trailing stop and trailing stop limit
 - outside RTH
 - risk/reward readout
 - cash and buying-power sizing
 - single-leg option order support, with option brackets deferred
+
+For the TWS assistant:
+
+- **Do not reuse** order submission code; MoonMarket submits through
+  `ClientPortalExecutionAdapter`, which TWS cannot share.
+- **May study** bracket construction rules and fill-state derivation in
+  `orderLifecycle.ts` to inform equivalent TWS plan compilation logic
+  (parent/child order linking, state reconciliation after fills).
+- Implement a **separate** `ExecutionCompiler` for TWS that produces
+  broker-native contracts/orders instead of Client Portal payloads.
 
 The TWS assistant does not replace the OrderTicket and is not implemented inside
 MoonMarket. It adds:
@@ -424,6 +480,15 @@ Orbit shell:
   - owns `none | client_portal | tws`
   - drives launcher tile enable/disable state
   - blocks direct module route access when the active mode is incompatible
+- Orbit module entry seam (`src/orbit/moduleEntry/` + `orbitModules` registry)
+  - already owns module registration, readiness, and route gating on `dev`
+  - the TWS assistant registers here with mode-gating logic: available only
+    when broker session mode is `tws`; Parallax, MoonMarket, and Inflect stay
+    gated to `client_portal`
+- `OrbitAccountProvider` (`src/orbit/accountContext/`)
+  - already owns account selection on `dev` via `useOrbitAccountContext()`
+  - the TWS assistant consumes the same context; account switching is read-only
+    while a TWS session is active
 - `OrbitLauncher`
   - shows Parallax, MoonMarket, Inflect, and the working-label TWS assistant tile
   - explains why disabled modules are unavailable in the current mode
@@ -433,6 +498,22 @@ Backend services:
 - `BrokerSessionService`
   - owns exclusive broker session mode and mode transitions
   - prevents Client Portal and TWS adapters from being active together
+- `ClientPortalExecutionAdapter` (`backend/services/client_portal_execution.py`, already on `dev`)
+  - Client Portal-specific implementation of the execution interface
+  - owns endpoint paths, HTTP verbs, payload quirks, and pacing rules
+  - called by MoonMarket order routes/services and Inflect position reads
+  - `TwsBrokerAdapter` is the TWS-mode equivalent behind the same intent-level
+    interface style; no broker-specific types leak into services, API models,
+    or UI in either mode
+- `InstrumentIdentityService` (`backend/services/instrument_identity.py`, already on `dev`)
+  - owns conid-to-display metadata, cache-write rules, and IBKR payload
+    normalization
+  - TWS contract details must route through this service so cache rules remain
+    consistent across broker modes
+- Trading Safety module (`backend/services/trading_safety.py`, already on `dev`)
+  - owns live/paper mutation policy, typed approval/rejection decisions, and
+    confirmation metadata; fails closed on unknown accounts
+  - TWS plan arming and live execution gates evaluate through the same module
 - `TwsConnectionService`
   - owns TWS socket lifecycle, client id, connection health, and account mode
   - exposes status to frontend
@@ -595,23 +676,48 @@ New execution endpoints under `/execution-assistant`:
 Existing MoonMarket order endpoints remain for Client Portal order ticket flows.
 They must reject or stay unreachable when broker session mode is `tws`.
 
+## Sidecar API Contract Organization
+
+Frontend API contracts are split by responsibility (already on `dev`):
+
+- `src/lib/sidecarClient.ts` — core transport: base URL, fetch, `ApiError`,
+  offline handling
+- `src/lib/api.ts` — Orbit-level shell seam: health, auth, gateway lifecycle
+- `src/modules/moonmarket/api.ts` — MoonMarket product contract
+- `src/modules/parallax/api.ts` — Parallax product contract
+- `src/modules/inflect/api.ts` — Inflect product contract
+- **`src/modules/tws-execution-assistant/api.ts`** — TWS assistant contract (to
+  be created with the module)
+
+The TWS assistant API file must:
+
+- define intent-level methods for the `/execution-assistant/*` and
+  `/orbit/session/*` endpoints above, not raw `sidecarRequest` calls at call
+  sites
+- own its endpoint paths and request/response types
+- provide tests proving contract behavior with a mocked transport
+
 ## Validation Rules
 
 Plan validation must reject:
 
-- non-stock instruments
-- missing or stale account id
-- missing conid
+- non-stock instruments (instrument class checked through the Instrument
+  Identity service)
+- missing or stale account id (checked against the Orbit account context)
+- missing conid (verified through the Instrument Identity service)
 - zero or negative quantity
 - entry plans without stop/risk definition
 - trim ladders whose total trim percent exceeds 100%
 - stop/target levels that contradict side
 - planned sell quantity greater than held or planned quantity
-- live mode without all live gates active
-- active broker session mode other than `tws`
-- risk over configured limits
+- live mode without all live gates active (evaluated through the Trading Safety
+  module, which fails closed on unknown accounts)
+- active broker session mode other than `tws` (checked through
+  `BrokerSessionService`)
+- risk over configured limits (checked through `ExecutionRiskService`)
 - expired plans
 - plans whose current position/order state diverges from their snapshot
+  (reconciled through `ExecutionMonitor`)
 
 Validation must warn, but not always reject:
 
