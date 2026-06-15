@@ -648,6 +648,10 @@ export interface AIProvidersResponse {
     cloud_enabled: boolean;
 }
 
+export interface AIProviderKeySaveRequest {
+    api_key: string;
+}
+
 export interface AIRoutingPolicyResponse {
     routing_mode: AIRoutingMode;
     local_fallback_enabled: boolean;
@@ -1069,6 +1073,12 @@ export const parallaxApi = {
 
     aiUpdateRoutingPolicy: (req: AIRoutingPolicyUpdate) =>
         sidecarRequest<AIRoutingPolicyResponse>("PUT", "/ai/routing-policy", req),
+
+    aiSaveProviderKey: (providerName: AIProviderName, req: AIProviderKeySaveRequest) =>
+        sidecarRequest<AIProviderStatus>("POST", `/ai/providers/${providerName}/key`, req),
+
+    aiDeleteProviderKey: (providerName: AIProviderName) =>
+        sidecarRequest<AIProviderStatus>("DELETE", `/ai/providers/${providerName}/key`),
 
     aiStatus: () =>
         sidecarRequest<AiStatusResponse>("GET", "/ai/status"),

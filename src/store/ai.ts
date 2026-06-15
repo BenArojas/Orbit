@@ -93,6 +93,7 @@ interface AiState {
   setOllamaStatus: (status: AiStatusResponse) => void;
   setAvailableModels: (models: OllamaModelResponse[]) => void;
   setProvidersStatus: (status: AIProvidersResponse) => void;
+  updateProviderStatus: (provider: AIProviderStatus) => void;
   setRoutingPolicy: (policy: AIRoutingPolicyResponse) => void;
   setLastProviderMetadata: (metadata: AIProviderMetadata | null) => void;
 
@@ -162,6 +163,13 @@ export const useAiStore = create<AiState>()((set) => ({
       routingMode: status.routing_mode,
       cloudEnabled: status.cloud_enabled,
     }),
+
+  updateProviderStatus: (provider) =>
+    set((state) => ({
+      providers: state.providers.map((existing) =>
+        existing.provider_name === provider.provider_name ? provider : existing
+      ),
+    })),
 
   setRoutingPolicy: (policy) =>
     set({

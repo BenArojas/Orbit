@@ -18,6 +18,8 @@ vi.mock("@/modules/parallax/api", async (importOriginal) => {
       aiProviders: vi.fn(),
       aiRoutingPolicy: vi.fn(),
       aiUpdateRoutingPolicy: vi.fn(),
+      aiSaveProviderKey: vi.fn(),
+      aiDeleteProviderKey: vi.fn(),
     },
   };
 });
@@ -90,9 +92,33 @@ describe("AiProvidersSettings", () => {
     vi.mocked(parallaxApi.aiProviders).mockResolvedValue(providersResponse);
     vi.mocked(parallaxApi.aiRoutingPolicy).mockResolvedValue(routingPolicy);
     vi.mocked(parallaxApi.aiUpdateRoutingPolicy).mockImplementation(async (policy) => policy);
+    vi.mocked(parallaxApi.aiSaveProviderKey).mockImplementation(
+      async (providerName) => ({
+        provider_name: providerName,
+        display_name: "OpenRouter",
+        kind: "cloud",
+        enabled: true,
+        ready: false,
+        selected_model: null,
+        has_key: true,
+        error: null,
+      }),
+    );
+    vi.mocked(parallaxApi.aiDeleteProviderKey).mockImplementation(
+      async (providerName) => ({
+        provider_name: providerName,
+        display_name: "OpenRouter",
+        kind: "cloud",
+        enabled: false,
+        ready: false,
+        selected_model: null,
+        has_key: false,
+        error: null,
+      }),
+    );
   });
 
-  it("renders provider cards with cloud providers disabled and no secret inputs", async () => {
+  it("renders provider cards with cloud providers disabled until a key is present", async () => {
     renderWithQueryClient(<AiProvidersSettings />);
 
     for (const provider of ["Ollama", "OpenRouter", "OpenAI", "Anthropic", "Gemini", "Grok"]) {
@@ -100,9 +126,7 @@ describe("AiProvidersSettings", () => {
     }
     expect(screen.getByText("Local")).toBeInTheDocument();
     expect(screen.getAllByText("Disabled")).toHaveLength(5);
-    expect(screen.queryByLabelText(/api key/i)).not.toBeInTheDocument();
-    expect(screen.queryByPlaceholderText(/api key/i)).not.toBeInTheDocument();
-    expect(screen.queryByText(/save key/i)).not.toBeInTheDocument();
+    expect(screen.queryByDisplayValue("sk-or-secret")).not.toBeInTheDocument();
   });
 
   it("round-trips non-secret routing and cost-cap settings", async () => {
@@ -121,5 +145,46 @@ describe("AiProvidersSettings", () => {
       });
     });
     expect(useAiStore.getState().perCallCostCapUsd).toBe(2.5);
+  });
+
+  it("saves a cloud provider key without rendering the secret after success", async () => {
+    renderWithQueryClient(<AiProvidersSettings />);
+
+    const keyInput = await screen.findByLabelText("OpenRouter API key");
+    fireEvent.change(keyInput, { target: { value: "sk-or-secret" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save OpenRouter key" }));
+
+    await waitFor(() => {
+      expect(parallaxApi.aiSaveProviderKey).toHaveBeenCalledWith(
+        "openrouter",
+        { api_key: "sk-or-secret" },
+      );
+    });
+    await waitFor(() => {
+      expect(useAiStore.getState().providers.find(
+        (provider) => provider.provider_name === "openrouter",
+      )?.has_key).toBe(true);
+    });
+    expect(screen.queryByDisplayValue("sk-or-secret")).not.toBeInTheDocument();
+    expect(screen.getByText("Key saved")).toBeInTheDocument();
+  });
+
+  it("shows keychain unavailable state without enabling the provider", async () => {
+    vi.mocked(parallaxApi.aiSaveProviderKey).mockRejectedValueOnce(
+      new Error("OS keychain is unavailable. Cloud AI providers remain disabled."),
+    );
+    renderWithQueryClient(<AiProvidersSettings />);
+
+    const keyInput = await screen.findByLabelText("OpenRouter API key");
+    fireEvent.change(keyInput, { target: { value: "sk-or-secret" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save OpenRouter key" }));
+
+    expect(await screen.findByText(
+      "OS keychain is unavailable. Cloud AI providers remain disabled.",
+    )).toBeInTheDocument();
+    expect(useAiStore.getState().providers.find(
+      (provider) => provider.provider_name === "openrouter",
+    )?.enabled).toBe(false);
+    expect(screen.queryByDisplayValue("sk-or-secret")).not.toBeInTheDocument();
   });
 });
