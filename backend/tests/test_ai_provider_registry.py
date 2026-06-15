@@ -94,6 +94,29 @@ class FakeCloudProvider(FakeProvider):
             provider_request_id="gen-123",
         )
 
+    async def chat_stream_with_metadata(
+        self,
+        *,
+        messages: list[dict[str, str]],
+        model: str,
+    ) -> AsyncIterator[dict]:
+        if self.calls is None:
+            self.calls = []
+        self.calls.append({"kind": "cloud_stream", "messages": messages, "model": model})
+        yield {"type": "token", "content": "Cloud "}
+        yield {"type": "token", "content": INLINE_JSON_NARRATIVE}
+        yield {
+            "type": "metadata",
+            "metadata": {
+                "provider_name": "openrouter",
+                "kind": "cloud",
+                "model": model,
+                "estimated_cost": None,
+                "actual_cost": self.actual_cost,
+                "fallback_used": False,
+            },
+        }
+
 
 @pytest.mark.asyncio
 async def test_ai_service_analyze_routes_through_provider_registry():
@@ -257,3 +280,37 @@ async def test_ai_service_analyze_falls_back_to_ollama_when_cloud_provider_fails
     }
     assert openrouter.calls and openrouter.calls[0]["kind"] == "cloud_chat"
     assert ollama.calls and ollama.calls[0]["kind"] == "chat"
+
+
+@pytest.mark.asyncio
+async def test_ai_service_analyze_stream_can_route_to_openrouter_with_metadata():
+    from services.ai_providers import AIProviderRegistry
+
+    openrouter = FakeCloudProvider()
+    svc = AiService(provider_registry=AIProviderRegistry({
+        "ollama": FakeProvider(),
+        "openrouter": openrouter,
+    }))
+
+    events = []
+    async for event in svc.analyze_stream(
+        symbol="AAPL",
+        timeframe_data={"D": {"candles": [], "indicators": [], "fibonacci": None}},
+        indicators_display=["EMA Stack"],
+        indicator_names=["ema_9", "ema_21", "ema_50", "ema_200"],
+        model="openrouter/auto",
+        provider_name="openrouter",
+    ):
+        events.append(event)
+
+    assert [event["type"] for event in events].count("token") == 2
+    assert events[-1]["type"] == "done"
+    assert events[-1]["provider"] == {
+        "provider_name": "openrouter",
+        "kind": "cloud",
+        "model": "openrouter/auto",
+        "estimated_cost": None,
+        "actual_cost": 0.0123,
+        "fallback_used": False,
+    }
+    assert openrouter.calls and openrouter.calls[0]["kind"] == "cloud_stream"

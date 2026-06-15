@@ -377,6 +377,34 @@ class AiService:
             fallback_used=True,
         )
 
+    async def _stream_analysis_with_metadata(
+        self,
+        *,
+        messages: list[dict[str, str]],
+        model: str,
+        provider_name: str,
+    ) -> AsyncIterator[dict]:
+        provider = self._provider_registry.require(provider_name)
+        stream_with_metadata = getattr(provider, "chat_stream_with_metadata", None)
+        if stream_with_metadata is not None:
+            async for event in stream_with_metadata(messages=messages, model=model):
+                yield event
+            return
+
+        async for token in provider.chat_stream(messages=messages, model=model, think=None):
+            yield {"type": "token", "content": token}
+        yield {
+            "type": "metadata",
+            "metadata": AIProviderMetadata(
+                provider_name="ollama",
+                kind="local",
+                model=model,
+                estimated_cost=None,
+                actual_cost=None,
+                fallback_used=False,
+            ).model_dump(),
+        }
+
     async def chat_structured(
         self,
         messages: list[dict[str, str]],
@@ -413,6 +441,7 @@ class AiService:
         model: str,
         *,
         think: Optional[bool] = None,
+        provider_name: str = "ollama",
     ) -> AsyncIterator[str]:
         """
         Send a chat request to Ollama and yield tokens as they arrive.
@@ -421,7 +450,7 @@ class AiService:
         model: the Ollama model name to use (from user's selection).
         think: see chat() — None = use Ollama default, True/False forces it.
         """
-        provider = self._provider_registry.require("ollama")
+        provider = self._provider_registry.require(provider_name)
         async for token in provider.chat_stream(
             messages=messages,
             model=model,
@@ -684,6 +713,9 @@ class AiService:
         indicator_priority: Optional[list[str]] = None,
         context_mode: str = "none",
         context_bars: int = 10,
+        provider_name: str = "ollama",
+        fallback_model: Optional[str] = None,
+        allow_fallback: bool = False,
         # Legacy alias — prefer indicators_display + indicator_names
         indicators_requested: Optional[list[str]] = None,
     ) -> AsyncIterator[dict]:
@@ -716,11 +748,47 @@ class AiService:
         )
 
         accumulated: list[str] = []
+        provider_metadata: dict | None = None
         try:
-            async for token in self.chat_stream(session.get_messages(), model=model):
-                accumulated.append(token)
-                yield {"type": "token", "content": token}
-        except (ConnectionError, TimeoutError, RuntimeError) as e:
+            async for event in self._stream_analysis_with_metadata(
+                messages=session.get_messages(),
+                model=model,
+                provider_name=provider_name,
+            ):
+                if event.get("type") == "token":
+                    token = event["content"]
+                    accumulated.append(token)
+                    yield {"type": "token", "content": token}
+                elif event.get("type") == "metadata":
+                    provider_metadata = event["metadata"]
+        except (
+            ConnectionError,
+            TimeoutError,
+            RuntimeError,
+            AIProviderAuthError,
+            AIProviderModelUnavailableError,
+            AIProviderNetworkError,
+            AIProviderRateLimitError,
+            AIProviderTimeoutError,
+        ) as e:
+            if allow_fallback and fallback_model and provider_name != "ollama":
+                provider_metadata = self._fallback_metadata(fallback_model).model_dump()
+                async for token in self.chat_stream(
+                    session.get_messages(),
+                    model=fallback_model,
+                    provider_name="ollama",
+                ):
+                    accumulated.append(token)
+                    yield {"type": "token", "content": token}
+            else:
+                provider_metadata = AIProviderMetadata(
+                    provider_name="ollama" if provider_name == "ollama" else provider_name,
+                    kind="local" if provider_name == "ollama" else "cloud",
+                    model=model,
+                    estimated_cost=None,
+                    actual_cost=None,
+                    fallback_used=False,
+                ).model_dump()
             # chat_stream itself yields error tokens on httpx failures, but
             # any unexpected error here is surfaced as a final done event so
             # the client can render something meaningful.
@@ -739,6 +807,7 @@ class AiService:
             "session_id": session.session_id,
             "signal": frontend_signal,
             "message": clean_full_text,
+            "provider": provider_metadata,
         }
 
     async def follow_up(

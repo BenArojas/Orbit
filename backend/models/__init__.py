@@ -997,6 +997,16 @@ class WatchlistMembershipResponse(BaseModel):
 # ═══════════════════════════════════════════════════════════════
 
 
+AIProviderName = Literal["ollama", "openai", "anthropic", "gemini", "grok", "openrouter"]
+AIProviderKind = Literal["local", "cloud"]
+AIRoutingMode = Literal[
+    "local_only",
+    "cloud_manual",
+    "hybrid_auto",
+    "cloud_with_local_fallback",
+]
+
+
 class AnalyzeRequest(BaseModel):
     """
     Request to run an AI technical analysis on a stock.
@@ -1043,16 +1053,9 @@ class AnalyzeRequest(BaseModel):
             "server-side auto-detection for AI prompting."
         ),
     )
-
-
-AIProviderName = Literal["ollama", "openai", "anthropic", "gemini", "grok", "openrouter"]
-AIProviderKind = Literal["local", "cloud"]
-AIRoutingMode = Literal[
-    "local_only",
-    "cloud_manual",
-    "hybrid_auto",
-    "cloud_with_local_fallback",
-]
+    provider_name: AIProviderName = "ollama"
+    model: Optional[str] = None
+    task_type: Literal["analysis", "execution_sensitive"] = "analysis"
 
 
 class AIProviderStatus(BaseModel):
@@ -1171,6 +1174,7 @@ class AnalyzeResponse(BaseModel):
     session_id: str
     signal: Optional[SignalData] = None
     message: str
+    provider: Optional[AIProviderMetadata] = None
 
 
 class ChatResponse(BaseModel):

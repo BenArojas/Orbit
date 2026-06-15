@@ -133,6 +133,62 @@ def _keychain_unavailable_http_error() -> HTTPException:
     )
 
 
+def _cloud_blocked_http_error() -> HTTPException:
+    return HTTPException(
+        status_code=http_status.HTTP_400_BAD_REQUEST,
+        detail={
+            "error": "ai_cloud_blocked_for_task",
+            "message": "Cloud AI is blocked for execution-sensitive tasks.",
+        },
+    )
+
+
+def _cloud_provider_unavailable_http_error(provider_name: str) -> HTTPException:
+    return HTTPException(
+        status_code=http_status.HTTP_400_BAD_REQUEST,
+        detail={
+            "error": "ai_cloud_provider_unavailable",
+            "message": f"{provider_name} is not enabled for cloud AI.",
+        },
+    )
+
+
+async def _resolve_analysis_routing(
+    request: AnalyzeRequest,
+    ollama: OllamaLifecycle,
+    ai_settings: AISettingsService,
+) -> tuple[str, str, str | None, bool]:
+    """Return provider name, model, local fallback model, and fallback flag."""
+    local_model = ollama.selected_model
+    if request.provider_name == "ollama":
+        if not local_model:
+            raise _cloud_provider_unavailable_http_error("ollama")
+        return "ollama", request.model or local_model, None, False
+
+    if request.task_type == "execution_sensitive":
+        raise _cloud_blocked_http_error()
+
+    provider_configs = await ai_settings.list_provider_configs()
+    selected = next(
+        (
+            config for config in provider_configs
+            if config["provider_name"] == request.provider_name
+        ),
+        None,
+    )
+    if selected is None or not selected["enabled"] or not selected.get("api_key_ref"):
+        raise _cloud_provider_unavailable_http_error(request.provider_name)
+
+    policy = await ai_settings.get_routing_policy()
+    model = request.model or selected.get("selected_model") or "openrouter/auto"
+    return (
+        request.provider_name,
+        model,
+        local_model,
+        bool(policy["local_fallback_enabled"] and local_model),
+    )
+
+
 # ── Timeframe → IBKR period mapping for AI analysis ────────
 
 AI_TIMEFRAME_MAP: dict[str, tuple[str, str]] = {
@@ -565,6 +621,7 @@ async def analyze(
     ai: AiService = Depends(get_ai),
     ollama: OllamaLifecycle = Depends(get_ollama),
     db: DatabaseService = Depends(get_db),
+    ai_settings: AISettingsService = Depends(get_ai_settings),
 ):
     """
     Run a full AI technical analysis on a stock.
@@ -582,13 +639,19 @@ async def analyze(
                     f"Please complete the AI setup first.",
         )
 
-    model = ollama.selected_model
-    if not model:
+    local_model = ollama.selected_model
+    if not local_model:
         return AnalyzeResponse(
             session_id="",
             signal=None,
             message="No model selected. Please choose a model in the AI panel.",
         )
+
+    provider_name, model, fallback_model, allow_fallback = await _resolve_analysis_routing(
+        request,
+        ollama,
+        ai_settings,
+    )
 
     # Resolve frontend display names → backend indicator names
     resolved_indicators = _resolve_indicators(request.indicators)
@@ -627,6 +690,9 @@ async def analyze(
             session_id=request.session_id,
             watchlist=request.watchlist,
             indicator_priority=request.indicator_priority or [],
+            provider_name=provider_name,
+            fallback_model=fallback_model,
+            allow_fallback=allow_fallback,
         )
     except AIAnalysisTimeoutError as exc:
         log.warning(
@@ -648,6 +714,7 @@ async def analyze(
         session_id=result["session_id"],
         signal=signal,
         message=result["message"],
+        provider=result.get("provider"),
     )
 
 
@@ -663,6 +730,7 @@ async def analyze_stream(
     ai: AiService = Depends(get_ai),
     ollama: OllamaLifecycle = Depends(get_ollama),
     db: DatabaseService = Depends(get_db),
+    ai_settings: AISettingsService = Depends(get_ai_settings),
 ):
     """
     Stream a full AI technical analysis as Server-Sent Events.
@@ -698,6 +766,12 @@ async def analyze_stream(
             yield f"data: {json.dumps(payload)}\n\n"
         return StreamingResponse(err_stream(), media_type="text/event-stream")
 
+    provider_name, selected_model, fallback_model, allow_fallback = await _resolve_analysis_routing(
+        request,
+        ollama,
+        ai_settings,
+    )
+
     resolved_indicators = _resolve_indicators(request.indicators)
 
     # Branch 3: preload user-edited fib scoring weights once per stream.
@@ -719,8 +793,8 @@ async def analyze_stream(
         )
 
     log.info(
-        "[stream] Running AI analysis for %s (%d) with %s — tfs=%s",
-        request.symbol, request.conid, model, request.timeframes,
+        "[stream] Running AI analysis for %s (%d) with %s/%s — tfs=%s",
+        request.symbol, request.conid, provider_name, selected_model, request.timeframes,
     )
 
     async def event_stream():
@@ -730,15 +804,19 @@ async def analyze_stream(
                 timeframe_data=timeframe_data,
                 indicators_display=request.indicators,
                 indicator_names=resolved_indicators,
-                model=model,
+                model=selected_model,
                 session_id=request.session_id,
                 watchlist=request.watchlist,
                 indicator_priority=request.indicator_priority or [],
+                provider_name=provider_name,
+                fallback_model=fallback_model,
+                allow_fallback=allow_fallback,
             ):
                 if event.get("type") == "done":
                     event = {
                         **event,
-                        "provider": _local_provider_metadata(model).model_dump(),
+                        "provider": event.get("provider")
+                        or _local_provider_metadata(selected_model).model_dump(),
                     }
                 yield f"data: {json.dumps(event)}\n\n"
         except AIAnalysisTimeoutError as exc:

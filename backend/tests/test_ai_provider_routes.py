@@ -71,6 +71,40 @@ class _FakeSettings:
         }
 
 
+class _FakeCloudSettings(_FakeSettings):
+    async def list_provider_configs(self) -> list[dict]:
+        return [
+            {
+                "provider_name": "ollama",
+                "display_name": "Ollama",
+                "kind": "local",
+                "enabled": True,
+                "selected_model": None,
+                "api_key_ref": None,
+                "routing_role": "default",
+                "settings": {},
+            },
+            {
+                "provider_name": "openrouter",
+                "display_name": "OpenRouter",
+                "kind": "cloud",
+                "enabled": True,
+                "selected_model": "openrouter/auto",
+                "api_key_ref": "macos-keychain:orbit-ai/openrouter",
+                "routing_role": "manual",
+                "settings": {},
+            },
+        ]
+
+    async def get_routing_policy(self) -> dict:
+        return {
+            "routing_mode": "cloud_manual",
+            "local_fallback_enabled": True,
+            "per_call_cost_cap_usd": 1.0,
+            "monthly_cost_cap_usd": 25.0,
+        }
+
+
 class _FakeKeyStore:
     def __init__(self, *, unavailable: bool = False) -> None:
         self.unavailable = unavailable
@@ -419,3 +453,149 @@ def test_analyze_stream_done_event_contains_local_provider_metadata():
         "actual_cost": None,
         "fallback_used": False,
     }
+
+
+def test_analyze_returns_cloud_provider_metadata_for_enabled_openrouter():
+    from deps import get_ai_settings
+
+    class FakeAi:
+        async def analyze(self, **kwargs) -> dict:
+            assert kwargs["provider_name"] == "openrouter"
+            assert kwargs["model"] == "openrouter/auto"
+            assert kwargs["fallback_model"] == "gemma4:26b"
+            assert kwargs["allow_fallback"] is True
+            return {
+                "session_id": "session-1",
+                "signal": None,
+                "message": "Cloud narrative.",
+                "provider": {
+                    "provider_name": "openrouter",
+                    "kind": "cloud",
+                    "model": "openrouter/auto",
+                    "estimated_cost": None,
+                    "actual_cost": 0.0123,
+                    "fallback_used": False,
+                },
+            }
+
+    fake_ibkr = MagicMock()
+    fake_ibkr.history = AsyncMock(return_value={"data": []})
+    fake_db = MagicMock()
+    fake_db.get_setting = AsyncMock(return_value=None)
+
+    client = _client(ai=FakeAi(), ibkr=fake_ibkr, db=fake_db)
+    client.app.dependency_overrides[get_ai_settings] = lambda: _FakeCloudSettings()
+
+    resp = client.post(
+        "/ai/analyze",
+        json={
+            "conid": 265598,
+            "symbol": "AAPL",
+            "timeframes": ["D"],
+            "indicators": ["RSI"],
+            "provider_name": "openrouter",
+        },
+    )
+
+    assert resp.status_code == 200
+    assert resp.json()["provider"] == {
+        "provider_name": "openrouter",
+        "kind": "cloud",
+        "model": "openrouter/auto",
+        "estimated_cost": None,
+        "actual_cost": 0.0123,
+        "fallback_used": False,
+    }
+
+
+def test_analyze_stream_done_event_contains_cloud_provider_metadata():
+    from deps import get_ai_settings
+
+    class FakeAi:
+        async def analyze_stream(self, **kwargs) -> AsyncIterator[dict]:
+            assert kwargs["provider_name"] == "openrouter"
+            assert kwargs["model"] == "openrouter/auto"
+            assert kwargs["fallback_model"] == "gemma4:26b"
+            assert kwargs["allow_fallback"] is True
+            yield {"type": "token", "content": "Cloud narrative."}
+            yield {
+                "type": "done",
+                "session_id": "session-1",
+                "signal": None,
+                "message": "Cloud narrative.",
+                "provider": {
+                    "provider_name": "openrouter",
+                    "kind": "cloud",
+                    "model": "openrouter/auto",
+                    "estimated_cost": None,
+                    "actual_cost": 0.0123,
+                    "fallback_used": False,
+                },
+            }
+
+    fake_ibkr = MagicMock()
+    fake_ibkr.history = AsyncMock(return_value={"data": []})
+    fake_db = MagicMock()
+    fake_db.get_setting = AsyncMock(return_value=None)
+
+    client = _client(ai=FakeAi(), ibkr=fake_ibkr, db=fake_db)
+    client.app.dependency_overrides[get_ai_settings] = lambda: _FakeCloudSettings()
+
+    with client.stream(
+        "POST",
+        "/ai/analyze/stream",
+        json={
+            "conid": 265598,
+            "symbol": "AAPL",
+            "timeframes": ["D"],
+            "indicators": ["RSI"],
+            "provider_name": "openrouter",
+        },
+    ) as resp:
+        assert resp.status_code == 200
+        frames = [
+            json.loads(line.removeprefix("data: "))
+            for line in resp.iter_lines()
+            if line.startswith("data: ")
+        ]
+
+    assert frames[-1]["provider"] == {
+        "provider_name": "openrouter",
+        "kind": "cloud",
+        "model": "openrouter/auto",
+        "estimated_cost": None,
+        "actual_cost": 0.0123,
+        "fallback_used": False,
+    }
+
+
+def test_analyze_blocks_cloud_for_execution_sensitive_tasks():
+    from deps import get_ai_settings
+
+    fake_ai = MagicMock()
+    fake_ibkr = MagicMock()
+    fake_ibkr.history = AsyncMock(return_value={"data": []})
+    fake_db = MagicMock()
+    fake_db.get_setting = AsyncMock(return_value=None)
+
+    client = _client(ai=fake_ai, ibkr=fake_ibkr, db=fake_db)
+    client.app.dependency_overrides[get_ai_settings] = lambda: _FakeCloudSettings()
+
+    resp = client.post(
+        "/ai/analyze",
+        json={
+            "conid": 265598,
+            "symbol": "AAPL",
+            "timeframes": ["D"],
+            "indicators": ["RSI"],
+            "provider_name": "openrouter",
+            "task_type": "execution_sensitive",
+        },
+    )
+
+    assert resp.status_code == 400
+    assert resp.json()["detail"] == {
+        "error": "ai_cloud_blocked_for_task",
+        "message": "Cloud AI is blocked for execution-sensitive tasks.",
+    }
+    fake_ai.analyze.assert_not_called()
