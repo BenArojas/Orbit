@@ -36,6 +36,7 @@ from services.ibkr import IBKRService
 from services.screener import ScreenerService
 from services.sectors import SectorService
 from services.ai import AiService
+from services.ai_providers import AIProviderRegistry, OllamaLLMProvider
 from services.ollama import OllamaLifecycle
 from services.ollama_context import OllamaContextService
 from services.scanner import ScannerService
@@ -126,7 +127,14 @@ async def lifespan(app: FastAPI):
     # ceiling per model and caches it, so the prompt truncator uses an
     # accurate budget instead of the static tier table.
     ollama_context = OllamaContextService(ollama)
-    ai = AiService(context_service=ollama_context)
+    ai_provider_registry = AIProviderRegistry({
+        "ollama": OllamaLLMProvider(),
+    })
+    app.state.ai_provider_registry = ai_provider_registry
+    ai = AiService(
+        context_service=ollama_context,
+        provider_registry=ai_provider_registry,
+    )
     app.state.ai = ai
 
     # Background trigger scanner (Phase 6.1 / 6.2)

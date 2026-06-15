@@ -143,3 +143,12 @@ async def test_ai_service_warmup_routes_through_provider_registry():
     await svc.warmup("gemma4:26b")
 
     assert provider.calls == [{"kind": "warmup", "model": "gemma4:26b"}]
+
+
+def test_default_registry_exposes_local_ollama_provider():
+    from services.ai_providers import AIProviderRegistry, OllamaLLMProvider
+
+    registry = AIProviderRegistry({"ollama": OllamaLLMProvider()})
+
+    assert registry.names() == ["ollama"]
+    assert registry.require("ollama").name == "ollama"
