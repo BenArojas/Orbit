@@ -352,7 +352,12 @@ class AiService:
         if chat_with_metadata is not None:
             return await chat_with_metadata(messages=messages, model=model)
 
-        content = await provider.chat(messages=messages, model=model, think=None)
+        content = await self.chat(
+            messages,
+            model=model,
+            think=None,
+            provider_name=provider_name,
+        )
         return AIProviderTextResult(
             content=content,
             metadata=AIProviderMetadata(
@@ -391,7 +396,12 @@ class AiService:
                 yield event
             return
 
-        async for token in provider.chat_stream(messages=messages, model=model, think=None):
+        async for token in self.chat_stream(
+            messages,
+            model=model,
+            think=None,
+            provider_name=provider_name,
+        ):
             yield {"type": "token", "content": token}
         yield {
             "type": "metadata",
