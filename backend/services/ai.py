@@ -31,7 +31,7 @@ if TYPE_CHECKING:
 
 from exceptions import AIAnalysisTimeoutError
 
-from models import CandleData
+from models import AIProviderMetadata, CandleData
 
 # ── Per-stage analysis timeouts (seconds) ────────────────────
 # Defined at module level so tests can patch them without touching internals.
@@ -72,6 +72,14 @@ from services.prompt_builder import (
     SIGNAL_JSON_SCHEMA,             # noqa: F401 — kept for legacy callers/tests
 )
 from services.ai_providers import AIProviderRegistry, OllamaLLMProvider
+from services.ai_cloud_adapters import (
+    AIProviderAuthError,
+    AIProviderModelUnavailableError,
+    AIProviderNetworkError,
+    AIProviderRateLimitError,
+    AIProviderTimeoutError,
+    AIProviderTextResult,
+)
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -316,6 +324,7 @@ class AiService:
         model: str,
         *,
         think: Optional[bool] = None,
+        provider_name: str = "ollama",
     ) -> str:
         """
         Send a chat request to Ollama and return the full response.
@@ -328,8 +337,45 @@ class AiService:
             True = force on (default for Analysis chat where reasoning is
             valued).
         """
-        provider = self._provider_registry.require("ollama")
+        provider = self._provider_registry.require(provider_name)
         return await provider.chat(messages=messages, model=model, think=think)
+
+    async def _chat_analysis_with_metadata(
+        self,
+        *,
+        messages: list[dict[str, str]],
+        model: str,
+        provider_name: str,
+    ) -> AIProviderTextResult:
+        provider = self._provider_registry.require(provider_name)
+        chat_with_metadata = getattr(provider, "chat_with_metadata", None)
+        if chat_with_metadata is not None:
+            return await chat_with_metadata(messages=messages, model=model)
+
+        content = await provider.chat(messages=messages, model=model, think=None)
+        return AIProviderTextResult(
+            content=content,
+            metadata=AIProviderMetadata(
+                provider_name="ollama",
+                kind="local",
+                model=model,
+                estimated_cost=None,
+                actual_cost=None,
+                fallback_used=False,
+            ),
+            provider_request_id=None,
+        )
+
+    @staticmethod
+    def _fallback_metadata(model: str) -> AIProviderMetadata:
+        return AIProviderMetadata(
+            provider_name="ollama",
+            kind="local",
+            model=model,
+            estimated_cost=None,
+            actual_cost=None,
+            fallback_used=True,
+        )
 
     async def chat_structured(
         self,
@@ -533,6 +579,9 @@ class AiService:
         indicator_priority: Optional[list[str]] = None,
         context_mode: str = "none",
         context_bars: int = 10,
+        provider_name: str = "ollama",
+        fallback_model: Optional[str] = None,
+        allow_fallback: bool = False,
         # Legacy alias — prefer indicators_display + indicator_names
         indicators_requested: Optional[list[str]] = None,
     ) -> dict:
@@ -571,13 +620,42 @@ class AiService:
             context_mode, context_bars,
         )
 
+        provider_result: AIProviderTextResult
         try:
-            response_text = await asyncio.wait_for(
-                self.chat(session.get_messages(), model=model),
+            provider_result = await asyncio.wait_for(
+                self._chat_analysis_with_metadata(
+                    messages=session.get_messages(),
+                    model=model,
+                    provider_name=provider_name,
+                ),
                 timeout=_NARRATIVE_TIMEOUT,
             )
         except asyncio.TimeoutError:
             raise AIAnalysisTimeoutError("narrative", _NARRATIVE_TIMEOUT)
+        except (
+            AIProviderAuthError,
+            AIProviderModelUnavailableError,
+            AIProviderNetworkError,
+            AIProviderRateLimitError,
+            AIProviderTimeoutError,
+        ):
+            if not allow_fallback or not fallback_model:
+                raise
+            fallback_content = await asyncio.wait_for(
+                self.chat(
+                    session.get_messages(),
+                    model=fallback_model,
+                    provider_name="ollama",
+                ),
+                timeout=_NARRATIVE_TIMEOUT,
+            )
+            provider_result = AIProviderTextResult(
+                content=fallback_content,
+                metadata=self._fallback_metadata(fallback_model),
+                provider_request_id=None,
+            )
+
+        response_text = provider_result.content
         clean_response_text = strip_signal_json_from_response(response_text)
         session.add_assistant(clean_response_text)
 
@@ -589,6 +667,7 @@ class AiService:
             "session_id": session.session_id,
             "signal": frontend_signal,
             "message": clean_response_text,
+            "provider": provider_result.metadata.model_dump(),
         }
 
     # ── Public: streaming analyze ─────────────────────────────────────

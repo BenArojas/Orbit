@@ -58,6 +58,43 @@ class FakeProvider:
         return None
 
 
+@dataclass
+class FakeCloudProvider(FakeProvider):
+    name: str = "openrouter"
+    actual_cost: float = 0.0123
+    fail: bool = False
+
+    async def chat_with_metadata(
+        self,
+        *,
+        messages: list[dict[str, str]],
+        model: str,
+    ):
+        from models import AIProviderMetadata
+        from services.ai_cloud_adapters import (
+            AIProviderRateLimitError,
+            AIProviderTextResult,
+        )
+
+        if self.calls is None:
+            self.calls = []
+        self.calls.append({"kind": "cloud_chat", "messages": messages, "model": model})
+        if self.fail:
+            raise AIProviderRateLimitError("rate limited")
+        return AIProviderTextResult(
+            content=INLINE_JSON_NARRATIVE,
+            metadata=AIProviderMetadata(
+                provider_name="openrouter",
+                kind="cloud",
+                model=model,
+                estimated_cost=None,
+                actual_cost=self.actual_cost,
+                fallback_used=False,
+            ),
+            provider_request_id="gen-123",
+        )
+
+
 @pytest.mark.asyncio
 async def test_ai_service_analyze_routes_through_provider_registry():
     from services.ai_providers import AIProviderRegistry
@@ -152,3 +189,71 @@ def test_default_registry_exposes_local_ollama_provider():
 
     assert registry.names() == ["ollama"]
     assert registry.require("ollama").name == "ollama"
+
+
+@pytest.mark.asyncio
+async def test_ai_service_analyze_can_route_read_only_analysis_to_openrouter():
+    from services.ai_providers import AIProviderRegistry
+
+    ollama = FakeProvider()
+    openrouter = FakeCloudProvider()
+    svc = AiService(provider_registry=AIProviderRegistry({
+        "ollama": ollama,
+        "openrouter": openrouter,
+    }))
+
+    result = await svc.analyze(
+        symbol="AAPL",
+        timeframe_data={"D": {"candles": [], "indicators": [], "fibonacci": None}},
+        indicators_display=["EMA Stack"],
+        indicator_names=["ema_9", "ema_21", "ema_50", "ema_200"],
+        model="openrouter/auto",
+        provider_name="openrouter",
+    )
+
+    assert result["signal"]["direction"] == "LONG"
+    assert result["provider"] == {
+        "provider_name": "openrouter",
+        "kind": "cloud",
+        "model": "openrouter/auto",
+        "estimated_cost": None,
+        "actual_cost": 0.0123,
+        "fallback_used": False,
+    }
+    assert openrouter.calls and openrouter.calls[0]["kind"] == "cloud_chat"
+    assert ollama.calls is None
+
+
+@pytest.mark.asyncio
+async def test_ai_service_analyze_falls_back_to_ollama_when_cloud_provider_fails():
+    from services.ai_providers import AIProviderRegistry
+
+    ollama = FakeProvider()
+    openrouter = FakeCloudProvider(fail=True)
+    svc = AiService(provider_registry=AIProviderRegistry({
+        "ollama": ollama,
+        "openrouter": openrouter,
+    }))
+
+    result = await svc.analyze(
+        symbol="AAPL",
+        timeframe_data={"D": {"candles": [], "indicators": [], "fibonacci": None}},
+        indicators_display=["EMA Stack"],
+        indicator_names=["ema_9", "ema_21", "ema_50", "ema_200"],
+        model="openrouter/auto",
+        provider_name="openrouter",
+        fallback_model="gemma4:26b",
+        allow_fallback=True,
+    )
+
+    assert result["signal"]["direction"] == "LONG"
+    assert result["provider"] == {
+        "provider_name": "ollama",
+        "kind": "local",
+        "model": "gemma4:26b",
+        "estimated_cost": None,
+        "actual_cost": None,
+        "fallback_used": True,
+    }
+    assert openrouter.calls and openrouter.calls[0]["kind"] == "cloud_chat"
+    assert ollama.calls and ollama.calls[0]["kind"] == "chat"
