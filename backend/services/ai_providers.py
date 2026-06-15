@@ -53,6 +53,9 @@ class LLMProvider(Protocol):
     async def warmup(self, *, model: str) -> None:
         ...
 
+    async def aclose(self) -> None:
+        ...
+
 
 class AIProviderRegistry:
     """Resolve active LLM providers by stable provider name."""
@@ -179,6 +182,9 @@ class OllamaLLMProvider:
             resp.raise_for_status()
         except (httpx.ConnectError, httpx.TimeoutException, httpx.HTTPStatusError) as e:
             log.debug("Warmup request failed (non-fatal): %s", e)
+
+    async def aclose(self) -> None:
+        await self._http.aclose()
 
     @staticmethod
     def _base_payload(

@@ -29,11 +29,8 @@ from typing import TYPE_CHECKING, AsyncIterator, Optional
 if TYPE_CHECKING:
     from services.ollama_context import OllamaContextService
 
-import httpx
-
 from exceptions import AIAnalysisTimeoutError
 
-from config import OLLAMA_HOST
 from models import CandleData
 
 # ── Per-stage analysis timeouts (seconds) ────────────────────
@@ -282,10 +279,6 @@ class AiService:
             "ollama": OllamaLLMProvider(),
         })
         self.sessions: OrderedDict[str, ChatSession] = OrderedDict()
-        self._http = httpx.AsyncClient(
-            base_url=OLLAMA_HOST,
-            timeout=httpx.Timeout(120.0, connect=10.0),
-        )
 
     # ── Session management ──────────────────────────────────────
 
@@ -382,47 +375,13 @@ class AiService:
         model: the Ollama model name to use (from user's selection).
         think: see chat() — None = use Ollama default, True/False forces it.
         """
-        payload: dict = {
-            "model": model,
-            "messages": messages,
-            "stream": True,
-            "keep_alive": "20m",
-            "options": {
-                "temperature": 0.3,
-                "num_predict": _ANALYSIS_NUM_PREDICT,
-            },
-        }
-        if think is not None:
-            payload["think"] = think
-
-        try:
-            async with self._http.stream(
-                "POST",
-                "/api/chat",
-                json=payload,
-                timeout=httpx.Timeout(
-                    connect=_OLLAMA_CONNECT_TIMEOUT,
-                    read=_OLLAMA_READ_TIMEOUT,
-                    write=_OLLAMA_READ_TIMEOUT,
-                    pool=_OLLAMA_READ_TIMEOUT,
-                ),
-            ) as response:
-                async for line in response.aiter_lines():
-                    if not line.strip():
-                        continue
-                    try:
-                        data = json.loads(line)
-                        content = data.get("message", {}).get("content", "")
-                        if content:
-                            yield content
-                        if data.get("done", False):
-                            return
-                    except json.JSONDecodeError:
-                        continue
-        except httpx.ConnectError:
-            yield "\n\n[Error: Cannot connect to Ollama server]"
-        except httpx.TimeoutException:
-            yield "\n\n[Error: Request timed out]"
+        provider = self._provider_registry.require("ollama")
+        async for token in provider.chat_stream(
+            messages=messages,
+            model=model,
+            think=think,
+        ):
+            yield token
 
     # ── Warmup ──────────────────────────────────────────────────
 
@@ -435,19 +394,8 @@ class AiService:
         is fast.  The keep_alive=20m means the model stays loaded for 20
         minutes of inactivity, so calling this once per page visit is enough.
         """
-        payload = {
-            "model": model,
-            "messages": [{"role": "user", "content": "hi"}],
-            "stream": False,
-            "keep_alive": "20m",
-            "options": {"num_predict": 1},
-        }
-        try:
-            resp = await self._http.post("/api/chat", json=payload, timeout=30.0)
-            resp.raise_for_status()
-        except (httpx.ConnectError, httpx.TimeoutException, httpx.HTTPStatusError) as e:
-            # Warmup failure is non-fatal — log and continue
-            log.debug("Warmup request failed (non-fatal): %s", e)
+        provider = self._provider_registry.require("ollama")
+        await provider.warmup(model=model)
 
     # ── Analysis ────────────────────────────────────────────────
 
@@ -783,6 +731,9 @@ class AiService:
 
     async def shutdown(self) -> None:
         """Clean shutdown — close HTTP client."""
-        await self._http.aclose()
+        provider = self._provider_registry.require("ollama")
+        close_provider = getattr(provider, "aclose", None)
+        if close_provider is not None:
+            await close_provider()
         self.sessions.clear()
         log.info("AI service shut down")

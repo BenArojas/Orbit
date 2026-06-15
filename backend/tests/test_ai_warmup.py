@@ -2,8 +2,8 @@
 Tests for POST /ai/warmup endpoint and AiService.warmup() method.
 
 Covers:
-  - warmup() sends a 1-token payload with keep_alive="20m"
-  - warmup() is non-fatal on ConnectError, TimeoutException, HTTPStatusError
+  - Ollama provider warmup sends a 1-token payload with keep_alive="20m"
+  - Ollama provider warmup is non-fatal on ConnectError, TimeoutException, HTTPStatusError
   - POST /ai/warmup returns 204 when model is ready
   - POST /ai/warmup returns 204 (no-op) when Ollama is not ready
   - POST /ai/warmup returns 204 (no-op) when no model is selected
@@ -15,32 +15,28 @@ import httpx
 from unittest.mock import AsyncMock, MagicMock, patch
 
 
-# ── AiService.warmup() ─────────────────────────────────────────
+# ── OllamaLLMProvider.warmup() ─────────────────────────────────
 
 
-class TestAiServiceWarmup:
+class TestOllamaProviderWarmup:
     @pytest.fixture
-    def ai_service(self):
-        """Create an AiService with a mocked HTTP client."""
-        from services.ai import AiService
-        from unittest.mock import AsyncMock, MagicMock
+    def provider(self):
+        """Create an Ollama provider with a mocked HTTP client."""
+        from services.ai_providers import OllamaLLMProvider
 
-        svc = AiService.__new__(AiService)
-        svc._http = MagicMock()
-        svc.sessions = {}
-        svc._context_service = None
-        return svc
+        http = MagicMock()
+        return OllamaLLMProvider(http_client=http)
 
-    async def test_warmup_sends_correct_payload(self, ai_service):
+    async def test_warmup_sends_correct_payload(self, provider):
         """warmup() POSTs to /api/chat with keep_alive=20m and num_predict=1."""
         mock_resp = MagicMock()
         mock_resp.raise_for_status = MagicMock()
-        ai_service._http.post = AsyncMock(return_value=mock_resp)
+        provider._http.post = AsyncMock(return_value=mock_resp)
 
-        await ai_service.warmup("gemma3:27b")
+        await provider.warmup(model="gemma3:27b")
 
-        ai_service._http.post.assert_called_once()
-        call_kwargs = ai_service._http.post.call_args
+        provider._http.post.assert_called_once()
+        call_kwargs = provider._http.post.call_args
         payload = call_kwargs.kwargs.get("json") or call_kwargs.args[1]
 
         assert payload["model"] == "gemma3:27b"
@@ -48,27 +44,27 @@ class TestAiServiceWarmup:
         assert payload["options"]["num_predict"] == 1
         assert payload["stream"] is False
 
-    async def test_warmup_nonfatal_on_connect_error(self, ai_service):
+    async def test_warmup_nonfatal_on_connect_error(self, provider):
         """ConnectError must not propagate — warmup is best-effort."""
-        ai_service._http.post = AsyncMock(side_effect=httpx.ConnectError("refused"))
+        provider._http.post = AsyncMock(side_effect=httpx.ConnectError("refused"))
 
         # Should not raise
-        await ai_service.warmup("gemma3:27b")
+        await provider.warmup(model="gemma3:27b")
 
-    async def test_warmup_nonfatal_on_timeout(self, ai_service):
+    async def test_warmup_nonfatal_on_timeout(self, provider):
         """TimeoutException must not propagate."""
-        ai_service._http.post = AsyncMock(
+        provider._http.post = AsyncMock(
             side_effect=httpx.TimeoutException("timeout")
         )
-        await ai_service.warmup("gemma3:27b")
+        await provider.warmup(model="gemma3:27b")
 
-    async def test_warmup_nonfatal_on_http_status_error(self, ai_service):
+    async def test_warmup_nonfatal_on_http_status_error(self, provider):
         """HTTPStatusError must not propagate."""
         mock_resp = MagicMock(status_code=503)
-        ai_service._http.post = AsyncMock(
+        provider._http.post = AsyncMock(
             side_effect=httpx.HTTPStatusError("503", request=MagicMock(), response=mock_resp)
         )
-        await ai_service.warmup("gemma3:27b")
+        await provider.warmup(model="gemma3:27b")
 
 
 # ── POST /ai/warmup endpoint ──────────────────────────────────

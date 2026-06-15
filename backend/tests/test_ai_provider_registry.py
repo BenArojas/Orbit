@@ -87,3 +87,59 @@ async def test_ai_service_analyze_routes_through_provider_registry():
     ]
     assert provider.calls[0]["messages"][0]["role"] == "system"
     assert provider.calls[0]["messages"][1]["role"] == "user"
+
+
+@dataclass
+class StreamingFakeProvider(FakeProvider):
+    async def chat_stream(
+        self,
+        *,
+        messages: list[dict[str, str]],
+        model: str,
+        think: bool | None = None,
+    ) -> AsyncIterator[str]:
+        if self.calls is None:
+            self.calls = []
+        self.calls.append({"kind": "stream", "model": model, "think": think})
+        for token in ["Streamed narrative. ", INLINE_JSON_NARRATIVE]:
+            yield token
+
+    async def warmup(self, *, model: str) -> None:
+        if self.calls is None:
+            self.calls = []
+        self.calls.append({"kind": "warmup", "model": model})
+
+
+@pytest.mark.asyncio
+async def test_ai_service_analyze_stream_routes_through_provider_registry():
+    from services.ai_providers import AIProviderRegistry
+
+    provider = StreamingFakeProvider()
+    svc = AiService(provider_registry=AIProviderRegistry({"ollama": provider}))
+
+    events = []
+    async for event in svc.analyze_stream(
+        symbol="AAPL",
+        timeframe_data={"D": {"candles": [], "indicators": [], "fibonacci": None}},
+        indicators_display=["EMA Stack"],
+        indicator_names=["ema_9", "ema_21", "ema_50", "ema_200"],
+        model="gemma4:26b",
+    ):
+        events.append(event)
+
+    assert [event["type"] for event in events].count("token") == 2
+    assert events[-1]["type"] == "done"
+    assert events[-1]["signal"]["direction"] == "LONG"
+    assert provider.calls[0]["kind"] == "stream"
+
+
+@pytest.mark.asyncio
+async def test_ai_service_warmup_routes_through_provider_registry():
+    from services.ai_providers import AIProviderRegistry
+
+    provider = StreamingFakeProvider()
+    svc = AiService(provider_registry=AIProviderRegistry({"ollama": provider}))
+
+    await svc.warmup("gemma4:26b")
+
+    assert provider.calls == [{"kind": "warmup", "model": "gemma4:26b"}]
