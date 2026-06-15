@@ -268,6 +268,32 @@ class DatabaseService:
                 updated_at  TEXT DEFAULT (datetime('now'))
             );
 
+            -- ─── AI Provider Settings (Orbit v2 cloud shell) ───────
+            -- Non-secret provider configuration only. `api_key_ref` is an
+            -- opaque OS-keychain reference that will be populated in a later
+            -- slice. Plaintext or encrypted key material is never stored here.
+            CREATE TABLE IF NOT EXISTS ai_provider_configs (
+                provider_name  TEXT PRIMARY KEY,
+                display_name   TEXT NOT NULL,
+                kind           TEXT NOT NULL,
+                enabled        INTEGER NOT NULL DEFAULT 0,
+                selected_model TEXT,
+                api_key_ref    TEXT,
+                routing_role   TEXT NOT NULL DEFAULT 'disabled',
+                settings_json  TEXT NOT NULL DEFAULT '{}',
+                created_at     TEXT DEFAULT (datetime('now')),
+                updated_at     TEXT DEFAULT (datetime('now'))
+            );
+
+            CREATE TABLE IF NOT EXISTS ai_routing_policy (
+                id                         INTEGER PRIMARY KEY CHECK (id = 1),
+                routing_mode               TEXT NOT NULL DEFAULT 'local_only',
+                local_fallback_enabled     INTEGER NOT NULL DEFAULT 1,
+                per_call_cost_cap_usd      REAL NOT NULL DEFAULT 1.0,
+                monthly_cost_cap_usd       REAL NOT NULL DEFAULT 25.0,
+                updated_at                 TEXT DEFAULT (datetime('now'))
+            );
+
             -- ─── Instruments Cache ─────────────────────────────────
             -- Local cache of IBKR's instrument metadata.
             -- Avoids hitting IBKR's search API repeatedly for the same stock.
@@ -1702,6 +1728,188 @@ class DatabaseService:
             return cursor.rowcount > 0
 
         return await self._run_write(_delete)
+
+    # ── AI Provider Settings ─────────────────────────────────
+
+    _AI_PROVIDER_DEFAULTS: tuple[dict[str, Any], ...] = (
+        {
+            "provider_name": "ollama",
+            "display_name": "Ollama",
+            "kind": "local",
+            "enabled": 1,
+            "selected_model": None,
+            "api_key_ref": None,
+            "routing_role": "default",
+            "settings_json": "{}",
+        },
+        {
+            "provider_name": "openrouter",
+            "display_name": "OpenRouter",
+            "kind": "cloud",
+            "enabled": 0,
+            "selected_model": None,
+            "api_key_ref": None,
+            "routing_role": "disabled",
+            "settings_json": "{}",
+        },
+        {
+            "provider_name": "openai",
+            "display_name": "OpenAI",
+            "kind": "cloud",
+            "enabled": 0,
+            "selected_model": None,
+            "api_key_ref": None,
+            "routing_role": "disabled",
+            "settings_json": "{}",
+        },
+        {
+            "provider_name": "anthropic",
+            "display_name": "Anthropic",
+            "kind": "cloud",
+            "enabled": 0,
+            "selected_model": None,
+            "api_key_ref": None,
+            "routing_role": "disabled",
+            "settings_json": "{}",
+        },
+        {
+            "provider_name": "gemini",
+            "display_name": "Gemini",
+            "kind": "cloud",
+            "enabled": 0,
+            "selected_model": None,
+            "api_key_ref": None,
+            "routing_role": "disabled",
+            "settings_json": "{}",
+        },
+        {
+            "provider_name": "grok",
+            "display_name": "Grok",
+            "kind": "cloud",
+            "enabled": 0,
+            "selected_model": None,
+            "api_key_ref": None,
+            "routing_role": "disabled",
+            "settings_json": "{}",
+        },
+    )
+
+    async def ensure_ai_settings_defaults(self) -> None:
+        """Seed non-secret AI provider config and routing policy defaults."""
+        def _do() -> None:
+            assert self._conn is not None
+            with self._conn:
+                for provider in self._AI_PROVIDER_DEFAULTS:
+                    self._conn.execute(
+                        """INSERT INTO ai_provider_configs (
+                               provider_name, display_name, kind, enabled,
+                               selected_model, api_key_ref, routing_role,
+                               settings_json, created_at, updated_at
+                           )
+                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+                           ON CONFLICT(provider_name) DO NOTHING""",
+                        (
+                            provider["provider_name"],
+                            provider["display_name"],
+                            provider["kind"],
+                            provider["enabled"],
+                            provider["selected_model"],
+                            provider["api_key_ref"],
+                            provider["routing_role"],
+                            provider["settings_json"],
+                        ),
+                    )
+                self._conn.execute(
+                    """INSERT INTO ai_routing_policy (
+                           id, routing_mode, local_fallback_enabled,
+                           per_call_cost_cap_usd, monthly_cost_cap_usd, updated_at
+                       )
+                       VALUES (1, 'local_only', 1, 1.0, 25.0, datetime('now'))
+                       ON CONFLICT(id) DO NOTHING"""
+                )
+
+        await self._run_write(_do)
+
+    async def list_ai_provider_configs(self) -> list[dict[str, Any]]:
+        """Return AI provider configuration rows in UI display order."""
+        await self.ensure_ai_settings_defaults()
+
+        rows = await self._run_read(
+            lambda: self._fetchall(
+                """SELECT provider_name, display_name, kind, enabled,
+                          selected_model, api_key_ref, routing_role, settings_json
+                   FROM ai_provider_configs
+                   ORDER BY CASE provider_name
+                     WHEN 'ollama' THEN 0
+                     WHEN 'openrouter' THEN 1
+                     WHEN 'openai' THEN 2
+                     WHEN 'anthropic' THEN 3
+                     WHEN 'gemini' THEN 4
+                     WHEN 'grok' THEN 5
+                     ELSE 99
+                   END"""
+            )
+        )
+        return [
+            {
+                **row,
+                "enabled": bool(row["enabled"]),
+                "settings": json.loads(row["settings_json"] or "{}"),
+            }
+            for row in rows
+        ]
+
+    async def get_ai_routing_policy(self) -> dict[str, Any]:
+        """Return the singleton AI routing policy row."""
+        await self.ensure_ai_settings_defaults()
+        row = await self._run_read(
+            lambda: self._fetchone(
+                """SELECT routing_mode, local_fallback_enabled,
+                          per_call_cost_cap_usd, monthly_cost_cap_usd
+                   FROM ai_routing_policy
+                   WHERE id = 1"""
+            )
+        )
+        assert row is not None
+        return {
+            "routing_mode": row["routing_mode"],
+            "local_fallback_enabled": bool(row["local_fallback_enabled"]),
+            "per_call_cost_cap_usd": float(row["per_call_cost_cap_usd"]),
+            "monthly_cost_cap_usd": float(row["monthly_cost_cap_usd"]),
+        }
+
+    async def update_ai_routing_policy(
+        self,
+        *,
+        routing_mode: str,
+        local_fallback_enabled: bool,
+        per_call_cost_cap_usd: float,
+        monthly_cost_cap_usd: float,
+    ) -> dict[str, Any]:
+        """Persist non-secret AI routing and cost-cap settings."""
+        await self.ensure_ai_settings_defaults()
+
+        def _do() -> None:
+            assert self._conn is not None
+            with self._conn:
+                self._conn.execute(
+                    """UPDATE ai_routing_policy
+                       SET routing_mode = ?,
+                           local_fallback_enabled = ?,
+                           per_call_cost_cap_usd = ?,
+                           monthly_cost_cap_usd = ?,
+                           updated_at = datetime('now')
+                       WHERE id = 1""",
+                    (
+                        routing_mode,
+                        1 if local_fallback_enabled else 0,
+                        per_call_cost_cap_usd,
+                        monthly_cost_cap_usd,
+                    ),
+                )
+
+        await self._run_write(_do)
+        return await self.get_ai_routing_policy()
 
     # ── Fibonacci Config (Branch 3) ─────────────────────────────
     #

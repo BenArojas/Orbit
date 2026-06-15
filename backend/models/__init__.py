@@ -1085,6 +1085,22 @@ class AIProvidersResponse(BaseModel):
     cloud_enabled: bool
 
 
+class AIRoutingPolicyResponse(BaseModel):
+    """Non-secret AI routing and cost-cap settings."""
+    routing_mode: AIRoutingMode = "local_only"
+    local_fallback_enabled: bool = True
+    per_call_cost_cap_usd: float = Field(default=1.0, ge=0)
+    monthly_cost_cap_usd: float = Field(default=25.0, ge=0)
+
+
+class AIRoutingPolicyUpdate(BaseModel):
+    """Update body for non-secret AI routing and cost-cap settings."""
+    routing_mode: AIRoutingMode = "local_only"
+    local_fallback_enabled: bool = True
+    per_call_cost_cap_usd: float = Field(default=1.0, ge=0)
+    monthly_cost_cap_usd: float = Field(default=25.0, ge=0)
+
+
 class ChatMessage(BaseModel):
     """A single message in a chat conversation."""
     role: str                                           # "user", "assistant", or "system"

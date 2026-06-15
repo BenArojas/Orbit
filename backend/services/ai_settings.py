@@ -1,0 +1,39 @@
+"""Non-secret AI provider settings for Orbit v2.
+
+This service deliberately excludes API key storage. Cloud provider rows may hold
+only an opaque `api_key_ref` once the OS-keychain slice lands; plaintext or
+encrypted key material must never be persisted in SQLite.
+"""
+from __future__ import annotations
+
+from typing import Any
+
+from services.db import DatabaseService
+
+
+class AISettingsService:
+    """Small public interface for AI provider configuration and routing policy."""
+
+    def __init__(self, db: DatabaseService) -> None:
+        self._db = db
+
+    async def list_provider_configs(self) -> list[dict[str, Any]]:
+        return await self._db.list_ai_provider_configs()
+
+    async def get_routing_policy(self) -> dict[str, Any]:
+        return await self._db.get_ai_routing_policy()
+
+    async def update_routing_policy(
+        self,
+        *,
+        routing_mode: str,
+        local_fallback_enabled: bool,
+        per_call_cost_cap_usd: float,
+        monthly_cost_cap_usd: float,
+    ) -> dict[str, Any]:
+        return await self._db.update_ai_routing_policy(
+            routing_mode=routing_mode,
+            local_fallback_enabled=local_fallback_enabled,
+            per_call_cost_cap_usd=per_call_cost_cap_usd,
+            monthly_cost_cap_usd=monthly_cost_cap_usd,
+        )

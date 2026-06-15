@@ -33,11 +33,13 @@ from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
 from pydantic import ValidationError
 
-from deps import get_ibkr, get_db, get_ai, get_ollama
+from deps import get_ibkr, get_db, get_ai, get_ai_settings, get_ollama
 from models import (
     AIProviderMetadata,
     AIProviderStatus,
     AIProvidersResponse,
+    AIRoutingPolicyResponse,
+    AIRoutingPolicyUpdate,
     AiStatusResponse,
     AnalyzeRequest,
     AnalyzeResponse,
@@ -56,6 +58,7 @@ from models import (
 )
 from exceptions import AIAnalysisTimeoutError
 from services.ai import AiService, _coerce_confidence
+from services.ai_settings import AISettingsService
 from services.db import DatabaseService
 from services.ibkr import IBKRService
 from services.indicators import IndicatorService, get_active_fib_weights
@@ -80,6 +83,29 @@ def _local_provider_status(ollama: OllamaLifecycle) -> AIProviderStatus:
         selected_model=status.get("selected_model"),
         has_key=False,
         error=status.get("error"),
+    )
+
+
+def _provider_status_from_config(
+    config: dict,
+    ollama: OllamaLifecycle,
+) -> AIProviderStatus:
+    if config["provider_name"] == "ollama":
+        status = _local_provider_status(ollama)
+        return status.model_copy(update={
+            "display_name": config["display_name"],
+            "enabled": True,
+        })
+
+    return AIProviderStatus(
+        provider_name=config["provider_name"],
+        display_name=config["display_name"],
+        kind=config["kind"],
+        enabled=bool(config["enabled"] and config.get("api_key_ref")),
+        ready=False,
+        selected_model=config.get("selected_model"),
+        has_key=bool(config.get("api_key_ref")),
+        error=None,
     )
 
 
@@ -258,13 +284,48 @@ async def warmup(
 @router.get("/providers", response_model=AIProvidersResponse)
 async def providers(
     ollama: OllamaLifecycle = Depends(get_ollama),
+    ai_settings: AISettingsService = Depends(get_ai_settings),
 ):
-    """Return local-only AI provider status for the current Slice 2 UI path."""
+    """Return AI provider status for the settings shell.
+
+    Slice 3 is still no-secrets/no-cloud: cloud providers are listed so the UI
+    can render cards, but they remain disabled until OS-keychain enablement.
+    """
+    policy = await ai_settings.get_routing_policy()
+    provider_configs = await ai_settings.list_provider_configs()
+    provider_statuses = [
+        _provider_status_from_config(config, ollama)
+        for config in provider_configs
+    ]
     return AIProvidersResponse(
-        providers=[_local_provider_status(ollama)],
+        providers=provider_statuses,
         active_provider="ollama",
-        routing_mode="local_only",
+        routing_mode=policy["routing_mode"],
         cloud_enabled=False,
+    )
+
+
+@router.get("/routing-policy", response_model=AIRoutingPolicyResponse)
+async def routing_policy(
+    ai_settings: AISettingsService = Depends(get_ai_settings),
+):
+    """Return non-secret AI routing and cost-cap settings."""
+    return AIRoutingPolicyResponse(**await ai_settings.get_routing_policy())
+
+
+@router.put("/routing-policy", response_model=AIRoutingPolicyResponse)
+async def update_routing_policy(
+    request: AIRoutingPolicyUpdate,
+    ai_settings: AISettingsService = Depends(get_ai_settings),
+):
+    """Persist non-secret AI routing and cost-cap settings."""
+    return AIRoutingPolicyResponse(
+        **await ai_settings.update_routing_policy(
+            routing_mode=request.routing_mode,
+            local_fallback_enabled=request.local_fallback_enabled,
+            per_call_cost_cap_usd=request.per_call_cost_cap_usd,
+            monthly_cost_cap_usd=request.monthly_cost_cap_usd,
+        )
     )
 
 

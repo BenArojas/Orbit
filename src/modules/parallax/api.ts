@@ -648,6 +648,15 @@ export interface AIProvidersResponse {
     cloud_enabled: boolean;
 }
 
+export interface AIRoutingPolicyResponse {
+    routing_mode: AIRoutingMode;
+    local_fallback_enabled: boolean;
+    per_call_cost_cap_usd: number;
+    monthly_cost_cap_usd: number;
+}
+
+export type AIRoutingPolicyUpdate = AIRoutingPolicyResponse;
+
 export interface AiStatusResponse {
     state:
     | "not_installed"
@@ -1054,6 +1063,12 @@ export const parallaxApi = {
     // AI Analysis (Phase 4)
     aiProviders: () =>
         sidecarRequest<AIProvidersResponse>("GET", "/ai/providers"),
+
+    aiRoutingPolicy: () =>
+        sidecarRequest<AIRoutingPolicyResponse>("GET", "/ai/routing-policy"),
+
+    aiUpdateRoutingPolicy: (req: AIRoutingPolicyUpdate) =>
+        sidecarRequest<AIRoutingPolicyResponse>("PUT", "/ai/routing-policy", req),
 
     aiStatus: () =>
         sidecarRequest<AiStatusResponse>("GET", "/ai/status"),

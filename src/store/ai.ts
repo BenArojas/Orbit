@@ -21,6 +21,7 @@ import type {
   AIProviderName,
   AIProviderStatus,
   AIProvidersResponse,
+  AIRoutingPolicyResponse,
   AIRoutingMode,
   AiStatusResponse,
   OllamaModelResponse,
@@ -70,6 +71,9 @@ interface AiState {
   activeProvider: AIProviderName;
   routingMode: AIRoutingMode;
   cloudEnabled: boolean;
+  localFallbackEnabled: boolean;
+  perCallCostCapUsd: number;
+  monthlyCostCapUsd: number;
   lastProviderMetadata: AIProviderMetadata | null;
 
   /* ── Chat session ── */
@@ -89,6 +93,7 @@ interface AiState {
   setOllamaStatus: (status: AiStatusResponse) => void;
   setAvailableModels: (models: OllamaModelResponse[]) => void;
   setProvidersStatus: (status: AIProvidersResponse) => void;
+  setRoutingPolicy: (policy: AIRoutingPolicyResponse) => void;
   setLastProviderMetadata: (metadata: AIProviderMetadata | null) => void;
 
   /* ── Actions: Chat ── */
@@ -120,6 +125,9 @@ export const useAiStore = create<AiState>()((set) => ({
   activeProvider: "ollama",
   routingMode: "local_only",
   cloudEnabled: false,
+  localFallbackEnabled: true,
+  perCallCostCapUsd: 1,
+  monthlyCostCapUsd: 25,
   lastProviderMetadata: null,
 
   // Chat session
@@ -153,6 +161,14 @@ export const useAiStore = create<AiState>()((set) => ({
       activeProvider: status.active_provider,
       routingMode: status.routing_mode,
       cloudEnabled: status.cloud_enabled,
+    }),
+
+  setRoutingPolicy: (policy) =>
+    set({
+      routingMode: policy.routing_mode,
+      localFallbackEnabled: policy.local_fallback_enabled,
+      perCallCostCapUsd: policy.per_call_cost_cap_usd,
+      monthlyCostCapUsd: policy.monthly_cost_cap_usd,
     }),
 
   setLastProviderMetadata: (metadata) => set({ lastProviderMetadata: metadata }),

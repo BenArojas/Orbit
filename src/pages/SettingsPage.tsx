@@ -27,6 +27,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { toast } from "sonner";
+import AiProvidersSettings from "@/components/ai/AiProvidersSettings";
 import PulseConfigSection from "@/components/settings/PulseConfigSection";
 
 // ── Timeframe options (matches chart store / IBKR bar sizes) ─────────────────
@@ -381,6 +382,11 @@ export default function SettingsPage() {
         {/* Market Pulse (Phase 8.9+) */}
         <SettingsCard title="Market Pulse">
           <PulseConfigSection />
+        </SettingsCard>
+
+        {/* AI Providers */}
+        <SettingsCard title="AI Providers">
+          <AiProvidersSettings />
         </SettingsCard>
 
         {/* Scanner */}
