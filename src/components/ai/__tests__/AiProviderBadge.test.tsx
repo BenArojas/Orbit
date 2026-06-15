@@ -35,4 +35,22 @@ describe("AiProviderBadge", () => {
 
     expect(screen.getByText("Fallback")).toBeInTheDocument();
   });
+
+  it("renders cloud provider cost metadata", () => {
+    render(
+      <AiProviderBadge
+        providerName="openrouter"
+        model="openrouter/auto"
+        kind="cloud"
+        fallbackUsed={false}
+        estimatedCost={null}
+        actualCost={0.0123}
+      />,
+    );
+
+    expect(screen.getByText("Cloud")).toBeInTheDocument();
+    expect(screen.getByText("OpenRouter")).toBeInTheDocument();
+    expect(screen.getByText("openrouter/auto")).toBeInTheDocument();
+    expect(screen.getByText("$0.01")).toBeInTheDocument();
+  });
 });

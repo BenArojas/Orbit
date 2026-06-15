@@ -198,4 +198,53 @@ describe("useAiAnalyzeStream", () => {
       fallback_used: false,
     });
   });
+
+  it("stores cloud provider cost metadata from the final done event", async () => {
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      body: new ReadableStream({
+        start(controller) {
+          const payload = JSON.stringify({
+            type: "done",
+            session_id: "sess-cloud",
+            signal: null,
+            message: "Cloud analysis complete.",
+            provider: {
+              provider_name: "openrouter",
+              kind: "cloud",
+              model: "openrouter/auto",
+              estimated_cost: null,
+              actual_cost: 0.0123,
+              fallback_used: false,
+            },
+          });
+          controller.enqueue(new TextEncoder().encode(`data: ${payload}\n\n`));
+          controller.close();
+        },
+      }),
+    }) as typeof fetch;
+
+    const { result } = renderHook(() => useAiAnalyzeStream());
+
+    await act(async () => {
+      await result.current.startAnalyze(
+        {
+          conid: 265598,
+          symbol: "AAPL",
+          timeframes: ["D"],
+          indicators: ["RSI"],
+        },
+        "openrouter/auto",
+      );
+    });
+
+    expect(aiStoreState.setLastProviderMetadata).toHaveBeenCalledWith({
+      provider_name: "openrouter",
+      kind: "cloud",
+      model: "openrouter/auto",
+      estimated_cost: null,
+      actual_cost: 0.0123,
+      fallback_used: false,
+    });
+  });
 });
