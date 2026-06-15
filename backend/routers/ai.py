@@ -29,13 +29,15 @@ Flow:
 import json
 import logging
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, status as http_status
 from fastapi.responses import StreamingResponse
 from pydantic import ValidationError
 
-from deps import get_ibkr, get_db, get_ai, get_ai_settings, get_ollama
+from deps import get_ibkr, get_db, get_ai, get_ai_keystore, get_ai_settings, get_ollama
 from models import (
+    AIProviderKeySaveRequest,
     AIProviderMetadata,
+    AIProviderName,
     AIProviderStatus,
     AIProvidersResponse,
     AIRoutingPolicyResponse,
@@ -58,6 +60,7 @@ from models import (
 )
 from exceptions import AIAnalysisTimeoutError
 from services.ai import AiService, _coerce_confidence
+from services.ai_keystore import AIKeyStore, AIKeyStoreUnavailableError
 from services.ai_settings import AISettingsService
 from services.db import DatabaseService
 from services.ibkr import IBKRService
@@ -117,6 +120,16 @@ def _local_provider_metadata(model: str | None) -> AIProviderMetadata:
         estimated_cost=None,
         actual_cost=None,
         fallback_used=False,
+    )
+
+
+def _keychain_unavailable_http_error() -> HTTPException:
+    return HTTPException(
+        status_code=http_status.HTTP_503_SERVICE_UNAVAILABLE,
+        detail={
+            "error": "ai_keychain_unavailable",
+            "message": "OS keychain is unavailable. Cloud AI providers remain disabled.",
+        },
     )
 
 
@@ -327,6 +340,62 @@ async def update_routing_policy(
             monthly_cost_cap_usd=request.monthly_cost_cap_usd,
         )
     )
+
+
+@router.post("/providers/{provider_name}/key", response_model=AIProviderStatus)
+async def save_provider_key(
+    provider_name: AIProviderName,
+    request: AIProviderKeySaveRequest,
+    ollama: OllamaLifecycle = Depends(get_ollama),
+    ai_settings: AISettingsService = Depends(get_ai_settings),
+    key_store: AIKeyStore = Depends(get_ai_keystore),
+):
+    """Save a cloud provider key to OS keychain and persist only its opaque ref."""
+    if provider_name == "ollama":
+        raise HTTPException(
+            status_code=http_status.HTTP_400_BAD_REQUEST,
+            detail={
+                "error": "local_provider_key_not_supported",
+                "message": "Ollama does not use cloud API key storage.",
+            },
+        )
+
+    try:
+        key_ref = await key_store.save_provider_key(provider_name, request.api_key)
+    except AIKeyStoreUnavailableError as exc:
+        raise _keychain_unavailable_http_error() from exc
+
+    config = await ai_settings.set_provider_key_ref(
+        provider_name=provider_name,
+        api_key_ref=key_ref,
+    )
+    return _provider_status_from_config(config, ollama)
+
+
+@router.delete("/providers/{provider_name}/key", response_model=AIProviderStatus)
+async def delete_provider_key(
+    provider_name: AIProviderName,
+    ollama: OllamaLifecycle = Depends(get_ollama),
+    ai_settings: AISettingsService = Depends(get_ai_settings),
+    key_store: AIKeyStore = Depends(get_ai_keystore),
+):
+    """Remove a cloud provider key from OS keychain and clear its opaque ref."""
+    if provider_name == "ollama":
+        raise HTTPException(
+            status_code=http_status.HTTP_400_BAD_REQUEST,
+            detail={
+                "error": "local_provider_key_not_supported",
+                "message": "Ollama does not use cloud API key storage.",
+            },
+        )
+
+    try:
+        await key_store.delete_provider_key(provider_name)
+    except AIKeyStoreUnavailableError as exc:
+        raise _keychain_unavailable_http_error() from exc
+
+    config = await ai_settings.clear_provider_key_ref(provider_name=provider_name)
+    return _provider_status_from_config(config, ollama)
 
 
 # ═══════════════════════════════════════════════════════════════

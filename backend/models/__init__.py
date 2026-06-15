@@ -1085,6 +1085,11 @@ class AIProvidersResponse(BaseModel):
     cloud_enabled: bool
 
 
+class AIProviderKeySaveRequest(BaseModel):
+    """Request body for saving a cloud provider API key to OS keychain."""
+    api_key: str = Field(min_length=1)
+
+
 class AIRoutingPolicyResponse(BaseModel):
     """Non-secret AI routing and cost-cap settings."""
     routing_mode: AIRoutingMode = "local_only"

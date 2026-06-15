@@ -1911,6 +1911,41 @@ class DatabaseService:
         await self._run_write(_do)
         return await self.get_ai_routing_policy()
 
+    async def update_ai_provider_key_ref(
+        self,
+        *,
+        provider_name: str,
+        api_key_ref: str | None,
+        enabled: bool,
+    ) -> dict[str, Any]:
+        """Persist only a provider's opaque key reference and enabled flag."""
+        await self.ensure_ai_settings_defaults()
+
+        def _do() -> None:
+            assert self._conn is not None
+            with self._conn:
+                self._conn.execute(
+                    """UPDATE ai_provider_configs
+                       SET api_key_ref = ?,
+                           enabled = ?,
+                           routing_role = ?,
+                           updated_at = datetime('now')
+                       WHERE provider_name = ?""",
+                    (
+                        api_key_ref,
+                        1 if enabled else 0,
+                        "manual" if enabled else "disabled",
+                        provider_name,
+                    ),
+                )
+
+        await self._run_write(_do)
+        providers = await self.list_ai_provider_configs()
+        return next(
+            provider for provider in providers
+            if provider["provider_name"] == provider_name
+        )
+
     # ── Fibonacci Config (Branch 3) ─────────────────────────────
     #
     # User-editable fib scoring weights live in the generic `settings`

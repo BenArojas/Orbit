@@ -37,3 +37,24 @@ class AISettingsService:
             per_call_cost_cap_usd=per_call_cost_cap_usd,
             monthly_cost_cap_usd=monthly_cost_cap_usd,
         )
+
+    async def set_provider_key_ref(
+        self,
+        *,
+        provider_name: str,
+        api_key_ref: str,
+    ) -> dict[str, Any]:
+        """Enable a cloud provider using an opaque OS-keychain reference."""
+        return await self._db.update_ai_provider_key_ref(
+            provider_name=provider_name,
+            api_key_ref=api_key_ref,
+            enabled=True,
+        )
+
+    async def clear_provider_key_ref(self, *, provider_name: str) -> dict[str, Any]:
+        """Disable a cloud provider and remove its opaque key reference."""
+        return await self._db.update_ai_provider_key_ref(
+            provider_name=provider_name,
+            api_key_ref=None,
+            enabled=False,
+        )

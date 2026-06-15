@@ -71,6 +71,28 @@ class _FakeSettings:
         }
 
 
+class _FakeKeyStore:
+    def __init__(self, *, unavailable: bool = False) -> None:
+        self.unavailable = unavailable
+        self.saved: list[tuple[str, str]] = []
+        self.deleted: list[str] = []
+
+    async def save_provider_key(self, provider_name: str, api_key: str) -> str:
+        if self.unavailable:
+            from services.ai_keystore import AIKeyStoreUnavailableError
+
+            raise AIKeyStoreUnavailableError("OS keychain is unavailable")
+        self.saved.append((provider_name, api_key))
+        return f"macos-keychain:orbit-ai/{provider_name}"
+
+    async def delete_provider_key(self, provider_name: str) -> None:
+        if self.unavailable:
+            from services.ai_keystore import AIKeyStoreUnavailableError
+
+            raise AIKeyStoreUnavailableError("OS keychain is unavailable")
+        self.deleted.append(provider_name)
+
+
 def test_get_ai_providers_returns_local_ollama_default():
     client = _client()
 
@@ -185,6 +207,168 @@ async def test_routing_policy_round_trips_non_secret_settings():
         "monthly_cost_cap_usd": 50.0,
     }
     assert client.get("/ai/routing-policy").json() == updated.json()
+
+    await db.close()
+
+
+@pytest.mark.asyncio
+async def test_provider_key_save_enables_cloud_provider_without_returning_secret_material():
+    from deps import get_ai_keystore, get_ai_settings, get_ollama
+    from routers.ai import router
+    from services.ai_settings import AISettingsService
+    from services.db import DatabaseService
+
+    db = DatabaseService(db_path=":memory:")
+    await db.initialize()
+    settings = AISettingsService(db)
+    key_store = _FakeKeyStore()
+
+    class FakeOllama:
+        selected_model = "gemma4:26b"
+
+        def status(self) -> dict:
+            return {
+                "state": "ready",
+                "ready": True,
+                "selected_model": "gemma4:26b",
+                "error": None,
+                "platform": "darwin",
+            }
+
+    app = FastAPI()
+    app.include_router(router)
+    app.dependency_overrides[get_ai_settings] = lambda: settings
+    app.dependency_overrides[get_ai_keystore] = lambda: key_store
+    app.dependency_overrides[get_ollama] = lambda: FakeOllama()
+    client = TestClient(app)
+
+    resp = client.post(
+        "/ai/providers/openrouter/key",
+        json={"api_key": "sk-or-secret"},
+    )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["provider_name"] == "openrouter"
+    assert body["enabled"] is True
+    assert body["has_key"] is True
+    assert "sk-or-secret" not in json.dumps(body)
+    assert "api_key" not in body
+    assert key_store.saved == [("openrouter", "sk-or-secret")]
+
+    configs = await settings.list_provider_configs()
+    openrouter = next(
+        provider for provider in configs
+        if provider["provider_name"] == "openrouter"
+    )
+    assert openrouter["enabled"] is True
+    assert openrouter["api_key_ref"] == "macos-keychain:orbit-ai/openrouter"
+    assert "sk-or-secret" not in json.dumps(openrouter)
+
+    await db.close()
+
+
+@pytest.mark.asyncio
+async def test_provider_key_delete_disables_cloud_provider_and_clears_key_ref():
+    from deps import get_ai_keystore, get_ai_settings, get_ollama
+    from routers.ai import router
+    from services.ai_settings import AISettingsService
+    from services.db import DatabaseService
+
+    db = DatabaseService(db_path=":memory:")
+    await db.initialize()
+    settings = AISettingsService(db)
+    key_store = _FakeKeyStore()
+
+    class FakeOllama:
+        selected_model = "gemma4:26b"
+
+        def status(self) -> dict:
+            return {
+                "state": "ready",
+                "ready": True,
+                "selected_model": "gemma4:26b",
+                "error": None,
+                "platform": "darwin",
+            }
+
+    app = FastAPI()
+    app.include_router(router)
+    app.dependency_overrides[get_ai_settings] = lambda: settings
+    app.dependency_overrides[get_ai_keystore] = lambda: key_store
+    app.dependency_overrides[get_ollama] = lambda: FakeOllama()
+    client = TestClient(app)
+
+    assert client.post(
+        "/ai/providers/openrouter/key",
+        json={"api_key": "sk-or-secret"},
+    ).status_code == 200
+
+    resp = client.delete("/ai/providers/openrouter/key")
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["provider_name"] == "openrouter"
+    assert body["enabled"] is False
+    assert body["has_key"] is False
+    assert key_store.deleted == ["openrouter"]
+
+    configs = await settings.list_provider_configs()
+    openrouter = next(
+        provider for provider in configs
+        if provider["provider_name"] == "openrouter"
+    )
+    assert openrouter["enabled"] is False
+    assert openrouter["api_key_ref"] is None
+
+    await db.close()
+
+
+@pytest.mark.asyncio
+async def test_provider_key_save_fails_closed_when_keychain_unavailable():
+    from deps import get_ai_keystore, get_ai_settings, get_ollama
+    from routers.ai import router
+    from services.ai_settings import AISettingsService
+    from services.db import DatabaseService
+
+    db = DatabaseService(db_path=":memory:")
+    await db.initialize()
+    settings = AISettingsService(db)
+
+    class FakeOllama:
+        selected_model = "gemma4:26b"
+
+        def status(self) -> dict:
+            return {
+                "state": "ready",
+                "ready": True,
+                "selected_model": "gemma4:26b",
+                "error": None,
+                "platform": "darwin",
+            }
+
+    app = FastAPI()
+    app.include_router(router)
+    app.dependency_overrides[get_ai_settings] = lambda: settings
+    app.dependency_overrides[get_ai_keystore] = lambda: _FakeKeyStore(unavailable=True)
+    app.dependency_overrides[get_ollama] = lambda: FakeOllama()
+    client = TestClient(app)
+
+    resp = client.post(
+        "/ai/providers/openrouter/key",
+        json={"api_key": "sk-or-secret"},
+    )
+
+    assert resp.status_code == 503
+    assert resp.json()["detail"] == {
+        "error": "ai_keychain_unavailable",
+        "message": "OS keychain is unavailable. Cloud AI providers remain disabled.",
+    }
+    assert "sk-or-secret" not in resp.text
+    providers = client.get("/ai/providers").json()["providers"]
+    assert providers[0]["provider_name"] == "ollama"
+    assert providers[0]["enabled"] is True
+    assert all(provider["enabled"] is False for provider in providers[1:])
 
     await db.close()
 
