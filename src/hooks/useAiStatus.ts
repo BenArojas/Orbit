@@ -28,6 +28,7 @@ export function useAiStatus() {
     ollamaError,
     setOllamaStatus,
     setAvailableModels,
+    setProvidersStatus,
   } = useAiStore();
 
   const queryClient = useQueryClient();
@@ -52,6 +53,19 @@ export function useAiStatus() {
       setOllamaStatus(statusQuery.data);
     }
   }, [statusQuery.data, setOllamaStatus]);
+
+  const providersQuery = useQuery({
+    queryKey: ["ai", "providers"],
+    queryFn: () => parallaxApi.aiProviders(),
+    refetchInterval: isReady ? POLL_INTERVAL_READY : POLL_INTERVAL_SETUP,
+    staleTime: isReady ? 30_000 : 5_000,
+  });
+
+  useEffect(() => {
+    if (providersQuery.data) {
+      setProvidersStatus(providersQuery.data);
+    }
+  }, [providersQuery.data, setProvidersStatus]);
 
   // ── Fetch models when Ollama is running ──
 

@@ -16,7 +16,15 @@
 
 import { create } from "zustand";
 import type { SignalData } from "@/components/ai";
-import type { AiStatusResponse, OllamaModelResponse } from "@/modules/parallax/api";
+import type {
+  AIProviderMetadata,
+  AIProviderName,
+  AIProviderStatus,
+  AIProvidersResponse,
+  AIRoutingMode,
+  AiStatusResponse,
+  OllamaModelResponse,
+} from "@/modules/parallax/api";
 
 /* ── Types ── */
 
@@ -58,6 +66,11 @@ interface AiState {
   availableModels: OllamaModelResponse[];
   platform: string;
   ollamaError: string | null;
+  providers: AIProviderStatus[];
+  activeProvider: AIProviderName;
+  routingMode: AIRoutingMode;
+  cloudEnabled: boolean;
+  lastProviderMetadata: AIProviderMetadata | null;
 
   /* ── Chat session ── */
   sessionId: string | null;
@@ -75,6 +88,8 @@ interface AiState {
   /* ── Actions: Ollama ── */
   setOllamaStatus: (status: AiStatusResponse) => void;
   setAvailableModels: (models: OllamaModelResponse[]) => void;
+  setProvidersStatus: (status: AIProvidersResponse) => void;
+  setLastProviderMetadata: (metadata: AIProviderMetadata | null) => void;
 
   /* ── Actions: Chat ── */
   setSessionId: (id: string) => void;
@@ -101,6 +116,11 @@ export const useAiStore = create<AiState>()((set) => ({
   availableModels: [],
   platform: "",
   ollamaError: null,
+  providers: [],
+  activeProvider: "ollama",
+  routingMode: "local_only",
+  cloudEnabled: false,
+  lastProviderMetadata: null,
 
   // Chat session
   sessionId: null,
@@ -127,6 +147,16 @@ export const useAiStore = create<AiState>()((set) => ({
 
   setAvailableModels: (models) => set({ availableModels: models }),
 
+  setProvidersStatus: (status) =>
+    set({
+      providers: status.providers,
+      activeProvider: status.active_provider,
+      routingMode: status.routing_mode,
+      cloudEnabled: status.cloud_enabled,
+    }),
+
+  setLastProviderMetadata: (metadata) => set({ lastProviderMetadata: metadata }),
+
   // ── Chat actions ──
 
   setSessionId: (id) => set({ sessionId: id }),
@@ -142,6 +172,7 @@ export const useAiStore = create<AiState>()((set) => ({
       messages: [],
       signal: null,
       streamingContent: "",
+      lastProviderMetadata: null,
     }),
 
   // ── Loading actions ──

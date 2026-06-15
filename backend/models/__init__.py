@@ -1045,6 +1045,46 @@ class AnalyzeRequest(BaseModel):
     )
 
 
+AIProviderName = Literal["ollama", "openai", "anthropic", "gemini", "grok", "openrouter"]
+AIProviderKind = Literal["local", "cloud"]
+AIRoutingMode = Literal[
+    "local_only",
+    "cloud_manual",
+    "hybrid_auto",
+    "cloud_with_local_fallback",
+]
+
+
+class AIProviderStatus(BaseModel):
+    """Current status for one AI provider exposed to the frontend."""
+    provider_name: AIProviderName
+    display_name: str
+    kind: AIProviderKind
+    enabled: bool
+    ready: bool
+    selected_model: Optional[str] = None
+    has_key: bool = False
+    error: Optional[str] = None
+
+
+class AIProviderMetadata(BaseModel):
+    """Provider metadata attached to completed AI analysis events."""
+    provider_name: AIProviderName
+    kind: AIProviderKind
+    model: Optional[str] = None
+    estimated_cost: Optional[float] = None
+    actual_cost: Optional[float] = None
+    fallback_used: bool = False
+
+
+class AIProvidersResponse(BaseModel):
+    """Local-only provider state for Slice 2."""
+    providers: list[AIProviderStatus]
+    active_provider: AIProviderName
+    routing_mode: AIRoutingMode
+    cloud_enabled: bool
+
+
 class ChatMessage(BaseModel):
     """A single message in a chat conversation."""
     role: str                                           # "user", "assistant", or "system"

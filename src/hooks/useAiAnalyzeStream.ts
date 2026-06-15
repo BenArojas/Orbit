@@ -24,7 +24,11 @@ import { useCallback, useRef } from "react";
 import { useAiStore } from "@/store";
 import { useChartStore } from "@/store/chart";
 import { API_BASE } from "@/config/endpoints";
-import type { AiContextMode, FibonacciSnapshot } from "@/modules/parallax/api";
+import type {
+  AIProviderMetadata,
+  AiContextMode,
+  FibonacciSnapshot,
+} from "@/modules/parallax/api";
 
 /* ── Types ── */
 
@@ -50,6 +54,7 @@ interface SseDoneEvent {
   session_id: string;
   signal: unknown; // typed as SignalData on the consuming side
   message: string;
+  provider?: AIProviderMetadata;
 }
 
 type SseEvent = SseTokenEvent | SseDoneEvent;
@@ -113,6 +118,7 @@ export function useAiAnalyzeStream() {
     appendStreamingContent,
     clearChat,
     pushResponseTime,
+    setLastProviderMetadata,
   } = useAiStore();
 
   const abortRef = useRef<AbortController | null>(null);
@@ -155,6 +161,7 @@ export function useAiAnalyzeStream() {
         let finalSessionId = req.session_id ?? "";
         let finalSignal: unknown = null;
         let finalMessage = "";
+        let finalProviderMetadata: AIProviderMetadata | null = null;
         let sawDone = false;
 
         // SSE loop — read chunks, split on lines, parse `data: …` frames
@@ -176,6 +183,7 @@ export function useAiAnalyzeStream() {
               finalSessionId = ev.session_id;
               finalSignal = ev.signal;
               finalMessage = ev.message;
+              finalProviderMetadata = ev.provider ?? null;
               sawDone = true;
             }
           }
@@ -188,6 +196,7 @@ export function useAiAnalyzeStream() {
           finalSessionId = trailing.session_id;
           finalSignal = trailing.signal;
           finalMessage = trailing.message;
+          finalProviderMetadata = trailing.provider ?? null;
           sawDone = true;
         }
 
@@ -205,6 +214,7 @@ export function useAiAnalyzeStream() {
           });
           // SignalData typing lives in components/ai — store accepts unknown shape
           setSignal(finalSignal as never);
+          setLastProviderMetadata(finalProviderMetadata);
           pushResponseTime({
             durationMs: performance.now() - startedAt,
             model,
@@ -251,7 +261,7 @@ export function useAiAnalyzeStream() {
     [
       isAnalyzing, clearChat, setAnalyzing, setStreaming, setStreamingContent,
       appendStreamingContent, addMessage, setSessionId, setSignal,
-      pushResponseTime,
+      setLastProviderMetadata, pushResponseTime,
     ],
   );
 

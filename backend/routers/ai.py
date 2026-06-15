@@ -35,6 +35,9 @@ from pydantic import ValidationError
 
 from deps import get_ibkr, get_db, get_ai, get_ollama
 from models import (
+    AIProviderMetadata,
+    AIProviderStatus,
+    AIProvidersResponse,
     AiStatusResponse,
     AnalyzeRequest,
     AnalyzeResponse,
@@ -64,6 +67,31 @@ router = APIRouter(prefix="/ai", tags=["ai"])
 
 # Indicator service is stateless — reuse the same instance
 _indicator_service = IndicatorService()
+
+
+def _local_provider_status(ollama: OllamaLifecycle) -> AIProviderStatus:
+    status = ollama.status()
+    return AIProviderStatus(
+        provider_name="ollama",
+        display_name="Ollama",
+        kind="local",
+        enabled=True,
+        ready=bool(status.get("ready")),
+        selected_model=status.get("selected_model"),
+        has_key=False,
+        error=status.get("error"),
+    )
+
+
+def _local_provider_metadata(model: str | None) -> AIProviderMetadata:
+    return AIProviderMetadata(
+        provider_name="ollama",
+        kind="local",
+        model=model,
+        estimated_cost=None,
+        actual_cost=None,
+        fallback_used=False,
+    )
 
 
 # ── Timeframe → IBKR period mapping for AI analysis ────────
@@ -220,6 +248,24 @@ async def warmup(
         return  # Nothing to warm up — silently succeed
 
     await ai.warmup(model)
+
+
+# ═══════════════════════════════════════════════════════════════
+#  GET /ai/providers
+# ═══════════════════════════════════════════════════════════════
+
+
+@router.get("/providers", response_model=AIProvidersResponse)
+async def providers(
+    ollama: OllamaLifecycle = Depends(get_ollama),
+):
+    """Return local-only AI provider status for the current Slice 2 UI path."""
+    return AIProvidersResponse(
+        providers=[_local_provider_status(ollama)],
+        active_provider="ollama",
+        routing_mode="local_only",
+        cloud_enabled=False,
+    )
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -517,6 +563,7 @@ async def analyze_stream(
                     "AI is not ready. Please complete the AI setup and select "
                     "a model first."
                 ),
+                "provider": _local_provider_metadata(model).model_dump(),
             }
             yield f"data: {json.dumps(payload)}\n\n"
         return StreamingResponse(err_stream(), media_type="text/event-stream")
@@ -558,6 +605,11 @@ async def analyze_stream(
                 watchlist=request.watchlist,
                 indicator_priority=request.indicator_priority or [],
             ):
+                if event.get("type") == "done":
+                    event = {
+                        **event,
+                        "provider": _local_provider_metadata(model).model_dump(),
+                    }
                 yield f"data: {json.dumps(event)}\n\n"
         except AIAnalysisTimeoutError as exc:
             timeout_event = {
@@ -569,6 +621,7 @@ async def analyze_stream(
                     f"for {request.symbol} (>{exc.timeout_s:.0f}s). Try a "
                     f"faster model or a shorter timeframe selection."
                 ),
+                "provider": _local_provider_metadata(model).model_dump(),
             }
             yield f"data: {json.dumps(timeout_event)}\n\n"
 

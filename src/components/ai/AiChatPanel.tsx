@@ -29,6 +29,7 @@ import AiConfigPanel, { type AiTimeframe, type AiIndicator } from "./AiConfigPan
 import ActionSignalCard from "./ActionSignalCard";
 import AiSetupGuide from "./AiSetupGuide";
 import AiModelSelector from "./AiModelSelector";
+import AiProviderBadge from "./AiProviderBadge";
 import ResponseTimeBadge from "./ResponseTimeBadge";
 import FibStackPanel from "./fib/FibStackPanel";
 import type { AiContextMode,FibonacciResult } from "@/modules/parallax/api";
@@ -169,6 +170,7 @@ export default function AiChatPanel({ activeConid, activeSymbol, fibonacci, char
     messages,
     signal,
     isAnalyzing,
+    lastProviderMetadata,
   } = useAiStore();
 
   // The fib panel must appear whenever ANY fib is on the chart — the
@@ -284,16 +286,30 @@ export default function AiChatPanel({ activeConid, activeSymbol, fibonacci, char
         </div>
 
         {/* Model selector + rolling response-time badge */}
-        {showChat && availableModels.length > 0 && (
+        {showChat && (availableModels.length > 0 || lastProviderMetadata) && (
           <div className="flex items-center gap-1.5">
-            <ResponseTimeBadge selectedModel={selectedModel} />
-            <AiModelSelector
-              models={availableModels}
-              selectedModel={selectedModel}
-              onSelect={selectModel}
-              onRefresh={refresh}
-              isRefreshing={isRefreshing}
-            />
+            {lastProviderMetadata && (
+              <AiProviderBadge
+                providerName={lastProviderMetadata.provider_name}
+                model={lastProviderMetadata.model}
+                kind={lastProviderMetadata.kind}
+                fallbackUsed={lastProviderMetadata.fallback_used}
+                estimatedCost={lastProviderMetadata.estimated_cost}
+                actualCost={lastProviderMetadata.actual_cost}
+              />
+            )}
+            {availableModels.length > 0 && (
+              <>
+                <ResponseTimeBadge selectedModel={selectedModel} />
+                <AiModelSelector
+                  models={availableModels}
+                  selectedModel={selectedModel}
+                  onSelect={selectModel}
+                  onRefresh={refresh}
+                  isRefreshing={isRefreshing}
+                />
+              </>
+            )}
           </div>
         )}
       </div>

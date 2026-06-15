@@ -605,6 +605,49 @@ export interface ChatResponse {
     message: string;
 }
 
+export type AIProviderName =
+    | "ollama"
+    | "openai"
+    | "anthropic"
+    | "gemini"
+    | "grok"
+    | "openrouter";
+
+export type AIProviderKind = "local" | "cloud";
+
+export type AIRoutingMode =
+    | "local_only"
+    | "cloud_manual"
+    | "hybrid_auto"
+    | "cloud_with_local_fallback";
+
+export interface AIProviderStatus {
+    provider_name: AIProviderName;
+    display_name: string;
+    kind: AIProviderKind;
+    enabled: boolean;
+    ready: boolean;
+    selected_model: string | null;
+    has_key: boolean;
+    error: string | null;
+}
+
+export interface AIProviderMetadata {
+    provider_name: AIProviderName;
+    kind: AIProviderKind;
+    model: string | null;
+    estimated_cost: number | null;
+    actual_cost: number | null;
+    fallback_used: boolean;
+}
+
+export interface AIProvidersResponse {
+    providers: AIProviderStatus[];
+    active_provider: AIProviderName;
+    routing_mode: AIRoutingMode;
+    cloud_enabled: boolean;
+}
+
 export interface AiStatusResponse {
     state:
     | "not_installed"
@@ -1009,6 +1052,9 @@ export const parallaxApi = {
         sidecarRequest<void>("DELETE", `/watchlist-config/${encodeURIComponent(name)}`),
 
     // AI Analysis (Phase 4)
+    aiProviders: () =>
+        sidecarRequest<AIProvidersResponse>("GET", "/ai/providers"),
+
     aiStatus: () =>
         sidecarRequest<AiStatusResponse>("GET", "/ai/status"),
 

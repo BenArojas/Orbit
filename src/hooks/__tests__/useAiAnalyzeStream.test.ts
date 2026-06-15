@@ -17,6 +17,7 @@ const aiStoreState = {
   appendStreamingContent: vi.fn(),
   clearChat: vi.fn(),
   pushResponseTime: vi.fn(),
+  setLastProviderMetadata: vi.fn(),
 };
 
 const activeFibs = [
@@ -82,6 +83,14 @@ describe("useAiAnalyzeStream", () => {
             session_id: "sess-1",
             signal: null,
             message: "Analysis complete.",
+            provider: {
+              provider_name: "ollama",
+              kind: "local",
+              model: "gemma4:26b",
+              estimated_cost: null,
+              actual_cost: null,
+              fallback_used: false,
+            },
           });
           controller.enqueue(new TextEncoder().encode(`data: ${payload}\n\n`));
           controller.close();
@@ -163,5 +172,30 @@ describe("useAiAnalyzeStream", () => {
     } finally {
       delete (activeFibs[1] as { hidden?: boolean }).hidden;
     }
+  });
+
+  it("stores provider metadata from the final done event", async () => {
+    const { result } = renderHook(() => useAiAnalyzeStream());
+
+    await act(async () => {
+      await result.current.startAnalyze(
+        {
+          conid: 265598,
+          symbol: "AAPL",
+          timeframes: ["D"],
+          indicators: ["RSI"],
+        },
+        "gemma4:26b",
+      );
+    });
+
+    expect(aiStoreState.setLastProviderMetadata).toHaveBeenCalledWith({
+      provider_name: "ollama",
+      kind: "local",
+      model: "gemma4:26b",
+      estimated_cost: null,
+      actual_cost: null,
+      fallback_used: false,
+    });
   });
 });
