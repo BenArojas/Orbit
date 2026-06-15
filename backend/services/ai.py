@@ -74,6 +74,7 @@ from services.prompt_builder import (
     SIGNAL_EXTRACTION_PROMPT,       # noqa: F401 — kept for legacy callers/tests
     SIGNAL_JSON_SCHEMA,             # noqa: F401 — kept for legacy callers/tests
 )
+from services.ai_providers import AIProviderRegistry, OllamaLLMProvider
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -269,12 +270,17 @@ class AiService:
     """
 
     def __init__(
-        self, context_service: "OllamaContextService | None" = None
+        self,
+        context_service: "OllamaContextService | None" = None,
+        provider_registry: AIProviderRegistry | None = None,
     ) -> None:
         # Model is not hardcoded — it comes from the user's selection
         # stored in SQLite settings and set via OllamaLifecycle.selected_model.
         # The router passes the current model name into analyze()/follow_up().
         self._context_service = context_service
+        self._provider_registry = provider_registry or AIProviderRegistry({
+            "ollama": OllamaLLMProvider(),
+        })
         self.sessions: OrderedDict[str, ChatSession] = OrderedDict()
         self._http = httpx.AsyncClient(
             base_url=OLLAMA_HOST,
@@ -329,30 +335,8 @@ class AiService:
             True = force on (default for Analysis chat where reasoning is
             valued).
         """
-        payload: dict = {
-            "model": model,
-            "messages": messages,
-            "stream": False,
-            "keep_alive": "20m",
-            "options": {
-                "temperature": 0.3,     # Low temp for more consistent analysis
-                "num_predict": _ANALYSIS_NUM_PREDICT,
-            },
-        }
-        if think is not None:
-            payload["think"] = think
-
-        try:
-            resp = await self._http.post("/api/chat", json=payload)
-            resp.raise_for_status()
-            data = resp.json()
-            return data.get("message", {}).get("content", "")
-        except httpx.ConnectError:
-            raise ConnectionError("Cannot connect to Ollama server")
-        except httpx.TimeoutException:
-            raise TimeoutError("Ollama request timed out (>120s)")
-        except httpx.HTTPStatusError as e:
-            raise RuntimeError(f"Ollama returned error: {e.response.status_code}")
+        provider = self._provider_registry.require("ollama")
+        return await provider.chat(messages=messages, model=model, think=think)
 
     async def chat_structured(
         self,
@@ -376,35 +360,13 @@ class AiService:
         json_schema: JSON Schema dict passed to Ollama's `format` parameter.
         think: see chat() — None = use Ollama default, True/False forces it.
         """
-        payload: dict = {
-            "model": model,
-            "messages": messages,
-            "stream": False,
-            "format": json_schema,
-            "keep_alive": "20m",
-            "options": {
-                "temperature": 0.2,     # Even lower temp for structured output
-                "num_predict": _ANALYSIS_NUM_PREDICT,
-            },
-        }
-        if think is not None:
-            payload["think"] = think
-
-        try:
-            resp = await self._http.post("/api/chat", json=payload)
-            resp.raise_for_status()
-            data = resp.json()
-            content = data.get("message", {}).get("content", "")
-            return json.loads(content)
-        except httpx.ConnectError:
-            raise ConnectionError("Cannot connect to Ollama server")
-        except httpx.TimeoutException:
-            raise TimeoutError("Ollama request timed out (>120s)")
-        except httpx.HTTPStatusError as e:
-            raise RuntimeError(f"Ollama returned error: {e.response.status_code}")
-        except json.JSONDecodeError as e:
-            log.warning("Structured output returned invalid JSON: %s", e)
-            raise ValueError(f"Model returned invalid JSON despite schema: {e}")
+        provider = self._provider_registry.require("ollama")
+        return await provider.chat_structured(
+            messages=messages,
+            model=model,
+            json_schema=json_schema,
+            think=think,
+        )
 
     async def chat_stream(
         self,
