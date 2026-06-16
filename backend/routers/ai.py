@@ -735,14 +735,17 @@ async def analyze(
         ollama,
         ai_settings,
     )
-    policy = await ai_settings.get_routing_policy()
-    estimated_cost = await _enforce_cloud_cost_caps(
-        provider_name=provider_name,
-        model=model,
-        task_type=request.task_type,
-        policy=policy,
-        usage_ledger=usage_ledger,
-    )
+    policy = {"routing_mode": "local_only"}
+    estimated_cost = None
+    if provider_name != "ollama":
+        policy = await ai_settings.get_routing_policy()
+        estimated_cost = await _enforce_cloud_cost_caps(
+            provider_name=provider_name,
+            model=model,
+            task_type=request.task_type,
+            policy=policy,
+            usage_ledger=usage_ledger,
+        )
 
     # Resolve frontend display names → backend indicator names
     resolved_indicators = _resolve_indicators(request.indicators)
@@ -882,14 +885,17 @@ async def analyze_stream(
         ollama,
         ai_settings,
     )
-    policy = await ai_settings.get_routing_policy()
-    estimated_cost = await _enforce_cloud_cost_caps(
-        provider_name=provider_name,
-        model=selected_model,
-        task_type=request.task_type,
-        policy=policy,
-        usage_ledger=usage_ledger,
-    )
+    policy = {"routing_mode": "local_only"}
+    estimated_cost = None
+    if provider_name != "ollama":
+        policy = await ai_settings.get_routing_policy()
+        estimated_cost = await _enforce_cloud_cost_caps(
+            provider_name=provider_name,
+            model=selected_model,
+            task_type=request.task_type,
+            policy=policy,
+            usage_ledger=usage_ledger,
+        )
 
     resolved_indicators = _resolve_indicators(request.indicators)
 
