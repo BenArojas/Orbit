@@ -50,6 +50,7 @@ from models import (
     AIProvidersResponse,
     AIRoutingPolicyResponse,
     AIRoutingPolicyUpdate,
+    AIUsageSummaryResponse,
     AiStatusResponse,
     AnalyzeRequest,
     AnalyzeResponse,
@@ -469,6 +470,14 @@ async def update_routing_policy(
             monthly_cost_cap_usd=request.monthly_cost_cap_usd,
         )
     )
+
+
+@router.get("/usage", response_model=AIUsageSummaryResponse)
+async def usage_summary(
+    usage_ledger: AIUsageLedger = Depends(get_ai_usage_ledger),
+):
+    """Return current-month AI estimated and actual spend."""
+    return AIUsageSummaryResponse(**await usage_ledger.monthly_spend_summary())
 
 
 @router.post("/providers/{provider_name}/key", response_model=AIProviderStatus)

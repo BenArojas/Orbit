@@ -1109,6 +1109,12 @@ class AIRoutingPolicyUpdate(BaseModel):
     monthly_cost_cap_usd: float = Field(default=25.0, ge=0)
 
 
+class AIUsageSummaryResponse(BaseModel):
+    """Current-month AI spend summary."""
+    monthly_actual_cost_usd: float = 0.0
+    monthly_estimated_cost_usd: float = 0.0
+
+
 class ChatMessage(BaseModel):
     """A single message in a chat conversation."""
     role: str                                           # "user", "assistant", or "system"

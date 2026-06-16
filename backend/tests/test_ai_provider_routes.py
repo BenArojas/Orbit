@@ -712,6 +712,25 @@ def test_analyze_stream_done_event_contains_cloud_provider_metadata():
     }
 
 
+def test_ai_usage_route_returns_monthly_spend_summary():
+    from deps import get_ai_usage_ledger
+
+    usage = _FakeUsageLedger(
+        monthly_actual_cost_usd=3.25,
+        monthly_estimated_cost_usd=5.0,
+    )
+    client = _client()
+    client.app.dependency_overrides[get_ai_usage_ledger] = lambda: usage
+
+    resp = client.get("/ai/usage")
+
+    assert resp.status_code == 200
+    assert resp.json() == {
+        "monthly_actual_cost_usd": 3.25,
+        "monthly_estimated_cost_usd": 5.0,
+    }
+
+
 def test_analyze_blocks_cloud_for_execution_sensitive_tasks():
     from deps import get_ai_settings
 
