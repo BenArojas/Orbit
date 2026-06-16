@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 
 import httpx
 import pytest
@@ -55,6 +56,282 @@ async def test_openrouter_provider_normalizes_chat_response_and_usage_cost():
     assert result.metadata.actual_cost == 0.0123
     assert result.provider_request_id == "gen-123"
     assert requests[0].url.path == "/api/v1/chat/completions"
+
+    await client.aclose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("provider_cls_name", "provider_name", "base_url", "model", "response_json"),
+    [
+        (
+            "OpenAIProvider",
+            "openai",
+            "https://api.openai.com",
+            "gpt-5.2",
+            {
+                "id": "resp-123",
+                "output_text": "OpenAI narrative.",
+                "usage": {"input_tokens": 100, "output_tokens": 50},
+            },
+        ),
+        (
+            "AnthropicProvider",
+            "anthropic",
+            "https://api.anthropic.com",
+            "claude-sonnet-4-5",
+            {
+                "id": "msg-123",
+                "content": [{"type": "text", "text": "Anthropic narrative."}],
+                "usage": {"input_tokens": 100, "output_tokens": 50},
+            },
+        ),
+        (
+            "GeminiProvider",
+            "gemini",
+            "https://generativelanguage.googleapis.com",
+            "gemini-3.5-flash",
+            {
+                "responseId": "gem-123",
+                "candidates": [
+                    {
+                        "content": {
+                            "parts": [{"text": "Gemini narrative."}],
+                        },
+                    },
+                ],
+                "usageMetadata": {
+                    "promptTokenCount": 100,
+                    "candidatesTokenCount": 50,
+                },
+            },
+        ),
+        (
+            "GrokProvider",
+            "grok",
+            "https://api.x.ai",
+            "latest",
+            {
+                "id": "chatcmpl-123",
+                "choices": [
+                    {"message": {"content": "Grok narrative."}},
+                ],
+                "usage": {
+                    "prompt_tokens": 100,
+                    "completion_tokens": 50,
+                },
+            },
+        ),
+    ],
+)
+async def test_direct_provider_adapters_satisfy_read_only_metadata_contract(
+    provider_cls_name: str,
+    provider_name: str,
+    base_url: str,
+    model: str,
+    response_json: dict,
+):
+    import services.ai_cloud_adapters as adapters
+
+    requests: list[httpx.Request] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(200, json=response_json)
+
+    client = httpx.AsyncClient(
+        base_url=base_url,
+        transport=httpx.MockTransport(handler),
+    )
+    provider_cls: Callable[..., object] = getattr(adapters, provider_cls_name)
+    provider = provider_cls(api_key="sk-test", http_client=client)
+
+    result = await provider.chat_with_metadata(
+        messages=[
+            {"role": "system", "content": "You are a technical analyst."},
+            {"role": "user", "content": "Analyze AAPL"},
+        ],
+        model=model,
+    )
+
+    expected_content = {
+        "openai": "OpenAI narrative.",
+        "anthropic": "Anthropic narrative.",
+        "gemini": "Gemini narrative.",
+        "grok": "Grok narrative.",
+    }[provider_name]
+    assert result.content == expected_content
+    assert result.metadata.provider_name == provider_name
+    assert result.metadata.kind == "cloud"
+    assert result.metadata.model == model
+    assert result.metadata.estimated_cost is None
+    assert result.metadata.actual_cost is None
+    assert result.metadata.fallback_used is False
+    assert result.provider_request_id in {"resp-123", "msg-123", "gem-123", "chatcmpl-123"}
+    assert requests, "adapter must issue an HTTP request"
+
+    await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_openai_provider_uses_responses_contract():
+    from services.ai_cloud_adapters import OpenAIProvider
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/v1/responses"
+        assert request.headers["authorization"] == "Bearer sk-test"
+        body = json.loads(request.content)
+        assert body == {
+            "model": "gpt-5.2",
+            "input": [
+                {"role": "system", "content": "You are a technical analyst."},
+                {"role": "user", "content": "Analyze AAPL"},
+            ],
+        }
+        return httpx.Response(
+            200,
+            json={"id": "resp-123", "output_text": "OpenAI narrative."},
+        )
+
+    client = httpx.AsyncClient(
+        base_url="https://api.openai.com",
+        transport=httpx.MockTransport(handler),
+    )
+    provider = OpenAIProvider(api_key="sk-test", http_client=client)
+
+    await provider.chat_with_metadata(
+        messages=[
+            {"role": "system", "content": "You are a technical analyst."},
+            {"role": "user", "content": "Analyze AAPL"},
+        ],
+        model="gpt-5.2",
+    )
+
+    await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_anthropic_provider_uses_messages_contract():
+    from services.ai_cloud_adapters import AnthropicProvider
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/v1/messages"
+        assert request.headers["x-api-key"] == "sk-test"
+        assert request.headers["anthropic-version"] == "2023-06-01"
+        body = json.loads(request.content)
+        assert body == {
+            "model": "claude-sonnet-4-5",
+            "max_tokens": 4096,
+            "system": "You are a technical analyst.",
+            "messages": [{"role": "user", "content": "Analyze AAPL"}],
+        }
+        return httpx.Response(
+            200,
+            json={
+                "id": "msg-123",
+                "content": [{"type": "text", "text": "Anthropic narrative."}],
+            },
+        )
+
+    client = httpx.AsyncClient(
+        base_url="https://api.anthropic.com",
+        transport=httpx.MockTransport(handler),
+    )
+    provider = AnthropicProvider(api_key="sk-test", http_client=client)
+
+    await provider.chat_with_metadata(
+        messages=[
+            {"role": "system", "content": "You are a technical analyst."},
+            {"role": "user", "content": "Analyze AAPL"},
+        ],
+        model="claude-sonnet-4-5",
+    )
+
+    await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_gemini_provider_uses_generate_content_contract():
+    from services.ai_cloud_adapters import GeminiProvider
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/v1beta/models/gemini-3.5-flash:generateContent"
+        assert request.url.params["key"] == "sk-test"
+        body = json.loads(request.content)
+        assert body == {
+            "systemInstruction": {
+                "parts": [{"text": "You are a technical analyst."}],
+            },
+            "contents": [
+                {
+                    "role": "user",
+                    "parts": [{"text": "Analyze AAPL"}],
+                },
+            ],
+        }
+        return httpx.Response(
+            200,
+            json={
+                "responseId": "gem-123",
+                "candidates": [
+                    {"content": {"parts": [{"text": "Gemini narrative."}]}}
+                ],
+            },
+        )
+
+    client = httpx.AsyncClient(
+        base_url="https://generativelanguage.googleapis.com",
+        transport=httpx.MockTransport(handler),
+    )
+    provider = GeminiProvider(api_key="sk-test", http_client=client)
+
+    await provider.chat_with_metadata(
+        messages=[
+            {"role": "system", "content": "You are a technical analyst."},
+            {"role": "user", "content": "Analyze AAPL"},
+        ],
+        model="gemini-3.5-flash",
+    )
+
+    await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_grok_provider_uses_chat_completions_contract():
+    from services.ai_cloud_adapters import GrokProvider
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/v1/chat/completions"
+        assert request.headers["authorization"] == "Bearer sk-test"
+        body = json.loads(request.content)
+        assert body == {
+            "model": "latest",
+            "messages": [
+                {"role": "system", "content": "You are a technical analyst."},
+                {"role": "user", "content": "Analyze AAPL"},
+            ],
+        }
+        return httpx.Response(
+            200,
+            json={
+                "id": "chatcmpl-123",
+                "choices": [{"message": {"content": "Grok narrative."}}],
+            },
+        )
+
+    client = httpx.AsyncClient(
+        base_url="https://api.x.ai",
+        transport=httpx.MockTransport(handler),
+    )
+    provider = GrokProvider(api_key="sk-test", http_client=client)
+
+    await provider.chat_with_metadata(
+        messages=[
+            {"role": "system", "content": "You are a technical analyst."},
+            {"role": "user", "content": "Analyze AAPL"},
+        ],
+        model="latest",
+    )
 
     await client.aclose()
 

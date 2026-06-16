@@ -186,3 +186,317 @@ class OpenRouterProvider:
             actual_cost=cost,
             fallback_used=False,
         )
+
+
+class OpenAIProvider:
+    """OpenAI Responses API adapter for read-only analysis calls."""
+
+    name = "openai"
+
+    def __init__(
+        self,
+        *,
+        api_key: str,
+        http_client: httpx.AsyncClient | None = None,
+    ) -> None:
+        self._api_key = api_key
+        self._http = http_client or httpx.AsyncClient(
+            base_url="https://api.openai.com",
+            timeout=httpx.Timeout(connect=10.0, read=180.0, write=30.0, pool=30.0),
+        )
+
+    async def chat_with_metadata(
+        self,
+        *,
+        messages: list[dict[str, str]],
+        model: str,
+    ) -> AIProviderTextResult:
+        response = await self._post(
+            "/v1/responses",
+            json={"model": model, "input": messages},
+            headers={
+                "Authorization": f"Bearer {self._api_key}",
+                "Content-Type": "application/json",
+            },
+        )
+        data = response.json()
+        return AIProviderTextResult(
+            content=_extract_openai_output_text(data),
+            metadata=_cloud_metadata(provider_name="openai", model=model),
+            provider_request_id=data.get("id"),
+        )
+
+    async def _post(
+        self,
+        url: str,
+        *,
+        json: dict[str, Any],
+        headers: dict[str, str],
+    ) -> httpx.Response:
+        return await _post_json(self._http, "OpenAI", url, json=json, headers=headers)
+
+    async def aclose(self) -> None:
+        await self._http.aclose()
+
+
+class AnthropicProvider:
+    """Anthropic Messages API adapter for read-only analysis calls."""
+
+    name = "anthropic"
+
+    def __init__(
+        self,
+        *,
+        api_key: str,
+        http_client: httpx.AsyncClient | None = None,
+    ) -> None:
+        self._api_key = api_key
+        self._http = http_client or httpx.AsyncClient(
+            base_url="https://api.anthropic.com",
+            timeout=httpx.Timeout(connect=10.0, read=180.0, write=30.0, pool=30.0),
+        )
+
+    async def chat_with_metadata(
+        self,
+        *,
+        messages: list[dict[str, str]],
+        model: str,
+    ) -> AIProviderTextResult:
+        payload = {
+            "model": model,
+            "max_tokens": 4096,
+            **_anthropic_messages_payload(messages),
+        }
+        response = await _post_json(
+            self._http,
+            "Anthropic",
+            "/v1/messages",
+            json=payload,
+            headers={
+                "x-api-key": self._api_key,
+                "anthropic-version": "2023-06-01",
+                "Content-Type": "application/json",
+            },
+        )
+        data = response.json()
+        return AIProviderTextResult(
+            content=_extract_anthropic_text(data),
+            metadata=_cloud_metadata(provider_name="anthropic", model=model),
+            provider_request_id=data.get("id"),
+        )
+
+    async def aclose(self) -> None:
+        await self._http.aclose()
+
+
+class GeminiProvider:
+    """Gemini GenerateContent API adapter for read-only analysis calls."""
+
+    name = "gemini"
+
+    def __init__(
+        self,
+        *,
+        api_key: str,
+        http_client: httpx.AsyncClient | None = None,
+    ) -> None:
+        self._api_key = api_key
+        self._http = http_client or httpx.AsyncClient(
+            base_url="https://generativelanguage.googleapis.com",
+            timeout=httpx.Timeout(connect=10.0, read=180.0, write=30.0, pool=30.0),
+        )
+
+    async def chat_with_metadata(
+        self,
+        *,
+        messages: list[dict[str, str]],
+        model: str,
+    ) -> AIProviderTextResult:
+        response = await _post_json(
+            self._http,
+            "Gemini",
+            f"/v1beta/models/{model}:generateContent",
+            json=_gemini_generate_content_payload(messages),
+            headers={"Content-Type": "application/json"},
+            params={"key": self._api_key},
+        )
+        data = response.json()
+        return AIProviderTextResult(
+            content=_extract_gemini_text(data),
+            metadata=_cloud_metadata(provider_name="gemini", model=model),
+            provider_request_id=data.get("responseId"),
+        )
+
+    async def aclose(self) -> None:
+        await self._http.aclose()
+
+
+class GrokProvider:
+    """xAI Grok chat-completions adapter for read-only analysis calls."""
+
+    name = "grok"
+
+    def __init__(
+        self,
+        *,
+        api_key: str,
+        http_client: httpx.AsyncClient | None = None,
+    ) -> None:
+        self._api_key = api_key
+        self._http = http_client or httpx.AsyncClient(
+            base_url="https://api.x.ai",
+            timeout=httpx.Timeout(connect=10.0, read=180.0, write=30.0, pool=30.0),
+        )
+
+    async def chat_with_metadata(
+        self,
+        *,
+        messages: list[dict[str, str]],
+        model: str,
+    ) -> AIProviderTextResult:
+        response = await _post_json(
+            self._http,
+            "Grok",
+            "/v1/chat/completions",
+            json={"model": model, "messages": messages},
+            headers={
+                "Authorization": f"Bearer {self._api_key}",
+                "Content-Type": "application/json",
+            },
+        )
+        data = response.json()
+        return AIProviderTextResult(
+            content=_extract_chat_completion_text(data),
+            metadata=_cloud_metadata(provider_name="grok", model=model),
+            provider_request_id=data.get("id"),
+        )
+
+    async def aclose(self) -> None:
+        await self._http.aclose()
+
+
+async def _post_json(
+    http_client: httpx.AsyncClient,
+    provider_label: str,
+    url: str,
+    *,
+    json: dict[str, Any],
+    headers: dict[str, str],
+    params: dict[str, str] | None = None,
+) -> httpx.Response:
+    try:
+        response = await http_client.post(
+            url,
+            json=json,
+            headers=headers,
+            params=params,
+        )
+        await _raise_provider_status(response, provider_label)
+        return response
+    except httpx.TimeoutException as exc:
+        raise AIProviderTimeoutError(f"{provider_label} request timed out") from exc
+    except httpx.NetworkError as exc:
+        raise AIProviderNetworkError(
+            f"{provider_label} network request failed"
+        ) from exc
+
+
+async def _raise_provider_status(
+    response: httpx.Response,
+    provider_label: str,
+) -> None:
+    if response.status_code < 400:
+        return
+    if response.status_code in {401, 403}:
+        raise AIProviderAuthError(f"{provider_label} authentication failed")
+    if response.status_code == 404:
+        raise AIProviderModelUnavailableError(f"{provider_label} model unavailable")
+    if response.status_code == 429:
+        raise AIProviderRateLimitError(f"{provider_label} rate limit reached")
+    raise AIProviderNetworkError(
+        f"{provider_label} returned HTTP {response.status_code}"
+    )
+
+
+def _cloud_metadata(*, provider_name: str, model: str) -> AIProviderMetadata:
+    return AIProviderMetadata(
+        provider_name=provider_name,
+        kind="cloud",
+        model=model,
+        estimated_cost=None,
+        actual_cost=None,
+        fallback_used=False,
+    )
+
+
+def _extract_openai_output_text(data: dict[str, Any]) -> str:
+    if isinstance(data.get("output_text"), str):
+        return data["output_text"]
+    parts: list[str] = []
+    for item in data.get("output", []):
+        for content in item.get("content", []):
+            if content.get("type") == "output_text" and content.get("text"):
+                parts.append(content["text"])
+    return "".join(parts)
+
+
+def _anthropic_messages_payload(messages: list[dict[str, str]]) -> dict[str, Any]:
+    system_parts = [
+        message["content"]
+        for message in messages
+        if message.get("role") == "system" and message.get("content")
+    ]
+    payload_messages = [
+        {"role": message["role"], "content": message["content"]}
+        for message in messages
+        if message.get("role") != "system"
+    ]
+    payload: dict[str, Any] = {"messages": payload_messages}
+    if system_parts:
+        payload["system"] = "\n\n".join(system_parts)
+    return payload
+
+
+def _extract_anthropic_text(data: dict[str, Any]) -> str:
+    return "".join(
+        part.get("text", "")
+        for part in data.get("content", [])
+        if part.get("type") == "text"
+    )
+
+
+def _gemini_generate_content_payload(messages: list[dict[str, str]]) -> dict[str, Any]:
+    system_parts = [
+        {"text": message["content"]}
+        for message in messages
+        if message.get("role") == "system" and message.get("content")
+    ]
+    contents = [
+        {
+            "role": "model" if message.get("role") == "assistant" else "user",
+            "parts": [{"text": message["content"]}],
+        }
+        for message in messages
+        if message.get("role") != "system"
+    ]
+    payload: dict[str, Any] = {"contents": contents}
+    if system_parts:
+        payload["systemInstruction"] = {"parts": system_parts}
+    return payload
+
+
+def _extract_gemini_text(data: dict[str, Any]) -> str:
+    parts: list[str] = []
+    for candidate in data.get("candidates", []):
+        for part in candidate.get("content", {}).get("parts", []):
+            if part.get("text"):
+                parts.append(part["text"])
+    return "".join(parts)
+
+
+def _extract_chat_completion_text(data: dict[str, Any]) -> str:
+    return (
+        data.get("choices", [{}])[0]
+        .get("message", {})
+        .get("content", "")
+    )
