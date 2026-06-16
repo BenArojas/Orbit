@@ -16,6 +16,7 @@ from services.sectors import SectorService
 from services.ai import AiService
 from services.ai_keystore import AIKeyStore
 from services.ai_settings import AISettingsService
+from services.ai_usage import AIUsageLedger
 from services.gateway import GatewayLifecycle
 from services.instrument_identity import InstrumentIdentityService
 from services.ollama import OllamaLifecycle
@@ -52,6 +53,11 @@ def get_ai(request: Request) -> AiService:
 def get_ai_settings(db: DatabaseService = Depends(get_db)) -> AISettingsService:
     """Get the AI settings service for the active database dependency."""
     return AISettingsService(db)
+
+
+def get_ai_usage_ledger(db: DatabaseService = Depends(get_db)) -> AIUsageLedger:
+    """Get the local AI usage/cost ledger for the active database dependency."""
+    return AIUsageLedger(db)
 
 
 def get_ai_keystore(request: Request) -> AIKeyStore:

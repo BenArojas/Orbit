@@ -105,6 +105,37 @@ class _FakeCloudSettings(_FakeSettings):
         }
 
 
+class _FakeLowCapCloudSettings(_FakeCloudSettings):
+    async def get_routing_policy(self) -> dict:
+        return {
+            "routing_mode": "cloud_manual",
+            "local_fallback_enabled": True,
+            "per_call_cost_cap_usd": 0.01,
+            "monthly_cost_cap_usd": 25.0,
+        }
+
+
+class _FakeUsageLedger:
+    def __init__(
+        self,
+        *,
+        monthly_actual_cost_usd: float = 0.0,
+        monthly_estimated_cost_usd: float = 0.0,
+    ) -> None:
+        self.records: list[dict] = []
+        self.summary = {
+            "monthly_actual_cost_usd": monthly_actual_cost_usd,
+            "monthly_estimated_cost_usd": monthly_estimated_cost_usd,
+        }
+
+    async def monthly_spend_summary(self) -> dict:
+        return self.summary
+
+    async def record_usage(self, **kwargs) -> dict:
+        self.records.append(kwargs)
+        return {"id": len(self.records), **kwargs}
+
+
 class _FakeKeyStore:
     def __init__(self, *, unavailable: bool = False) -> None:
         self.unavailable = unavailable
@@ -456,7 +487,7 @@ def test_analyze_stream_done_event_contains_local_provider_metadata():
 
 
 def test_analyze_returns_cloud_provider_metadata_for_enabled_openrouter():
-    from deps import get_ai_settings
+    from deps import get_ai_settings, get_ai_usage_ledger
 
     class FakeAi:
         async def analyze(self, **kwargs) -> dict:
@@ -472,7 +503,7 @@ def test_analyze_returns_cloud_provider_metadata_for_enabled_openrouter():
                     "provider_name": "openrouter",
                     "kind": "cloud",
                     "model": "openrouter/auto",
-                    "estimated_cost": None,
+                    "estimated_cost": 0.02,
                     "actual_cost": 0.0123,
                     "fallback_used": False,
                 },
@@ -484,7 +515,9 @@ def test_analyze_returns_cloud_provider_metadata_for_enabled_openrouter():
     fake_db.get_setting = AsyncMock(return_value=None)
 
     client = _client(ai=FakeAi(), ibkr=fake_ibkr, db=fake_db)
+    usage = _FakeUsageLedger()
     client.app.dependency_overrides[get_ai_settings] = lambda: _FakeCloudSettings()
+    client.app.dependency_overrides[get_ai_usage_ledger] = lambda: usage
 
     resp = client.post(
         "/ai/analyze",
@@ -502,14 +535,109 @@ def test_analyze_returns_cloud_provider_metadata_for_enabled_openrouter():
         "provider_name": "openrouter",
         "kind": "cloud",
         "model": "openrouter/auto",
-        "estimated_cost": None,
+        "estimated_cost": 0.02,
         "actual_cost": 0.0123,
         "fallback_used": False,
     }
+    assert usage.records == [
+        {
+            "provider_name": "openrouter",
+            "model": "openrouter/auto",
+            "task_type": "analysis",
+            "routing_mode": "cloud_manual",
+            "input_tokens": None,
+            "output_tokens": None,
+            "estimated_cost": 0.02,
+            "actual_cost": 0.0123,
+            "status": "success",
+            "provider_request_id": None,
+            "error_code": None,
+        }
+    ]
+
+
+def test_analyze_blocks_over_per_call_cap_before_cloud_ai_call():
+    from deps import get_ai_settings, get_ai_usage_ledger
+
+    fake_ai = MagicMock()
+    fake_ibkr = MagicMock()
+    fake_ibkr.history = AsyncMock(return_value={"data": []})
+    fake_db = MagicMock()
+    fake_db.get_setting = AsyncMock(return_value=None)
+
+    usage = _FakeUsageLedger()
+    client = _client(ai=fake_ai, ibkr=fake_ibkr, db=fake_db)
+    client.app.dependency_overrides[get_ai_settings] = lambda: _FakeLowCapCloudSettings()
+    client.app.dependency_overrides[get_ai_usage_ledger] = lambda: usage
+
+    resp = client.post(
+        "/ai/analyze",
+        json={
+            "conid": 265598,
+            "symbol": "AAPL",
+            "timeframes": ["D"],
+            "indicators": ["RSI"],
+            "provider_name": "openrouter",
+        },
+    )
+
+    assert resp.status_code == 402
+    assert resp.json()["detail"] == {
+        "error": "ai_cost_limit_exceeded",
+        "message": "Estimated cloud AI cost exceeds the per-call cap.",
+        "estimated_cost": 0.02,
+        "per_call_cost_cap_usd": 0.01,
+    }
+    fake_ai.analyze.assert_not_called()
+    assert usage.records == [
+        {
+            "provider_name": "openrouter",
+            "model": "openrouter/auto",
+            "task_type": "analysis",
+            "routing_mode": "cloud_manual",
+            "input_tokens": None,
+            "output_tokens": None,
+            "estimated_cost": 0.02,
+            "actual_cost": None,
+            "status": "blocked",
+            "provider_request_id": None,
+            "error_code": "ai_cost_limit_exceeded",
+        }
+    ]
+
+
+def test_analyze_stream_blocks_over_per_call_cap_before_cloud_ai_call():
+    from deps import get_ai_settings, get_ai_usage_ledger
+
+    fake_ai = MagicMock()
+    fake_ibkr = MagicMock()
+    fake_ibkr.history = AsyncMock(return_value={"data": []})
+    fake_db = MagicMock()
+    fake_db.get_setting = AsyncMock(return_value=None)
+
+    usage = _FakeUsageLedger()
+    client = _client(ai=fake_ai, ibkr=fake_ibkr, db=fake_db)
+    client.app.dependency_overrides[get_ai_settings] = lambda: _FakeLowCapCloudSettings()
+    client.app.dependency_overrides[get_ai_usage_ledger] = lambda: usage
+
+    resp = client.post(
+        "/ai/analyze/stream",
+        json={
+            "conid": 265598,
+            "symbol": "AAPL",
+            "timeframes": ["D"],
+            "indicators": ["RSI"],
+            "provider_name": "openrouter",
+        },
+    )
+
+    assert resp.status_code == 402
+    assert resp.json()["detail"]["error"] == "ai_cost_limit_exceeded"
+    fake_ai.analyze_stream.assert_not_called()
 
 
 def test_analyze_stream_done_event_contains_cloud_provider_metadata():
-    from deps import get_ai_settings
+    from deps import get_ai_settings, get_ai_usage_ledger
 
     class FakeAi:
         async def analyze_stream(self, **kwargs) -> AsyncIterator[dict]:
@@ -539,7 +667,9 @@ def test_analyze_stream_done_event_contains_cloud_provider_metadata():
     fake_db.get_setting = AsyncMock(return_value=None)
 
     client = _client(ai=FakeAi(), ibkr=fake_ibkr, db=fake_db)
+    usage = _FakeUsageLedger()
     client.app.dependency_overrides[get_ai_settings] = lambda: _FakeCloudSettings()
+    client.app.dependency_overrides[get_ai_usage_ledger] = lambda: usage
 
     with client.stream(
         "POST",
@@ -563,9 +693,22 @@ def test_analyze_stream_done_event_contains_cloud_provider_metadata():
         "provider_name": "openrouter",
         "kind": "cloud",
         "model": "openrouter/auto",
-        "estimated_cost": None,
+        "estimated_cost": 0.02,
         "actual_cost": 0.0123,
         "fallback_used": False,
+    }
+    assert usage.records[-1] == {
+        "provider_name": "openrouter",
+        "model": "openrouter/auto",
+        "task_type": "analysis",
+        "routing_mode": "cloud_manual",
+        "input_tokens": None,
+        "output_tokens": None,
+        "estimated_cost": 0.02,
+        "actual_cost": 0.0123,
+        "status": "success",
+        "provider_request_id": None,
+        "error_code": None,
     }
 
 

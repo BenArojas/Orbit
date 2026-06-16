@@ -33,7 +33,15 @@ from fastapi import APIRouter, Depends, HTTPException, status as http_status
 from fastapi.responses import StreamingResponse
 from pydantic import ValidationError
 
-from deps import get_ibkr, get_db, get_ai, get_ai_keystore, get_ai_settings, get_ollama
+from deps import (
+    get_ibkr,
+    get_db,
+    get_ai,
+    get_ai_keystore,
+    get_ai_settings,
+    get_ai_usage_ledger,
+    get_ollama,
+)
 from models import (
     AIProviderKeySaveRequest,
     AIProviderMetadata,
@@ -62,6 +70,7 @@ from exceptions import AIAnalysisTimeoutError
 from services.ai import AiService, _coerce_confidence
 from services.ai_keystore import AIKeyStore, AIKeyStoreUnavailableError
 from services.ai_settings import AISettingsService
+from services.ai_usage import AIUsageLedger
 from services.db import DatabaseService
 from services.ibkr import IBKRService
 from services.indicators import IndicatorService, get_active_fib_weights
@@ -153,6 +162,30 @@ def _cloud_provider_unavailable_http_error(provider_name: str) -> HTTPException:
     )
 
 
+def _cloud_cost_limit_http_error(
+    *,
+    estimated_cost: float,
+    per_call_cost_cap_usd: float,
+) -> HTTPException:
+    return HTTPException(
+        status_code=http_status.HTTP_402_PAYMENT_REQUIRED,
+        detail={
+            "error": "ai_cost_limit_exceeded",
+            "message": "Estimated cloud AI cost exceeds the per-call cap.",
+            "estimated_cost": estimated_cost,
+            "per_call_cost_cap_usd": per_call_cost_cap_usd,
+        },
+    )
+
+
+def _estimate_cloud_analysis_cost(provider_name: AIProviderName, model: str) -> float | None:
+    if provider_name == "ollama":
+        return None
+    if provider_name == "openrouter" and model in {"openrouter/auto", "openrouter/fusion"}:
+        return 0.02
+    return 0.02
+
+
 async def _resolve_analysis_routing(
     request: AnalyzeRequest,
     ollama: OllamaLifecycle,
@@ -186,6 +219,46 @@ async def _resolve_analysis_routing(
         model,
         local_model,
         bool(policy["local_fallback_enabled"] and local_model),
+    )
+
+
+async def _enforce_cloud_cost_caps(
+    *,
+    provider_name: AIProviderName,
+    model: str,
+    task_type: str,
+    policy: dict,
+    usage_ledger: AIUsageLedger,
+) -> float | None:
+    estimated_cost = _estimate_cloud_analysis_cost(provider_name, model)
+    if estimated_cost is None:
+        return None
+
+    monthly = await usage_ledger.monthly_spend_summary()
+    projected_monthly = monthly["monthly_actual_cost_usd"] + estimated_cost
+    blocked = (
+        estimated_cost > policy["per_call_cost_cap_usd"]
+        or projected_monthly > policy["monthly_cost_cap_usd"]
+    )
+    if not blocked:
+        return estimated_cost
+
+    await usage_ledger.record_usage(
+        provider_name=provider_name,
+        model=model,
+        task_type=task_type,
+        routing_mode=policy["routing_mode"],
+        input_tokens=None,
+        output_tokens=None,
+        estimated_cost=estimated_cost,
+        actual_cost=None,
+        status="blocked",
+        provider_request_id=None,
+        error_code="ai_cost_limit_exceeded",
+    )
+    raise _cloud_cost_limit_http_error(
+        estimated_cost=estimated_cost,
+        per_call_cost_cap_usd=policy["per_call_cost_cap_usd"],
     )
 
 
@@ -622,6 +695,7 @@ async def analyze(
     ollama: OllamaLifecycle = Depends(get_ollama),
     db: DatabaseService = Depends(get_db),
     ai_settings: AISettingsService = Depends(get_ai_settings),
+    usage_ledger: AIUsageLedger = Depends(get_ai_usage_ledger),
 ):
     """
     Run a full AI technical analysis on a stock.
@@ -651,6 +725,14 @@ async def analyze(
         request,
         ollama,
         ai_settings,
+    )
+    policy = await ai_settings.get_routing_policy()
+    estimated_cost = await _enforce_cloud_cost_caps(
+        provider_name=provider_name,
+        model=model,
+        task_type=request.task_type,
+        policy=policy,
+        usage_ledger=usage_ledger,
     )
 
     # Resolve frontend display names → backend indicator names
@@ -709,12 +791,31 @@ async def analyze(
         )
 
     signal = _parse_signal(result["signal"]) if result.get("signal") else None
+    provider_metadata = result.get("provider")
+    if provider_metadata is not None and estimated_cost is not None:
+        provider_metadata = {
+            **provider_metadata,
+            "estimated_cost": provider_metadata.get("estimated_cost") or estimated_cost,
+        }
+        await usage_ledger.record_usage(
+            provider_name=provider_metadata["provider_name"],
+            model=provider_metadata.get("model"),
+            task_type=request.task_type,
+            routing_mode=policy["routing_mode"],
+            input_tokens=None,
+            output_tokens=None,
+            estimated_cost=provider_metadata.get("estimated_cost"),
+            actual_cost=provider_metadata.get("actual_cost"),
+            status="success",
+            provider_request_id=None,
+            error_code=None,
+        )
 
     return AnalyzeResponse(
         session_id=result["session_id"],
         signal=signal,
         message=result["message"],
-        provider=result.get("provider"),
+        provider=provider_metadata,
     )
 
 
@@ -731,6 +832,7 @@ async def analyze_stream(
     ollama: OllamaLifecycle = Depends(get_ollama),
     db: DatabaseService = Depends(get_db),
     ai_settings: AISettingsService = Depends(get_ai_settings),
+    usage_ledger: AIUsageLedger = Depends(get_ai_usage_ledger),
 ):
     """
     Stream a full AI technical analysis as Server-Sent Events.
@@ -770,6 +872,14 @@ async def analyze_stream(
         request,
         ollama,
         ai_settings,
+    )
+    policy = await ai_settings.get_routing_policy()
+    estimated_cost = await _enforce_cloud_cost_caps(
+        provider_name=provider_name,
+        model=selected_model,
+        task_type=request.task_type,
+        policy=policy,
+        usage_ledger=usage_ledger,
     )
 
     resolved_indicators = _resolve_indicators(request.indicators)
@@ -813,9 +923,29 @@ async def analyze_stream(
                 allow_fallback=allow_fallback,
             ):
                 if event.get("type") == "done":
+                    provider_metadata = event.get("provider")
+                    if provider_metadata is not None and estimated_cost is not None:
+                        provider_metadata = {
+                            **provider_metadata,
+                            "estimated_cost": provider_metadata.get("estimated_cost")
+                            or estimated_cost,
+                        }
+                        await usage_ledger.record_usage(
+                            provider_name=provider_metadata["provider_name"],
+                            model=provider_metadata.get("model"),
+                            task_type=request.task_type,
+                            routing_mode=policy["routing_mode"],
+                            input_tokens=None,
+                            output_tokens=None,
+                            estimated_cost=provider_metadata.get("estimated_cost"),
+                            actual_cost=provider_metadata.get("actual_cost"),
+                            status="success",
+                            provider_request_id=None,
+                            error_code=None,
+                        )
                     event = {
                         **event,
-                        "provider": event.get("provider")
+                        "provider": provider_metadata
                         or _local_provider_metadata(selected_model).model_dump(),
                     }
                 yield f"data: {json.dumps(event)}\n\n"
