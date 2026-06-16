@@ -14,6 +14,11 @@ class FakeBackend:
             raise RuntimeError(f"backend unavailable for {password}")
         self.passwords[(service, account)] = password
 
+    async def get_password(self, service: str, account: str) -> str | None:
+        if not self.available:
+            raise RuntimeError("backend unavailable")
+        return self.passwords.get((service, account))
+
     async def delete_password(self, service: str, account: str) -> None:
         if not self.available:
             raise RuntimeError("backend unavailable")
@@ -32,6 +37,20 @@ async def test_ai_keystore_saves_provider_key_in_os_keychain_without_leaking_sec
     assert key_ref == "macos-keychain:orbit-ai/openrouter"
     assert backend.passwords == {("orbit-ai/openrouter", "openrouter"): "sk-or-secret"}
     assert "sk-or-secret" not in key_ref
+
+
+@pytest.mark.asyncio
+async def test_ai_keystore_reads_provider_key_from_opaque_ref():
+    from services.ai_keystore import AIKeyStore
+
+    backend = FakeBackend()
+    store = AIKeyStore(backend=backend)
+
+    key_ref = await store.save_provider_key("openrouter", "sk-or-secret")
+    api_key = await store.get_provider_key("openrouter", key_ref)
+
+    assert api_key == "sk-or-secret"
+    assert key_ref == "macos-keychain:orbit-ai/openrouter"
 
 
 @pytest.mark.asyncio

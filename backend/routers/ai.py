@@ -69,6 +69,13 @@ from models import (
 )
 from exceptions import AIAnalysisTimeoutError
 from services.ai import AiService, _coerce_confidence
+from services.ai_cloud_adapters import (
+    AnthropicProvider,
+    GeminiProvider,
+    GrokProvider,
+    OpenAIProvider,
+    OpenRouterProvider,
+)
 from services.ai_keystore import AIKeyStore, AIKeyStoreUnavailableError
 from services.ai_settings import AISettingsService
 from services.ai_usage import AIUsageLedger
@@ -179,6 +186,42 @@ def _cloud_cost_limit_http_error(
     )
 
 
+async def _register_cloud_provider_for_request(
+    *,
+    provider_config: dict | None,
+    ai: AiService,
+    key_store: AIKeyStore,
+) -> None:
+    if provider_config is None or provider_config["provider_name"] == "ollama":
+        return
+
+    provider_name = provider_config["provider_name"]
+    api_key_ref = provider_config.get("api_key_ref")
+    if not api_key_ref:
+        raise _cloud_provider_unavailable_http_error(provider_name)
+
+    registry = getattr(ai, "provider_registry", None)
+    if registry is None:
+        return
+
+    try:
+        api_key = await key_store.get_provider_key(provider_name, api_key_ref)
+    except AIKeyStoreUnavailableError as exc:
+        raise _keychain_unavailable_http_error() from exc
+
+    provider_cls_by_name = {
+        "openrouter": OpenRouterProvider,
+        "openai": OpenAIProvider,
+        "anthropic": AnthropicProvider,
+        "gemini": GeminiProvider,
+        "grok": GrokProvider,
+    }
+    provider_cls = provider_cls_by_name.get(provider_name)
+    if provider_cls is None:
+        raise _cloud_provider_unavailable_http_error(provider_name)
+    registry.register(provider_cls(api_key=api_key))
+
+
 def _estimate_cloud_analysis_cost(provider_name: AIProviderName, model: str) -> float | None:
     if provider_name == "ollama":
         return None
@@ -191,13 +234,13 @@ async def _resolve_analysis_routing(
     request: AnalyzeRequest,
     ollama: OllamaLifecycle,
     ai_settings: AISettingsService,
-) -> tuple[str, str, str | None, bool]:
+) -> tuple[str, str, str | None, bool, dict | None]:
     """Return provider name, model, local fallback model, and fallback flag."""
     local_model = ollama.selected_model
     if request.provider_name == "ollama":
         if not local_model:
             raise _cloud_provider_unavailable_http_error("ollama")
-        return "ollama", request.model or local_model, None, False
+        return "ollama", request.model or local_model, None, False, None
 
     if request.task_type == "execution_sensitive":
         raise _cloud_blocked_http_error()
@@ -220,6 +263,7 @@ async def _resolve_analysis_routing(
         model,
         local_model,
         bool(policy["local_fallback_enabled"] and local_model),
+        selected,
     )
 
 
@@ -705,6 +749,7 @@ async def analyze(
     db: DatabaseService = Depends(get_db),
     ai_settings: AISettingsService = Depends(get_ai_settings),
     usage_ledger: AIUsageLedger = Depends(get_ai_usage_ledger),
+    key_store: AIKeyStore = Depends(get_ai_keystore),
 ):
     """
     Run a full AI technical analysis on a stock.
@@ -730,7 +775,13 @@ async def analyze(
             message="No model selected. Please choose a model in the AI panel.",
         )
 
-    provider_name, model, fallback_model, allow_fallback = await _resolve_analysis_routing(
+    (
+        provider_name,
+        model,
+        fallback_model,
+        allow_fallback,
+        provider_config,
+    ) = await _resolve_analysis_routing(
         request,
         ollama,
         ai_settings,
@@ -745,6 +796,11 @@ async def analyze(
             task_type=request.task_type,
             policy=policy,
             usage_ledger=usage_ledger,
+        )
+        await _register_cloud_provider_for_request(
+            provider_config=provider_config,
+            ai=ai,
+            key_store=key_store,
         )
 
     # Resolve frontend display names → backend indicator names
@@ -845,6 +901,7 @@ async def analyze_stream(
     db: DatabaseService = Depends(get_db),
     ai_settings: AISettingsService = Depends(get_ai_settings),
     usage_ledger: AIUsageLedger = Depends(get_ai_usage_ledger),
+    key_store: AIKeyStore = Depends(get_ai_keystore),
 ):
     """
     Stream a full AI technical analysis as Server-Sent Events.
@@ -880,7 +937,13 @@ async def analyze_stream(
             yield f"data: {json.dumps(payload)}\n\n"
         return StreamingResponse(err_stream(), media_type="text/event-stream")
 
-    provider_name, selected_model, fallback_model, allow_fallback = await _resolve_analysis_routing(
+    (
+        provider_name,
+        selected_model,
+        fallback_model,
+        allow_fallback,
+        provider_config,
+    ) = await _resolve_analysis_routing(
         request,
         ollama,
         ai_settings,
@@ -895,6 +958,11 @@ async def analyze_stream(
             task_type=request.task_type,
             policy=policy,
             usage_ledger=usage_ledger,
+        )
+        await _register_cloud_provider_for_request(
+            provider_config=provider_config,
+            ai=ai,
+            key_store=key_store,
         )
 
     resolved_indicators = _resolve_indicators(request.indicators)

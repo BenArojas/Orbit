@@ -118,6 +118,39 @@ class FakeCloudProvider(FakeProvider):
         }
 
 
+@dataclass
+class FakeNonStreamingCloudProvider(FakeCloudProvider):
+    name: str = "openai"
+
+    async def chat_with_metadata(
+        self,
+        *,
+        messages: list[dict[str, str]],
+        model: str,
+    ):
+        from models import AIProviderMetadata
+        from services.ai_cloud_adapters import AIProviderTextResult
+
+        if self.calls is None:
+            self.calls = []
+        self.calls.append({"kind": "cloud_chat", "messages": messages, "model": model})
+        return AIProviderTextResult(
+            content=INLINE_JSON_NARRATIVE,
+            metadata=AIProviderMetadata(
+                provider_name="openai",
+                kind="cloud",
+                model=model,
+                estimated_cost=None,
+                actual_cost=self.actual_cost,
+                fallback_used=False,
+            ),
+            provider_request_id="resp-123",
+        )
+
+    async def chat_stream_with_metadata(self, **_kwargs):
+        raise AttributeError("non-streaming provider")
+
+
 @pytest.mark.asyncio
 async def test_ai_service_analyze_routes_through_provider_registry():
     from services.ai_providers import AIProviderRegistry
@@ -314,3 +347,38 @@ async def test_ai_service_analyze_stream_can_route_to_openrouter_with_metadata()
         "fallback_used": False,
     }
     assert openrouter.calls and openrouter.calls[0]["kind"] == "cloud_stream"
+
+
+@pytest.mark.asyncio
+async def test_ai_service_analyze_stream_uses_chat_metadata_for_non_streaming_provider():
+    from services.ai_providers import AIProviderRegistry
+
+    provider = FakeNonStreamingCloudProvider()
+    svc = AiService(provider_registry=AIProviderRegistry({
+        "ollama": FakeProvider(),
+        "openai": provider,
+    }))
+
+    events = []
+    async for event in svc.analyze_stream(
+        symbol="AAPL",
+        timeframe_data={"D": {"candles": [], "indicators": [], "fibonacci": None}},
+        indicators_display=["EMA Stack"],
+        indicator_names=["ema_9", "ema_21", "ema_50", "ema_200"],
+        model="gpt-5.2",
+        provider_name="openai",
+    ):
+        events.append(event)
+
+    assert events[0] == {"type": "token", "content": INLINE_JSON_NARRATIVE}
+    assert events[-1]["type"] == "done"
+    assert events[-1]["message"] == "AAPL is holding above the 21 EMA."
+    assert events[-1]["provider"] == {
+        "provider_name": "openai",
+        "kind": "cloud",
+        "model": "gpt-5.2",
+        "estimated_cost": None,
+        "actual_cost": 0.0123,
+        "fallback_used": False,
+    }
+    assert provider.calls and provider.calls[0]["kind"] == "cloud_chat"

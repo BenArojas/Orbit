@@ -69,6 +69,9 @@ class AIProviderRegistry:
             raise KeyError(f"AI provider is not registered: {name}")
         return provider
 
+    def register(self, provider: LLMProvider) -> None:
+        self._providers[provider.name] = provider
+
     def names(self) -> list[str]:
         return sorted(self._providers)
 

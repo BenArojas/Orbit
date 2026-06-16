@@ -17,6 +17,9 @@ class KeyringBackend(Protocol):
     async def set_password(self, service: str, account: str, password: str) -> None:
         ...
 
+    async def get_password(self, service: str, account: str) -> str | None:
+        ...
+
     async def delete_password(self, service: str, account: str) -> None:
         ...
 
@@ -27,6 +30,10 @@ class PythonKeyringBackend:
     async def set_password(self, service: str, account: str, password: str) -> None:
         keyring = self._load_keyring()
         await asyncio.to_thread(keyring.set_password, service, account, password)
+
+    async def get_password(self, service: str, account: str) -> str | None:
+        keyring = self._load_keyring()
+        return await asyncio.to_thread(keyring.get_password, service, account)
 
     async def delete_password(self, service: str, account: str) -> None:
         keyring = self._load_keyring()
@@ -65,6 +72,20 @@ class AIKeyStore:
             raise
         except (OSError, RuntimeError) as exc:
             raise AIKeyStoreUnavailableError("OS keychain is unavailable") from exc
+
+    async def get_provider_key(self, provider_name: str, api_key_ref: str) -> str:
+        ref = self._key_ref(provider_name)
+        if api_key_ref != ref.value:
+            raise AIKeyStoreUnavailableError("OS keychain reference is invalid")
+        try:
+            api_key = await self._backend.get_password(ref.service, ref.account)
+        except AIKeyStoreUnavailableError:
+            raise
+        except (OSError, RuntimeError) as exc:
+            raise AIKeyStoreUnavailableError("OS keychain is unavailable") from exc
+        if not api_key:
+            raise AIKeyStoreUnavailableError("OS keychain secret is unavailable")
+        return api_key
 
     @staticmethod
     def _key_ref(provider_name: str) -> "_ProviderKeyRef":

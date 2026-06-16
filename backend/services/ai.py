@@ -19,6 +19,7 @@ Prompt strategy:
 """
 
 import asyncio
+import inspect
 import json
 import logging
 import re
@@ -288,6 +289,10 @@ class AiService:
         })
         self.sessions: OrderedDict[str, ChatSession] = OrderedDict()
 
+    @property
+    def provider_registry(self) -> AIProviderRegistry:
+        return self._provider_registry
+
     # ── Session management ──────────────────────────────────────
 
     def get_or_create_session(self, session_id: Optional[str] = None) -> ChatSession:
@@ -391,9 +396,16 @@ class AiService:
     ) -> AsyncIterator[dict]:
         provider = self._provider_registry.require(provider_name)
         stream_with_metadata = getattr(provider, "chat_stream_with_metadata", None)
-        if stream_with_metadata is not None:
+        if stream_with_metadata is not None and inspect.isasyncgenfunction(stream_with_metadata):
             async for event in stream_with_metadata(messages=messages, model=model):
                 yield event
+            return
+
+        chat_with_metadata = getattr(provider, "chat_with_metadata", None)
+        if chat_with_metadata is not None:
+            result = await chat_with_metadata(messages=messages, model=model)
+            yield {"type": "token", "content": result.content}
+            yield {"type": "metadata", "metadata": result.metadata.model_dump()}
             return
 
         async for token in self.chat_stream(

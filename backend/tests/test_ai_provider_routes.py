@@ -158,6 +158,21 @@ class _FakeKeyStore:
         self.deleted.append(provider_name)
 
 
+class _FakeReadableKeyStore(_FakeKeyStore):
+    def __init__(self, *, api_key: str | None = "sk-runtime-secret") -> None:
+        super().__init__()
+        self.api_key = api_key
+        self.reads: list[tuple[str, str]] = []
+
+    async def get_provider_key(self, provider_name: str, api_key_ref: str) -> str:
+        self.reads.append((provider_name, api_key_ref))
+        if self.api_key is None:
+            from services.ai_keystore import AIKeyStoreUnavailableError
+
+            raise AIKeyStoreUnavailableError("OS keychain is unavailable")
+        return self.api_key
+
+
 def test_get_ai_providers_returns_local_ollama_default():
     client = _client()
 
@@ -554,6 +569,104 @@ def test_analyze_returns_cloud_provider_metadata_for_enabled_openrouter():
             "error_code": None,
         }
     ]
+
+
+def test_analyze_registers_enabled_openrouter_from_keychain_ref(monkeypatch):
+    from deps import get_ai_keystore, get_ai_settings, get_ai_usage_ledger
+    from services.ai import AiService
+    from services.ai_cloud_adapters import AIProviderTextResult
+    from services.ai_providers import AIProviderRegistry
+    from models import AIProviderMetadata
+
+    class FakeOllamaProvider:
+        name = "ollama"
+
+        async def chat(self, **_kwargs) -> str:
+            return "Local fallback."
+
+        async def chat_structured(self, **_kwargs) -> dict:
+            return {}
+
+        async def chat_stream(self, **_kwargs):
+            if False:
+                yield ""
+
+        async def warmup(self, **_kwargs) -> None:
+            return None
+
+        async def aclose(self) -> None:
+            return None
+
+    class FakeOpenRouterProvider:
+        name = "openrouter"
+        seen_keys: list[str] = []
+
+        def __init__(self, *, api_key: str) -> None:
+            self.seen_keys.append(api_key)
+
+        async def chat_with_metadata(self, *, messages: list[dict[str, str]], model: str):
+            assert messages
+            return AIProviderTextResult(
+                content=(
+                    "Cloud narrative.\n\n```json\n"
+                    "{\"direction\":\"LONG\",\"confidence\":0.7,\"description\":\"Constructive\","
+                    "\"entry\":{},\"stop\":{},\"target\":{},\"meta\":{},"
+                    "\"confirmations\":[],\"cautions\":[]}\n```"
+                ),
+                metadata=AIProviderMetadata(
+                    provider_name="openrouter",
+                    kind="cloud",
+                    model=model,
+                    estimated_cost=None,
+                    actual_cost=0.0123,
+                    fallback_used=False,
+                ),
+                provider_request_id="gen-runtime-1",
+            )
+
+    monkeypatch.setattr(
+        "routers.ai.OpenRouterProvider",
+        FakeOpenRouterProvider,
+        raising=False,
+    )
+
+    fake_ibkr = MagicMock()
+    fake_ibkr.history = AsyncMock(return_value={"data": []})
+    fake_db = MagicMock()
+    fake_db.get_setting = AsyncMock(return_value=None)
+    key_store = _FakeReadableKeyStore()
+    usage = _FakeUsageLedger()
+    ai = AiService(provider_registry=AIProviderRegistry({"ollama": FakeOllamaProvider()}))
+    client = _client(ai=ai, ibkr=fake_ibkr, db=fake_db)
+    client.app.dependency_overrides[get_ai_settings] = lambda: _FakeCloudSettings()
+    client.app.dependency_overrides[get_ai_keystore] = lambda: key_store
+    client.app.dependency_overrides[get_ai_usage_ledger] = lambda: usage
+
+    resp = client.post(
+        "/ai/analyze",
+        json={
+            "conid": 265598,
+            "symbol": "AAPL",
+            "timeframes": ["D"],
+            "indicators": ["RSI"],
+            "provider_name": "openrouter",
+        },
+    )
+
+    assert resp.status_code == 200
+    assert resp.json()["provider"] == {
+        "provider_name": "openrouter",
+        "kind": "cloud",
+        "model": "openrouter/auto",
+        "estimated_cost": 0.02,
+        "actual_cost": 0.0123,
+        "fallback_used": False,
+    }
+    assert key_store.reads == [
+        ("openrouter", "macos-keychain:orbit-ai/openrouter"),
+    ]
+    assert FakeOpenRouterProvider.seen_keys == ["sk-runtime-secret"]
+    assert "sk-runtime-secret" not in resp.text
 
 
 def test_analyze_blocks_over_per_call_cap_before_cloud_ai_call():
