@@ -294,6 +294,23 @@ class DatabaseService:
                 updated_at                 TEXT DEFAULT (datetime('now'))
             );
 
+            CREATE TABLE IF NOT EXISTS ai_usage_log (
+                id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+                provider_name       TEXT NOT NULL,
+                model               TEXT,
+                task_type           TEXT NOT NULL,
+                routing_mode        TEXT NOT NULL,
+                input_tokens        INTEGER,
+                output_tokens       INTEGER,
+                estimated_cost      REAL,
+                actual_cost         REAL,
+                currency            TEXT NOT NULL DEFAULT 'USD',
+                status              TEXT NOT NULL,
+                provider_request_id TEXT,
+                error_code          TEXT,
+                created_at          TEXT DEFAULT (datetime('now'))
+            );
+
             -- ─── Instruments Cache ─────────────────────────────────
             -- Local cache of IBKR's instrument metadata.
             -- Avoids hitting IBKR's search API repeatedly for the same stock.
@@ -1945,6 +1962,92 @@ class DatabaseService:
             provider for provider in providers
             if provider["provider_name"] == provider_name
         )
+
+    async def insert_ai_usage_log(
+        self,
+        *,
+        provider_name: str,
+        model: str | None,
+        task_type: str,
+        routing_mode: str,
+        input_tokens: int | None,
+        output_tokens: int | None,
+        estimated_cost: float | None,
+        actual_cost: float | None,
+        status: str,
+        provider_request_id: str | None,
+        error_code: str | None,
+    ) -> dict[str, Any]:
+        """Insert one AI usage row and return it."""
+        def _do() -> dict[str, Any]:
+            assert self._conn is not None
+            with self._conn:
+                cur = self._conn.execute(
+                    """INSERT INTO ai_usage_log (
+                           provider_name, model, task_type, routing_mode,
+                           input_tokens, output_tokens, estimated_cost,
+                           actual_cost, status, provider_request_id, error_code
+                       )
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        provider_name,
+                        model,
+                        task_type,
+                        routing_mode,
+                        input_tokens,
+                        output_tokens,
+                        estimated_cost,
+                        actual_cost,
+                        status,
+                        provider_request_id,
+                        error_code,
+                    ),
+                )
+                row = self._conn.execute(
+                    """SELECT id, provider_name, model, task_type, routing_mode,
+                              input_tokens, output_tokens, estimated_cost,
+                              actual_cost, currency, status, provider_request_id,
+                              error_code, created_at
+                       FROM ai_usage_log
+                       WHERE id = ?""",
+                    (cur.lastrowid,),
+                ).fetchone()
+                assert row is not None
+                return dict(row)
+
+        return await self._run_write(_do)
+
+    async def list_ai_usage_log(self, *, limit: int = 50) -> list[dict[str, Any]]:
+        """Return recent AI usage rows newest-first."""
+        return await self._run_read(
+            lambda: self._fetchall(
+                """SELECT id, provider_name, model, task_type, routing_mode,
+                          input_tokens, output_tokens, estimated_cost,
+                          actual_cost, currency, status, provider_request_id,
+                          error_code, created_at
+                   FROM ai_usage_log
+                   ORDER BY id DESC
+                   LIMIT ?""",
+                (limit,),
+            )
+        )
+
+    async def get_ai_usage_monthly_totals(self) -> dict[str, float]:
+        """Return current-month estimated and actual AI spend totals."""
+        row = await self._run_read(
+            lambda: self._fetchone(
+                """SELECT
+                          COALESCE(SUM(estimated_cost), 0) AS estimated_total,
+                          COALESCE(SUM(actual_cost), 0) AS actual_total
+                   FROM ai_usage_log
+                   WHERE strftime('%Y-%m', created_at) = strftime('%Y-%m', 'now')"""
+            )
+        )
+        assert row is not None
+        return {
+            "monthly_estimated_cost_usd": float(row["estimated_total"]),
+            "monthly_actual_cost_usd": float(row["actual_total"]),
+        }
 
     # ── Fibonacci Config (Branch 3) ─────────────────────────────
     #
