@@ -33,7 +33,12 @@ export default function AiProviderBadge({
   estimatedCost,
   actualCost,
 }: AiProviderBadgeProps) {
-  const cost = formatCost(actualCost ?? estimatedCost);
+  const cost = actualCost == null
+    ? formatCost(estimatedCost)
+    : formatCost(actualCost);
+  const costLabel = cost == null
+    ? null
+    : `${actualCost == null ? "Estimated" : "Actual"} ${cost}`;
   const Icon = kind === "local" ? Cpu : Cloud;
 
   return (
@@ -46,8 +51,8 @@ export default function AiProviderBadge({
           {model}
         </span>
       )}
-      {cost && (
-        <span className="font-mono text-[var(--text-3)]">{cost}</span>
+      {costLabel && (
+        <span className="font-mono text-[var(--text-3)]">{costLabel}</span>
       )}
       {fallbackUsed && (
         <span className="inline-flex items-center gap-1 rounded border border-[var(--clr-amber,#ff9f1c)] px-1 py-0.5 text-[9px] text-[var(--clr-amber,#ff9f1c)]">

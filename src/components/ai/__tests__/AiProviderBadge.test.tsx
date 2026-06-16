@@ -51,6 +51,21 @@ describe("AiProviderBadge", () => {
     expect(screen.getByText("Cloud")).toBeInTheDocument();
     expect(screen.getByText("OpenRouter")).toBeInTheDocument();
     expect(screen.getByText("openrouter/auto")).toBeInTheDocument();
-    expect(screen.getByText("$0.01")).toBeInTheDocument();
+    expect(screen.getByText("Actual $0.01")).toBeInTheDocument();
+  });
+
+  it("renders estimated cloud cost before actual usage is available", () => {
+    render(
+      <AiProviderBadge
+        providerName="openrouter"
+        model="openrouter/auto"
+        kind="cloud"
+        fallbackUsed={false}
+        estimatedCost={0.02}
+        actualCost={null}
+      />,
+    );
+
+    expect(screen.getByText("Estimated $0.02")).toBeInTheDocument();
   });
 });

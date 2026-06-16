@@ -6,6 +6,11 @@ import { parallaxApi } from "@/modules/parallax/api";
 import type { AIRoutingPolicyUpdate, AIProviderStatus } from "@/modules/parallax/api";
 import { useAiStore } from "@/store";
 
+function formatCost(value: number): string {
+  if (value < 0.01) return `$${value.toFixed(4)}`;
+  return `$${value.toFixed(2)}`;
+}
+
 function ProviderCard({ provider }: { provider: AIProviderStatus }) {
   const Icon = provider.kind === "local" ? Cpu : Cloud;
   const status = provider.enabled ? "Enabled" : "Disabled";
@@ -140,6 +145,12 @@ export default function AiProvidersSettings() {
   const routingPolicyQuery = useQuery({
     queryKey: ["ai", "routing-policy"],
     queryFn: () => parallaxApi.aiRoutingPolicy(),
+    staleTime: 30_000,
+  });
+
+  const usageSummaryQuery = useQuery({
+    queryKey: ["ai", "usage-summary"],
+    queryFn: () => parallaxApi.aiUsageSummary(),
     staleTime: 30_000,
   });
 
@@ -327,6 +338,25 @@ export default function AiProvidersSettings() {
               className="w-[90px] rounded-md border border-border bg-[var(--bg-3)] px-2 py-1.5 text-right font-data text-[11px] text-[var(--text-1)] focus:outline-none focus:ring-1 focus:ring-[var(--clr-cyan)]"
             />
           </div>
+
+          {usageSummaryQuery.data ? (
+            <div className="flex items-center justify-between gap-6 border-t border-border py-3">
+              <div className="min-w-0 flex-1">
+                <p className="text-[12px] font-medium text-[var(--text-1)]">Monthly spend</p>
+                <p className="mt-0.5 text-[10px] text-[var(--text-3)]">
+                  Cloud AI usage recorded this month.
+                </p>
+              </div>
+              <div className="flex shrink-0 flex-wrap justify-end gap-2 text-[10px]">
+                <span className="rounded-md border border-border px-2 py-1 font-data text-[var(--text-2)]">
+                  Actual {formatCost(usageSummaryQuery.data.monthly_actual_cost_usd)}
+                </span>
+                <span className="rounded-md border border-border px-2 py-1 font-data text-[var(--text-3)]">
+                  Estimated {formatCost(usageSummaryQuery.data.monthly_estimated_cost_usd)}
+                </span>
+              </div>
+            </div>
+          ) : null}
         </div>
       )}
     </div>

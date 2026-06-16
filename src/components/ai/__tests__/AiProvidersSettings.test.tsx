@@ -17,6 +17,7 @@ vi.mock("@/modules/parallax/api", async (importOriginal) => {
       ...actual.parallaxApi,
       aiProviders: vi.fn(),
       aiRoutingPolicy: vi.fn(),
+      aiUsageSummary: vi.fn(),
       aiUpdateRoutingPolicy: vi.fn(),
       aiSaveProviderKey: vi.fn(),
       aiDeleteProviderKey: vi.fn(),
@@ -91,6 +92,10 @@ describe("AiProvidersSettings", () => {
     });
     vi.mocked(parallaxApi.aiProviders).mockResolvedValue(providersResponse);
     vi.mocked(parallaxApi.aiRoutingPolicy).mockResolvedValue(routingPolicy);
+    vi.mocked(parallaxApi.aiUsageSummary).mockResolvedValue({
+      monthly_actual_cost_usd: 3.25,
+      monthly_estimated_cost_usd: 5,
+    });
     vi.mocked(parallaxApi.aiUpdateRoutingPolicy).mockImplementation(async (policy) => policy);
     vi.mocked(parallaxApi.aiSaveProviderKey).mockImplementation(
       async (providerName) => ({
@@ -145,6 +150,14 @@ describe("AiProvidersSettings", () => {
       });
     });
     expect(useAiStore.getState().perCallCostCapUsd).toBe(2.5);
+  });
+
+  it("renders current monthly cloud AI spend summary", async () => {
+    renderWithQueryClient(<AiProvidersSettings />);
+
+    expect(await screen.findByText("Monthly spend")).toBeInTheDocument();
+    expect(screen.getByText("Actual $3.25")).toBeInTheDocument();
+    expect(screen.getByText("Estimated $5.00")).toBeInTheDocument();
   });
 
   it("saves a cloud provider key without rendering the secret after success", async () => {

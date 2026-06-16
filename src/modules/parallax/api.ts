@@ -661,6 +661,11 @@ export interface AIRoutingPolicyResponse {
 
 export type AIRoutingPolicyUpdate = AIRoutingPolicyResponse;
 
+export interface AIUsageSummaryResponse {
+    monthly_actual_cost_usd: number;
+    monthly_estimated_cost_usd: number;
+}
+
 export interface AiStatusResponse {
     state:
     | "not_installed"
@@ -1070,6 +1075,9 @@ export const parallaxApi = {
 
     aiRoutingPolicy: () =>
         sidecarRequest<AIRoutingPolicyResponse>("GET", "/ai/routing-policy"),
+
+    aiUsageSummary: () =>
+        sidecarRequest<AIUsageSummaryResponse>("GET", "/ai/usage"),
 
     aiUpdateRoutingPolicy: (req: AIRoutingPolicyUpdate) =>
         sidecarRequest<AIRoutingPolicyResponse>("PUT", "/ai/routing-policy", req),
