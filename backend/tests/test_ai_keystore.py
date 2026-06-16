@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import sys
+import types
+
 import pytest
 
 
@@ -77,3 +80,27 @@ async def test_ai_keystore_unavailable_error_redacts_secret_material():
 
     assert "sk-or-secret" not in str(exc_info.value)
     assert "OS keychain is unavailable" in str(exc_info.value)
+
+
+@pytest.mark.asyncio
+async def test_python_keyring_backend_rejects_unsafe_plaintext_backend(monkeypatch):
+    from services.ai_keystore import AIKeyStore, AIKeyStoreUnavailableError
+
+    class UnsafeBackend:
+        __module__ = "keyrings.alt.file"
+        __class_name__ = "PlaintextKeyring"
+
+    fake_keyring = types.SimpleNamespace(
+        get_keyring=lambda: UnsafeBackend(),
+        set_password=lambda *_args: pytest.fail("unsafe backend should not be used"),
+        get_password=lambda *_args: pytest.fail("unsafe backend should not be used"),
+        delete_password=lambda *_args: pytest.fail("unsafe backend should not be used"),
+    )
+    monkeypatch.setitem(sys.modules, "keyring", fake_keyring)
+    store = AIKeyStore()
+
+    with pytest.raises(AIKeyStoreUnavailableError) as exc_info:
+        await store.save_provider_key("openrouter", "sk-or-secret")
+
+    assert "unsafe keyring backend" in str(exc_info.value)
+    assert "sk-or-secret" not in str(exc_info.value)

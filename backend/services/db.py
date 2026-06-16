@@ -2049,6 +2049,21 @@ class DatabaseService:
             "monthly_actual_cost_usd": float(row["actual_total"]),
         }
 
+    async def get_ai_usage_monthly_effective_spend(self) -> float:
+        """Return cost-cap spend: actual cost when present, else estimate."""
+        row = await self._run_read(
+            lambda: self._fetchone(
+                """SELECT
+                          COALESCE(SUM(COALESCE(actual_cost, estimated_cost, 0)), 0)
+                              AS effective_total
+                   FROM ai_usage_log
+                   WHERE strftime('%Y-%m', created_at) = strftime('%Y-%m', 'now')
+                     AND status != 'blocked'"""
+            )
+        )
+        assert row is not None
+        return float(row["effective_total"])
+
     # ── Fibonacci Config (Branch 3) ─────────────────────────────
     #
     # User-editable fib scoring weights live in the generic `settings`

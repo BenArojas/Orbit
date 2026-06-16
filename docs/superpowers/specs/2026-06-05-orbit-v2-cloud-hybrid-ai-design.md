@@ -15,7 +15,7 @@ AI to place, arm, modify, or cancel orders.
 
 - Orbit remains local-first by default.
 - Optional cloud AI is allowed only when explicitly enabled by the user.
-- API keys stay local, encrypted, and never logged.
+- API keys stay in the OS keychain only and are never logged.
 - Local Ollama remains the default and fallback provider.
 - AI may draft analysis, trade-management ideas, and risk/reward variants.
 - AI cannot mutate execution state or call order-placement paths.
@@ -68,8 +68,8 @@ Core backend services:
 - `AIProviderRegistry`: resolves active providers and validates capabilities.
 - `AISettingsService`: stores enabled providers, selected models, routing mode,
   cost limits, and fallback preferences.
-- `AIKeyStore`: stores local encrypted key references and returns secrets only
-  to provider adapters at call time.
+- `AIKeyStore`: stores provider secrets in the OS keychain and returns secrets
+  only to provider adapters at call time.
 - `HybridInferenceRouter`: chooses local or cloud per task using policy,
   privacy level, expected cost, latency, context size, and required reasoning.
 - `AIUsageLedger`: records provider, model, tokens, cost estimate, status, and
@@ -115,8 +115,8 @@ Hybrid task policy:
 ## Data Flow
 
 1. User enables cloud AI in settings.
-2. User adds provider key. The key is encrypted locally and never displayed
-   again after save.
+2. User adds provider key. The key is stored in the OS keychain and never
+   displayed again after save.
 3. User selects provider/model defaults and optional cost caps.
 4. Analysis request enters the existing `/ai/analyze` or streaming flow.
 5. Backend builds structured prompt facts using existing services.
@@ -167,10 +167,11 @@ Additive schema:
   - `fallback_used`
   - `created_at`
 
-Key material must not be stored in plaintext SQLite. Preferred design is OS
-keychain storage with SQLite holding only `api_key_ref`. If implementation needs
-an encrypted SQLite fallback, it must define key derivation and recovery before
-code is written.
+Key material must not be stored in SQLite, either plaintext or encrypted. The
+only supported design is OS keychain storage with SQLite holding only
+`api_key_ref`. If the OS keychain is unavailable or unsafe, cloud providers
+remain disabled and local Ollama remains available. There is no encrypted
+SQLite fallback.
 
 ## Backend API
 

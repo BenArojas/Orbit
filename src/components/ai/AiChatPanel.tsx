@@ -32,7 +32,11 @@ import AiModelSelector from "./AiModelSelector";
 import AiProviderBadge from "./AiProviderBadge";
 import ResponseTimeBadge from "./ResponseTimeBadge";
 import FibStackPanel from "./fib/FibStackPanel";
-import type { AiContextMode,FibonacciResult } from "@/modules/parallax/api";
+import type {
+  AIProviderName,
+  AiContextMode,
+  FibonacciResult,
+} from "@/modules/parallax/api";
 
 /* ── Types ── */
 
@@ -171,6 +175,9 @@ export default function AiChatPanel({ activeConid, activeSymbol, fibonacci, char
     signal,
     isAnalyzing,
     lastProviderMetadata,
+    providers,
+    activeProvider,
+    routingMode,
   } = useAiStore();
 
   // The fib panel must appear whenever ANY fib is on the chart — the
@@ -201,6 +208,27 @@ export default function AiChatPanel({ activeConid, activeSymbol, fibonacci, char
   // so the StreamingBubble keeps working without changes.
   const { startAnalyze, cancelAnalyze } = useAiAnalyzeStream();
 
+  const resolveAnalysisRoute = useCallback((): {
+    providerName: AIProviderName;
+    model: string | null;
+  } => {
+    if (routingMode === "local_only" || activeProvider === "ollama") {
+      return { providerName: "ollama", model: selectedModel ?? null };
+    }
+
+    const provider = providers.find(
+      (candidate) => candidate.provider_name === activeProvider,
+    );
+    if (!provider || !provider.enabled || !provider.has_key) {
+      return { providerName: "ollama", model: selectedModel ?? null };
+    }
+
+    return {
+      providerName: provider.provider_name,
+      model: provider.selected_model ?? selectedModel ?? null,
+    };
+  }, [activeProvider, providers, routingMode, selectedModel]);
+
   // Auto-scroll to bottom when messages change. Direct scrollTop assignment
   // on the container ref — guaranteed to only scroll within this element,
   // never bubbles up to ancestors or the window.
@@ -220,6 +248,7 @@ export default function AiChatPanel({ activeConid, activeSymbol, fibonacci, char
       contextBars: number;
     }) => {
       if (!isReady || !activeConid || !activeSymbol) return;
+      const route = resolveAnalysisRoute();
       // Streams narrative tokens into streamingContent, then commits the
       // final message + signal + session_id once the SSE `done` event lands.
       void startAnalyze(
@@ -231,11 +260,21 @@ export default function AiChatPanel({ activeConid, activeSymbol, fibonacci, char
           session_id: sessionId ?? undefined,
           context_mode: config.contextMode,
           context_bars: config.contextBars,
+          provider_name: route.providerName,
+          model: route.model,
+          task_type: "analysis",
         },
-        selectedModel ?? null,
+        route.model,
       );
     },
-    [isReady, activeConid, activeSymbol, sessionId, selectedModel, startAnalyze],
+    [
+      isReady,
+      activeConid,
+      activeSymbol,
+      sessionId,
+      resolveAnalysisRoute,
+      startAnalyze,
+    ],
   );
 
   /** Abort an in-flight analysis — closes the SSE stream and resets the spinner. */

@@ -70,6 +70,11 @@ from models import (
 from exceptions import AIAnalysisTimeoutError
 from services.ai import AiService, _coerce_confidence
 from services.ai_cloud_adapters import (
+    AIProviderAuthError,
+    AIProviderModelUnavailableError,
+    AIProviderNetworkError,
+    AIProviderRateLimitError,
+    AIProviderTimeoutError,
     AnthropicProvider,
     GeminiProvider,
     GrokProvider,
@@ -160,6 +165,16 @@ def _cloud_blocked_http_error() -> HTTPException:
     )
 
 
+def _cloud_local_only_http_error() -> HTTPException:
+    return HTTPException(
+        status_code=http_status.HTTP_400_BAD_REQUEST,
+        detail={
+            "error": "ai_cloud_routing_local_only",
+            "message": "Cloud AI is disabled by the local-only routing policy.",
+        },
+    )
+
+
 def _cloud_provider_unavailable_http_error(provider_name: str) -> HTTPException:
     return HTTPException(
         status_code=http_status.HTTP_400_BAD_REQUEST,
@@ -186,14 +201,71 @@ def _cloud_cost_limit_http_error(
     )
 
 
+def _provider_error_detail(exc: Exception, provider_name: str) -> tuple[int, dict]:
+    if isinstance(exc, AIProviderAuthError):
+        return http_status.HTTP_401_UNAUTHORIZED, {
+            "error": "ai_provider_auth_error",
+            "message": "Cloud AI provider authentication failed.",
+            "provider_name": provider_name,
+        }
+    if isinstance(exc, AIProviderRateLimitError):
+        return http_status.HTTP_429_TOO_MANY_REQUESTS, {
+            "error": "ai_provider_rate_limit_error",
+            "message": "Cloud AI provider rate limit was reached.",
+            "provider_name": provider_name,
+        }
+    if isinstance(exc, AIProviderModelUnavailableError):
+        return http_status.HTTP_400_BAD_REQUEST, {
+            "error": "ai_provider_model_unavailable",
+            "message": "Cloud AI provider model is unavailable.",
+            "provider_name": provider_name,
+        }
+    if isinstance(exc, AIProviderTimeoutError):
+        return http_status.HTTP_504_GATEWAY_TIMEOUT, {
+            "error": "ai_provider_timeout_error",
+            "message": "Cloud AI provider request timed out.",
+            "provider_name": provider_name,
+        }
+    return http_status.HTTP_503_SERVICE_UNAVAILABLE, {
+        "error": "ai_provider_network_error",
+        "message": "Cloud AI provider network request failed.",
+        "provider_name": provider_name,
+    }
+
+
+async def _record_failed_cloud_usage(
+    *,
+    usage_ledger: AIUsageLedger,
+    provider_name: AIProviderName,
+    model: str,
+    task_type: str,
+    routing_mode: str,
+    estimated_cost: float | None,
+    error_code: str,
+) -> None:
+    await usage_ledger.record_usage(
+        provider_name=provider_name,
+        model=model,
+        task_type=task_type,
+        routing_mode=routing_mode,
+        input_tokens=None,
+        output_tokens=None,
+        estimated_cost=estimated_cost,
+        actual_cost=None,
+        status="failed",
+        provider_request_id=None,
+        error_code=error_code,
+    )
+
+
 async def _register_cloud_provider_for_request(
     *,
     provider_config: dict | None,
     ai: AiService,
     key_store: AIKeyStore,
-) -> None:
+) -> object | None:
     if provider_config is None or provider_config["provider_name"] == "ollama":
-        return
+        return None
 
     provider_name = provider_config["provider_name"]
     api_key_ref = provider_config.get("api_key_ref")
@@ -202,7 +274,7 @@ async def _register_cloud_provider_for_request(
 
     registry = getattr(ai, "provider_registry", None)
     if registry is None:
-        return
+        return None
 
     try:
         api_key = await key_store.get_provider_key(provider_name, api_key_ref)
@@ -219,7 +291,7 @@ async def _register_cloud_provider_for_request(
     provider_cls = provider_cls_by_name.get(provider_name)
     if provider_cls is None:
         raise _cloud_provider_unavailable_http_error(provider_name)
-    registry.register(provider_cls(api_key=api_key))
+    return provider_cls(api_key=api_key)
 
 
 def _estimate_cloud_analysis_cost(provider_name: AIProviderName, model: str) -> float | None:
@@ -236,11 +308,13 @@ async def _resolve_analysis_routing(
     ai_settings: AISettingsService,
 ) -> tuple[str, str, str | None, bool, dict | None]:
     """Return provider name, model, local fallback model, and fallback flag."""
+    policy = await _get_routing_policy(ai_settings)
     local_model = ollama.selected_model
     if request.provider_name == "ollama":
-        if not local_model:
-            raise _cloud_provider_unavailable_http_error("ollama")
-        return "ollama", request.model or local_model, None, False, None
+        return "ollama", request.model or local_model or "", None, False, None
+
+    if policy["routing_mode"] == "local_only":
+        raise _cloud_local_only_http_error()
 
     if request.task_type == "execution_sensitive":
         raise _cloud_blocked_http_error()
@@ -256,15 +330,26 @@ async def _resolve_analysis_routing(
     if selected is None or not selected["enabled"] or not selected.get("api_key_ref"):
         raise _cloud_provider_unavailable_http_error(request.provider_name)
 
-    policy = await ai_settings.get_routing_policy()
     model = request.model or selected.get("selected_model") or "openrouter/auto"
     return (
         request.provider_name,
         model,
-        local_model,
-        bool(policy["local_fallback_enabled"] and local_model),
+        local_model if ollama.status().get("ready") else None,
+        bool(policy["local_fallback_enabled"] and local_model and ollama.status().get("ready")),
         selected,
     )
+
+
+async def _get_routing_policy(ai_settings: AISettingsService) -> dict:
+    get_policy = getattr(ai_settings, "get_routing_policy", None)
+    if get_policy is None:
+        return {
+            "routing_mode": "local_only",
+            "local_fallback_enabled": True,
+            "per_call_cost_cap_usd": 1.0,
+            "monthly_cost_cap_usd": 25.0,
+        }
+    return await get_policy()
 
 
 async def _enforce_cloud_cost_caps(
@@ -279,8 +364,8 @@ async def _enforce_cloud_cost_caps(
     if estimated_cost is None:
         return None
 
-    monthly = await usage_ledger.monthly_spend_summary()
-    projected_monthly = monthly["monthly_actual_cost_usd"] + estimated_cost
+    monthly_effective_spend = await usage_ledger.monthly_effective_spend_usd()
+    projected_monthly = monthly_effective_spend + estimated_cost
     blocked = (
         estimated_cost > policy["per_call_cost_cap_usd"]
         or projected_monthly > policy["monthly_cost_cap_usd"]
@@ -758,23 +843,6 @@ async def analyze(
     Fetches indicator data for each timeframe, builds structured context,
     sends to the user's selected model, and returns signal + analysis text.
     """
-    status = ollama.status()
-    if not status["ready"]:
-        return AnalyzeResponse(
-            session_id="",
-            signal=None,
-            message=f"AI is not ready. Current state: {status['state']}. "
-                    f"Please complete the AI setup first.",
-        )
-
-    local_model = ollama.selected_model
-    if not local_model:
-        return AnalyzeResponse(
-            session_id="",
-            signal=None,
-            message="No model selected. Please choose a model in the AI panel.",
-        )
-
     (
         provider_name,
         model,
@@ -786,10 +854,26 @@ async def analyze(
         ollama,
         ai_settings,
     )
+    status = ollama.status()
+    if provider_name == "ollama" and not status["ready"]:
+        return AnalyzeResponse(
+            session_id="",
+            signal=None,
+            message=f"AI is not ready. Current state: {status['state']}. "
+                    f"Please complete the AI setup first.",
+        )
+
+    if provider_name == "ollama" and not model:
+        return AnalyzeResponse(
+            session_id="",
+            signal=None,
+            message="No model selected. Please choose a model in the AI panel.",
+        )
     policy = {"routing_mode": "local_only"}
     estimated_cost = None
+    cloud_provider = None
     if provider_name != "ollama":
-        policy = await ai_settings.get_routing_policy()
+        policy = await _get_routing_policy(ai_settings)
         estimated_cost = await _enforce_cloud_cost_caps(
             provider_name=provider_name,
             model=model,
@@ -797,7 +881,7 @@ async def analyze(
             policy=policy,
             usage_ledger=usage_ledger,
         )
-        await _register_cloud_provider_for_request(
+        cloud_provider = await _register_cloud_provider_for_request(
             provider_config=provider_config,
             ai=ai,
             key_store=key_store,
@@ -830,8 +914,8 @@ async def analyze(
         request.timeframes, request.indicators, resolved_indicators,
     )
 
-    try:
-        result = await ai.analyze(
+    async def run_analysis() -> dict:
+        return await ai.analyze(
             symbol=request.symbol,
             timeframe_data=timeframe_data,
             indicators_display=request.indicators,
@@ -844,6 +928,13 @@ async def analyze(
             fallback_model=fallback_model,
             allow_fallback=allow_fallback,
         )
+
+    try:
+        if cloud_provider is not None:
+            async with ai.provider_registry.temporary_provider(cloud_provider):
+                result = await run_analysis()
+        else:
+            result = await run_analysis()
     except AIAnalysisTimeoutError as exc:
         log.warning(
             "Analysis timed out for %s at stage '%s' (%.0fs) — returning graceful error",
@@ -857,6 +948,24 @@ async def analyze(
                 f"(>{exc.timeout_s:.0f}s). Try a faster model or a shorter timeframe selection."
             ),
         )
+    except (
+        AIProviderAuthError,
+        AIProviderModelUnavailableError,
+        AIProviderNetworkError,
+        AIProviderRateLimitError,
+        AIProviderTimeoutError,
+    ) as exc:
+        status_code, detail = _provider_error_detail(exc, provider_name)
+        await _record_failed_cloud_usage(
+            usage_ledger=usage_ledger,
+            provider_name=provider_name,
+            model=model,
+            task_type=request.task_type,
+            routing_mode=policy["routing_mode"],
+            estimated_cost=estimated_cost,
+            error_code=detail["error"],
+        )
+        raise HTTPException(status_code=status_code, detail=detail) from exc
 
     signal = _parse_signal(result["signal"]) if result.get("signal") else None
     provider_metadata = result.get("provider")
@@ -920,23 +1029,6 @@ async def analyze_stream(
     On readiness/model errors, a single `done` event with signal=null and
     a human-readable `message` is emitted so the UI has something to show.
     """
-    status = ollama.status()
-    model = ollama.selected_model
-    if not status["ready"] or not model:
-        async def err_stream():
-            payload = {
-                "type": "done",
-                "session_id": request.session_id or "",
-                "signal": None,
-                "message": (
-                    "AI is not ready. Please complete the AI setup and select "
-                    "a model first."
-                ),
-                "provider": _local_provider_metadata(model).model_dump(),
-            }
-            yield f"data: {json.dumps(payload)}\n\n"
-        return StreamingResponse(err_stream(), media_type="text/event-stream")
-
     (
         provider_name,
         selected_model,
@@ -948,10 +1040,26 @@ async def analyze_stream(
         ollama,
         ai_settings,
     )
+    status = ollama.status()
+    if provider_name == "ollama" and (not status["ready"] or not selected_model):
+        async def err_stream():
+            payload = {
+                "type": "done",
+                "session_id": request.session_id or "",
+                "signal": None,
+                "message": (
+                    "AI is not ready. Please complete the AI setup and select "
+                    "a model first."
+                ),
+                "provider": _local_provider_metadata(selected_model).model_dump(),
+            }
+            yield f"data: {json.dumps(payload)}\n\n"
+        return StreamingResponse(err_stream(), media_type="text/event-stream")
     policy = {"routing_mode": "local_only"}
     estimated_cost = None
+    cloud_provider = None
     if provider_name != "ollama":
-        policy = await ai_settings.get_routing_policy()
+        policy = await _get_routing_policy(ai_settings)
         estimated_cost = await _enforce_cloud_cost_caps(
             provider_name=provider_name,
             model=selected_model,
@@ -959,7 +1067,7 @@ async def analyze_stream(
             policy=policy,
             usage_ledger=usage_ledger,
         )
-        await _register_cloud_provider_for_request(
+        cloud_provider = await _register_cloud_provider_for_request(
             provider_config=provider_config,
             ai=ai,
             key_store=key_store,
@@ -991,7 +1099,7 @@ async def analyze_stream(
     )
 
     async def event_stream():
-        try:
+        async def analysis_events():
             async for event in ai.analyze_stream(
                 symbol=request.symbol,
                 timeframe_data=timeframe_data,
@@ -1005,33 +1113,45 @@ async def analyze_stream(
                 fallback_model=fallback_model,
                 allow_fallback=allow_fallback,
             ):
-                if event.get("type") == "done":
-                    provider_metadata = event.get("provider")
-                    if provider_metadata is not None and estimated_cost is not None:
-                        provider_metadata = {
-                            **provider_metadata,
-                            "estimated_cost": provider_metadata.get("estimated_cost")
-                            or estimated_cost,
-                        }
-                        await usage_ledger.record_usage(
-                            provider_name=provider_metadata["provider_name"],
-                            model=provider_metadata.get("model"),
-                            task_type=request.task_type,
-                            routing_mode=policy["routing_mode"],
-                            input_tokens=None,
-                            output_tokens=None,
-                            estimated_cost=provider_metadata.get("estimated_cost"),
-                            actual_cost=provider_metadata.get("actual_cost"),
-                            status="success",
-                            provider_request_id=None,
-                            error_code=None,
-                        )
-                    event = {
-                        **event,
-                        "provider": provider_metadata
-                        or _local_provider_metadata(selected_model).model_dump(),
+                yield event
+
+        async def serialize_analysis_event(event: dict) -> str:
+            if event.get("type") == "done":
+                provider_metadata = event.get("provider")
+                if provider_metadata is not None and estimated_cost is not None:
+                    provider_metadata = {
+                        **provider_metadata,
+                        "estimated_cost": provider_metadata.get("estimated_cost")
+                        or estimated_cost,
                     }
-                yield f"data: {json.dumps(event)}\n\n"
+                    await usage_ledger.record_usage(
+                        provider_name=provider_metadata["provider_name"],
+                        model=provider_metadata.get("model"),
+                        task_type=request.task_type,
+                        routing_mode=policy["routing_mode"],
+                        input_tokens=None,
+                        output_tokens=None,
+                        estimated_cost=provider_metadata.get("estimated_cost"),
+                        actual_cost=provider_metadata.get("actual_cost"),
+                        status="success",
+                        provider_request_id=None,
+                        error_code=None,
+                    )
+                event = {
+                    **event,
+                    "provider": provider_metadata
+                    or _local_provider_metadata(selected_model).model_dump(),
+                }
+            return f"data: {json.dumps(event)}\n\n"
+
+        try:
+            if cloud_provider is not None:
+                async with ai.provider_registry.temporary_provider(cloud_provider):
+                    async for event in analysis_events():
+                        yield await serialize_analysis_event(event)
+            else:
+                async for event in analysis_events():
+                    yield await serialize_analysis_event(event)
         except AIAnalysisTimeoutError as exc:
             timeout_event = {
                 "type": "done",
@@ -1042,9 +1162,27 @@ async def analyze_stream(
                     f"for {request.symbol} (>{exc.timeout_s:.0f}s). Try a "
                     f"faster model or a shorter timeframe selection."
                 ),
-                "provider": _local_provider_metadata(model).model_dump(),
+                "provider": _local_provider_metadata(selected_model).model_dump(),
             }
             yield f"data: {json.dumps(timeout_event)}\n\n"
+        except (
+            AIProviderAuthError,
+            AIProviderModelUnavailableError,
+            AIProviderNetworkError,
+            AIProviderRateLimitError,
+            AIProviderTimeoutError,
+        ) as exc:
+            _, detail = _provider_error_detail(exc, provider_name)
+            await _record_failed_cloud_usage(
+                usage_ledger=usage_ledger,
+                provider_name=provider_name,
+                model=selected_model,
+                task_type=request.task_type,
+                routing_mode=policy["routing_mode"],
+                estimated_cost=estimated_cost,
+                error_code=detail["error"],
+            )
+            yield f"data: {json.dumps({'type': 'error', **detail})}\n\n"
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
 

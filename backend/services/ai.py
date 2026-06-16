@@ -793,6 +793,21 @@ class AiService:
             AIProviderRateLimitError,
             AIProviderTimeoutError,
         ) as e:
+            if (
+                provider_name != "ollama"
+                and isinstance(
+                    e,
+                    (
+                        AIProviderAuthError,
+                        AIProviderModelUnavailableError,
+                        AIProviderNetworkError,
+                        AIProviderRateLimitError,
+                        AIProviderTimeoutError,
+                    ),
+                )
+                and (not allow_fallback or not fallback_model)
+            ):
+                raise
             if allow_fallback and fallback_model and provider_name != "ollama":
                 provider_metadata = self._fallback_metadata(fallback_model).model_dump()
                 async for token in self.chat_stream(

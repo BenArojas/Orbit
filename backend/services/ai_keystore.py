@@ -29,14 +29,17 @@ class PythonKeyringBackend:
 
     async def set_password(self, service: str, account: str, password: str) -> None:
         keyring = self._load_keyring()
+        self._validate_os_backed(keyring)
         await asyncio.to_thread(keyring.set_password, service, account, password)
 
     async def get_password(self, service: str, account: str) -> str | None:
         keyring = self._load_keyring()
+        self._validate_os_backed(keyring)
         return await asyncio.to_thread(keyring.get_password, service, account)
 
     async def delete_password(self, service: str, account: str) -> None:
         keyring = self._load_keyring()
+        self._validate_os_backed(keyring)
         await asyncio.to_thread(keyring.delete_password, service, account)
 
     @staticmethod
@@ -46,6 +49,33 @@ class PythonKeyringBackend:
         except ImportError as exc:
             raise AIKeyStoreUnavailableError("OS keychain is unavailable") from exc
         return keyring
+
+    @staticmethod
+    def _validate_os_backed(keyring_module) -> None:
+        backend = keyring_module.get_keyring()
+        backend_module = backend.__class__.__module__
+        backend_name = backend.__class__.__name__.lower()
+        unsafe_module_prefixes = (
+            "keyrings.alt",
+            "keyring.backends.fail",
+            "keyring.backends.null",
+            "keyring.backends.chainer",
+        )
+        unsafe_name_fragments = ("plaintext", "encrypted", "fail", "null", "chainer")
+        if backend_module.startswith(unsafe_module_prefixes) or any(
+            fragment in backend_name for fragment in unsafe_name_fragments
+        ):
+            raise AIKeyStoreUnavailableError("unsafe keyring backend is unavailable")
+
+        safe_module_prefixes = (
+            "keyring.backends.macOS",
+            "keyring.backends.Windows",
+            "keyring.backends.SecretService",
+            "keyring.backends.kwallet",
+            "keyring.backends.libsecret",
+        )
+        if not backend_module.startswith(safe_module_prefixes):
+            raise AIKeyStoreUnavailableError("unsafe keyring backend is unavailable")
 
 
 class AIKeyStore:

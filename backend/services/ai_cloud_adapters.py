@@ -161,6 +161,9 @@ class OpenRouterProvider:
             "Content-Type": "application/json",
         }
 
+    async def aclose(self) -> None:
+        await self._http.aclose()
+
     @staticmethod
     async def _raise_for_status(response: httpx.Response) -> None:
         if response.status_code < 400:

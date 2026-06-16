@@ -81,3 +81,56 @@ async def test_ai_usage_ledger_monthly_spend_uses_actual_cost_only():
     }
 
     await db.close()
+
+
+@pytest.mark.asyncio
+async def test_ai_usage_ledger_monthly_effective_spend_excludes_blocked_rows():
+    from services.ai_usage import AIUsageLedger
+
+    db = DatabaseService(db_path=":memory:")
+    await db.initialize()
+    ledger = AIUsageLedger(db)
+
+    await ledger.record_usage(
+        provider_name="openrouter",
+        model="openrouter/auto",
+        task_type="analysis",
+        routing_mode="cloud_manual",
+        input_tokens=None,
+        output_tokens=None,
+        estimated_cost=0.50,
+        actual_cost=0.10,
+        status="success",
+        provider_request_id=None,
+        error_code=None,
+    )
+    await ledger.record_usage(
+        provider_name="openrouter",
+        model="openrouter/auto",
+        task_type="analysis",
+        routing_mode="cloud_manual",
+        input_tokens=None,
+        output_tokens=None,
+        estimated_cost=0.25,
+        actual_cost=None,
+        status="failed",
+        provider_request_id=None,
+        error_code="ai_provider_network_error",
+    )
+    await ledger.record_usage(
+        provider_name="openrouter",
+        model="openrouter/auto",
+        task_type="analysis",
+        routing_mode="cloud_manual",
+        input_tokens=None,
+        output_tokens=None,
+        estimated_cost=0.75,
+        actual_cost=None,
+        status="blocked",
+        provider_request_id=None,
+        error_code="ai_cost_limit_exceeded",
+    )
+
+    assert await ledger.monthly_effective_spend_usd() == 0.35
+
+    await db.close()

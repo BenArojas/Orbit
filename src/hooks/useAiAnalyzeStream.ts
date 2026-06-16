@@ -26,6 +26,7 @@ import { useChartStore } from "@/store/chart";
 import { API_BASE } from "@/config/endpoints";
 import type {
   AIProviderMetadata,
+  AIProviderName,
   AiContextMode,
   FibonacciSnapshot,
 } from "@/modules/parallax/api";
@@ -42,6 +43,9 @@ export interface AnalyzeStreamRequest {
   indicator_priority?: string[];
   context_mode?: AiContextMode;
   context_bars?: number;
+  provider_name?: AIProviderName;
+  model?: string | null;
+  task_type?: "analysis" | "execution_sensitive";
 }
 
 interface SseTokenEvent {

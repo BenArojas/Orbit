@@ -247,4 +247,30 @@ describe("useAiAnalyzeStream", () => {
       fallback_used: false,
     });
   });
+
+  it("sends selected provider, model, and task type in the analyze request body", async () => {
+    const { result } = renderHook(() => useAiAnalyzeStream());
+
+    await act(async () => {
+      await result.current.startAnalyze(
+        {
+          conid: 265598,
+          symbol: "AAPL",
+          timeframes: ["D"],
+          indicators: ["RSI"],
+          provider_name: "openrouter",
+          model: "openrouter/auto",
+          task_type: "analysis",
+        },
+        "openrouter/auto",
+      );
+    });
+
+    const [, options] = vi.mocked(global.fetch).mock.calls[0];
+    const body = JSON.parse(String(options?.body));
+
+    expect(body.provider_name).toBe("openrouter");
+    expect(body.model).toBe("openrouter/auto");
+    expect(body.task_type).toBe("analysis");
+  });
 });

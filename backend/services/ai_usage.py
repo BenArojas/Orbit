@@ -46,3 +46,6 @@ class AIUsageLedger:
 
     async def monthly_spend_summary(self) -> dict[str, float]:
         return await self._db.get_ai_usage_monthly_totals()
+
+    async def monthly_effective_spend_usd(self) -> float:
+        return await self._db.get_ai_usage_monthly_effective_spend()

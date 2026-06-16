@@ -9,7 +9,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { createElement, type ReactElement } from "react";
 
@@ -34,6 +34,22 @@ function renderAiChat(element: ReactElement) {
 const mockAnalyzing = { current: false };
 const mockStartAnalyze = vi.fn();
 const mockCancelAnalyze = vi.fn();
+const mockAiStore = {
+  activeProvider: "ollama",
+  routingMode: "local_only",
+  providers: [
+    {
+      provider_name: "ollama",
+      display_name: "Ollama",
+      kind: "local",
+      enabled: true,
+      ready: true,
+      selected_model: "gemma4:4b",
+      has_key: false,
+      error: null,
+    },
+  ],
+};
 
 vi.mock("@/store", () => ({
   useAiStore: Object.assign(
@@ -43,6 +59,9 @@ vi.mock("@/store", () => ({
       signal: null,
       isAnalyzing: mockAnalyzing.current,
       responseTimes: [],
+      activeProvider: mockAiStore.activeProvider,
+      routingMode: mockAiStore.routingMode,
+      providers: mockAiStore.providers,
     }),
     {
       // Allow useAiStore.getState() lookups in the hook (not used here, but
@@ -124,6 +143,20 @@ describe("AiChatPanel — fib section gating", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockAnalyzing.current = false;
+    mockAiStore.activeProvider = "ollama";
+    mockAiStore.routingMode = "local_only";
+    mockAiStore.providers = [
+      {
+        provider_name: "ollama",
+        display_name: "Ollama",
+        kind: "local",
+        enabled: true,
+        ready: true,
+        selected_model: "gemma4:4b",
+        has_key: false,
+        error: null,
+      },
+    ];
   });
 
   it("shows the fib panel for a drawn fib even when there is no auto fib (pill off)", async () => {
@@ -175,6 +208,61 @@ describe("AiChatPanel — fib section gating", () => {
     expect(screen.getByTestId("fib-locked-visibility-1")).toBeTruthy();
 
     useChartStore.setState({ activeFibs: [] });
+  });
+});
+
+describe("AiChatPanel — provider routing", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockAnalyzing.current = false;
+    mockAiStore.activeProvider = "openrouter";
+    mockAiStore.routingMode = "cloud_manual";
+    mockAiStore.providers = [
+      {
+        provider_name: "ollama",
+        display_name: "Ollama",
+        kind: "local",
+        enabled: true,
+        ready: true,
+        selected_model: "gemma4:4b",
+        has_key: false,
+        error: null,
+      },
+      {
+        provider_name: "openrouter",
+        display_name: "OpenRouter",
+        kind: "cloud",
+        enabled: true,
+        ready: false,
+        selected_model: "openrouter/auto",
+        has_key: true,
+        error: null,
+      },
+    ];
+  });
+
+  it("derives cloud analysis routing from backend provider state", async () => {
+    const { default: AiChatPanel } = await import("../AiChatPanel");
+
+    renderAiChat(
+      createElement(AiChatPanel, {
+        activeConid: 265598,
+        activeSymbol: "AAPL",
+        fibonacci: null,
+      }),
+    );
+
+    fireEvent.click(screen.getByText("RSI"));
+    fireEvent.click(screen.getByRole("button", { name: /run analysis/i }));
+
+    await waitFor(() => {
+      expect(mockStartAnalyze).toHaveBeenCalledTimes(1);
+    });
+    const [request, model] = mockStartAnalyze.mock.calls[0];
+    expect(model).toBe("openrouter/auto");
+    expect(request.provider_name).toBe("openrouter");
+    expect(request.model).toBe("openrouter/auto");
+    expect(request.task_type).toBe("analysis");
   });
 });
 
