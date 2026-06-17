@@ -12,6 +12,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { createElement, type ReactElement } from "react";
+import type { AIProviderStatus } from "@/modules/parallax/api";
 
 // jsdom doesn't implement scrollIntoView — the panel calls it on every
 // messages/streamingContent change. Stub once for the file.
@@ -38,6 +39,9 @@ const mockCancelAnalyze = vi.fn();
 const mockAiStore = {
   activeProvider: "ollama",
   routingMode: "local_only",
+  analysisProvider: null as "ollama" | "openrouter" | null,
+  analysisModel: null as string | null,
+  analysisFallbackEnabled: null as boolean | null,
   providers: [
     {
       provider_name: "ollama",
@@ -49,7 +53,7 @@ const mockAiStore = {
       has_key: false,
       error: null,
     },
-  ],
+  ] as AIProviderStatus[],
 };
 
 afterEach(() => {
@@ -67,6 +71,9 @@ vi.mock("@/store", () => ({
       activeProvider: mockAiStore.activeProvider,
       routingMode: mockAiStore.routingMode,
       providers: mockAiStore.providers,
+      analysisProvider: mockAiStore.analysisProvider,
+      analysisModel: mockAiStore.analysisModel,
+      analysisFallbackEnabled: mockAiStore.analysisFallbackEnabled,
     }),
     {
       // Allow useAiStore.getState() lookups in the hook (not used here, but
@@ -151,6 +158,9 @@ describe("AiChatPanel — fib section gating", () => {
     mockOllamaReady.current = true;
     mockAiStore.activeProvider = "ollama";
     mockAiStore.routingMode = "local_only";
+    mockAiStore.analysisProvider = null;
+    mockAiStore.analysisModel = null;
+    mockAiStore.analysisFallbackEnabled = null;
     mockAiStore.providers = [
       {
         provider_name: "ollama",
@@ -223,6 +233,9 @@ describe("AiChatPanel — provider routing", () => {
     mockAnalyzing.current = false;
     mockAiStore.activeProvider = "openrouter";
     mockAiStore.routingMode = "cloud_manual";
+    mockAiStore.analysisProvider = null;
+    mockAiStore.analysisModel = null;
+    mockAiStore.analysisFallbackEnabled = null;
     mockAiStore.providers = [
       {
         provider_name: "ollama",
@@ -240,7 +253,7 @@ describe("AiChatPanel — provider routing", () => {
         kind: "cloud",
         enabled: true,
         ready: false,
-        selected_model: "openrouter/auto",
+        selected_model: "anthropic/claude-sonnet-4",
         has_key: true,
         error: null,
       },
@@ -265,10 +278,58 @@ describe("AiChatPanel — provider routing", () => {
       expect(mockStartAnalyze).toHaveBeenCalledTimes(1);
     });
     const [request, model] = mockStartAnalyze.mock.calls[0];
-    expect(model).toBe("openrouter/auto");
+    expect(model).toBe("anthropic/claude-sonnet-4");
     expect(request.provider_name).toBe("openrouter");
-    expect(request.model).toBe("openrouter/auto");
+    expect(request.model).toBe("anthropic/claude-sonnet-4");
     expect(request.task_type).toBe("analysis");
+  });
+
+  it("uses the exact per-run OpenRouter model selected in Analysis", async () => {
+    mockAiStore.analysisProvider = "openrouter";
+    mockAiStore.analysisModel = "google/gemini-2.5-pro";
+    const { default: AiChatPanel } = await import("../AiChatPanel");
+
+    renderAiChat(
+      createElement(AiChatPanel, {
+        activeConid: 265598,
+        activeSymbol: "AAPL",
+        fibonacci: null,
+      }),
+    );
+
+    fireEvent.click(screen.getByText("RSI"));
+    fireEvent.click(screen.getByRole("button", { name: /run analysis/i }));
+
+    await waitFor(() => expect(mockStartAnalyze).toHaveBeenCalledTimes(1));
+    const [request, model] = mockStartAnalyze.mock.calls[0];
+    expect(model).toBe("google/gemini-2.5-pro");
+    expect(request.provider_name).toBe("openrouter");
+    expect(request.model).toBe("google/gemini-2.5-pro");
+    expect(request.model).not.toBe("gemma4:4b");
+  });
+
+  it("disables analysis when OpenRouter has no validated model", async () => {
+    mockAiStore.analysisProvider = "openrouter";
+    mockAiStore.analysisModel = null;
+    mockAiStore.providers = mockAiStore.providers.map((provider) =>
+      provider.provider_name === "openrouter"
+        ? { ...provider, selected_model: null }
+        : provider,
+    );
+    const { default: AiChatPanel } = await import("../AiChatPanel");
+
+    renderAiChat(
+      createElement(AiChatPanel, {
+        activeConid: 265598,
+        activeSymbol: "AAPL",
+        fibonacci: null,
+      }),
+    );
+
+    fireEvent.click(screen.getByText("RSI"));
+
+    expect(screen.getByRole("button", { name: /run analysis/i }))
+      .toBeDisabled();
   });
 
   it("starts cloud analysis when Ollama is unavailable", async () => {

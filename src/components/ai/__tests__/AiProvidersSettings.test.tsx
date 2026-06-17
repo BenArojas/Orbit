@@ -160,7 +160,7 @@ describe("AiProvidersSettings", () => {
       cloud_enabled: true,
       providers: providersResponse.providers.map((provider) =>
         provider.provider_name === "openrouter"
-          ? { ...provider, enabled: true, has_key: true, selected_model: "openrouter/auto" }
+          ? { ...provider, enabled: true, has_key: true, selected_model: "anthropic/claude-sonnet-4" }
           : provider,
       ),
     });
@@ -168,6 +168,8 @@ describe("AiProvidersSettings", () => {
 
     const routing = await screen.findByLabelText("Routing mode");
     expect((screen.getByRole("option", { name: "Cloud manual" }) as HTMLOptionElement).disabled).toBe(false);
+    expect(screen.queryByRole("option", { name: "Hybrid auto" })).not.toBeInTheDocument();
+    expect(screen.queryByText(/execution remains local-only/i)).not.toBeInTheDocument();
     fireEvent.change(routing, { target: { value: "cloud_manual" } });
     fireEvent.change(screen.getByLabelText("Active provider"), { target: { value: "openrouter" } });
 

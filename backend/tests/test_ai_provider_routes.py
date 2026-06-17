@@ -90,7 +90,7 @@ class _FakeCloudSettings(_FakeSettings):
                 "display_name": "OpenRouter",
                 "kind": "cloud",
                 "enabled": True,
-                "selected_model": "openrouter/auto",
+                "selected_model": "anthropic/claude-sonnet-4",
                 "api_key_ref": "macos-keychain:orbit-ai/openrouter",
                 "routing_role": "manual",
                 "settings": {},
@@ -116,6 +116,17 @@ class _FakeLocalOnlyCloudSettings(_FakeCloudSettings):
             "per_call_cost_cap_usd": 1.0,
             "monthly_cost_cap_usd": 25.0,
         }
+
+
+class _FakeCloudSettingsWithoutModel(_FakeCloudSettings):
+    async def list_provider_configs(self) -> list[dict]:
+        configs = await super().list_provider_configs()
+        return [
+            {**config, "selected_model": None}
+            if config["provider_name"] == "openrouter"
+            else config
+            for config in configs
+        ]
 
 
 class _FakeLowCapCloudSettings(_FakeCloudSettings):
@@ -199,6 +210,172 @@ class _FakeReadableKeyStore(_FakeKeyStore):
 
             raise AIKeyStoreUnavailableError("OS keychain is unavailable")
         return self.api_key
+
+
+def test_openrouter_models_returns_user_filtered_catalog_and_selected_model(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    from deps import get_ai_keystore, get_ai_settings
+    from routers import ai as ai_router
+    from services.ai_cloud_adapters import OpenRouterModel
+
+    class FakeProvider:
+        closed = False
+
+        async def list_models(self) -> list[OpenRouterModel]:
+            return [
+                OpenRouterModel(
+                    id="anthropic/claude-sonnet-4",
+                    name="Claude Sonnet 4",
+                    context_length=200000,
+                    max_completion_tokens=4096,
+                    prompt_price_per_token="0.000003",
+                    completion_price_per_token="0.000015",
+                    request_price="0",
+                )
+            ]
+
+        async def aclose(self) -> None:
+            self.closed = True
+
+    provider = FakeProvider()
+    settings = _FakeCloudSettings()
+    key_store = _FakeReadableKeyStore()
+    monkeypatch.setattr(
+        ai_router,
+        "OpenRouterProvider",
+        lambda *, api_key: provider,
+    )
+
+    app = FastAPI()
+    app.include_router(ai_router.router)
+    app.dependency_overrides[get_ai_settings] = lambda: settings
+    app.dependency_overrides[get_ai_keystore] = lambda: key_store
+
+    response = TestClient(app).get("/ai/providers/openrouter/models")
+
+    assert response.status_code == 200
+    assert response.json()["selected_model"] == "anthropic/claude-sonnet-4"
+    assert response.json()["models"][0]["id"] == "anthropic/claude-sonnet-4"
+    assert key_store.reads == [
+        ("openrouter", "macos-keychain:orbit-ai/openrouter")
+    ]
+    assert provider.closed is True
+
+
+def test_select_openrouter_model_rejects_model_missing_from_catalog(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    from deps import get_ai_keystore, get_ai_settings
+    from routers import ai as ai_router
+    from services.ai_cloud_adapters import OpenRouterModel
+
+    class FakeProvider:
+        async def list_models(self) -> list[OpenRouterModel]:
+            return [
+                OpenRouterModel(
+                    id="anthropic/claude-sonnet-4",
+                    name="Claude Sonnet 4",
+                    context_length=200000,
+                    max_completion_tokens=4096,
+                    prompt_price_per_token="0.000003",
+                    completion_price_per_token="0.000015",
+                    request_price="0",
+                )
+            ]
+
+        async def aclose(self) -> None:
+            return None
+
+    class Settings(_FakeCloudSettings):
+        selected: list[str] = []
+
+        async def set_provider_model(self, *, provider_name: str, model: str) -> dict:
+            self.selected.append(model)
+            return {}
+
+    settings = Settings()
+    monkeypatch.setattr(
+        ai_router,
+        "OpenRouterProvider",
+        lambda *, api_key: FakeProvider(),
+    )
+
+    app = FastAPI()
+    app.include_router(ai_router.router)
+    app.dependency_overrides[get_ai_settings] = lambda: settings
+    app.dependency_overrides[get_ai_keystore] = lambda: _FakeReadableKeyStore()
+
+    response = TestClient(app).put(
+        "/ai/providers/openrouter/model",
+        json={"model": "gemma4:e4b"},
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"]["error"] == "ai_provider_model_unavailable"
+    assert settings.selected == []
+
+
+@pytest.mark.asyncio
+async def test_select_openrouter_model_persists_validated_catalog_model(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    from deps import get_ai_keystore, get_ai_settings
+    from routers import ai as ai_router
+    from services.ai_cloud_adapters import OpenRouterModel
+    from services.ai_settings import AISettingsService
+    from services.db import DatabaseService
+
+    class FakeProvider:
+        async def list_models(self) -> list[OpenRouterModel]:
+            return [
+                OpenRouterModel(
+                    id="anthropic/claude-sonnet-4",
+                    name="Claude Sonnet 4",
+                    context_length=200000,
+                    max_completion_tokens=4096,
+                    prompt_price_per_token="0.000003",
+                    completion_price_per_token="0.000015",
+                    request_price="0",
+                )
+            ]
+
+        async def aclose(self) -> None:
+            return None
+
+    db = DatabaseService(db_path=":memory:")
+    await db.initialize()
+    settings = AISettingsService(db)
+    await settings.set_provider_key_ref(
+        provider_name="openrouter",
+        api_key_ref="macos-keychain:orbit-ai/openrouter",
+    )
+    monkeypatch.setattr(
+        ai_router,
+        "OpenRouterProvider",
+        lambda *, api_key: FakeProvider(),
+    )
+
+    app = FastAPI()
+    app.include_router(ai_router.router)
+    app.dependency_overrides[get_ai_settings] = lambda: settings
+    app.dependency_overrides[get_ai_keystore] = lambda: _FakeReadableKeyStore()
+
+    response = TestClient(app).put(
+        "/ai/providers/openrouter/model",
+        json={"model": "anthropic/claude-sonnet-4"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["selected_model"] == "anthropic/claude-sonnet-4"
+    configs = await settings.list_provider_configs()
+    openrouter = next(
+        config for config in configs if config["provider_name"] == "openrouter"
+    )
+    assert openrouter["selected_model"] == "anthropic/claude-sonnet-4"
+    assert openrouter["api_key_ref"] == "macos-keychain:orbit-ai/openrouter"
+
+    await db.close()
 
 
 def test_get_ai_providers_returns_local_ollama_default():
@@ -507,6 +684,61 @@ async def test_provider_key_save_fails_closed_when_keychain_unavailable():
     await db.close()
 
 
+def test_cloud_analysis_requires_a_validated_selected_model(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    from deps import get_ai_keystore, get_ai_settings, get_ai_usage_ledger
+    from routers import ai as ai_router
+    from models import AIProviderMetadata
+
+    class FakeProvider:
+        async def aclose(self) -> None:
+            return None
+
+    class FakeAi:
+        async def analyze(self, **kwargs) -> dict:
+            return {
+                "session_id": "session-1",
+                "signal": None,
+                "message": "Cloud narrative.",
+                "provider": AIProviderMetadata(
+                    provider_name="openrouter",
+                    kind="cloud",
+                    model=kwargs["model"],
+                ).model_dump(),
+            }
+
+    monkeypatch.setattr(
+        ai_router,
+        "OpenRouterProvider",
+        lambda *, api_key: FakeProvider(),
+    )
+    fake_ibkr = MagicMock()
+    fake_ibkr.history = AsyncMock(return_value={"data": []})
+    fake_db = MagicMock()
+    fake_db.get_setting = AsyncMock(return_value=None)
+    client = _client(ai=FakeAi(), ibkr=fake_ibkr, db=fake_db)
+    client.app.dependency_overrides[get_ai_settings] = (
+        lambda: _FakeCloudSettingsWithoutModel()
+    )
+    client.app.dependency_overrides[get_ai_keystore] = lambda: _FakeReadableKeyStore()
+    client.app.dependency_overrides[get_ai_usage_ledger] = lambda: _FakeUsageLedger()
+
+    response = client.post(
+        "/ai/analyze",
+        json={
+            "conid": 265598,
+            "symbol": "AAPL",
+            "timeframes": ["D"],
+            "indicators": ["RSI"],
+            "provider_name": "openrouter",
+        },
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"]["error"] == "ai_provider_model_required"
+
+
 def test_analyze_stream_done_event_contains_local_provider_metadata():
     class FakeAi:
         async def analyze_stream(self, **_kwargs) -> AsyncIterator[dict]:
@@ -561,7 +793,7 @@ def test_analyze_returns_cloud_provider_metadata_for_enabled_openrouter():
     class FakeAi:
         async def analyze(self, **kwargs) -> dict:
             assert kwargs["provider_name"] == "openrouter"
-            assert kwargs["model"] == "openrouter/auto"
+            assert kwargs["model"] == "anthropic/claude-sonnet-4"
             assert kwargs["fallback_model"] == "gemma4:26b"
             assert kwargs["allow_fallback"] is True
             return {
@@ -571,7 +803,7 @@ def test_analyze_returns_cloud_provider_metadata_for_enabled_openrouter():
                 "provider": {
                     "provider_name": "openrouter",
                     "kind": "cloud",
-                    "model": "openrouter/auto",
+                    "model": "anthropic/claude-sonnet-4",
                     "estimated_cost": 0.02,
                     "actual_cost": 0.0123,
                     "fallback_used": False,
@@ -604,7 +836,7 @@ def test_analyze_returns_cloud_provider_metadata_for_enabled_openrouter():
     assert resp.json()["provider"] == {
         "provider_name": "openrouter",
         "kind": "cloud",
-        "model": "openrouter/auto",
+        "model": "anthropic/claude-sonnet-4",
         "estimated_cost": 0.02,
         "actual_cost": 0.0123,
         "fallback_used": False,
@@ -612,7 +844,7 @@ def test_analyze_returns_cloud_provider_metadata_for_enabled_openrouter():
     assert usage.records == [
         {
             "provider_name": "openrouter",
-            "model": "openrouter/auto",
+            "model": "anthropic/claude-sonnet-4",
             "task_type": "analysis",
             "routing_mode": "cloud_manual",
             "input_tokens": None,
@@ -852,7 +1084,7 @@ def test_analyze_registers_enabled_openrouter_from_keychain_ref(monkeypatch):
     assert resp.json()["provider"] == {
         "provider_name": "openrouter",
         "kind": "cloud",
-        "model": "openrouter/auto",
+        "model": "anthropic/claude-sonnet-4",
         "estimated_cost": 0.02,
         "actual_cost": 0.0123,
         "fallback_used": False,
@@ -1039,7 +1271,7 @@ def test_analyze_maps_cloud_auth_error_to_typed_response_and_failed_usage(monkey
     assert "sk-runtime-secret" not in resp.text
     assert usage.records[-1] == {
         "provider_name": "openrouter",
-        "model": "openrouter/auto",
+        "model": "anthropic/claude-sonnet-4",
         "task_type": "analysis",
         "routing_mode": "cloud_manual",
         "input_tokens": None,
@@ -1177,7 +1409,7 @@ def test_analyze_blocks_over_per_call_cap_before_cloud_ai_call():
     assert usage.records == [
         {
             "provider_name": "openrouter",
-            "model": "openrouter/auto",
+            "model": "anthropic/claude-sonnet-4",
             "task_type": "analysis",
             "routing_mode": "cloud_manual",
             "input_tokens": None,
@@ -1227,7 +1459,7 @@ def test_analyze_stream_done_event_contains_cloud_provider_metadata():
     class FakeAi:
         async def analyze_stream(self, **kwargs) -> AsyncIterator[dict]:
             assert kwargs["provider_name"] == "openrouter"
-            assert kwargs["model"] == "openrouter/auto"
+            assert kwargs["model"] == "anthropic/claude-sonnet-4"
             assert kwargs["fallback_model"] == "gemma4:26b"
             assert kwargs["allow_fallback"] is True
             yield {"type": "token", "content": "Cloud narrative."}
@@ -1239,7 +1471,7 @@ def test_analyze_stream_done_event_contains_cloud_provider_metadata():
                 "provider": {
                     "provider_name": "openrouter",
                     "kind": "cloud",
-                    "model": "openrouter/auto",
+                    "model": "anthropic/claude-sonnet-4",
                     "estimated_cost": None,
                     "actual_cost": 0.0123,
                     "fallback_used": False,
@@ -1278,14 +1510,14 @@ def test_analyze_stream_done_event_contains_cloud_provider_metadata():
     assert frames[-1]["provider"] == {
         "provider_name": "openrouter",
         "kind": "cloud",
-        "model": "openrouter/auto",
+        "model": "anthropic/claude-sonnet-4",
         "estimated_cost": 0.02,
         "actual_cost": 0.0123,
         "fallback_used": False,
     }
     assert usage.records[-1] == {
         "provider_name": "openrouter",
-        "model": "openrouter/auto",
+        "model": "anthropic/claude-sonnet-4",
         "task_type": "analysis",
         "routing_mode": "cloud_manual",
         "input_tokens": None,

@@ -30,6 +30,7 @@ import ActionSignalCard from "./ActionSignalCard";
 import AiSetupGuide from "./AiSetupGuide";
 import AiModelSelector from "./AiModelSelector";
 import AiProviderBadge from "./AiProviderBadge";
+import AiAnalysisTargetControls from "./AiAnalysisTargetControls";
 import ResponseTimeBadge from "./ResponseTimeBadge";
 import FibStackPanel from "./fib/FibStackPanel";
 import type {
@@ -175,9 +176,11 @@ export default function AiChatPanel({ activeConid, activeSymbol, fibonacci, char
     signal,
     isAnalyzing,
     lastProviderMetadata,
-    providers,
-    activeProvider,
-    routingMode,
+    providers = [],
+    activeProvider = "ollama",
+    routingMode = "local_only",
+    analysisProvider,
+    analysisModel,
   } = useAiStore();
 
   // The fib panel must appear whenever ANY fib is on the chart — the
@@ -208,35 +211,48 @@ export default function AiChatPanel({ activeConid, activeSymbol, fibonacci, char
   // so the StreamingBubble keeps working without changes.
   const { startAnalyze, cancelAnalyze } = useAiAnalyzeStream();
 
+  const requestedProvider = analysisProvider
+    ?? (routingMode === "local_only" ? "ollama" : activeProvider);
   const selectedCloudProvider = providers?.find(
-    (provider) => provider.provider_name === activeProvider && provider.kind === "cloud",
+    (provider) => provider.provider_name === requestedProvider && provider.kind === "cloud",
   );
+  const selectedCloudModel = analysisModel ?? selectedCloudProvider?.selected_model ?? null;
   const hasValidCloudRoute =
     routingMode !== "local_only" &&
-    activeProvider !== "ollama" &&
-    Boolean(selectedCloudProvider?.enabled && selectedCloudProvider.has_key);
+    requestedProvider === "openrouter" &&
+    Boolean(
+      selectedCloudProvider?.enabled
+      && selectedCloudProvider.has_key
+      && selectedCloudModel,
+    );
   const aiAvailable = isReady || hasValidCloudRoute;
 
   const resolveAnalysisRoute = useCallback((): {
     providerName: AIProviderName;
     model: string | null;
   } => {
-    if (routingMode === "local_only" || activeProvider === "ollama") {
+    const requestedProvider = analysisProvider
+      ?? (routingMode === "local_only" ? "ollama" : activeProvider);
+    if (requestedProvider === "ollama") {
       return { providerName: "ollama", model: selectedModel ?? null };
     }
 
     const provider = providers.find(
-      (candidate) => candidate.provider_name === activeProvider,
+      (candidate) => candidate.provider_name === requestedProvider,
     );
-    if (!provider || !provider.enabled || !provider.has_key) {
-      return { providerName: "ollama", model: selectedModel ?? null };
+    if (!provider || provider.provider_name !== "openrouter" || !provider.enabled || !provider.has_key) {
+      return { providerName: requestedProvider, model: null };
     }
 
     return {
       providerName: provider.provider_name,
-      model: provider.selected_model ?? selectedModel ?? null,
+      model: analysisModel ?? provider.selected_model ?? null,
     };
-  }, [activeProvider, providers, routingMode, selectedModel]);
+  }, [activeProvider, analysisModel, analysisProvider, providers, routingMode, selectedModel]);
+  const analysisRoute = resolveAnalysisRoute();
+  const analysisRunDisabled = analysisRoute.providerName === "ollama"
+    ? !isReady
+    : !hasValidCloudRoute || !analysisRoute.model;
 
   // Auto-scroll to bottom when messages change. Direct scrollTop assignment
   // on the container ref — guaranteed to only scroll within this element,
@@ -258,6 +274,7 @@ export default function AiChatPanel({ activeConid, activeSymbol, fibonacci, char
     }) => {
       if (!aiAvailable || !activeConid || !activeSymbol) return;
       const route = resolveAnalysisRoute();
+      if (route.providerName !== "ollama" && !route.model) return;
       // Streams narrative tokens into streamingContent, then commits the
       // final message + signal + session_id once the SSE `done` event lands.
       void startAnalyze(
@@ -387,10 +404,12 @@ export default function AiChatPanel({ activeConid, activeSymbol, fibonacci, char
                   Fib details appear. Plan reference: decision 7 in
                   docs/fibonacci-improvements-plan.md. */}
               <div className="-mx-3 -mt-3 mb-0">
+                <AiAnalysisTargetControls />
                 <AiConfigPanel
                   onRunAnalysis={handleRunAnalysis}
                   chartIndicators={chartIndicators}
                   isAnalyzing={isAnalyzing}
+                  isRunDisabled={analysisRunDisabled}
                 />
                 <ActionSignalCard signal={signal} />
               </div>

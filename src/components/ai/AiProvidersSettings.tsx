@@ -249,7 +249,7 @@ export default function AiProvidersSettings() {
                 Routing mode
               </label>
               <p className="mt-0.5 text-[10px] text-[var(--text-3)]">
-                Routing preference is saved while AI execution remains local-only.
+                Choose local execution or an explicitly enabled cloud route.
               </p>
             </div>
             <select
@@ -263,7 +263,6 @@ export default function AiProvidersSettings() {
             >
               <option value="local_only">Local only</option>
               <option value="cloud_manual">Cloud manual</option>
-              <option value="hybrid_auto">Hybrid auto</option>
               <option value="cloud_with_local_fallback">Cloud with fallback</option>
             </select>
           </div>

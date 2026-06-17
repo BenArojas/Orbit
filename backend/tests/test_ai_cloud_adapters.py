@@ -8,6 +8,96 @@ import pytest
 
 
 @pytest.mark.asyncio
+async def test_openrouter_list_models_uses_authenticated_user_catalog():
+    from services.ai_cloud_adapters import OpenRouterProvider
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        assert request.method == "GET"
+        assert request.url.path == "/api/v1/models/user"
+        assert request.headers["authorization"] == "Bearer test-key"
+        return httpx.Response(200, json={"data": []})
+
+    client = httpx.AsyncClient(
+        base_url="https://openrouter.ai",
+        transport=httpx.MockTransport(handler),
+    )
+    provider = OpenRouterProvider(api_key="test-key", http_client=client)
+
+    assert await provider.list_models() == []
+
+    await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_openrouter_list_models_keeps_only_fixed_priced_text_models():
+    from services.ai_cloud_adapters import OpenRouterProvider
+
+    valid_model = {
+        "id": "anthropic/claude-sonnet-4",
+        "name": "Claude Sonnet 4",
+        "context_length": 200000,
+        "architecture": {
+            "input_modalities": ["text"],
+            "output_modalities": ["text"],
+        },
+        "supported_parameters": ["max_tokens"],
+        "top_provider": {"max_completion_tokens": 4096},
+        "pricing": {
+            "prompt": "0.000003",
+            "completion": "0.000015",
+            "request": "0",
+        },
+    }
+    invalid_models = [
+        {**valid_model, "id": "openrouter/auto", "name": "Auto"},
+        {**valid_model, "id": "openrouter/fusion", "name": "Fusion"},
+        {
+            **valid_model,
+            "id": "example/image-only",
+            "architecture": {
+                "input_modalities": ["image"],
+                "output_modalities": ["text"],
+            },
+        },
+        {
+            **valid_model,
+            "id": "example/no-max-tokens",
+            "supported_parameters": [],
+        },
+        {
+            **valid_model,
+            "id": "example/unknown-pricing",
+            "pricing": {
+                "prompt": "unknown",
+                "completion": "0.000001",
+                "request": "0",
+            },
+        },
+    ]
+
+    async def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"data": [valid_model, *invalid_models]})
+
+    client = httpx.AsyncClient(
+        base_url="https://openrouter.ai",
+        transport=httpx.MockTransport(handler),
+    )
+    provider = OpenRouterProvider(api_key="test-key", http_client=client)
+
+    models = await provider.list_models()
+
+    assert [model.id for model in models] == ["anthropic/claude-sonnet-4"]
+    assert models[0].name == "Claude Sonnet 4"
+    assert models[0].context_length == 200000
+    assert models[0].max_completion_tokens == 4096
+    assert models[0].prompt_price_per_token == "0.000003"
+    assert models[0].completion_price_per_token == "0.000015"
+    assert models[0].request_price == "0"
+
+    await client.aclose()
+
+
+@pytest.mark.asyncio
 async def test_openrouter_provider_normalizes_chat_response_and_usage_cost():
     from services.ai_cloud_adapters import OpenRouterProvider
 

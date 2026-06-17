@@ -97,11 +97,14 @@ vi.mock("@/store", () => ({
 
 vi.mock("@/modules/parallax/api", () => ({
   AI_PROVIDERS_QUERY_KEY: ["ai", "providers"],
+  AI_OPENROUTER_MODELS_QUERY_KEY: ["ai", "providers", "openrouter", "models"],
   parallaxApi: {
     aiStatus: vi.fn().mockResolvedValue({}),
     aiModels: vi.fn().mockResolvedValue([]),
     aiProviders: vi.fn().mockResolvedValue({}),
     aiSelectModel: vi.fn().mockResolvedValue({}),
+    aiOpenRouterModels: vi.fn().mockResolvedValue({ models: [] }),
+    aiSelectOpenRouterModel: vi.fn().mockResolvedValue({ models: [] }),
     aiRefresh: vi.fn().mockResolvedValue({}),
   },
 }));

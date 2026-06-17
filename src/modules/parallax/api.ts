@@ -618,7 +618,6 @@ export type AIProviderKind = "local" | "cloud";
 export type AIRoutingMode =
     | "local_only"
     | "cloud_manual"
-    | "hybrid_auto"
     | "cloud_with_local_fallback";
 
 export interface AIProviderStatus {
@@ -648,6 +647,27 @@ export interface AIProvidersResponse {
     cloud_enabled: boolean;
 }
 
+export interface AIModelOption {
+    id: string;
+    name: string;
+    context_length: number;
+    max_completion_tokens: number;
+    prompt_price_per_token: string;
+    completion_price_per_token: string;
+    request_price: string;
+}
+
+export interface AIProviderModelsResponse {
+    provider_name: "openrouter";
+    models: AIModelOption[];
+    selected_model: string | null;
+    fetched_at: string;
+}
+
+export interface AIProviderModelUpdateRequest {
+    model: string;
+}
+
 export interface AIProviderKeySaveRequest {
     api_key: string;
 }
@@ -663,6 +683,12 @@ export interface AIRoutingPolicyResponse {
 export type AIRoutingPolicyUpdate = AIRoutingPolicyResponse;
 
 export const AI_PROVIDERS_QUERY_KEY = ["ai", "providers"] as const;
+export const AI_OPENROUTER_MODELS_QUERY_KEY = [
+    "ai",
+    "providers",
+    "openrouter",
+    "models",
+] as const;
 
 export interface AIUsageSummaryResponse {
     monthly_actual_cost_usd: number;
@@ -1075,6 +1101,12 @@ export const parallaxApi = {
     // AI Analysis (Phase 4)
     aiProviders: () =>
         sidecarRequest<AIProvidersResponse>("GET", "/ai/providers"),
+
+    aiOpenRouterModels: () =>
+        sidecarRequest<AIProviderModelsResponse>("GET", "/ai/providers/openrouter/models"),
+
+    aiSelectOpenRouterModel: (req: AIProviderModelUpdateRequest) =>
+        sidecarRequest<AIProviderModelsResponse>("PUT", "/ai/providers/openrouter/model", req),
 
     aiRoutingPolicy: () =>
         sidecarRequest<AIRoutingPolicyResponse>("GET", "/ai/routing-policy"),

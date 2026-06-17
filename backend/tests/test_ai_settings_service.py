@@ -69,3 +69,58 @@ async def test_ai_settings_service_round_trips_routing_policy():
     assert await service.get_routing_policy() == updated
 
     await db.close()
+
+
+@pytest.mark.asyncio
+async def test_ai_settings_service_persists_selected_provider_model_only():
+    from services.ai_settings import AISettingsService
+
+    db = DatabaseService(db_path=":memory:")
+    await db.initialize()
+    service = AISettingsService(db)
+    await service.set_provider_key_ref(
+        provider_name="openrouter",
+        api_key_ref="macos-keychain:orbit-ai/openrouter",
+    )
+
+    updated = await service.set_provider_model(
+        provider_name="openrouter",
+        model="anthropic/claude-sonnet-4",
+    )
+
+    assert updated["selected_model"] == "anthropic/claude-sonnet-4"
+    assert updated["api_key_ref"] == "macos-keychain:orbit-ai/openrouter"
+    assert "api_key" not in updated
+
+    await db.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("fallback_enabled", "expected_mode"),
+    [
+        (True, "cloud_with_local_fallback"),
+        (False, "cloud_manual"),
+    ],
+)
+async def test_ai_settings_service_migrates_hybrid_auto_routing_mode(
+    fallback_enabled: bool,
+    expected_mode: str,
+):
+    from services.ai_settings import AISettingsService
+
+    db = DatabaseService(db_path=":memory:")
+    await db.initialize()
+    await db.update_ai_routing_policy(
+        active_provider="openrouter",
+        routing_mode="hybrid_auto",
+        local_fallback_enabled=fallback_enabled,
+        per_call_cost_cap_usd=1.0,
+        monthly_cost_cap_usd=25.0,
+    )
+
+    policy = await AISettingsService(db).get_routing_policy()
+
+    assert policy["routing_mode"] == expected_mode
+
+    await db.close()

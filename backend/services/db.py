@@ -1846,6 +1846,16 @@ class DatabaseService:
                        VALUES (1, 'ollama', 'local_only', 1, 1.0, 25.0, datetime('now'))
                        ON CONFLICT(id) DO NOTHING"""
                 )
+                self._conn.execute(
+                    """UPDATE ai_routing_policy
+                       SET routing_mode = CASE
+                             WHEN local_fallback_enabled = 1
+                               THEN 'cloud_with_local_fallback'
+                             ELSE 'cloud_manual'
+                           END,
+                           updated_at = datetime('now')
+                       WHERE id = 1 AND routing_mode = 'hybrid_auto'"""
+                )
 
         await self._run_write(_do)
 
@@ -1960,6 +1970,32 @@ class DatabaseService:
                         "manual" if enabled else "disabled",
                         provider_name,
                     ),
+                )
+
+        await self._run_write(_do)
+        providers = await self.list_ai_provider_configs()
+        return next(
+            provider for provider in providers
+            if provider["provider_name"] == provider_name
+        )
+
+    async def update_ai_provider_model(
+        self,
+        *,
+        provider_name: str,
+        model: str,
+    ) -> dict[str, Any]:
+        """Persist only the validated selected model for one provider."""
+        await self.ensure_ai_settings_defaults()
+
+        def _do() -> None:
+            assert self._conn is not None
+            with self._conn:
+                self._conn.execute(
+                    """UPDATE ai_provider_configs
+                       SET selected_model = ?, updated_at = datetime('now')
+                       WHERE provider_name = ?""",
+                    (model, provider_name),
                 )
 
         await self._run_write(_do)

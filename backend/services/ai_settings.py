@@ -60,3 +60,15 @@ class AISettingsService:
             api_key_ref=None,
             enabled=False,
         )
+
+    async def set_provider_model(
+        self,
+        *,
+        provider_name: str,
+        model: str,
+    ) -> dict[str, Any]:
+        """Persist a model only after the route validates it against the catalog."""
+        return await self._db.update_ai_provider_model(
+            provider_name=provider_name,
+            model=model,
+        )

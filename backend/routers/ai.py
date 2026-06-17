@@ -28,6 +28,7 @@ Flow:
 
 import json
 import logging
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, status as http_status
 from fastapi.responses import StreamingResponse
@@ -43,7 +44,10 @@ from deps import (
     get_ollama,
 )
 from models import (
+    AIModelOption,
     AIProviderKeySaveRequest,
+    AIProviderModelUpdateRequest,
+    AIProviderModelsResponse,
     AIProviderMetadata,
     AIProviderName,
     AIProviderStatus,
@@ -181,6 +185,17 @@ def _cloud_provider_unavailable_http_error(provider_name: str) -> HTTPException:
         detail={
             "error": "ai_cloud_provider_unavailable",
             "message": f"{provider_name} is not enabled for cloud AI.",
+        },
+    )
+
+
+def _cloud_provider_model_required_http_error(provider_name: str) -> HTTPException:
+    return HTTPException(
+        status_code=http_status.HTTP_409_CONFLICT,
+        detail={
+            "error": "ai_provider_model_required",
+            "message": "Select a validated cloud model before running analysis.",
+            "provider_name": provider_name,
         },
     )
 
@@ -372,8 +387,6 @@ async def _record_completed_usage(
 def _estimate_cloud_analysis_cost(provider_name: AIProviderName, model: str) -> float | None:
     if provider_name == "ollama":
         return None
-    if provider_name == "openrouter" and model in {"openrouter/auto", "openrouter/fusion"}:
-        return 0.02
     return 0.02
 
 
@@ -405,7 +418,9 @@ async def _resolve_analysis_routing(
     if selected is None or not selected["enabled"] or not selected.get("api_key_ref"):
         raise _cloud_provider_unavailable_http_error(request.provider_name)
 
-    model = request.model or selected.get("selected_model") or "openrouter/auto"
+    model = request.model or selected.get("selected_model")
+    if not model:
+        raise _cloud_provider_model_required_http_error(request.provider_name)
     return (
         request.provider_name,
         model,
@@ -652,6 +667,113 @@ async def providers(
             provider.kind == "cloud" and provider.enabled and provider.has_key
             for provider in provider_statuses
         ),
+    )
+
+
+@router.get(
+    "/providers/openrouter/models",
+    response_model=AIProviderModelsResponse,
+)
+async def openrouter_models(
+    ai_settings: AISettingsService = Depends(get_ai_settings),
+    key_store: AIKeyStore = Depends(get_ai_keystore),
+):
+    """Return the authenticated user's validated fixed OpenRouter models."""
+    configs = await ai_settings.list_provider_configs()
+    config = next(
+        (item for item in configs if item["provider_name"] == "openrouter"),
+        None,
+    )
+    if config is None or not config.get("api_key_ref"):
+        raise _cloud_provider_unavailable_http_error("openrouter")
+
+    provider = None
+    try:
+        provider = await _create_cloud_provider_for_request(
+            provider_config=config,
+            key_store=key_store,
+        )
+        models = await provider.list_models()
+    except AIKeyStoreUnavailableError as exc:
+        raise _keychain_unavailable_http_error() from exc
+    except (
+        AIProviderAuthError,
+        AIProviderRateLimitError,
+        AIProviderModelUnavailableError,
+        AIProviderTimeoutError,
+        AIProviderNetworkError,
+    ) as exc:
+        status_code, detail = _provider_error_detail(exc, "openrouter")
+        raise HTTPException(status_code=status_code, detail=detail) from exc
+    finally:
+        await _close_request_provider(provider)
+
+    return AIProviderModelsResponse(
+        provider_name="openrouter",
+        models=[AIModelOption(**model.__dict__) for model in models],
+        selected_model=config.get("selected_model"),
+        fetched_at=datetime.now(UTC),
+    )
+
+
+@router.put(
+    "/providers/openrouter/model",
+    response_model=AIProviderModelsResponse,
+)
+async def select_openrouter_model(
+    request: AIProviderModelUpdateRequest,
+    ai_settings: AISettingsService = Depends(get_ai_settings),
+    key_store: AIKeyStore = Depends(get_ai_keystore),
+):
+    """Validate an OpenRouter model against the user catalog before persistence."""
+    configs = await ai_settings.list_provider_configs()
+    config = next(
+        (item for item in configs if item["provider_name"] == "openrouter"),
+        None,
+    )
+    if config is None or not config.get("api_key_ref"):
+        raise _cloud_provider_unavailable_http_error("openrouter")
+
+    provider = None
+    try:
+        provider = await _create_cloud_provider_for_request(
+            provider_config=config,
+            key_store=key_store,
+        )
+        models = await provider.list_models()
+    except AIKeyStoreUnavailableError as exc:
+        raise _keychain_unavailable_http_error() from exc
+    except (
+        AIProviderAuthError,
+        AIProviderRateLimitError,
+        AIProviderModelUnavailableError,
+        AIProviderTimeoutError,
+        AIProviderNetworkError,
+    ) as exc:
+        status_code, detail = _provider_error_detail(exc, "openrouter")
+        raise HTTPException(status_code=status_code, detail=detail) from exc
+    finally:
+        await _close_request_provider(provider)
+
+    if request.model not in {model.id for model in models}:
+        raise HTTPException(
+            status_code=http_status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail={
+                "error": "ai_provider_model_unavailable",
+                "message": "The selected OpenRouter model is not available for this account.",
+                "provider_name": "openrouter",
+            },
+        )
+
+    await ai_settings.set_provider_model(
+        provider_name="openrouter",
+        model=request.model,
+    )
+    return AIProviderModelsResponse(
+        provider_name="openrouter",
+        models=[AIModelOption(**model.__dict__) for model in models],
+        selected_model=request.model,
+        fetched_at=datetime.now(UTC),
     )
 
 

@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
+from decimal import Decimal, InvalidOperation
 from typing import Any
 
 import httpx
@@ -42,6 +43,17 @@ class AIProviderTextResult:
     provider_request_id: str | None = None
 
 
+@dataclass(frozen=True)
+class OpenRouterModel:
+    id: str
+    name: str
+    context_length: int
+    max_completion_tokens: int
+    prompt_price_per_token: str
+    completion_price_per_token: str
+    request_price: str
+
+
 class OpenRouterProvider:
     """OpenRouter adapter for the chat completions contract."""
 
@@ -58,6 +70,25 @@ class OpenRouterProvider:
             base_url="https://openrouter.ai",
             timeout=httpx.Timeout(connect=10.0, read=180.0, write=30.0, pool=30.0),
         )
+
+    async def list_models(self) -> list[OpenRouterModel]:
+        try:
+            response = await self._http.get(
+                "/api/v1/models/user",
+                headers=self._headers(),
+            )
+            await self._raise_for_status(response)
+        except httpx.TimeoutException as exc:
+            raise AIProviderTimeoutError("OpenRouter request timed out") from exc
+        except httpx.NetworkError as exc:
+            raise AIProviderNetworkError("OpenRouter network request failed") from exc
+
+        models: list[OpenRouterModel] = []
+        for raw_model in response.json().get("data", []):
+            model = self._parse_model(raw_model)
+            if model is not None:
+                models.append(model)
+        return models
 
     async def chat_with_metadata(
         self,
@@ -160,6 +191,52 @@ class OpenRouterProvider:
             "Authorization": f"Bearer {self._api_key}",
             "Content-Type": "application/json",
         }
+
+    @staticmethod
+    def _parse_model(raw_model: dict[str, Any]) -> OpenRouterModel | None:
+        model_id = raw_model.get("id")
+        architecture = raw_model.get("architecture") or {}
+        supported_parameters = raw_model.get("supported_parameters") or []
+        top_provider = raw_model.get("top_provider") or {}
+        pricing = raw_model.get("pricing") or {}
+        context_length = raw_model.get("context_length")
+        max_completion_tokens = top_provider.get("max_completion_tokens")
+
+        if not isinstance(model_id, str) or model_id.startswith("openrouter/"):
+            return None
+        if "text" not in architecture.get("input_modalities", []):
+            return None
+        if "text" not in architecture.get("output_modalities", []):
+            return None
+        if "max_tokens" not in supported_parameters:
+            return None
+        if not isinstance(context_length, int) or context_length <= 0:
+            return None
+        if not isinstance(max_completion_tokens, int) or max_completion_tokens <= 0:
+            return None
+
+        price_values = (
+            pricing.get("prompt"),
+            pricing.get("completion"),
+            pricing.get("request"),
+        )
+        if not all(isinstance(value, str) for value in price_values):
+            return None
+        try:
+            if any(Decimal(value) < 0 for value in price_values):
+                return None
+        except InvalidOperation:
+            return None
+
+        return OpenRouterModel(
+            id=model_id,
+            name=raw_model.get("name") or model_id,
+            context_length=context_length,
+            max_completion_tokens=max_completion_tokens,
+            prompt_price_per_token=price_values[0],
+            completion_price_per_token=price_values[1],
+            request_price=price_values[2],
+        )
 
     async def aclose(self) -> None:
         await self._http.aclose()

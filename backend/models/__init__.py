@@ -21,6 +21,8 @@ Note: Watchlists are managed in IBKR — no local models needed.
 
 from __future__ import annotations
 
+from datetime import datetime
+
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from typing import Any, Literal, Optional
 
@@ -1002,7 +1004,6 @@ AIProviderKind = Literal["local", "cloud"]
 AIRoutingMode = Literal[
     "local_only",
     "cloud_manual",
-    "hybrid_auto",
     "cloud_with_local_fallback",
 ]
 
@@ -1086,6 +1087,30 @@ class AIProvidersResponse(BaseModel):
     active_provider: AIProviderName
     routing_mode: AIRoutingMode
     cloud_enabled: bool
+
+
+class AIModelOption(BaseModel):
+    """One validated fixed OpenRouter text model available to the user."""
+    id: str
+    name: str
+    context_length: int
+    max_completion_tokens: int
+    prompt_price_per_token: str
+    completion_price_per_token: str
+    request_price: str
+
+
+class AIProviderModelsResponse(BaseModel):
+    """Authenticated OpenRouter catalog plus the persisted default model."""
+    provider_name: Literal["openrouter"]
+    models: list[AIModelOption]
+    selected_model: Optional[str] = None
+    fetched_at: datetime
+
+
+class AIProviderModelUpdateRequest(BaseModel):
+    """Persist a validated provider model selection."""
+    model: str = Field(min_length=1)
 
 
 class AIProviderKeySaveRequest(BaseModel):

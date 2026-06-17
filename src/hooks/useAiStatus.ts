@@ -10,7 +10,11 @@
 
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useEffect } from "react";
-import { AI_PROVIDERS_QUERY_KEY, parallaxApi } from "@/modules/parallax/api";
+import {
+  AI_OPENROUTER_MODELS_QUERY_KEY,
+  AI_PROVIDERS_QUERY_KEY,
+  parallaxApi,
+} from "@/modules/parallax/api";
 import { useAiStore } from "@/store";
 
 /** Refetch interval when Ollama is NOT ready (user might be installing) */
@@ -29,6 +33,12 @@ export function useAiStatus() {
     setOllamaStatus,
     setAvailableModels,
     setProvidersStatus,
+    providers = [],
+    activeProvider = "ollama",
+    routingMode = "local_only",
+    analysisProvider,
+    setAnalysisModel,
+    updateProviderStatus,
   } = useAiStore();
 
   const queryClient = useQueryClient();
@@ -66,6 +76,36 @@ export function useAiStatus() {
       setProvidersStatus(providersQuery.data);
     }
   }, [providersQuery.data, setProvidersStatus]);
+
+  const requestedProvider = analysisProvider ?? activeProvider;
+  const openRouterProvider = providers.find(
+    (provider) => provider.provider_name === "openrouter",
+  );
+  const openRouterModelsQuery = useQuery({
+    queryKey: AI_OPENROUTER_MODELS_QUERY_KEY,
+    queryFn: () => parallaxApi.aiOpenRouterModels(),
+    enabled:
+      requestedProvider === "openrouter"
+      && routingMode !== "local_only"
+      && Boolean(openRouterProvider?.enabled && openRouterProvider.has_key),
+    staleTime: 10 * 60_000,
+  });
+
+  const selectOpenRouterModelMutation = useMutation({
+    mutationFn: (model: string) =>
+      parallaxApi.aiSelectOpenRouterModel({ model }),
+    onSuccess: (data) => {
+      setAnalysisModel(data.selected_model);
+      if (openRouterProvider && data.selected_model) {
+        updateProviderStatus({
+          ...openRouterProvider,
+          selected_model: data.selected_model,
+        });
+      }
+      queryClient.setQueryData(AI_OPENROUTER_MODELS_QUERY_KEY, data);
+      void queryClient.invalidateQueries({ queryKey: AI_PROVIDERS_QUERY_KEY });
+    },
+  });
 
   // ── Fetch models when Ollama is running ──
 
@@ -115,11 +155,16 @@ export function useAiStatus() {
     ollamaError,
     isReady,
     isLoading: statusQuery.isLoading,
+    openRouterModels: openRouterModelsQuery.data?.models ?? [],
+    openRouterSelectedModel: openRouterModelsQuery.data?.selected_model ?? null,
+    isLoadingOpenRouterModels: openRouterModelsQuery.isLoading,
 
     // Actions
     selectModel: selectModelMutation.mutate,
     isSelectingModel: selectModelMutation.isPending,
     refresh: refreshMutation.mutate,
     isRefreshing: refreshMutation.isPending,
+    selectOpenRouterModel: selectOpenRouterModelMutation.mutate,
+    isSelectingOpenRouterModel: selectOpenRouterModelMutation.isPending,
   };
 }

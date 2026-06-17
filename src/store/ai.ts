@@ -75,6 +75,9 @@ interface AiState {
   perCallCostCapUsd: number;
   monthlyCostCapUsd: number;
   lastProviderMetadata: AIProviderMetadata | null;
+  analysisProvider: AIProviderName | null;
+  analysisModel: string | null;
+  analysisFallbackEnabled: boolean | null;
 
   /* ── Chat session ── */
   sessionId: string | null;
@@ -96,6 +99,9 @@ interface AiState {
   updateProviderStatus: (provider: AIProviderStatus) => void;
   setRoutingPolicy: (policy: AIRoutingPolicyResponse) => void;
   setLastProviderMetadata: (metadata: AIProviderMetadata | null) => void;
+  setAnalysisProvider: (provider: AIProviderName) => void;
+  setAnalysisModel: (model: string | null) => void;
+  setAnalysisFallbackEnabled: (enabled: boolean) => void;
 
   /* ── Actions: Chat ── */
   setSessionId: (id: string) => void;
@@ -130,6 +136,9 @@ export const useAiStore = create<AiState>()((set) => ({
   perCallCostCapUsd: 1,
   monthlyCostCapUsd: 25,
   lastProviderMetadata: null,
+  analysisProvider: null,
+  analysisModel: null,
+  analysisFallbackEnabled: null,
 
   // Chat session
   sessionId: null,
@@ -181,6 +190,13 @@ export const useAiStore = create<AiState>()((set) => ({
     }),
 
   setLastProviderMetadata: (metadata) => set({ lastProviderMetadata: metadata }),
+
+  setAnalysisProvider: (provider) => set({ analysisProvider: provider }),
+
+  setAnalysisModel: (model) => set({ analysisModel: model }),
+
+  setAnalysisFallbackEnabled: (enabled) =>
+    set({ analysisFallbackEnabled: enabled }),
 
   // ── Chat actions ──
 

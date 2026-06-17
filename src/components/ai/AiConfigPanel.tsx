@@ -176,12 +176,15 @@ interface AiConfigPanelProps {
    * loading row, not from here — decision 7A in the plan).
    */
   isAnalyzing?: boolean;
+  /** Disable a run when the selected provider route is not executable. */
+  isRunDisabled?: boolean;
 }
 
 export default function AiConfigPanel({
   onRunAnalysis,
   chartIndicators,
   isAnalyzing = false,
+  isRunDisabled = false,
 }: AiConfigPanelProps) {
   const [selectedTf, setSelectedTf] = useState<Set<AiTimeframe>>(
     () => new Set(DEFAULT_TIMEFRAMES)
@@ -361,7 +364,10 @@ export default function AiConfigPanel({
       <button
         onClick={handleRun}
         disabled={
-          selectedTf.size === 0 || selectedInd.size === 0 || isAnalyzing
+          selectedTf.size === 0
+          || selectedInd.size === 0
+          || isAnalyzing
+          || isRunDisabled
         }
         data-testid="run-analysis-button"
         title={
