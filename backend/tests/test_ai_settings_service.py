@@ -44,6 +44,7 @@ async def test_ai_settings_service_round_trips_routing_policy():
 
     policy = await service.get_routing_policy()
     assert policy == {
+        "active_provider": "ollama",
         "routing_mode": "local_only",
         "local_fallback_enabled": True,
         "per_call_cost_cap_usd": 1.0,
@@ -51,14 +52,16 @@ async def test_ai_settings_service_round_trips_routing_policy():
     }
 
     updated = await service.update_routing_policy(
-        routing_mode="local_only",
+        active_provider="openrouter",
+        routing_mode="cloud_manual",
         local_fallback_enabled=False,
         per_call_cost_cap_usd=2.5,
         monthly_cost_cap_usd=50.0,
     )
 
     assert updated == {
-        "routing_mode": "local_only",
+        "active_provider": "openrouter",
+        "routing_mode": "cloud_manual",
         "local_fallback_enabled": False,
         "per_call_cost_cap_usd": 2.5,
         "monthly_cost_cap_usd": 50.0,

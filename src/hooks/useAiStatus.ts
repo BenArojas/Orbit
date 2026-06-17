@@ -10,7 +10,7 @@
 
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useEffect } from "react";
-import { parallaxApi } from "@/modules/parallax/api";
+import { AI_PROVIDERS_QUERY_KEY, parallaxApi } from "@/modules/parallax/api";
 import { useAiStore } from "@/store";
 
 /** Refetch interval when Ollama is NOT ready (user might be installing) */
@@ -55,7 +55,7 @@ export function useAiStatus() {
   }, [statusQuery.data, setOllamaStatus]);
 
   const providersQuery = useQuery({
-    queryKey: ["ai", "providers"],
+    queryKey: AI_PROVIDERS_QUERY_KEY,
     queryFn: () => parallaxApi.aiProviders(),
     refetchInterval: isReady ? POLL_INTERVAL_READY : POLL_INTERVAL_SETUP,
     staleTime: isReady ? 30_000 : 5_000,

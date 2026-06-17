@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
 import { Cloud, Cpu } from "lucide-react";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
-import { parallaxApi } from "@/modules/parallax/api";
+import { AI_PROVIDERS_QUERY_KEY, parallaxApi } from "@/modules/parallax/api";
 import type { AIRoutingPolicyUpdate, AIProviderStatus } from "@/modules/parallax/api";
 import { useAiStore } from "@/store";
 
@@ -17,6 +17,7 @@ function ProviderCard({ provider }: { provider: AIProviderStatus }) {
   const [keyDraft, setKeyDraft] = useState("");
   const [keyError, setKeyError] = useState<string | null>(null);
   const updateProviderStatus = useAiStore((state) => state.updateProviderStatus);
+  const queryClient = useQueryClient();
 
   const saveKey = useMutation({
     mutationFn: () =>
@@ -25,6 +26,7 @@ function ProviderCard({ provider }: { provider: AIProviderStatus }) {
       setKeyDraft("");
       setKeyError(null);
       updateProviderStatus(updated);
+      void queryClient.invalidateQueries({ queryKey: AI_PROVIDERS_QUERY_KEY });
     },
     onError: (error) => {
       setKeyDraft("");
@@ -37,6 +39,7 @@ function ProviderCard({ provider }: { provider: AIProviderStatus }) {
     onSuccess: (updated) => {
       setKeyError(null);
       updateProviderStatus(updated);
+      void queryClient.invalidateQueries({ queryKey: AI_PROVIDERS_QUERY_KEY });
     },
     onError: (error) => {
       setKeyError(error instanceof Error ? error.message : "OS keychain is unavailable.");
@@ -128,6 +131,7 @@ function ProviderCard({ provider }: { provider: AIProviderStatus }) {
 export default function AiProvidersSettings() {
   const {
     providers,
+    activeProvider,
     routingMode,
     localFallbackEnabled,
     perCallCostCapUsd,
@@ -135,9 +139,10 @@ export default function AiProvidersSettings() {
     setProvidersStatus,
     setRoutingPolicy,
   } = useAiStore();
+  const queryClient = useQueryClient();
 
   const providersQuery = useQuery({
-    queryKey: ["ai", "providers", "settings"],
+    queryKey: AI_PROVIDERS_QUERY_KEY,
     queryFn: () => parallaxApi.aiProviders(),
     staleTime: 30_000,
   });
@@ -171,11 +176,14 @@ export default function AiProvidersSettings() {
       parallaxApi.aiUpdateRoutingPolicy(policy),
     onSuccess: (policy) => {
       setRoutingPolicy(policy);
+      void queryClient.invalidateQueries({ queryKey: AI_PROVIDERS_QUERY_KEY });
+      void queryClient.invalidateQueries({ queryKey: ["ai", "routing-policy"] });
     },
   });
 
   const [perCallDraft, setPerCallDraft] = useState(String(perCallCostCapUsd));
   const [monthlyDraft, setMonthlyDraft] = useState(String(monthlyCostCapUsd));
+  const [costError, setCostError] = useState<string | null>(null);
 
   useEffect(() => {
     setPerCallDraft(String(perCallCostCapUsd));
@@ -189,6 +197,7 @@ export default function AiProvidersSettings() {
     const current = useAiStore.getState();
     updatePolicy.mutate({
       routing_mode: current.routingMode,
+      active_provider: current.activeProvider,
       local_fallback_enabled: current.localFallbackEnabled,
       per_call_cost_cap_usd: current.perCallCostCapUsd,
       monthly_cost_cap_usd: current.monthlyCostCapUsd,
@@ -196,9 +205,19 @@ export default function AiProvidersSettings() {
     });
   }
 
-  function parseDraftCost(value: string, fallback: number) {
+  function parseDraftCost(value: string): number | null {
     const next = Number(value);
-    return Number.isFinite(next) ? next : fallback;
+    return Number.isFinite(next) && next >= 0 ? next : null;
+  }
+
+  function saveCostDraft(field: "per_call_cost_cap_usd" | "monthly_cost_cap_usd", value: string) {
+    const next = parseDraftCost(value);
+    if (next === null) {
+      setCostError("Enter a non-negative cost cap.");
+      return;
+    }
+    setCostError(null);
+    savePolicy({ [field]: next });
   }
 
   const loading = providersQuery.isLoading || routingPolicyQuery.isLoading;
@@ -243,9 +262,26 @@ export default function AiProvidersSettings() {
               className="min-w-[150px] rounded-md border border-border bg-[var(--bg-3)] px-3 py-1.5 text-[11px] text-[var(--text-1)] focus:outline-none focus:ring-1 focus:ring-[var(--clr-cyan)]"
             >
               <option value="local_only">Local only</option>
-              <option value="cloud_manual" disabled>Cloud manual</option>
-              <option value="hybrid_auto" disabled>Hybrid auto</option>
-              <option value="cloud_with_local_fallback" disabled>Cloud with fallback</option>
+              <option value="cloud_manual">Cloud manual</option>
+              <option value="hybrid_auto">Hybrid auto</option>
+              <option value="cloud_with_local_fallback">Cloud with fallback</option>
+            </select>
+          </div>
+
+          <div className="flex items-center justify-between gap-6 border-b border-border py-3">
+            <label htmlFor="ai-active-provider" className="text-[12px] font-medium text-[var(--text-1)]">
+              Active provider
+            </label>
+            <select
+              id="ai-active-provider"
+              aria-label="Active provider"
+              value={activeProvider}
+              onChange={(event) => savePolicy({ active_provider: event.target.value as AIProviderStatus["provider_name"] })}
+              className="min-w-[150px] rounded-md border border-border bg-[var(--bg-3)] px-3 py-1.5 text-[11px] text-[var(--text-1)]"
+            >
+              {providers.filter((provider) => provider.kind === "local" || (provider.enabled && provider.has_key)).map((provider) => (
+                <option key={provider.provider_name} value={provider.provider_name}>{provider.display_name}</option>
+              ))}
             </select>
           </div>
 
@@ -291,18 +327,8 @@ export default function AiProvidersSettings() {
               min="0"
               step="0.1"
               value={perCallDraft}
-              onChange={(event) => {
-                const nextDraft = event.target.value;
-                setPerCallDraft(nextDraft);
-                useAiStore.setState({
-                  perCallCostCapUsd: parseDraftCost(nextDraft, perCallCostCapUsd),
-                });
-              }}
-              onBlur={() =>
-                savePolicy({
-                  per_call_cost_cap_usd: parseDraftCost(perCallDraft, perCallCostCapUsd),
-                })
-              }
+              onChange={(event) => setPerCallDraft(event.target.value)}
+              onBlur={() => saveCostDraft("per_call_cost_cap_usd", perCallDraft)}
               className="w-[90px] rounded-md border border-border bg-[var(--bg-3)] px-2 py-1.5 text-right font-data text-[11px] text-[var(--text-1)] focus:outline-none focus:ring-1 focus:ring-[var(--clr-cyan)]"
             />
           </div>
@@ -323,21 +349,13 @@ export default function AiProvidersSettings() {
               min="0"
               step="1"
               value={monthlyDraft}
-              onChange={(event) => {
-                const nextDraft = event.target.value;
-                setMonthlyDraft(nextDraft);
-                useAiStore.setState({
-                  monthlyCostCapUsd: parseDraftCost(nextDraft, monthlyCostCapUsd),
-                });
-              }}
-              onBlur={() =>
-                savePolicy({
-                  monthly_cost_cap_usd: parseDraftCost(monthlyDraft, monthlyCostCapUsd),
-                })
-              }
+              onChange={(event) => setMonthlyDraft(event.target.value)}
+              onBlur={() => saveCostDraft("monthly_cost_cap_usd", monthlyDraft)}
               className="w-[90px] rounded-md border border-border bg-[var(--bg-3)] px-2 py-1.5 text-right font-data text-[11px] text-[var(--text-1)] focus:outline-none focus:ring-1 focus:ring-[var(--clr-cyan)]"
             />
           </div>
+
+          {costError ? <p className="py-2 text-[10px] text-[var(--clr-red)]">{costError}</p> : null}
 
           {usageSummaryQuery.data ? (
             <div className="flex items-center justify-between gap-6 border-t border-border py-3">

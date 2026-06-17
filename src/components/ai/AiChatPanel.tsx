@@ -208,6 +208,15 @@ export default function AiChatPanel({ activeConid, activeSymbol, fibonacci, char
   // so the StreamingBubble keeps working without changes.
   const { startAnalyze, cancelAnalyze } = useAiAnalyzeStream();
 
+  const selectedCloudProvider = providers?.find(
+    (provider) => provider.provider_name === activeProvider && provider.kind === "cloud",
+  );
+  const hasValidCloudRoute =
+    routingMode !== "local_only" &&
+    activeProvider !== "ollama" &&
+    Boolean(selectedCloudProvider?.enabled && selectedCloudProvider.has_key);
+  const aiAvailable = isReady || hasValidCloudRoute;
+
   const resolveAnalysisRoute = useCallback((): {
     providerName: AIProviderName;
     model: string | null;
@@ -247,7 +256,7 @@ export default function AiChatPanel({ activeConid, activeSymbol, fibonacci, char
       contextMode: AiContextMode;
       contextBars: number;
     }) => {
-      if (!isReady || !activeConid || !activeSymbol) return;
+      if (!aiAvailable || !activeConid || !activeSymbol) return;
       const route = resolveAnalysisRoute();
       // Streams narrative tokens into streamingContent, then commits the
       // final message + signal + session_id once the SSE `done` event lands.
@@ -268,7 +277,7 @@ export default function AiChatPanel({ activeConid, activeSymbol, fibonacci, char
       );
     },
     [
-      isReady,
+      aiAvailable,
       activeConid,
       activeSymbol,
       sessionId,
@@ -298,14 +307,15 @@ export default function AiChatPanel({ activeConid, activeSymbol, fibonacci, char
 
   // ── Determine what to show ──
 
-  const showSetupGuide =
+  const showSetupGuide = !hasValidCloudRoute && (
     ollamaState === "not_installed" ||
     ollamaState === "no_models" ||
     ollamaState === "error" ||
     ollamaState === "starting" ||
-    ollamaState === "installed";
+    ollamaState === "installed"
+  );
 
-  const showChat = isReady || ollamaState === "running";
+  const showChat = aiAvailable || ollamaState === "running";
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden bg-[var(--bg-1)]">
@@ -315,8 +325,8 @@ export default function AiChatPanel({ activeConid, activeSymbol, fibonacci, char
           <div
             className="h-2 w-2 rounded-full"
             style={{
-              background: isReady ? "var(--clr-green)" : "var(--clr-orange)",
-              boxShadow: isReady
+              background: aiAvailable ? "var(--clr-green)" : "var(--clr-orange)",
+              boxShadow: aiAvailable
                 ? "0 0 10px var(--clr-green)"
                 : "0 0 6px var(--clr-orange)",
             }}

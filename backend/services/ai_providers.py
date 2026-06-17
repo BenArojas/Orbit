@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import json
 import logging
-from contextlib import asynccontextmanager
 from collections.abc import AsyncIterator
 from typing import Protocol
 
@@ -69,24 +68,6 @@ class AIProviderRegistry:
         if provider is None:
             raise KeyError(f"AI provider is not registered: {name}")
         return provider
-
-    def register(self, provider: LLMProvider) -> None:
-        self._providers[provider.name] = provider
-
-    @asynccontextmanager
-    async def temporary_provider(self, provider: LLMProvider) -> AsyncIterator[None]:
-        previous = self._providers.get(provider.name)
-        self._providers[provider.name] = provider
-        try:
-            yield
-        finally:
-            if previous is None:
-                self._providers.pop(provider.name, None)
-            else:
-                self._providers[provider.name] = previous
-            close = getattr(provider, "aclose", None)
-            if close is not None:
-                await close()
 
     def names(self) -> list[str]:
         return sorted(self._providers)

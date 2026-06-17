@@ -230,6 +230,9 @@ class ChatSession:
         self.messages: list[dict[str, str]] = []
         self.symbol: str = ""
         self.signal: Optional[dict] = None
+        self.provider_name: str = "ollama"
+        self.model: str = ""
+        self.fallback_model: Optional[str] = None
 
     def add_system(self, content: str) -> None:
         """Add a system message (indicator context, etc.)."""
@@ -351,18 +354,19 @@ class AiService:
         messages: list[dict[str, str]],
         model: str,
         provider_name: str,
+        provider: object | None = None,
     ) -> AIProviderTextResult:
-        provider = self._provider_registry.require(provider_name)
-        chat_with_metadata = getattr(provider, "chat_with_metadata", None)
+        resolved_provider = provider or self._provider_registry.require(provider_name)
+        chat_with_metadata = getattr(resolved_provider, "chat_with_metadata", None)
         if chat_with_metadata is not None:
             return await chat_with_metadata(messages=messages, model=model)
 
-        content = await self.chat(
-            messages,
-            model=model,
-            think=None,
-            provider_name=provider_name,
-        )
+        if provider is None:
+            content = await self.chat(
+                messages, model=model, think=None, provider_name=provider_name,
+            )
+        else:
+            content = await resolved_provider.chat(messages=messages, model=model, think=None)
         return AIProviderTextResult(
             content=content,
             metadata=AIProviderMetadata(
@@ -393,27 +397,31 @@ class AiService:
         messages: list[dict[str, str]],
         model: str,
         provider_name: str,
+        provider: object | None = None,
     ) -> AsyncIterator[dict]:
-        provider = self._provider_registry.require(provider_name)
-        stream_with_metadata = getattr(provider, "chat_stream_with_metadata", None)
+        resolved_provider = provider or self._provider_registry.require(provider_name)
+        stream_with_metadata = getattr(resolved_provider, "chat_stream_with_metadata", None)
         if stream_with_metadata is not None and inspect.isasyncgenfunction(stream_with_metadata):
             async for event in stream_with_metadata(messages=messages, model=model):
                 yield event
             return
 
-        chat_with_metadata = getattr(provider, "chat_with_metadata", None)
+        chat_with_metadata = getattr(resolved_provider, "chat_with_metadata", None)
         if chat_with_metadata is not None:
             result = await chat_with_metadata(messages=messages, model=model)
             yield {"type": "token", "content": result.content}
             yield {"type": "metadata", "metadata": result.metadata.model_dump()}
             return
 
-        async for token in self.chat_stream(
-            messages,
-            model=model,
-            think=None,
-            provider_name=provider_name,
-        ):
+        if provider is None:
+            token_stream = self.chat_stream(
+                messages, model=model, think=None, provider_name=provider_name,
+            )
+        else:
+            token_stream = resolved_provider.chat_stream(
+                messages=messages, model=model, think=None,
+            )
+        async for token in token_stream:
             yield {"type": "token", "content": token}
         yield {
             "type": "metadata",
@@ -567,6 +575,8 @@ class AiService:
         narrative: str,
         model: str,
         symbol: str,
+        provider_name: str = "ollama",
+        provider: object | None = None,
     ) -> Optional[dict]:
         """
         Parse the trailing ```json``` block from the narrative.
@@ -592,7 +602,10 @@ class AiService:
         )
         try:
             retry = await asyncio.wait_for(
-                self.chat(session.get_messages(), model=model),
+                self._chat_with_provider(
+                    session.get_messages(), model=model,
+                    provider_name=provider_name, provider=provider,
+                ),
                 timeout=_REFORMAT_TIMEOUT,
             )
         except asyncio.TimeoutError:
@@ -604,6 +617,22 @@ class AiService:
         if retry:
             return parse_signal_from_response(retry)
         return None
+
+    async def _chat_with_provider(
+        self,
+        messages: list[dict[str, str]],
+        *,
+        model: str,
+        provider_name: str,
+        provider: object | None,
+    ) -> str:
+        if provider is None:
+            return await self.chat(messages, model=model, provider_name=provider_name)
+        chat_with_metadata = getattr(provider, "chat_with_metadata", None)
+        if chat_with_metadata is not None:
+            result = await chat_with_metadata(messages=messages, model=model)
+            return result.content
+        return await provider.chat(messages=messages, model=model, think=None)
 
     # ── Internal: post-process raw signal into frontend shape ─────────
 
@@ -633,6 +662,7 @@ class AiService:
         provider_name: str = "ollama",
         fallback_model: Optional[str] = None,
         allow_fallback: bool = False,
+        provider: object | None = None,
         # Legacy alias — prefer indicators_display + indicator_names
         indicators_requested: Optional[list[str]] = None,
     ) -> dict:
@@ -670,6 +700,9 @@ class AiService:
             session_id, watchlist, indicator_priority,
             context_mode, context_bars,
         )
+        session.provider_name = provider_name
+        session.model = model
+        session.fallback_model = fallback_model
 
         provider_result: AIProviderTextResult
         try:
@@ -678,6 +711,7 @@ class AiService:
                     messages=session.get_messages(),
                     model=model,
                     provider_name=provider_name,
+                    provider=provider,
                 ),
                 timeout=_NARRATIVE_TIMEOUT,
             )
@@ -705,12 +739,18 @@ class AiService:
                 metadata=self._fallback_metadata(fallback_model),
                 provider_request_id=None,
             )
+            session.provider_name = "ollama"
+            session.model = fallback_model
 
         response_text = provider_result.content
         clean_response_text = strip_signal_json_from_response(response_text)
         session.add_assistant(clean_response_text)
 
-        raw_signal = await self._extract_signal(session, response_text, model, symbol)
+        raw_signal = await self._extract_signal(
+            session, response_text, session.model, symbol,
+            provider_name=session.provider_name,
+            provider=provider if session.provider_name == provider_name else None,
+        )
         frontend_signal = self._finalize_signal(raw_signal)
         session.signal = frontend_signal
 
@@ -738,6 +778,7 @@ class AiService:
         provider_name: str = "ollama",
         fallback_model: Optional[str] = None,
         allow_fallback: bool = False,
+        provider: object | None = None,
         # Legacy alias — prefer indicators_display + indicator_names
         indicators_requested: Optional[list[str]] = None,
     ) -> AsyncIterator[dict]:
@@ -768,6 +809,9 @@ class AiService:
             session_id, watchlist, indicator_priority,
             context_mode, context_bars,
         )
+        session.provider_name = provider_name
+        session.model = model
+        session.fallback_model = fallback_model
 
         accumulated: list[str] = []
         provider_metadata: dict | None = None
@@ -776,6 +820,7 @@ class AiService:
                 messages=session.get_messages(),
                 model=model,
                 provider_name=provider_name,
+                provider=provider,
             ):
                 if event.get("type") == "token":
                     token = event["content"]
@@ -810,6 +855,8 @@ class AiService:
                 raise
             if allow_fallback and fallback_model and provider_name != "ollama":
                 provider_metadata = self._fallback_metadata(fallback_model).model_dump()
+                session.provider_name = "ollama"
+                session.model = fallback_model
                 async for token in self.chat_stream(
                     session.get_messages(),
                     model=fallback_model,
@@ -835,7 +882,11 @@ class AiService:
         clean_full_text = strip_signal_json_from_response(full_text)
         session.add_assistant(clean_full_text)
 
-        raw_signal = await self._extract_signal(session, full_text, model, symbol)
+        raw_signal = await self._extract_signal(
+            session, full_text, session.model, symbol,
+            provider_name=session.provider_name,
+            provider=provider if session.provider_name == provider_name else None,
+        )
         frontend_signal = self._finalize_signal(raw_signal)
         session.signal = frontend_signal
 
@@ -851,7 +902,8 @@ class AiService:
         self,
         session_id: str,
         message: str,
-        model: str,
+        model: Optional[str] = None,
+        provider: object | None = None,
     ) -> dict:
         """
         Send a follow-up message in an existing analysis session.
@@ -867,7 +919,12 @@ class AiService:
             raise ValueError(f"Session {session_id} not found")
 
         session.add_user(message)
-        response_text = await self.chat(session.get_messages(), model=model)
+        response_text = await self._chat_with_provider(
+            session.get_messages(),
+            model=model or session.model,
+            provider_name=session.provider_name,
+            provider=provider,
+        )
         clean_response_text = strip_signal_json_from_response(response_text)
         session.add_assistant(clean_response_text)
 
@@ -886,7 +943,8 @@ class AiService:
         self,
         session_id: str,
         message: str,
-        model: str,
+        model: Optional[str] = None,
+        provider: object | None = None,
     ) -> AsyncIterator[str]:
         """
         Streaming version of follow_up — yields tokens as they arrive.
@@ -900,9 +958,16 @@ class AiService:
         session.add_user(message)
 
         full_response = ""
-        async for token in self.chat_stream(session.get_messages(), model=model):
-            full_response += token
-            yield token
+        async for event in self._stream_analysis_with_metadata(
+            messages=session.get_messages(),
+            model=model or session.model,
+            provider_name=session.provider_name,
+            provider=provider,
+        ):
+            if event.get("type") == "token":
+                token = event["content"]
+                full_response += token
+                yield token
 
         clean_full_response = strip_signal_json_from_response(full_response)
         session.add_assistant(clean_full_response)

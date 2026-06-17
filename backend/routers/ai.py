@@ -258,10 +258,9 @@ async def _record_failed_cloud_usage(
     )
 
 
-async def _register_cloud_provider_for_request(
+async def _create_cloud_provider_for_request(
     *,
     provider_config: dict | None,
-    ai: AiService,
     key_store: AIKeyStore,
 ) -> object | None:
     if provider_config is None or provider_config["provider_name"] == "ollama":
@@ -272,14 +271,7 @@ async def _register_cloud_provider_for_request(
     if not api_key_ref:
         raise _cloud_provider_unavailable_http_error(provider_name)
 
-    registry = getattr(ai, "provider_registry", None)
-    if registry is None:
-        return None
-
-    try:
-        api_key = await key_store.get_provider_key(provider_name, api_key_ref)
-    except AIKeyStoreUnavailableError as exc:
-        raise _keychain_unavailable_http_error() from exc
+    api_key = await key_store.get_provider_key(provider_name, api_key_ref)
 
     provider_cls_by_name = {
         "openrouter": OpenRouterProvider,
@@ -292,6 +284,89 @@ async def _register_cloud_provider_for_request(
     if provider_cls is None:
         raise _cloud_provider_unavailable_http_error(provider_name)
     return provider_cls(api_key=api_key)
+
+
+async def _close_request_provider(provider: object | None) -> None:
+    if provider is None:
+        return
+    close = getattr(provider, "aclose", None)
+    if close is not None:
+        await close()
+
+
+async def _create_session_provider(
+    *,
+    ai: AiService,
+    session_id: str,
+    ai_settings: AISettingsService,
+    key_store: AIKeyStore,
+) -> tuple[object, dict] | tuple[None, dict]:
+    session = ai.sessions.get(session_id)
+    if session is None or session.provider_name == "ollama":
+        return None, await _get_routing_policy(ai_settings)
+    configs = await ai_settings.list_provider_configs()
+    config = next(
+        (item for item in configs if item["provider_name"] == session.provider_name),
+        None,
+    )
+    provider = await _create_cloud_provider_for_request(
+        provider_config=config,
+        key_store=key_store,
+    )
+    return provider, await _get_routing_policy(ai_settings)
+
+
+async def _record_completed_usage(
+    *,
+    usage_ledger: AIUsageLedger,
+    requested_provider: AIProviderName,
+    requested_model: str,
+    provider_metadata: dict,
+    task_type: str,
+    routing_mode: str,
+    estimated_cost: float | None,
+    fallback_error_code: str = "ai_provider_fallback",
+) -> None:
+    if provider_metadata.get("fallback_used"):
+        await _record_failed_cloud_usage(
+            usage_ledger=usage_ledger,
+            provider_name=requested_provider,
+            model=requested_model,
+            task_type=task_type,
+            routing_mode=routing_mode,
+            estimated_cost=estimated_cost,
+            error_code=fallback_error_code,
+        )
+        await usage_ledger.record_usage(
+            provider_name="ollama",
+            model=provider_metadata.get("model"),
+            task_type=task_type,
+            routing_mode=routing_mode,
+            input_tokens=None,
+            output_tokens=None,
+            estimated_cost=None,
+            actual_cost=None,
+            status="fallback_success",
+            provider_request_id=None,
+            error_code=None,
+        )
+        return
+    provider_metadata["estimated_cost"] = (
+        provider_metadata.get("estimated_cost") or estimated_cost
+    )
+    await usage_ledger.record_usage(
+        provider_name=provider_metadata["provider_name"],
+        model=provider_metadata.get("model"),
+        task_type=task_type,
+        routing_mode=routing_mode,
+        input_tokens=None,
+        output_tokens=None,
+        estimated_cost=provider_metadata.get("estimated_cost"),
+        actual_cost=provider_metadata.get("actual_cost"),
+        status="success",
+        provider_request_id=None,
+        error_code=None,
+    )
 
 
 def _estimate_cloud_analysis_cost(provider_name: AIProviderName, model: str) -> float | None:
@@ -571,9 +646,12 @@ async def providers(
     ]
     return AIProvidersResponse(
         providers=provider_statuses,
-        active_provider="ollama",
+        active_provider=policy["active_provider"],
         routing_mode=policy["routing_mode"],
-        cloud_enabled=False,
+        cloud_enabled=any(
+            provider.kind == "cloud" and provider.enabled and provider.has_key
+            for provider in provider_statuses
+        ),
     )
 
 
@@ -593,6 +671,7 @@ async def update_routing_policy(
     """Persist non-secret AI routing and cost-cap settings."""
     return AIRoutingPolicyResponse(
         **await ai_settings.update_routing_policy(
+            active_provider=request.active_provider,
             routing_mode=request.routing_mode,
             local_fallback_enabled=request.local_fallback_enabled,
             per_call_cost_cap_usd=request.per_call_cost_cap_usd,
@@ -872,6 +951,9 @@ async def analyze(
     policy = {"routing_mode": "local_only"}
     estimated_cost = None
     cloud_provider = None
+    requested_provider_name = provider_name
+    requested_model = model
+    fallback_error_code = "ai_provider_fallback"
     if provider_name != "ollama":
         policy = await _get_routing_policy(ai_settings)
         estimated_cost = await _enforce_cloud_cost_caps(
@@ -881,11 +963,17 @@ async def analyze(
             policy=policy,
             usage_ledger=usage_ledger,
         )
-        cloud_provider = await _register_cloud_provider_for_request(
-            provider_config=provider_config,
-            ai=ai,
-            key_store=key_store,
-        )
+        try:
+            cloud_provider = await _create_cloud_provider_for_request(
+                provider_config=provider_config,
+                key_store=key_store,
+            )
+        except AIKeyStoreUnavailableError as exc:
+            if not allow_fallback or not fallback_model:
+                raise _keychain_unavailable_http_error() from exc
+            provider_name = "ollama"
+            model = fallback_model
+            fallback_error_code = "ai_keychain_unavailable"
 
     # Resolve frontend display names → backend indicator names
     resolved_indicators = _resolve_indicators(request.indicators)
@@ -927,14 +1015,11 @@ async def analyze(
             provider_name=provider_name,
             fallback_model=fallback_model,
             allow_fallback=allow_fallback,
+            provider=cloud_provider,
         )
 
     try:
-        if cloud_provider is not None:
-            async with ai.provider_registry.temporary_provider(cloud_provider):
-                result = await run_analysis()
-        else:
-            result = await run_analysis()
+        result = await run_analysis()
     except AIAnalysisTimeoutError as exc:
         log.warning(
             "Analysis timed out for %s at stage '%s' (%.0fs) — returning graceful error",
@@ -966,26 +1051,24 @@ async def analyze(
             error_code=detail["error"],
         )
         raise HTTPException(status_code=status_code, detail=detail) from exc
+    finally:
+        await _close_request_provider(cloud_provider)
 
     signal = _parse_signal(result["signal"]) if result.get("signal") else None
     provider_metadata = result.get("provider")
     if provider_metadata is not None and estimated_cost is not None:
-        provider_metadata = {
-            **provider_metadata,
-            "estimated_cost": provider_metadata.get("estimated_cost") or estimated_cost,
-        }
-        await usage_ledger.record_usage(
-            provider_name=provider_metadata["provider_name"],
-            model=provider_metadata.get("model"),
+        provider_metadata = dict(provider_metadata)
+        if provider_name == "ollama" and requested_provider_name != "ollama":
+            provider_metadata["fallback_used"] = True
+        await _record_completed_usage(
+            usage_ledger=usage_ledger,
+            requested_provider=requested_provider_name,
+            requested_model=requested_model,
+            provider_metadata=provider_metadata,
             task_type=request.task_type,
             routing_mode=policy["routing_mode"],
-            input_tokens=None,
-            output_tokens=None,
-            estimated_cost=provider_metadata.get("estimated_cost"),
-            actual_cost=provider_metadata.get("actual_cost"),
-            status="success",
-            provider_request_id=None,
-            error_code=None,
+            estimated_cost=estimated_cost,
+            fallback_error_code=fallback_error_code,
         )
 
     return AnalyzeResponse(
@@ -1058,6 +1141,9 @@ async def analyze_stream(
     policy = {"routing_mode": "local_only"}
     estimated_cost = None
     cloud_provider = None
+    requested_provider_name = provider_name
+    requested_model = selected_model
+    fallback_error_code = "ai_provider_fallback"
     if provider_name != "ollama":
         policy = await _get_routing_policy(ai_settings)
         estimated_cost = await _enforce_cloud_cost_caps(
@@ -1067,11 +1153,17 @@ async def analyze_stream(
             policy=policy,
             usage_ledger=usage_ledger,
         )
-        cloud_provider = await _register_cloud_provider_for_request(
-            provider_config=provider_config,
-            ai=ai,
-            key_store=key_store,
-        )
+        try:
+            cloud_provider = await _create_cloud_provider_for_request(
+                provider_config=provider_config,
+                key_store=key_store,
+            )
+        except AIKeyStoreUnavailableError as exc:
+            if not allow_fallback or not fallback_model:
+                raise _keychain_unavailable_http_error() from exc
+            provider_name = "ollama"
+            selected_model = fallback_model
+            fallback_error_code = "ai_keychain_unavailable"
 
     resolved_indicators = _resolve_indicators(request.indicators)
 
@@ -1112,6 +1204,7 @@ async def analyze_stream(
                 provider_name=provider_name,
                 fallback_model=fallback_model,
                 allow_fallback=allow_fallback,
+                provider=cloud_provider,
             ):
                 yield event
 
@@ -1119,23 +1212,18 @@ async def analyze_stream(
             if event.get("type") == "done":
                 provider_metadata = event.get("provider")
                 if provider_metadata is not None and estimated_cost is not None:
-                    provider_metadata = {
-                        **provider_metadata,
-                        "estimated_cost": provider_metadata.get("estimated_cost")
-                        or estimated_cost,
-                    }
-                    await usage_ledger.record_usage(
-                        provider_name=provider_metadata["provider_name"],
-                        model=provider_metadata.get("model"),
+                    provider_metadata = dict(provider_metadata)
+                    if provider_name == "ollama" and requested_provider_name != "ollama":
+                        provider_metadata["fallback_used"] = True
+                    await _record_completed_usage(
+                        usage_ledger=usage_ledger,
+                        requested_provider=requested_provider_name,
+                        requested_model=requested_model,
+                        provider_metadata=provider_metadata,
                         task_type=request.task_type,
                         routing_mode=policy["routing_mode"],
-                        input_tokens=None,
-                        output_tokens=None,
-                        estimated_cost=provider_metadata.get("estimated_cost"),
-                        actual_cost=provider_metadata.get("actual_cost"),
-                        status="success",
-                        provider_request_id=None,
-                        error_code=None,
+                        estimated_cost=estimated_cost,
+                        fallback_error_code=fallback_error_code,
                     )
                 event = {
                     **event,
@@ -1145,13 +1233,8 @@ async def analyze_stream(
             return f"data: {json.dumps(event)}\n\n"
 
         try:
-            if cloud_provider is not None:
-                async with ai.provider_registry.temporary_provider(cloud_provider):
-                    async for event in analysis_events():
-                        yield await serialize_analysis_event(event)
-            else:
-                async for event in analysis_events():
-                    yield await serialize_analysis_event(event)
+            async for event in analysis_events():
+                yield await serialize_analysis_event(event)
         except AIAnalysisTimeoutError as exc:
             timeout_event = {
                 "type": "done",
@@ -1183,6 +1266,8 @@ async def analyze_stream(
                 error_code=detail["error"],
             )
             yield f"data: {json.dumps({'type': 'error', **detail})}\n\n"
+        finally:
+            await _close_request_provider(cloud_provider)
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
 
@@ -1197,27 +1282,72 @@ async def chat(
     request: ChatRequest,
     ai: AiService = Depends(get_ai),
     ollama: OllamaLifecycle = Depends(get_ollama),
+    ai_settings: AISettingsService = Depends(get_ai_settings),
+    usage_ledger: AIUsageLedger = Depends(get_ai_usage_ledger),
+    key_store: AIKeyStore = Depends(get_ai_keystore),
 ):
     """Send a follow-up question in an existing analysis session."""
-    if not ollama.status()["ready"] or not ollama.selected_model:
+    session = ai.sessions.get(request.session_id)
+    if session is not None and session.provider_name == "ollama" and (
+        not ollama.status()["ready"] or not session.model
+    ):
         return ChatResponse(
             session_id=request.session_id,
             signal=None,
             message="AI is not ready. Please complete setup and select a model.",
         )
 
+    request_provider = None
+    policy = await _get_routing_policy(ai_settings)
     try:
+        request_provider, policy = await _create_session_provider(
+            ai=ai,
+            session_id=request.session_id,
+            ai_settings=ai_settings,
+            key_store=key_store,
+        )
         result = await ai.follow_up(
             session_id=request.session_id,
             message=request.message,
-            model=ollama.selected_model,
+            provider=request_provider,
         )
+    except AIKeyStoreUnavailableError as exc:
+        if session and session.fallback_model and ollama.status().get("ready"):
+            session.provider_name = "ollama"
+            session.model = session.fallback_model
+            result = await ai.follow_up(
+                session_id=request.session_id,
+                message=request.message,
+            )
+        else:
+            raise _keychain_unavailable_http_error() from exc
+    except (
+        AIProviderAuthError,
+        AIProviderModelUnavailableError,
+        AIProviderNetworkError,
+        AIProviderRateLimitError,
+        AIProviderTimeoutError,
+    ) as exc:
+        provider_name = session.provider_name if session else "ollama"
+        status_code, detail = _provider_error_detail(exc, provider_name)
+        await _record_failed_cloud_usage(
+            usage_ledger=usage_ledger,
+            provider_name=provider_name,
+            model=session.model if session else "",
+            task_type="chat",
+            routing_mode=policy["routing_mode"],
+            estimated_cost=_estimate_cloud_analysis_cost(provider_name, session.model if session else ""),
+            error_code=detail["error"],
+        )
+        raise HTTPException(status_code=status_code, detail=detail) from exc
     except ValueError as e:
         return ChatResponse(
             session_id=request.session_id,
             signal=None,
             message=str(e),
         )
+    finally:
+        await _close_request_provider(request_provider)
 
     signal = _parse_signal(result["signal"]) if result.get("signal") else None
 
@@ -1238,25 +1368,66 @@ async def chat_stream(
     request: ChatRequest,
     ai: AiService = Depends(get_ai),
     ollama: OllamaLifecycle = Depends(get_ollama),
+    ai_settings: AISettingsService = Depends(get_ai_settings),
+    usage_ledger: AIUsageLedger = Depends(get_ai_usage_ledger),
+    key_store: AIKeyStore = Depends(get_ai_keystore),
 ):
     """Streaming follow-up via Server-Sent Events."""
-    if not ollama.status()["ready"] or not ollama.selected_model:
+    session = ai.sessions.get(request.session_id)
+    if session is not None and session.provider_name == "ollama" and (
+        not ollama.status()["ready"] or not session.model
+    ):
         async def error_stream():
             yield "data: AI is not ready. Please complete setup first.\n\n"
             yield "data: [DONE]\n\n"
         return StreamingResponse(error_stream(), media_type="text/event-stream")
+
+    try:
+        request_provider, policy = await _create_session_provider(
+            ai=ai, session_id=request.session_id,
+            ai_settings=ai_settings, key_store=key_store,
+        )
+    except AIKeyStoreUnavailableError as exc:
+        if session and session.fallback_model and ollama.status().get("ready"):
+            session.provider_name = "ollama"
+            session.model = session.fallback_model
+            request_provider = None
+            policy = await _get_routing_policy(ai_settings)
+        else:
+            raise _keychain_unavailable_http_error() from exc
 
     async def token_stream():
         try:
             async for token in ai.follow_up_stream(
                 session_id=request.session_id,
                 message=request.message,
-                model=ollama.selected_model,
+                provider=request_provider,
             ):
                 yield f"data: {token}\n\n"
             yield "data: [DONE]\n\n"
         except ValueError as e:
             yield f"data: Error: {e}\n\n"
             yield "data: [DONE]\n\n"
+        except (
+            AIProviderAuthError,
+            AIProviderModelUnavailableError,
+            AIProviderNetworkError,
+            AIProviderRateLimitError,
+            AIProviderTimeoutError,
+        ) as exc:
+            provider_name = session.provider_name if session else "ollama"
+            _, detail = _provider_error_detail(exc, provider_name)
+            await _record_failed_cloud_usage(
+                usage_ledger=usage_ledger,
+                provider_name=provider_name,
+                model=session.model if session else "",
+                task_type="chat",
+                routing_mode=policy["routing_mode"],
+                estimated_cost=_estimate_cloud_analysis_cost(provider_name, session.model if session else ""),
+                error_code=detail["error"],
+            )
+            yield f"data: {json.dumps({'type': 'error', **detail})}\n\n"
+        finally:
+            await _close_request_provider(request_provider)
 
     return StreamingResponse(token_stream(), media_type="text/event-stream")

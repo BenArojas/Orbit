@@ -256,7 +256,9 @@ async def test_gemini_provider_uses_generate_content_contract():
 
     async def handler(request: httpx.Request) -> httpx.Response:
         assert request.url.path == "/v1beta/models/gemini-3.5-flash:generateContent"
-        assert request.url.params["key"] == "sk-test"
+        assert "sk-test" not in str(request.url)
+        assert "key" not in request.url.params
+        assert request.headers["x-goog-api-key"] == "sk-test"
         body = json.loads(request.content)
         assert body == {
             "systemInstruction": {

@@ -4,7 +4,7 @@
 
 **Goal:** Add optional cloud AI and hybrid local/cloud inference while preserving Orbit's local-first default, current Ollama behavior, and no-autonomous-trading safety boundary.
 
-**Architecture:** Introduce a provider boundary behind the existing FastAPI AI routes, migrate Ollama into the first provider implementation, then continue with vertical slices that always connect backend contracts, frontend state/hooks, UI metadata, and tests in the same execution unit. Slice 1 has already proven the backend provider boundary; the next execution slice must prove the local provider metadata path end-to-end before adding secrets or cloud calls.
+**Architecture:** The provider boundary, local metadata path, OS-keychain enablement, cloud adapters, routing, usage controls, and provider-aware session flow are implemented on the feature branch. Cloud provider instances are request-scoped and never stored in the singleton registry.
 
 **Tech Stack:** Python 3.12 / FastAPI / Pydantic v2 / httpx / SQLite / pytest (backend); React 19 / TypeScript / Zustand / TanStack Query / Vitest + Testing Library (frontend); Ollama local provider first, cloud providers through mocked `httpx` tests before any manual key smoke test.
 
@@ -14,9 +14,7 @@
 
 ## Readiness Verdict
 
-The design spec is ready for implementation through tracer-bullet slices, but the slice boundaries were revised after Slice 1 because Slice 1 was backend-only and not vertical enough for Orbit's execution policy.
-
-Slice 1 is complete as a preparatory provider-boundary refactor. It should not be used as the pattern for the remaining work. From Slice 2 onward, each slice must prove a user-visible path across backend, frontend contracts, state/hooks, UI, and tests.
+Slices 1 through 7 are implemented on `feature/orbit-v2-cloud-hybrid-ai-spec`. PR #30 remains draft while review remediation and verification complete. Slice 8 manual provider smoke tests remain a human review gate and have not been claimed complete.
 
 ## API Key Storage Decision
 
@@ -26,7 +24,7 @@ Orbit v2 cloud AI uses OS keychain storage only. SQLite stores provider configur
 
 ## Policy Impact
 
-Policy impact is already approved in branch docs: `AGENTS.md` and `CLAUDE.md` now allow optional cloud AI only when explicitly enabled, require local encrypted key storage, and ban AI from mutating execution state. This implementation should not require new policy text. Pause if any task needs to send raw account/order payloads to a cloud model, add AI tool/function calling, or weaken local-first defaults.
+Policy impact is already approved in branch docs: `AGENTS.md` and `CLAUDE.md` allow optional cloud AI only when explicitly enabled, require OS-keychain-only API key storage, and ban AI from mutating execution state. SQLite stores only opaque `api_key_ref` values. Pause if any task needs to send raw account/order payloads to a cloud model, add AI tool/function calling, or weaken local-first defaults.
 
 ## Existing Context To Preserve
 
@@ -38,9 +36,20 @@ Policy impact is already approved in branch docs: `AGENTS.md` and `CLAUDE.md` no
 - `src/modules/parallax/api.ts` owns Parallax-facing frontend contracts.
 - `src/hooks/useAiStatus.ts`, `src/hooks/useAiAnalyzeStream.ts`, `src/hooks/useAiStream.ts`, and `src/store/ai.ts` own the current AI panel data flow.
 
-## Stop Rule
+## Current Review Gate
 
-Slice 1 has already been implemented. Execute **Revised Slice 2 only** next, verify it, report what was proven, then ask before continuing. Every remaining slice must touch the smallest backend + frontend + UI surface needed to prove one real behavior. Do not continue with backend-only schema, router, adapter, or ledger work unless it is inside a vertical slice that also exposes the behavior through the UI or frontend data flow.
+Do not merge or push PR #30 until focused AI verification, build, policy drift, Ruff, and full backend/frontend suites have been run and branch-introduced failures are fixed. Manual provider smoke tests require user-supplied keys and remain a separate HITL gate.
+
+| Slice | Status |
+|---|---|
+| 1. Ollama provider boundary | Implemented |
+| 2. Local provider metadata | Implemented |
+| 3. Provider settings shell | Implemented |
+| 4. OS-keychain enablement | Implemented |
+| 5. OpenRouter analysis and fallback | Implemented |
+| 6. Usage ledger and cost caps | Implemented |
+| 7. Direct cloud adapters | Implemented |
+| 8. Manual provider smoke tests | Pending HITL verification |
 
 ---
 
@@ -285,7 +294,7 @@ git add backend/models/__init__.py backend/routers/ai.py backend/tests/test_ai_p
 git commit -m "feat: show local ai provider metadata end to end"
 ```
 
-Stop after this slice and report what was proven. Do not add settings persistence, key storage, cloud adapters, or cost caps until the user approves Revised Slice 3.
+Historical Slice 2 checkpoint completed. The authoritative current status is the table above.
 
 ## Revised Slice 3: HITL — Provider Settings Shell End-to-End, No Secrets
 

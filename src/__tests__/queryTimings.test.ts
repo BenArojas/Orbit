@@ -91,13 +91,16 @@ vi.mock("@/store", () => ({
     ollamaError: null,
     setOllamaStatus: vi.fn(),
     setAvailableModels: vi.fn(),
+    setProvidersStatus: vi.fn(),
   }),
 }));
 
 vi.mock("@/modules/parallax/api", () => ({
+  AI_PROVIDERS_QUERY_KEY: ["ai", "providers"],
   parallaxApi: {
     aiStatus: vi.fn().mockResolvedValue({}),
     aiModels: vi.fn().mockResolvedValue([]),
+    aiProviders: vi.fn().mockResolvedValue({}),
     aiSelectModel: vi.fn().mockResolvedValue({}),
     aiRefresh: vi.fn().mockResolvedValue({}),
   },

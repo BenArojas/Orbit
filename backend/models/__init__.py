@@ -1095,6 +1095,7 @@ class AIProviderKeySaveRequest(BaseModel):
 
 class AIRoutingPolicyResponse(BaseModel):
     """Non-secret AI routing and cost-cap settings."""
+    active_provider: AIProviderName = "ollama"
     routing_mode: AIRoutingMode = "local_only"
     local_fallback_enabled: bool = True
     per_call_cost_cap_usd: float = Field(default=1.0, ge=0)
@@ -1103,6 +1104,7 @@ class AIRoutingPolicyResponse(BaseModel):
 
 class AIRoutingPolicyUpdate(BaseModel):
     """Update body for non-secret AI routing and cost-cap settings."""
+    active_provider: AIProviderName = "ollama"
     routing_mode: AIRoutingMode = "local_only"
     local_fallback_enabled: bool = True
     per_call_cost_cap_usd: float = Field(default=1.0, ge=0)

@@ -84,7 +84,7 @@ async def test_ai_usage_ledger_monthly_spend_uses_actual_cost_only():
 
 
 @pytest.mark.asyncio
-async def test_ai_usage_ledger_monthly_effective_spend_excludes_blocked_rows():
+async def test_ai_usage_ledger_effective_spend_counts_actual_or_successful_estimate_only():
     from services.ai_usage import AIUsageLedger
 
     db = DatabaseService(db_path=":memory:")
@@ -124,6 +124,19 @@ async def test_ai_usage_ledger_monthly_effective_spend_excludes_blocked_rows():
         routing_mode="cloud_manual",
         input_tokens=None,
         output_tokens=None,
+        estimated_cost=0.40,
+        actual_cost=0.05,
+        status="failed",
+        provider_request_id=None,
+        error_code="ai_provider_timeout_error",
+    )
+    await ledger.record_usage(
+        provider_name="openrouter",
+        model="openrouter/auto",
+        task_type="analysis",
+        routing_mode="cloud_manual",
+        input_tokens=None,
+        output_tokens=None,
         estimated_cost=0.75,
         actual_cost=None,
         status="blocked",
@@ -131,6 +144,6 @@ async def test_ai_usage_ledger_monthly_effective_spend_excludes_blocked_rows():
         error_code="ai_cost_limit_exceeded",
     )
 
-    assert await ledger.monthly_effective_spend_usd() == 0.35
+    assert await ledger.monthly_effective_spend_usd() == pytest.approx(0.15)
 
     await db.close()

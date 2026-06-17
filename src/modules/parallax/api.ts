@@ -653,6 +653,7 @@ export interface AIProviderKeySaveRequest {
 }
 
 export interface AIRoutingPolicyResponse {
+    active_provider: AIProviderName;
     routing_mode: AIRoutingMode;
     local_fallback_enabled: boolean;
     per_call_cost_cap_usd: number;
@@ -660,6 +661,8 @@ export interface AIRoutingPolicyResponse {
 }
 
 export type AIRoutingPolicyUpdate = AIRoutingPolicyResponse;
+
+export const AI_PROVIDERS_QUERY_KEY = ["ai", "providers"] as const;
 
 export interface AIUsageSummaryResponse {
     monthly_actual_cost_usd: number;

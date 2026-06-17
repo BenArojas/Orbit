@@ -320,8 +320,10 @@ class GeminiProvider:
             "Gemini",
             f"/v1beta/models/{model}:generateContent",
             json=_gemini_generate_content_payload(messages),
-            headers={"Content-Type": "application/json"},
-            params={"key": self._api_key},
+            headers={
+                "Content-Type": "application/json",
+                "x-goog-api-key": self._api_key,
+            },
         )
         data = response.json()
         return AIProviderTextResult(

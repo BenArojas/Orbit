@@ -8,7 +8,7 @@
  *     so we just assert the panel doesn't crash with the new hook in place)
  */
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { createElement, type ReactElement } from "react";
@@ -32,6 +32,7 @@ function renderAiChat(element: ReactElement) {
 // ── Mocks ─────────────────────────────────────────────────────
 
 const mockAnalyzing = { current: false };
+const mockOllamaReady = { current: true };
 const mockStartAnalyze = vi.fn();
 const mockCancelAnalyze = vi.fn();
 const mockAiStore = {
@@ -50,6 +51,10 @@ const mockAiStore = {
     },
   ],
 };
+
+afterEach(() => {
+  mockOllamaReady.current = true;
+});
 
 vi.mock("@/store", () => ({
   useAiStore: Object.assign(
@@ -73,11 +78,11 @@ vi.mock("@/store", () => ({
 
 vi.mock("@/hooks/useAiStatus", () => ({
   useAiStatus: () => ({
-    ollamaState: "ready",
+    ollamaState: mockOllamaReady.current ? "ready" : "not_installed",
     selectedModel: "gemma4:4b",
     availableModels: [],
     ollamaError: null,
-    isReady: true,
+    isReady: mockOllamaReady.current,
     selectModel: vi.fn(),
     refresh: vi.fn(),
     isRefreshing: false,
@@ -143,6 +148,7 @@ describe("AiChatPanel — fib section gating", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockAnalyzing.current = false;
+    mockOllamaReady.current = true;
     mockAiStore.activeProvider = "ollama";
     mockAiStore.routingMode = "local_only";
     mockAiStore.providers = [
@@ -263,6 +269,23 @@ describe("AiChatPanel — provider routing", () => {
     expect(request.provider_name).toBe("openrouter");
     expect(request.model).toBe("openrouter/auto");
     expect(request.task_type).toBe("analysis");
+  });
+
+  it("starts cloud analysis when Ollama is unavailable", async () => {
+    mockOllamaReady.current = false;
+    const { default: AiChatPanel } = await import("../AiChatPanel");
+
+    renderAiChat(createElement(AiChatPanel, {
+      activeConid: 265598,
+      activeSymbol: "AAPL",
+      fibonacci: null,
+    }));
+
+    fireEvent.click(screen.getByText("RSI"));
+    fireEvent.click(screen.getByRole("button", { name: /run analysis/i }));
+
+    await waitFor(() => expect(mockStartAnalyze).toHaveBeenCalledTimes(1));
+    expect(mockStartAnalyze.mock.calls[0][0].provider_name).toBe("openrouter");
   });
 });
 

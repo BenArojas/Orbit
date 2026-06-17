@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 
@@ -281,6 +282,48 @@ async def test_ai_service_analyze_can_route_read_only_analysis_to_openrouter():
 
 
 @pytest.mark.asyncio
+async def test_concurrent_request_scoped_providers_never_mutate_singleton_registry():
+    from services.ai_providers import AIProviderRegistry
+
+    entered = 0
+    both_entered = asyncio.Event()
+
+    @dataclass
+    class ConcurrentCloudProvider(FakeCloudProvider):
+        request_id: str = ""
+
+        async def chat_with_metadata(self, *, messages, model):
+            nonlocal entered
+            entered += 1
+            if entered == 2:
+                both_entered.set()
+            await asyncio.wait_for(both_entered.wait(), timeout=1)
+            return await super().chat_with_metadata(messages=messages, model=model)
+
+    registry = AIProviderRegistry({"ollama": FakeProvider()})
+    service = AiService(provider_registry=registry)
+    first = ConcurrentCloudProvider(request_id="first")
+    second = ConcurrentCloudProvider(request_id="second")
+    kwargs = {
+        "symbol": "AAPL",
+        "timeframe_data": {"D": {"candles": [], "indicators": [], "fibonacci": None}},
+        "indicators_display": ["RSI"],
+        "indicator_names": ["rsi"],
+        "model": "openrouter/auto",
+        "provider_name": "openrouter",
+    }
+
+    results = await asyncio.gather(
+        service.analyze(**kwargs, provider=first),
+        service.analyze(**kwargs, provider=second),
+    )
+
+    assert len(results) == 2
+    assert first.calls and second.calls
+    assert registry.names() == ["ollama"]
+
+
+@pytest.mark.asyncio
 async def test_ai_service_analyze_falls_back_to_ollama_when_cloud_provider_fails():
     from services.ai_providers import AIProviderRegistry
 
@@ -382,3 +425,72 @@ async def test_ai_service_analyze_stream_uses_chat_metadata_for_non_streaming_pr
         "fallback_used": False,
     }
     assert provider.calls and provider.calls[0]["kind"] == "cloud_chat"
+
+
+@pytest.mark.asyncio
+async def test_cloud_analysis_reformat_uses_the_same_request_provider():
+    from models import AIProviderMetadata
+    from services.ai_cloud_adapters import AIProviderTextResult
+    from services.ai_providers import AIProviderRegistry
+
+    class ReformatCloudProvider(FakeCloudProvider):
+        async def chat_with_metadata(self, *, messages, model):
+            if self.calls is None:
+                self.calls = []
+            self.calls.append({"kind": "cloud_chat", "model": model})
+            content = "Cloud narrative without signal."
+            if len(self.calls) == 2:
+                content = INLINE_JSON_NARRATIVE
+            return AIProviderTextResult(
+                content=content,
+                metadata=AIProviderMetadata(
+                    provider_name="openrouter", kind="cloud", model=model,
+                    estimated_cost=None, actual_cost=0.01, fallback_used=False,
+                ),
+            )
+
+    ollama = FakeProvider()
+    cloud = ReformatCloudProvider()
+    service = AiService(provider_registry=AIProviderRegistry({"ollama": ollama}))
+
+    result = await service.analyze(
+        symbol="AAPL",
+        timeframe_data={"D": {"candles": [], "indicators": [], "fibonacci": None}},
+        indicators_display=["RSI"],
+        indicator_names=["rsi"],
+        model="openrouter/auto",
+        provider_name="openrouter",
+        provider=cloud,
+    )
+
+    assert result["signal"]["direction"] == "LONG"
+    assert len(cloud.calls) == 2
+    assert ollama.calls is None
+
+
+@pytest.mark.asyncio
+async def test_cloud_analysis_follow_up_continues_with_session_provider():
+    from services.ai_providers import AIProviderRegistry
+
+    ollama = FakeProvider()
+    cloud = FakeCloudProvider()
+    service = AiService(provider_registry=AIProviderRegistry({"ollama": ollama}))
+    analysis = await service.analyze(
+        symbol="AAPL",
+        timeframe_data={"D": {"candles": [], "indicators": [], "fibonacci": None}},
+        indicators_display=["RSI"],
+        indicator_names=["rsi"],
+        model="openrouter/auto",
+        provider_name="openrouter",
+        provider=cloud,
+    )
+
+    await service.follow_up(
+        session_id=analysis["session_id"],
+        message="What invalidates this setup?",
+        provider=cloud,
+    )
+
+    assert len(cloud.calls) == 2
+    assert cloud.calls[-1]["model"] == "openrouter/auto"
+    assert ollama.calls is None

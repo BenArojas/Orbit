@@ -287,6 +287,7 @@ class DatabaseService:
 
             CREATE TABLE IF NOT EXISTS ai_routing_policy (
                 id                         INTEGER PRIMARY KEY CHECK (id = 1),
+                active_provider            TEXT NOT NULL DEFAULT 'ollama',
                 routing_mode               TEXT NOT NULL DEFAULT 'local_only',
                 local_fallback_enabled     INTEGER NOT NULL DEFAULT 1,
                 per_call_cost_cap_usd      REAL NOT NULL DEFAULT 1.0,
@@ -615,6 +616,7 @@ class DatabaseService:
             "ALTER TABLE pulse_config ADD COLUMN sec_type TEXT NOT NULL DEFAULT ''",
             # Inflect P1-F: distinguish IBKR recent fills from PA/manual basis rows.
             "ALTER TABLE fills ADD COLUMN source TEXT NOT NULL DEFAULT 'IBKR_TRADES'",
+            "ALTER TABLE ai_routing_policy ADD COLUMN active_provider TEXT NOT NULL DEFAULT 'ollama'",
         ]
         for sql in migrations:
             try:
@@ -1838,10 +1840,10 @@ class DatabaseService:
                     )
                 self._conn.execute(
                     """INSERT INTO ai_routing_policy (
-                           id, routing_mode, local_fallback_enabled,
+                           id, active_provider, routing_mode, local_fallback_enabled,
                            per_call_cost_cap_usd, monthly_cost_cap_usd, updated_at
                        )
-                       VALUES (1, 'local_only', 1, 1.0, 25.0, datetime('now'))
+                       VALUES (1, 'ollama', 'local_only', 1, 1.0, 25.0, datetime('now'))
                        ON CONFLICT(id) DO NOTHING"""
                 )
 
@@ -1881,7 +1883,7 @@ class DatabaseService:
         await self.ensure_ai_settings_defaults()
         row = await self._run_read(
             lambda: self._fetchone(
-                """SELECT routing_mode, local_fallback_enabled,
+                """SELECT active_provider, routing_mode, local_fallback_enabled,
                           per_call_cost_cap_usd, monthly_cost_cap_usd
                    FROM ai_routing_policy
                    WHERE id = 1"""
@@ -1889,6 +1891,7 @@ class DatabaseService:
         )
         assert row is not None
         return {
+            "active_provider": row["active_provider"],
             "routing_mode": row["routing_mode"],
             "local_fallback_enabled": bool(row["local_fallback_enabled"]),
             "per_call_cost_cap_usd": float(row["per_call_cost_cap_usd"]),
@@ -1898,6 +1901,7 @@ class DatabaseService:
     async def update_ai_routing_policy(
         self,
         *,
+        active_provider: str,
         routing_mode: str,
         local_fallback_enabled: bool,
         per_call_cost_cap_usd: float,
@@ -1911,13 +1915,15 @@ class DatabaseService:
             with self._conn:
                 self._conn.execute(
                     """UPDATE ai_routing_policy
-                       SET routing_mode = ?,
+                       SET active_provider = ?,
+                           routing_mode = ?,
                            local_fallback_enabled = ?,
                            per_call_cost_cap_usd = ?,
                            monthly_cost_cap_usd = ?,
                            updated_at = datetime('now')
                        WHERE id = 1""",
                     (
+                        active_provider,
                         routing_mode,
                         1 if local_fallback_enabled else 0,
                         per_call_cost_cap_usd,
@@ -2054,11 +2060,17 @@ class DatabaseService:
         row = await self._run_read(
             lambda: self._fetchone(
                 """SELECT
-                          COALESCE(SUM(COALESCE(actual_cost, estimated_cost, 0)), 0)
+                          COALESCE(SUM(
+                              CASE
+                                  WHEN actual_cost IS NOT NULL THEN actual_cost
+                                  WHEN status = 'success' THEN COALESCE(estimated_cost, 0)
+                                  ELSE 0
+                              END
+                          ), 0)
                               AS effective_total
                    FROM ai_usage_log
                    WHERE strftime('%Y-%m', created_at) = strftime('%Y-%m', 'now')
-                     AND status != 'blocked'"""
+                """
             )
         )
         assert row is not None

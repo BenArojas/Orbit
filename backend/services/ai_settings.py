@@ -26,12 +26,14 @@ class AISettingsService:
     async def update_routing_policy(
         self,
         *,
+        active_provider: str,
         routing_mode: str,
         local_fallback_enabled: bool,
         per_call_cost_cap_usd: float,
         monthly_cost_cap_usd: float,
     ) -> dict[str, Any]:
         return await self._db.update_ai_routing_policy(
+            active_provider=active_provider,
             routing_mode=routing_mode,
             local_fallback_enabled=local_fallback_enabled,
             per_call_cost_cap_usd=per_call_cost_cap_usd,

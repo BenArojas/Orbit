@@ -173,6 +173,7 @@ export const useAiStore = create<AiState>()((set) => ({
 
   setRoutingPolicy: (policy) =>
     set({
+      activeProvider: policy.active_provider,
       routingMode: policy.routing_mode,
       localFallbackEnabled: policy.local_fallback_enabled,
       perCallCostCapUsd: policy.per_call_cost_cap_usd,

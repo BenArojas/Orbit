@@ -64,6 +64,7 @@ class _FakeSettings:
 
     async def get_routing_policy(self) -> dict:
         return {
+            "active_provider": "ollama",
             "routing_mode": "local_only",
             "local_fallback_enabled": True,
             "per_call_cost_cap_usd": 1.0,
@@ -98,6 +99,7 @@ class _FakeCloudSettings(_FakeSettings):
 
     async def get_routing_policy(self) -> dict:
         return {
+            "active_provider": "openrouter",
             "routing_mode": "cloud_manual",
             "local_fallback_enabled": True,
             "per_call_cost_cap_usd": 1.0,
@@ -108,6 +110,7 @@ class _FakeCloudSettings(_FakeSettings):
 class _FakeLocalOnlyCloudSettings(_FakeCloudSettings):
     async def get_routing_policy(self) -> dict:
         return {
+            "active_provider": "openrouter",
             "routing_mode": "local_only",
             "local_fallback_enabled": True,
             "per_call_cost_cap_usd": 1.0,
@@ -118,6 +121,7 @@ class _FakeLocalOnlyCloudSettings(_FakeCloudSettings):
 class _FakeLowCapCloudSettings(_FakeCloudSettings):
     async def get_routing_policy(self) -> dict:
         return {
+            "active_provider": "openrouter",
             "routing_mode": "cloud_manual",
             "local_fallback_enabled": True,
             "per_call_cost_cap_usd": 0.01,
@@ -128,6 +132,7 @@ class _FakeLowCapCloudSettings(_FakeCloudSettings):
 class _FakeNoFallbackCloudSettings(_FakeCloudSettings):
     async def get_routing_policy(self) -> dict:
         return {
+            "active_provider": "openrouter",
             "routing_mode": "cloud_manual",
             "local_fallback_enabled": False,
             "per_call_cost_cap_usd": 1.0,
@@ -286,6 +291,7 @@ async def test_routing_policy_round_trips_non_secret_settings():
     initial = client.get("/ai/routing-policy")
     assert initial.status_code == 200
     assert initial.json() == {
+        "active_provider": "ollama",
         "routing_mode": "local_only",
         "local_fallback_enabled": True,
         "per_call_cost_cap_usd": 1.0,
@@ -295,7 +301,8 @@ async def test_routing_policy_round_trips_non_secret_settings():
     updated = client.put(
         "/ai/routing-policy",
         json={
-            "routing_mode": "local_only",
+            "active_provider": "openrouter",
+            "routing_mode": "cloud_manual",
             "local_fallback_enabled": False,
             "per_call_cost_cap_usd": 2.5,
             "monthly_cost_cap_usd": 50.0,
@@ -304,7 +311,8 @@ async def test_routing_policy_round_trips_non_secret_settings():
 
     assert updated.status_code == 200
     assert updated.json() == {
-        "routing_mode": "local_only",
+        "active_provider": "openrouter",
+        "routing_mode": "cloud_manual",
         "local_fallback_enabled": False,
         "per_call_cost_cap_usd": 2.5,
         "monthly_cost_cap_usd": 50.0,
@@ -312,6 +320,29 @@ async def test_routing_policy_round_trips_non_secret_settings():
     assert client.get("/ai/routing-policy").json() == updated.json()
 
     await db.close()
+
+
+@pytest.mark.asyncio
+async def test_get_ai_providers_exposes_selected_enabled_cloud_route():
+    from deps import get_ai_settings, get_ollama
+    from routers.ai import router
+
+    class FakeOllama:
+        selected_model = None
+
+        def status(self) -> dict:
+            return {"state": "not_installed", "ready": False, "selected_model": None}
+
+    app = FastAPI()
+    app.include_router(router)
+    app.dependency_overrides[get_ai_settings] = lambda: _FakeCloudSettings()
+    app.dependency_overrides[get_ollama] = lambda: FakeOllama()
+
+    response = TestClient(app).get("/ai/providers")
+
+    assert response.status_code == 200
+    assert response.json()["active_provider"] == "openrouter"
+    assert response.json()["cloud_enabled"] is True
 
 
 @pytest.mark.asyncio
@@ -525,7 +556,7 @@ def test_analyze_stream_done_event_contains_local_provider_metadata():
 
 
 def test_analyze_returns_cloud_provider_metadata_for_enabled_openrouter():
-    from deps import get_ai_settings, get_ai_usage_ledger
+    from deps import get_ai_keystore, get_ai_settings, get_ai_usage_ledger
 
     class FakeAi:
         async def analyze(self, **kwargs) -> dict:
@@ -556,6 +587,7 @@ def test_analyze_returns_cloud_provider_metadata_for_enabled_openrouter():
     usage = _FakeUsageLedger()
     client.app.dependency_overrides[get_ai_settings] = lambda: _FakeCloudSettings()
     client.app.dependency_overrides[get_ai_usage_ledger] = lambda: usage
+    client.app.dependency_overrides[get_ai_keystore] = lambda: _FakeReadableKeyStore()
 
     resp = client.post(
         "/ai/analyze",
@@ -660,6 +692,78 @@ def test_analyze_stream_rejects_cloud_provider_when_routing_policy_is_local_only
     fake_ai.analyze_stream.assert_not_called()
 
 
+def test_analyze_keychain_failure_falls_back_to_ollama_with_truthful_usage():
+    from deps import get_ai_keystore, get_ai_settings, get_ai_usage_ledger
+
+    class FakeAi:
+        async def analyze(self, **kwargs) -> dict:
+            assert kwargs["provider_name"] == "ollama"
+            assert kwargs["model"] == "gemma4:26b"
+            return {
+                "session_id": "fallback-session",
+                "signal": None,
+                "message": "Local fallback.",
+                "provider": {"provider_name": "ollama", "kind": "local", "model": "gemma4:26b",
+                             "estimated_cost": None, "actual_cost": None, "fallback_used": False},
+            }
+
+    fake_ibkr = MagicMock()
+    fake_ibkr.history = AsyncMock(return_value={"data": []})
+    fake_db = MagicMock()
+    fake_db.get_setting = AsyncMock(return_value=None)
+    usage = _FakeUsageLedger()
+    client = _client(ai=FakeAi(), ibkr=fake_ibkr, db=fake_db)
+    client.app.dependency_overrides[get_ai_settings] = lambda: _FakeCloudSettings()
+    client.app.dependency_overrides[get_ai_keystore] = lambda: _FakeReadableKeyStore(api_key=None)
+    client.app.dependency_overrides[get_ai_usage_ledger] = lambda: usage
+
+    response = client.post("/ai/analyze", json={
+        "conid": 265598, "symbol": "AAPL", "timeframes": ["D"],
+        "indicators": ["RSI"], "provider_name": "openrouter",
+    })
+
+    assert response.status_code == 200
+    assert response.json()["provider"]["provider_name"] == "ollama"
+    assert response.json()["provider"]["fallback_used"] is True
+    assert response.json()["provider"]["estimated_cost"] is None
+    assert [record["status"] for record in usage.records] == ["failed", "fallback_success"]
+    assert usage.records[0]["estimated_cost"] == 0.02
+    assert usage.records[1]["estimated_cost"] is None
+
+
+def test_analyze_stream_keychain_failure_falls_back_to_ollama():
+    from deps import get_ai_keystore, get_ai_settings, get_ai_usage_ledger
+
+    class FakeAi:
+        async def analyze_stream(self, **kwargs) -> AsyncIterator[dict]:
+            assert kwargs["provider_name"] == "ollama"
+            yield {"type": "done", "session_id": "fallback-session", "signal": None,
+                   "message": "Local fallback.",
+                   "provider": {"provider_name": "ollama", "kind": "local", "model": "gemma4:26b",
+                                "estimated_cost": None, "actual_cost": None, "fallback_used": False}}
+
+    fake_ibkr = MagicMock()
+    fake_ibkr.history = AsyncMock(return_value={"data": []})
+    fake_db = MagicMock()
+    fake_db.get_setting = AsyncMock(return_value=None)
+    usage = _FakeUsageLedger()
+    client = _client(ai=FakeAi(), ibkr=fake_ibkr, db=fake_db)
+    client.app.dependency_overrides[get_ai_settings] = lambda: _FakeCloudSettings()
+    client.app.dependency_overrides[get_ai_keystore] = lambda: _FakeReadableKeyStore(api_key=None)
+    client.app.dependency_overrides[get_ai_usage_ledger] = lambda: usage
+
+    with client.stream("POST", "/ai/analyze/stream", json={
+        "conid": 265598, "symbol": "AAPL", "timeframes": ["D"],
+        "indicators": ["RSI"], "provider_name": "openrouter",
+    }) as response:
+        frames = [json.loads(line.removeprefix("data: ")) for line in response.iter_lines()
+                  if line.startswith("data: ")]
+
+    assert frames[-1]["provider"]["provider_name"] == "ollama"
+    assert frames[-1]["provider"]["fallback_used"] is True
+    assert [record["status"] for record in usage.records] == ["failed", "fallback_success"]
+
+
 def test_analyze_registers_enabled_openrouter_from_keychain_ref(monkeypatch):
     from deps import get_ai_keystore, get_ai_settings, get_ai_usage_ledger
     from services.ai import AiService
@@ -689,12 +793,14 @@ def test_analyze_registers_enabled_openrouter_from_keychain_ref(monkeypatch):
     class FakeOpenRouterProvider:
         name = "openrouter"
         seen_keys: list[str] = []
+        calls = 0
 
         def __init__(self, *, api_key: str) -> None:
             self.seen_keys.append(api_key)
 
         async def chat_with_metadata(self, *, messages: list[dict[str, str]], model: str):
             assert messages
+            self.__class__.calls += 1
             return AIProviderTextResult(
                 content=(
                     "Cloud narrative.\n\n```json\n"
@@ -756,6 +862,23 @@ def test_analyze_registers_enabled_openrouter_from_keychain_ref(monkeypatch):
     ]
     assert FakeOpenRouterProvider.seen_keys == ["sk-runtime-secret"]
     assert "sk-runtime-secret" not in resp.text
+
+    follow_up = client.post(
+        "/ai/chat",
+        json={"session_id": resp.json()["session_id"], "message": "What invalidates it?"},
+    )
+
+    assert follow_up.status_code == 200
+    assert FakeOpenRouterProvider.calls == 2
+
+    with client.stream(
+        "POST",
+        "/ai/chat/stream",
+        json={"session_id": resp.json()["session_id"], "message": "And the target?"},
+    ) as stream_response:
+        assert stream_response.status_code == 200
+        assert any("Cloud narrative." in line for line in stream_response.iter_lines())
+    assert FakeOpenRouterProvider.calls == 3
 
 
 def test_analyze_evicts_key_bearing_cloud_provider_after_request(monkeypatch):
@@ -1099,7 +1222,7 @@ def test_analyze_stream_blocks_over_per_call_cap_before_cloud_ai_call():
 
 
 def test_analyze_stream_done_event_contains_cloud_provider_metadata():
-    from deps import get_ai_settings, get_ai_usage_ledger
+    from deps import get_ai_keystore, get_ai_settings, get_ai_usage_ledger
 
     class FakeAi:
         async def analyze_stream(self, **kwargs) -> AsyncIterator[dict]:
@@ -1132,6 +1255,7 @@ def test_analyze_stream_done_event_contains_cloud_provider_metadata():
     usage = _FakeUsageLedger()
     client.app.dependency_overrides[get_ai_settings] = lambda: _FakeCloudSettings()
     client.app.dependency_overrides[get_ai_usage_ledger] = lambda: usage
+    client.app.dependency_overrides[get_ai_keystore] = lambda: _FakeReadableKeyStore()
 
     with client.stream(
         "POST",

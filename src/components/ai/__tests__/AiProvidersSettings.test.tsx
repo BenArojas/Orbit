@@ -72,6 +72,7 @@ const providersResponse: AIProvidersResponse = {
 };
 
 const routingPolicy: AIRoutingPolicyResponse = {
+  active_provider: "ollama",
   routing_mode: "local_only",
   local_fallback_enabled: true,
   per_call_cost_cap_usd: 1,
@@ -127,7 +128,7 @@ describe("AiProvidersSettings", () => {
     renderWithQueryClient(<AiProvidersSettings />);
 
     for (const provider of ["Ollama", "OpenRouter", "OpenAI", "Anthropic", "Gemini", "Grok"]) {
-      expect(await screen.findByText(provider)).toBeInTheDocument();
+      expect((await screen.findAllByText(provider)).length).toBeGreaterThan(0);
     }
     expect(screen.getByText("Local")).toBeInTheDocument();
     expect(screen.getAllByText("Disabled")).toHaveLength(5);
@@ -143,6 +144,7 @@ describe("AiProvidersSettings", () => {
 
     await waitFor(() => {
       expect(parallaxApi.aiUpdateRoutingPolicy).toHaveBeenCalledWith({
+        active_provider: "ollama",
         routing_mode: "local_only",
         local_fallback_enabled: true,
         per_call_cost_cap_usd: 2.5,
@@ -150,6 +152,39 @@ describe("AiProvidersSettings", () => {
       });
     });
     expect(useAiStore.getState().perCallCostCapUsd).toBe(2.5);
+  });
+
+  it("enables cloud routing and persists an explicit provider selection", async () => {
+    vi.mocked(parallaxApi.aiProviders).mockResolvedValue({
+      ...providersResponse,
+      cloud_enabled: true,
+      providers: providersResponse.providers.map((provider) =>
+        provider.provider_name === "openrouter"
+          ? { ...provider, enabled: true, has_key: true, selected_model: "openrouter/auto" }
+          : provider,
+      ),
+    });
+    renderWithQueryClient(<AiProvidersSettings />);
+
+    const routing = await screen.findByLabelText("Routing mode");
+    expect((screen.getByRole("option", { name: "Cloud manual" }) as HTMLOptionElement).disabled).toBe(false);
+    fireEvent.change(routing, { target: { value: "cloud_manual" } });
+    fireEvent.change(screen.getByLabelText("Active provider"), { target: { value: "openrouter" } });
+
+    await waitFor(() => expect(parallaxApi.aiUpdateRoutingPolicy).toHaveBeenLastCalledWith(
+      expect.objectContaining({ active_provider: "openrouter" }),
+    ));
+  });
+
+  it("rejects a negative cost cap without mutating persisted state", async () => {
+    renderWithQueryClient(<AiProvidersSettings />);
+    const perCall = await screen.findByLabelText("Per-call cost cap");
+    fireEvent.change(perCall, { target: { value: "-1" } });
+    fireEvent.blur(perCall);
+
+    expect(await screen.findByText("Enter a non-negative cost cap.")).toBeInTheDocument();
+    expect(parallaxApi.aiUpdateRoutingPolicy).not.toHaveBeenCalled();
+    expect(useAiStore.getState().perCallCostCapUsd).toBe(1);
   });
 
   it("renders current monthly cloud AI spend summary", async () => {
