@@ -48,6 +48,10 @@ export interface AnalyzeStreamRequest {
   task_type?: "analysis" | "execution_sensitive";
 }
 
+interface PreparedAnalyzeStreamRequest {
+  snapshot_id: string;
+}
+
 interface SseTokenEvent {
   type: "token";
   content: string;
@@ -128,7 +132,10 @@ export function useAiAnalyzeStream() {
   const abortRef = useRef<AbortController | null>(null);
 
   const startAnalyze = useCallback(
-    async (req: AnalyzeStreamRequest, model: string | null) => {
+    async (
+      req: AnalyzeStreamRequest | PreparedAnalyzeStreamRequest,
+      model: string | null,
+    ) => {
       if (isAnalyzing) return;
 
       // Reset chat — analyze always starts a fresh signal/conversation
@@ -142,10 +149,9 @@ export function useAiAnalyzeStream() {
       const startedAt = performance.now();
 
       try {
-        const payload = {
-          ...req,
-          fibs: buildFibSnapshots(),
-        };
+        const payload = "snapshot_id" in req
+          ? req
+          : { ...req, fibs: buildFibSnapshots() };
 
         const resp = await fetch(`${API_BASE}/ai/analyze/stream`, {
           method: "POST",
@@ -162,7 +168,7 @@ export function useAiAnalyzeStream() {
         const decoder = new TextDecoder();
         let buffer = ""; // partial-line carry-over
 
-        let finalSessionId = req.session_id ?? "";
+        let finalSessionId = "session_id" in req ? req.session_id ?? "" : "";
         let finalSignal: unknown = null;
         let finalMessage = "";
         let finalProviderMetadata: AIProviderMetadata | null = null;
@@ -269,12 +275,19 @@ export function useAiAnalyzeStream() {
     ],
   );
 
+  const startPreparedAnalyze = useCallback(
+    (snapshotId: string, model: string) =>
+      startAnalyze({ snapshot_id: snapshotId }, model),
+    [startAnalyze],
+  );
+
   const cancelAnalyze = useCallback(() => {
     abortRef.current?.abort();
   }, []);
 
   return {
     startAnalyze,
+    startPreparedAnalyze,
     cancelAnalyze,
     isAnalyzing,
     streamingContent,

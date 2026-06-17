@@ -36,6 +36,8 @@ const mockAnalyzing = { current: false };
 const mockOllamaReady = { current: true };
 const mockStartAnalyze = vi.fn();
 const mockCancelAnalyze = vi.fn();
+const mockReviewCloudRun = vi.fn();
+const mockInspectorError = { current: null as Error | null };
 const mockAiStore = {
   activeProvider: "ollama",
   routingMode: "local_only",
@@ -108,9 +110,22 @@ vi.mock("@/hooks/useAiStream", () => ({
 vi.mock("@/hooks/useAiAnalyzeStream", () => ({
   useAiAnalyzeStream: () => ({
     startAnalyze: mockStartAnalyze,
+    startPreparedAnalyze: vi.fn(),
     cancelAnalyze: mockCancelAnalyze,
     isAnalyzing: mockAnalyzing.current,
     streamingContent: "",
+  }),
+}));
+
+vi.mock("@/hooks/useAiRunInspector", () => ({
+  useAiRunInspector: () => ({
+    preview: null,
+    open: false,
+    setOpen: vi.fn(),
+    isPreviewing: false,
+    error: mockInspectorError.current,
+    review: mockReviewCloudRun,
+    send: vi.fn(),
   }),
 }));
 
@@ -161,6 +176,7 @@ describe("AiChatPanel — fib section gating", () => {
     mockAiStore.analysisProvider = null;
     mockAiStore.analysisModel = null;
     mockAiStore.analysisFallbackEnabled = null;
+    mockInspectorError.current = null;
     mockAiStore.providers = [
       {
         provider_name: "ollama",
@@ -260,7 +276,7 @@ describe("AiChatPanel — provider routing", () => {
     ];
   });
 
-  it("derives cloud analysis routing from backend provider state", async () => {
+  it("previews the derived cloud route without starting inference", async () => {
     const { default: AiChatPanel } = await import("../AiChatPanel");
 
     renderAiChat(
@@ -272,13 +288,13 @@ describe("AiChatPanel — provider routing", () => {
     );
 
     fireEvent.click(screen.getByText("RSI"));
-    fireEvent.click(screen.getByRole("button", { name: /run analysis/i }));
+    fireEvent.click(screen.getByRole("button", { name: /review cloud run/i }));
 
     await waitFor(() => {
-      expect(mockStartAnalyze).toHaveBeenCalledTimes(1);
+      expect(mockReviewCloudRun).toHaveBeenCalledTimes(1);
     });
-    const [request, model] = mockStartAnalyze.mock.calls[0];
-    expect(model).toBe("anthropic/claude-sonnet-4");
+    expect(mockStartAnalyze).not.toHaveBeenCalled();
+    const [request] = mockReviewCloudRun.mock.calls[0];
     expect(request.provider_name).toBe("openrouter");
     expect(request.model).toBe("anthropic/claude-sonnet-4");
     expect(request.task_type).toBe("analysis");
@@ -298,11 +314,10 @@ describe("AiChatPanel — provider routing", () => {
     );
 
     fireEvent.click(screen.getByText("RSI"));
-    fireEvent.click(screen.getByRole("button", { name: /run analysis/i }));
+    fireEvent.click(screen.getByRole("button", { name: /review cloud run/i }));
 
-    await waitFor(() => expect(mockStartAnalyze).toHaveBeenCalledTimes(1));
-    const [request, model] = mockStartAnalyze.mock.calls[0];
-    expect(model).toBe("google/gemini-2.5-pro");
+    await waitFor(() => expect(mockReviewCloudRun).toHaveBeenCalledTimes(1));
+    const [request] = mockReviewCloudRun.mock.calls[0];
     expect(request.provider_name).toBe("openrouter");
     expect(request.model).toBe("google/gemini-2.5-pro");
     expect(request.model).not.toBe("gemma4:4b");
@@ -328,7 +343,7 @@ describe("AiChatPanel — provider routing", () => {
 
     fireEvent.click(screen.getByText("RSI"));
 
-    expect(screen.getByRole("button", { name: /run analysis/i }))
+    expect(screen.getByRole("button", { name: /review cloud run/i }))
       .toBeDisabled();
   });
 
@@ -343,10 +358,23 @@ describe("AiChatPanel — provider routing", () => {
     }));
 
     fireEvent.click(screen.getByText("RSI"));
-    fireEvent.click(screen.getByRole("button", { name: /run analysis/i }));
+    fireEvent.click(screen.getByRole("button", { name: /review cloud run/i }));
 
-    await waitFor(() => expect(mockStartAnalyze).toHaveBeenCalledTimes(1));
-    expect(mockStartAnalyze.mock.calls[0][0].provider_name).toBe("openrouter");
+    await waitFor(() => expect(mockReviewCloudRun).toHaveBeenCalledTimes(1));
+    expect(mockReviewCloudRun.mock.calls[0][0].provider_name).toBe("openrouter");
+  });
+
+  it("shows a cloud preview failure", async () => {
+    mockInspectorError.current = new Error("Selected model exceeds the cost cap");
+    const { default: AiChatPanel } = await import("../AiChatPanel");
+
+    renderAiChat(createElement(AiChatPanel, {
+      activeConid: 265598,
+      activeSymbol: "AAPL",
+      fibonacci: null,
+    }));
+
+    expect(screen.getByText("Selected model exceeds the cost cap")).toBeTruthy();
   });
 });
 

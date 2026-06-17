@@ -547,6 +547,9 @@ export interface AnalyzeRequest {
     context_bars?: number;
     /** Active fibs currently rendered on the chart. */
     fibs?: FibonacciSnapshot[];
+    provider_name?: AIProviderName;
+    model?: string | null;
+    task_type?: "analysis" | "execution_sensitive";
 }
 
 export interface FibonacciSnapshot {
@@ -662,6 +665,28 @@ export interface AIProviderModelsResponse {
     models: AIModelOption[];
     selected_model: string | null;
     fetched_at: string;
+}
+
+export interface AIAnalysisPreview {
+    snapshot_id: string;
+    expires_at: string;
+    provider_name: "openrouter";
+    model: AIModelOption;
+    request_body: Record<string, unknown>;
+    disclosure: {
+        sent_to_cloud: string[];
+        kept_local: string[];
+        exact_payload_available_until: string;
+    };
+    cost: {
+        currency: "USD";
+        estimated_input_tokens: number;
+        expected_output_tokens: number;
+        max_output_tokens: number;
+        estimated_cost_usd: string;
+        maximum_cost_usd: string;
+    };
+    fallback_enabled: boolean;
 }
 
 export interface AIProviderModelUpdateRequest {
@@ -1107,6 +1132,9 @@ export const parallaxApi = {
 
     aiSelectOpenRouterModel: (req: AIProviderModelUpdateRequest) =>
         sidecarRequest<AIProviderModelsResponse>("PUT", "/ai/providers/openrouter/model", req),
+
+    aiAnalysisPreview: (req: AnalyzeRequest) =>
+        sidecarRequest<AIAnalysisPreview>("POST", "/ai/analysis/preview", req),
 
     aiRoutingPolicy: () =>
         sidecarRequest<AIRoutingPolicyResponse>("GET", "/ai/routing-policy"),

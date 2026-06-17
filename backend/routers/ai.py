@@ -38,6 +38,7 @@ from deps import (
     get_ibkr,
     get_db,
     get_ai,
+    get_ai_analysis_preparation,
     get_ai_keystore,
     get_ai_settings,
     get_ai_usage_ledger,
@@ -45,6 +46,8 @@ from deps import (
 )
 from models import (
     AIModelOption,
+    AIAnalysisPreviewResponse,
+    AIAnalysisSnapshotRunRequest,
     AIProviderKeySaveRequest,
     AIProviderModelUpdateRequest,
     AIProviderModelsResponse,
@@ -73,6 +76,12 @@ from models import (
 )
 from exceptions import AIAnalysisTimeoutError
 from services.ai import AiService, _coerce_confidence
+from services.ai_analysis_preparation import (
+    AIAnalysisPreparationService,
+    AIAnalysisContextLimitError,
+    AIAnalysisSnapshotExpiredError,
+    AIAnalysisSnapshotNotFoundError,
+)
 from services.ai_cloud_adapters import (
     AIProviderAuthError,
     AIProviderModelUnavailableError,
@@ -449,15 +458,22 @@ async def _enforce_cloud_cost_caps(
     task_type: str,
     policy: dict,
     usage_ledger: AIUsageLedger,
+    quoted_estimated_cost: float | None = None,
+    maximum_cost: float | None = None,
 ) -> float | None:
-    estimated_cost = _estimate_cloud_analysis_cost(provider_name, model)
+    estimated_cost = (
+        quoted_estimated_cost
+        if quoted_estimated_cost is not None
+        else _estimate_cloud_analysis_cost(provider_name, model)
+    )
     if estimated_cost is None:
         return None
 
+    enforced_cost = maximum_cost if maximum_cost is not None else estimated_cost
     monthly_effective_spend = await usage_ledger.monthly_effective_spend_usd()
-    projected_monthly = monthly_effective_spend + estimated_cost
+    projected_monthly = monthly_effective_spend + enforced_cost
     blocked = (
-        estimated_cost > policy["per_call_cost_cap_usd"]
+        enforced_cost > policy["per_call_cost_cap_usd"]
         or projected_monthly > policy["monthly_cost_cap_usd"]
     )
     if not blocked:
@@ -477,7 +493,7 @@ async def _enforce_cloud_cost_caps(
         error_code="ai_cost_limit_exceeded",
     )
     raise _cloud_cost_limit_http_error(
-        estimated_cost=estimated_cost,
+        estimated_cost=enforced_cost,
         per_call_cost_cap_usd=policy["per_call_cost_cap_usd"],
     )
 
@@ -775,6 +791,103 @@ async def select_openrouter_model(
         selected_model=request.model,
         fetched_at=datetime.now(UTC),
     )
+
+
+@router.post("/analysis/preview", response_model=AIAnalysisPreviewResponse)
+async def preview_analysis(
+    request: AnalyzeRequest,
+    ibkr: IBKRService = Depends(get_ibkr),
+    ai: AiService = Depends(get_ai),
+    preparation: AIAnalysisPreparationService = Depends(get_ai_analysis_preparation),
+    ollama: OllamaLifecycle = Depends(get_ollama),
+    db: DatabaseService = Depends(get_db),
+    ai_settings: AISettingsService = Depends(get_ai_settings),
+    key_store: AIKeyStore = Depends(get_ai_keystore),
+):
+    provider_name, model_id, fallback_model, allow_fallback, provider_config = (
+        await _resolve_analysis_routing(request, ollama, ai_settings)
+    )
+    if provider_name != "openrouter":
+        raise HTTPException(
+            status_code=http_status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail={
+                "error": "ai_analysis_preview_requires_openrouter",
+                "message": "Cloud analysis preview currently supports OpenRouter only.",
+            },
+        )
+
+    provider = None
+    try:
+        provider = await _create_cloud_provider_for_request(
+            provider_config=provider_config,
+            key_store=key_store,
+        )
+        catalog = await provider.list_models()
+    except AIKeyStoreUnavailableError as exc:
+        raise _keychain_unavailable_http_error() from exc
+    except (
+        AIProviderAuthError,
+        AIProviderRateLimitError,
+        AIProviderModelUnavailableError,
+        AIProviderTimeoutError,
+        AIProviderNetworkError,
+    ) as exc:
+        status_code, detail = _provider_error_detail(exc, "openrouter")
+        raise HTTPException(status_code=status_code, detail=detail) from exc
+    finally:
+        await _close_request_provider(provider)
+
+    selected_model = next((model for model in catalog if model.id == model_id), None)
+    if selected_model is None:
+        raise HTTPException(
+            status_code=http_status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail={
+                "error": "ai_provider_model_unavailable",
+                "message": "The selected OpenRouter model is not available for this account.",
+                "provider_name": "openrouter",
+            },
+        )
+
+    resolved_indicators = _resolve_indicators(request.indicators)
+    fib_weights = await get_active_fib_weights(db)
+    timeframe_data = {
+        timeframe: await _fetch_timeframe_data(
+            conid=request.conid,
+            timeframe=timeframe,
+            indicators=resolved_indicators,
+            ibkr=ibkr,
+            fib_weights=fib_weights,
+            fib_snapshots=request.fibs,
+        )
+        for timeframe in request.timeframes
+    }
+    messages = await ai.prepare_analysis_messages(
+        symbol=request.symbol,
+        timeframe_data=timeframe_data,
+        indicators_display=request.indicators,
+        indicator_names=resolved_indicators,
+        model=model_id,
+        watchlist=request.watchlist,
+        indicator_priority=request.indicator_priority or [],
+    )
+    try:
+        snapshot = await preparation.prepare(
+            request,
+            provider_name="openrouter",
+            model=AIModelOption(**selected_model.__dict__),
+            messages=messages,
+            fallback_enabled=allow_fallback,
+            local_model=fallback_model,
+        )
+    except AIAnalysisContextLimitError as exc:
+        raise HTTPException(
+            status_code=http_status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail={
+                "error": "ai_analysis_context_limit_exceeded",
+                "message": str(exc),
+            },
+        ) from exc
+    return AIAnalysisPreviewResponse(**snapshot.__dict__)
 
 
 @router.get("/routing-policy", response_model=AIRoutingPolicyResponse)
@@ -1208,7 +1321,7 @@ async def analyze(
 
 @router.post("/analyze/stream")
 async def analyze_stream(
-    request: AnalyzeRequest,
+    request: AnalyzeRequest | AIAnalysisSnapshotRunRequest,
     ibkr: IBKRService = Depends(get_ibkr),
     ai: AiService = Depends(get_ai),
     ollama: OllamaLifecycle = Depends(get_ollama),
@@ -1216,6 +1329,7 @@ async def analyze_stream(
     ai_settings: AISettingsService = Depends(get_ai_settings),
     usage_ledger: AIUsageLedger = Depends(get_ai_usage_ledger),
     key_store: AIKeyStore = Depends(get_ai_keystore),
+    preparation: AIAnalysisPreparationService = Depends(get_ai_analysis_preparation),
 ):
     """
     Stream a full AI technical analysis as Server-Sent Events.
@@ -1234,6 +1348,122 @@ async def analyze_stream(
     On readiness/model errors, a single `done` event with signal=null and
     a human-readable `message` is emitted so the UI has something to show.
     """
+    if isinstance(request, AIAnalysisSnapshotRunRequest):
+        try:
+            snapshot = preparation.get_snapshot(request.snapshot_id)
+        except AIAnalysisSnapshotExpiredError as exc:
+            raise HTTPException(
+                status_code=http_status.HTTP_410_GONE,
+                detail={
+                    "error": "ai_analysis_snapshot_expired",
+                    "message": "The reviewed cloud analysis snapshot has expired.",
+                },
+            ) from exc
+        except AIAnalysisSnapshotNotFoundError as exc:
+            raise HTTPException(
+                status_code=http_status.HTTP_404_NOT_FOUND,
+                detail={
+                    "error": "ai_analysis_snapshot_not_found",
+                    "message": "The reviewed cloud analysis snapshot was not found.",
+                },
+            ) from exc
+        policy = await _get_routing_policy(ai_settings)
+        if policy["routing_mode"] == "local_only":
+            raise _cloud_local_only_http_error()
+        configs = await ai_settings.list_provider_configs()
+        provider_config = next(
+            (
+                config for config in configs
+                if config["provider_name"] == snapshot.provider_name
+            ),
+            None,
+        )
+        if (
+            provider_config is None
+            or not provider_config.get("enabled")
+            or not provider_config.get("api_key_ref")
+        ):
+            raise _cloud_provider_unavailable_http_error(snapshot.provider_name)
+        if provider_config.get("selected_model") != snapshot.model.id:
+            raise HTTPException(
+                status_code=http_status.HTTP_409_CONFLICT,
+                detail={
+                    "error": "ai_analysis_snapshot_model_changed",
+                    "message": "The selected OpenRouter model changed after preview.",
+                },
+            )
+        await _enforce_cloud_cost_caps(
+            provider_name="openrouter",
+            model=snapshot.model.id,
+            task_type=snapshot.request.task_type,
+            policy=policy,
+            usage_ledger=usage_ledger,
+            quoted_estimated_cost=float(snapshot.cost.estimated_cost_usd),
+            maximum_cost=float(snapshot.cost.maximum_cost_usd),
+        )
+        registry = getattr(ai, "provider_registry", None)
+        fallback_provider = (
+            registry.require("ollama")
+            if snapshot.fallback_enabled and snapshot.local_model and registry is not None
+            else None
+        )
+        fallback_error_code = "ai_provider_fallback"
+        try:
+            cloud_provider = await _create_cloud_provider_for_request(
+                provider_config=provider_config,
+                key_store=key_store,
+            )
+        except AIKeyStoreUnavailableError as exc:
+            if fallback_provider is None:
+                raise _keychain_unavailable_http_error() from exc
+            cloud_provider = None
+            fallback_error_code = "ai_keychain_unavailable"
+
+        async def prepared_event_stream():
+            try:
+                async for event in ai.analyze_prepared_stream(
+                    snapshot=snapshot,
+                    provider=cloud_provider,
+                    fallback_provider=fallback_provider,
+                ):
+                    if event.get("type") == "done":
+                        provider_metadata = event.get("provider") or {}
+                        await _record_completed_usage(
+                            usage_ledger=usage_ledger,
+                            requested_provider="openrouter",
+                            requested_model=snapshot.model.id,
+                            provider_metadata=provider_metadata,
+                            task_type=snapshot.request.task_type,
+                            routing_mode=policy["routing_mode"],
+                            estimated_cost=float(snapshot.cost.estimated_cost_usd),
+                            fallback_error_code=fallback_error_code,
+                        )
+                    yield f"data: {json.dumps(event)}\n\n"
+            except (
+                AIProviderAuthError,
+                AIProviderModelUnavailableError,
+                AIProviderNetworkError,
+                AIProviderRateLimitError,
+                AIProviderTimeoutError,
+            ) as exc:
+                _, detail = _provider_error_detail(exc, "openrouter")
+                await _record_failed_cloud_usage(
+                    usage_ledger=usage_ledger,
+                    provider_name="openrouter",
+                    model=snapshot.model.id,
+                    task_type=snapshot.request.task_type,
+                    routing_mode=policy["routing_mode"],
+                    estimated_cost=float(snapshot.cost.estimated_cost_usd),
+                    error_code=detail["error"],
+                )
+                yield f"data: {json.dumps({'type': 'error', **detail})}\n\n"
+            finally:
+                await _close_request_provider(cloud_provider)
+
+        return StreamingResponse(
+            prepared_event_stream(), media_type="text/event-stream",
+        )
+
     (
         provider_name,
         selected_model,

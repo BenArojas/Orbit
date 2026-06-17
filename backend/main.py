@@ -36,6 +36,7 @@ from services.ibkr import IBKRService
 from services.screener import ScreenerService
 from services.sectors import SectorService
 from services.ai import AiService
+from services.ai_analysis_preparation import AIAnalysisPreparationService
 from services.ai_providers import AIProviderRegistry, OllamaLLMProvider
 from services.ollama import OllamaLifecycle
 from services.ollama_context import OllamaContextService
@@ -136,6 +137,7 @@ async def lifespan(app: FastAPI):
         provider_registry=ai_provider_registry,
     )
     app.state.ai = ai
+    app.state.ai_analysis_preparation = AIAnalysisPreparationService()
 
     # Background trigger scanner (Phase 6.1 / 6.2)
     # Evaluates active trigger rules every N minutes while the app is open.

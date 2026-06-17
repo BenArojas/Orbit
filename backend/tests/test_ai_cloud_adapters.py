@@ -432,7 +432,11 @@ async def test_grok_provider_uses_chat_completions_contract():
 async def test_openrouter_provider_normalizes_stream_chunks_and_usage_cost():
     from services.ai_cloud_adapters import OpenRouterProvider
 
-    async def handler(_request: httpx.Request) -> httpx.Response:
+    sent_body = None
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal sent_body
+        sent_body = json.loads(request.content)
         lines = [
             "data: " + json.dumps({"choices": [{"delta": {"content": "Cloud "}}]}),
             "data: " + json.dumps({"choices": [{"delta": {"content": "stream."}}]}),
@@ -454,6 +458,7 @@ async def test_openrouter_provider_normalizes_stream_chunks_and_usage_cost():
         event async for event in provider.chat_stream_with_metadata(
             messages=[{"role": "user", "content": "Analyze AAPL"}],
             model="openrouter/auto",
+            max_tokens=4096,
         )
     ]
 
@@ -472,6 +477,7 @@ async def test_openrouter_provider_normalizes_stream_chunks_and_usage_cost():
             },
         },
     ]
+    assert sent_body["max_tokens"] == 4096
 
     await client.aclose()
 

@@ -28,6 +28,7 @@ from collections import OrderedDict
 from typing import TYPE_CHECKING, AsyncIterator, Optional
 
 if TYPE_CHECKING:
+    from services.ai_analysis_preparation import PreparedAnalysisSnapshot
     from services.ollama_context import OllamaContextService
 
 from exceptions import AIAnalysisTimeoutError
@@ -529,10 +530,32 @@ class AiService:
         indicator_names: resolved backend names (e.g. ["ema", "rsi"]) — used
             by the fact builders and system prompt.
         """
+        messages = await self.prepare_analysis_messages(
+            symbol=symbol,
+            timeframe_data=timeframe_data,
+            indicators_display=indicators_display,
+            indicator_names=indicator_names,
+            model=model,
+            watchlist=watchlist,
+            indicator_priority=indicator_priority,
+        )
         session = self.get_or_create_session(session_id)
         session.symbol = symbol
         session.clear()
+        session.messages = [dict(message) for message in messages]
+        return session
 
+    async def prepare_analysis_messages(
+        self,
+        *,
+        symbol: str,
+        timeframe_data: dict[str, dict],
+        indicators_display: list[str],
+        indicator_names: list[str],
+        model: str,
+        watchlist: Optional[str] = None,
+        indicator_priority: Optional[list[str]] = None,
+    ) -> list[dict[str, str]]:
         if self._context_service is not None:
             budget = await self._context_service.get_budget_for_model(model)
         else:
@@ -563,9 +586,10 @@ class AiService:
             indicator_priority=indicator_priority,
         )
 
-        session.add_system(system_prompt)
-        session.add_user(user_message)
-        return session
+        return [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_message},
+        ]
 
     # ── Internal: parse + (one) reformat fallback ─────────────────────
 
@@ -895,6 +919,88 @@ class AiService:
             "session_id": session.session_id,
             "signal": frontend_signal,
             "message": clean_full_text,
+            "provider": provider_metadata,
+        }
+
+    async def analyze_prepared_stream(
+        self,
+        *,
+        snapshot: "PreparedAnalysisSnapshot",
+        provider: object | None,
+        fallback_provider: object | None,
+    ) -> AsyncIterator[dict]:
+        session = self.get_or_create_session(snapshot.request.session_id)
+        session.symbol = snapshot.request.symbol
+        session.messages = [dict(message) for message in snapshot.messages]
+        session.provider_name = snapshot.provider_name
+        session.model = snapshot.model.id
+
+        accumulated: list[str] = []
+        provider_metadata: dict | None = None
+        if provider is None:
+            if not snapshot.fallback_enabled or fallback_provider is None:
+                raise AIProviderNetworkError("Cloud provider is unavailable")
+            fallback_model = snapshot.local_model or ""
+            provider_metadata = self._fallback_metadata(fallback_model).model_dump()
+            session.provider_name = "ollama"
+            session.model = fallback_model
+            async for token in fallback_provider.chat_stream(
+                messages=snapshot.messages,
+                model=fallback_model,
+                think=None,
+            ):
+                accumulated.append(token)
+                yield {"type": "token", "content": token}
+        else:
+            try:
+                async for event in provider.chat_stream_with_metadata(
+                    messages=snapshot.messages,
+                    model=snapshot.model.id,
+                    max_tokens=snapshot.cost.max_output_tokens,
+                ):
+                    if event.get("type") == "token":
+                        accumulated.append(event["content"])
+                        yield event
+                    elif event.get("type") == "metadata":
+                        provider_metadata = event["metadata"]
+            except (
+                AIProviderAuthError,
+                AIProviderModelUnavailableError,
+                AIProviderNetworkError,
+                AIProviderRateLimitError,
+                AIProviderTimeoutError,
+            ):
+                if not snapshot.fallback_enabled or fallback_provider is None:
+                    raise
+                fallback_model = snapshot.local_model or ""
+                provider_metadata = self._fallback_metadata(fallback_model).model_dump()
+                session.provider_name = "ollama"
+                session.model = fallback_model
+                async for token in fallback_provider.chat_stream(
+                    messages=snapshot.messages,
+                    model=fallback_model,
+                    think=None,
+                ):
+                    accumulated.append(token)
+                    yield {"type": "token", "content": token}
+
+        full_text = "".join(accumulated)
+        clean_text = strip_signal_json_from_response(full_text)
+        session.add_assistant(clean_text)
+        raw_signal = await self._extract_signal(
+            session,
+            full_text,
+            session.model,
+            snapshot.request.symbol,
+            provider_name=session.provider_name,
+            provider=provider if session.provider_name == snapshot.provider_name else fallback_provider,
+        )
+        session.signal = self._finalize_signal(raw_signal)
+        yield {
+            "type": "done",
+            "session_id": session.session_id,
+            "signal": session.signal,
+            "message": clean_text,
             "provider": provider_metadata,
         }
 

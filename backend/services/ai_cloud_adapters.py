@@ -95,8 +95,11 @@ class OpenRouterProvider:
         *,
         messages: list[dict[str, str]],
         model: str,
+        max_tokens: int | None = None,
     ) -> AIProviderTextResult:
-        data = await self._post_chat(messages=messages, model=model, stream=False)
+        data = await self._post_chat(
+            messages=messages, model=model, stream=False, max_tokens=max_tokens,
+        )
         content = (
             data.get("choices", [{}])[0]
             .get("message", {})
@@ -113,8 +116,11 @@ class OpenRouterProvider:
         *,
         messages: list[dict[str, str]],
         model: str,
+        max_tokens: int | None = None,
     ) -> AsyncIterator[dict[str, Any]]:
-        payload = self._payload(messages=messages, model=model, stream=True)
+        payload = self._payload(
+            messages=messages, model=model, stream=True, max_tokens=max_tokens,
+        )
         try:
             async with self._http.stream(
                 "POST",
@@ -159,11 +165,15 @@ class OpenRouterProvider:
         messages: list[dict[str, str]],
         model: str,
         stream: bool,
+        max_tokens: int | None = None,
     ) -> dict[str, Any]:
         try:
             response = await self._http.post(
                 "/api/v1/chat/completions",
-                json=self._payload(messages=messages, model=model, stream=stream),
+                json=self._payload(
+                    messages=messages, model=model, stream=stream,
+                    max_tokens=max_tokens,
+                ),
                 headers=self._headers(),
             )
             await self._raise_for_status(response)
@@ -179,12 +189,16 @@ class OpenRouterProvider:
         messages: list[dict[str, str]],
         model: str,
         stream: bool,
+        max_tokens: int | None = None,
     ) -> dict[str, Any]:
-        return {
+        payload = {
             "model": model,
             "messages": messages,
             "stream": stream,
         }
+        if max_tokens is not None:
+            payload["max_tokens"] = max_tokens
+        return payload
 
     def _headers(self) -> dict[str, str]:
         return {

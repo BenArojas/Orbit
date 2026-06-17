@@ -2,11 +2,15 @@ from __future__ import annotations
 
 import json
 from collections.abc import AsyncIterator
+from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+
+from models import AIModelOption, AnalyzeRequest
 
 
 def _client(
@@ -15,9 +19,11 @@ def _client(
     ai: object | None = None,
     ibkr: object | None = None,
     db: object | None = None,
+    preparation: object | None = None,
 ) -> TestClient:
     from deps import get_ai, get_ai_settings, get_db, get_ibkr, get_ollama
     from routers.ai import router
+    from services.ai_analysis_preparation import AIAnalysisPreparationService
 
     status = ollama_status or {
         "state": "ready",
@@ -35,6 +41,7 @@ def _client(
             return status
 
     app = FastAPI()
+    app.state.ai_analysis_preparation = preparation or AIAnalysisPreparationService()
     app.include_router(router)
     app.dependency_overrides[get_ollama] = lambda: FakeOllama()
     app.dependency_overrides[get_ai_settings] = lambda: _FakeSettings()
@@ -210,6 +217,344 @@ class _FakeReadableKeyStore(_FakeKeyStore):
 
             raise AIKeyStoreUnavailableError("OS keychain is unavailable")
         return self.api_key
+
+
+def test_preview_returns_exact_body_without_starting_cloud_inference(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    from deps import get_ai_keystore, get_ai_settings
+    from routers import ai as ai_router
+    from services.ai_analysis_preparation import AIAnalysisPreparationService
+    from services.ai_cloud_adapters import OpenRouterModel
+
+    class FakeProvider:
+        completion_calls = 0
+
+        async def list_models(self) -> list[OpenRouterModel]:
+            return [
+                OpenRouterModel(
+                    id="anthropic/claude-sonnet-4",
+                    name="Claude Sonnet 4",
+                    context_length=200000,
+                    max_completion_tokens=4096,
+                    prompt_price_per_token="0.000003",
+                    completion_price_per_token="0.000015",
+                    request_price="0",
+                )
+            ]
+
+        async def aclose(self) -> None:
+            return None
+
+    class FakeAi:
+        async def prepare_analysis_messages(self, **_kwargs) -> list[dict[str, str]]:
+            return [{"role": "user", "content": "Analyze AAPL."}]
+
+    monkeypatch.setattr(
+        ai_router,
+        "OpenRouterProvider",
+        lambda *, api_key: FakeProvider(),
+    )
+    fake_ibkr = MagicMock()
+    fake_ibkr.history = AsyncMock(return_value={"data": []})
+    fake_db = MagicMock()
+    fake_db.get_setting = AsyncMock(return_value=None)
+    client = _client(
+        ai=FakeAi(),
+        ibkr=fake_ibkr,
+        db=fake_db,
+        preparation=AIAnalysisPreparationService(token_estimator=lambda _messages: 1000),
+    )
+    client.app.dependency_overrides[get_ai_settings] = lambda: _FakeCloudSettings()
+    client.app.dependency_overrides[get_ai_keystore] = lambda: _FakeReadableKeyStore()
+
+    response = client.post(
+        "/ai/analysis/preview",
+        json={
+            "conid": 265598,
+            "symbol": "AAPL",
+            "timeframes": ["D"],
+            "indicators": ["RSI"],
+            "provider_name": "openrouter",
+            "model": "anthropic/claude-sonnet-4",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["request_body"] == {
+        "model": "anthropic/claude-sonnet-4",
+        "messages": [{"role": "user", "content": "Analyze AAPL."}],
+        "stream": True,
+        "max_tokens": 4096,
+    }
+    assert FakeProvider.completion_calls == 0
+
+
+def test_cloud_stream_executes_snapshot_without_refetching_market_data(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    from deps import get_ai_keystore, get_ai_settings, get_ai_usage_ledger
+    from routers import ai as ai_router
+    from services.ai_analysis_preparation import AIAnalysisPreparationService
+    from services.ai_cloud_adapters import OpenRouterModel
+
+    class FakeProvider:
+        async def list_models(self) -> list[OpenRouterModel]:
+            return [
+                OpenRouterModel(
+                    id="anthropic/claude-sonnet-4",
+                    name="Claude Sonnet 4",
+                    context_length=200000,
+                    max_completion_tokens=4096,
+                    prompt_price_per_token="0.000003",
+                    completion_price_per_token="0.000015",
+                    request_price="0",
+                )
+            ]
+
+        async def aclose(self) -> None:
+            return None
+
+    class FakeAi:
+        executed_body = None
+
+        async def prepare_analysis_messages(self, **_kwargs) -> list[dict[str, str]]:
+            return [{"role": "user", "content": "Analyze AAPL."}]
+
+        async def analyze_prepared_stream(self, *, snapshot, **_kwargs):
+            self.executed_body = snapshot.request_body
+            yield {
+                "type": "done",
+                "session_id": "session-1",
+                "signal": None,
+                "message": "Cloud narrative.",
+                "provider": {
+                    "provider_name": "openrouter",
+                    "kind": "cloud",
+                    "model": snapshot.model.id,
+                    "estimated_cost": None,
+                    "actual_cost": 0.01,
+                    "fallback_used": False,
+                },
+            }
+
+    monkeypatch.setattr(
+        ai_router,
+        "OpenRouterProvider",
+        lambda *, api_key: FakeProvider(),
+    )
+    fake_ai = FakeAi()
+    fake_ibkr = MagicMock()
+    fake_ibkr.history = AsyncMock(return_value={"data": []})
+    fake_db = MagicMock()
+    fake_db.get_setting = AsyncMock(return_value=None)
+    client = _client(
+        ai=fake_ai,
+        ibkr=fake_ibkr,
+        db=fake_db,
+        preparation=AIAnalysisPreparationService(token_estimator=lambda _messages: 1000),
+    )
+    client.app.dependency_overrides[get_ai_settings] = lambda: _FakeCloudSettings()
+    client.app.dependency_overrides[get_ai_keystore] = lambda: _FakeReadableKeyStore()
+    client.app.dependency_overrides[get_ai_usage_ledger] = lambda: _FakeUsageLedger()
+    request = {
+        "conid": 265598,
+        "symbol": "AAPL",
+        "timeframes": ["D"],
+        "indicators": ["RSI"],
+        "provider_name": "openrouter",
+        "model": "anthropic/claude-sonnet-4",
+    }
+
+    preview = client.post("/ai/analysis/preview", json=request).json()
+    with client.stream(
+        "POST", "/ai/analyze/stream", json={"snapshot_id": preview["snapshot_id"]},
+    ) as response:
+        assert response.status_code == 200
+        list(response.iter_lines())
+
+    assert fake_ibkr.history.await_count == 1
+    assert fake_ai.executed_body == preview["request_body"]
+
+
+@pytest.mark.asyncio
+async def test_cloud_stream_rejects_expired_snapshot_with_typed_error():
+    from deps import get_ai_settings, get_ai_usage_ledger
+    from services.ai_analysis_preparation import AIAnalysisPreparationService
+
+    now = datetime(2026, 6, 18, tzinfo=UTC)
+    clock = [now]
+    preparation = AIAnalysisPreparationService(clock=lambda: clock[0])
+    snapshot = await preparation.prepare(
+        AnalyzeRequest(
+            conid=265598,
+            symbol="AAPL",
+            timeframes=["D"],
+            indicators=["RSI"],
+            provider_name="openrouter",
+            model="anthropic/claude-sonnet-4",
+        ),
+        provider_name="openrouter",
+        model=AIModelOption(
+            id="anthropic/claude-sonnet-4",
+            name="Claude Sonnet 4",
+            context_length=200000,
+            max_completion_tokens=4096,
+            prompt_price_per_token="0.000003",
+            completion_price_per_token="0.000015",
+            request_price="0",
+        ),
+        messages=[{"role": "user", "content": "Analyze AAPL."}],
+        fallback_enabled=False,
+    )
+    clock[0] = now + timedelta(minutes=10)
+    client = _client(
+        ai=MagicMock(),
+        ibkr=MagicMock(),
+        db=MagicMock(),
+        preparation=preparation,
+    )
+    client.app.dependency_overrides[get_ai_settings] = lambda: _FakeCloudSettings()
+    client.app.dependency_overrides[get_ai_usage_ledger] = lambda: _FakeUsageLedger()
+
+    response = client.post(
+        "/ai/analyze/stream", json={"snapshot_id": snapshot.snapshot_id},
+    )
+
+    assert response.status_code == 410
+    assert response.json()["detail"]["error"] == "ai_analysis_snapshot_expired"
+
+
+@pytest.mark.asyncio
+async def test_cloud_stream_rejects_snapshot_when_selected_model_changed(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    from deps import get_ai_keystore, get_ai_settings, get_ai_usage_ledger
+    from routers import ai as ai_router
+    from services.ai_analysis_preparation import AIAnalysisPreparationService
+
+    class ChangedModelSettings(_FakeCloudSettings):
+        async def list_provider_configs(self) -> list[dict]:
+            configs = await super().list_provider_configs()
+            return [
+                {**config, "selected_model": "openai/gpt-5"}
+                if config["provider_name"] == "openrouter"
+                else config
+                for config in configs
+            ]
+
+    class FakeProvider:
+        async def aclose(self) -> None:
+            return None
+
+    monkeypatch.setattr(
+        ai_router, "OpenRouterProvider", lambda *, api_key: FakeProvider(),
+    )
+    preparation = AIAnalysisPreparationService()
+    snapshot = await preparation.prepare(
+        AnalyzeRequest(
+            conid=265598,
+            symbol="AAPL",
+            provider_name="openrouter",
+            model="anthropic/claude-sonnet-4",
+        ),
+        provider_name="openrouter",
+        model=AIModelOption(
+            id="anthropic/claude-sonnet-4",
+            name="Claude Sonnet 4",
+            context_length=200000,
+            max_completion_tokens=4096,
+            prompt_price_per_token="0.000003",
+            completion_price_per_token="0.000015",
+            request_price="0",
+        ),
+        messages=[{"role": "user", "content": "Analyze AAPL."}],
+        fallback_enabled=False,
+    )
+    client = _client(
+        ai=MagicMock(), ibkr=MagicMock(), db=MagicMock(), preparation=preparation,
+    )
+    client.app.dependency_overrides[get_ai_settings] = lambda: ChangedModelSettings()
+    client.app.dependency_overrides[get_ai_keystore] = lambda: _FakeReadableKeyStore()
+    client.app.dependency_overrides[get_ai_usage_ledger] = lambda: _FakeUsageLedger()
+
+    response = client.post(
+        "/ai/analyze/stream", json={"snapshot_id": snapshot.snapshot_id},
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"]["error"] == "ai_analysis_snapshot_model_changed"
+
+
+@pytest.mark.asyncio
+async def test_cloud_stream_enforces_cost_cap_against_snapshot_maximum(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    from deps import get_ai_keystore, get_ai_settings, get_ai_usage_ledger
+    from routers import ai as ai_router
+    from services.ai_analysis_preparation import AIAnalysisPreparationService
+
+    class CappedSettings(_FakeCloudSettings):
+        async def get_routing_policy(self) -> dict:
+            return {
+                **await super().get_routing_policy(),
+                "per_call_cost_cap_usd": 0.03,
+            }
+
+    class FakeProvider:
+        async def aclose(self) -> None:
+            return None
+
+    class FakeAi:
+        executed = False
+
+        async def analyze_prepared_stream(self, **_kwargs):
+            self.executed = True
+            if False:
+                yield {}
+
+    monkeypatch.setattr(
+        ai_router, "OpenRouterProvider", lambda *, api_key: FakeProvider(),
+    )
+    preparation = AIAnalysisPreparationService(token_estimator=lambda _messages: 1000)
+    snapshot = await preparation.prepare(
+        AnalyzeRequest(
+            conid=265598,
+            symbol="AAPL",
+            provider_name="openrouter",
+            model="anthropic/claude-sonnet-4",
+        ),
+        provider_name="openrouter",
+        model=AIModelOption(
+            id="anthropic/claude-sonnet-4",
+            name="Claude Sonnet 4",
+            context_length=200000,
+            max_completion_tokens=4096,
+            prompt_price_per_token="0.000003",
+            completion_price_per_token="0.000015",
+            request_price="0",
+        ),
+        messages=[{"role": "user", "content": "Analyze AAPL."}],
+        fallback_enabled=False,
+    )
+    fake_ai = FakeAi()
+    usage = _FakeUsageLedger()
+    client = _client(
+        ai=fake_ai, ibkr=MagicMock(), db=MagicMock(), preparation=preparation,
+    )
+    client.app.dependency_overrides[get_ai_settings] = lambda: CappedSettings()
+    client.app.dependency_overrides[get_ai_keystore] = lambda: _FakeReadableKeyStore()
+    client.app.dependency_overrides[get_ai_usage_ledger] = lambda: usage
+
+    response = client.post(
+        "/ai/analyze/stream", json={"snapshot_id": snapshot.snapshot_id},
+    )
+
+    assert snapshot.cost.estimated_cost_usd < Decimal("0.03")
+    assert snapshot.cost.maximum_cost_usd > Decimal("0.03")
+    assert response.status_code == 402
+    assert response.json()["detail"]["error"] == "ai_cost_limit_exceeded"
+    assert fake_ai.executed is False
 
 
 def test_openrouter_models_returns_user_filtered_catalog_and_selected_model(

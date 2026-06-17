@@ -148,6 +148,19 @@ describe("useAiAnalyzeStream", () => {
     ]);
   });
 
+  it("sends only the reviewed snapshot id for prepared cloud analysis", async () => {
+    const { result } = renderHook(() => useAiAnalyzeStream());
+
+    await act(async () => {
+      await result.current.startPreparedAnalyze(
+        "snapshot-123", "anthropic/claude-sonnet-4",
+      );
+    });
+
+    const [, options] = vi.mocked(global.fetch).mock.calls[0];
+    expect(JSON.parse(String(options?.body))).toEqual({ snapshot_id: "snapshot-123" });
+  });
+
   it("excludes hidden fibs from the analyze request body", async () => {
     // Hide the locked fib — it should drop out of the AI payload entirely.
     (activeFibs[1] as { hidden?: boolean }).hidden = true;

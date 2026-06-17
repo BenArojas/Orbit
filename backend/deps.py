@@ -14,6 +14,7 @@ from services.ibkr import IBKRService
 from services.screener import ScreenerService
 from services.sectors import SectorService
 from services.ai import AiService
+from services.ai_analysis_preparation import AIAnalysisPreparationService
 from services.ai_keystore import AIKeyStore
 from services.ai_settings import AISettingsService
 from services.ai_usage import AIUsageLedger
@@ -48,6 +49,10 @@ def get_sectors(request: Request) -> SectorService:
 def get_ai(request: Request) -> AiService:
     """Get the AI service singleton stashed on app.state during lifespan."""
     return request.app.state.ai
+
+
+def get_ai_analysis_preparation(request: Request) -> AIAnalysisPreparationService:
+    return request.app.state.ai_analysis_preparation
 
 
 def get_ai_settings(db: DatabaseService = Depends(get_db)) -> AISettingsService:

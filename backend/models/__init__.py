@@ -22,6 +22,7 @@ Note: Watchlists are managed in IBKR — no local models needed.
 from __future__ import annotations
 
 from datetime import datetime
+from decimal import Decimal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from typing import Any, Literal, Optional
@@ -1059,6 +1060,10 @@ class AnalyzeRequest(BaseModel):
     task_type: Literal["analysis", "execution_sensitive"] = "analysis"
 
 
+class AIAnalysisSnapshotRunRequest(BaseModel):
+    snapshot_id: str = Field(min_length=1)
+
+
 class AIProviderStatus(BaseModel):
     """Current status for one AI provider exposed to the frontend."""
     provider_name: AIProviderName
@@ -1111,6 +1116,32 @@ class AIProviderModelsResponse(BaseModel):
 class AIProviderModelUpdateRequest(BaseModel):
     """Persist a validated provider model selection."""
     model: str = Field(min_length=1)
+
+
+class AIDataDisclosure(BaseModel):
+    sent_to_cloud: list[str]
+    kept_local: list[str]
+    exact_payload_available_until: datetime
+
+
+class AICostQuote(BaseModel):
+    currency: Literal["USD"] = "USD"
+    estimated_input_tokens: int
+    expected_output_tokens: int
+    max_output_tokens: int
+    estimated_cost_usd: Decimal
+    maximum_cost_usd: Decimal
+
+
+class AIAnalysisPreviewResponse(BaseModel):
+    snapshot_id: str
+    expires_at: datetime
+    provider_name: Literal["openrouter"]
+    model: AIModelOption
+    request_body: dict[str, Any]
+    disclosure: AIDataDisclosure
+    cost: AICostQuote
+    fallback_enabled: bool
 
 
 class AIProviderKeySaveRequest(BaseModel):

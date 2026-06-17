@@ -25,12 +25,14 @@ import { useChartStore, type IndicatorId } from "@/store/chart";
 import { useAiStatus } from "@/hooks/useAiStatus";
 import { useAiStream } from "@/hooks/useAiStream";
 import { useAiAnalyzeStream } from "@/hooks/useAiAnalyzeStream";
+import { useAiRunInspector } from "@/hooks/useAiRunInspector";
 import AiConfigPanel, { type AiTimeframe, type AiIndicator } from "./AiConfigPanel";
 import ActionSignalCard from "./ActionSignalCard";
 import AiSetupGuide from "./AiSetupGuide";
 import AiModelSelector from "./AiModelSelector";
 import AiProviderBadge from "./AiProviderBadge";
 import AiAnalysisTargetControls from "./AiAnalysisTargetControls";
+import AiRunInspectorDialog from "./AiRunInspectorDialog";
 import ResponseTimeBadge from "./ResponseTimeBadge";
 import FibStackPanel from "./fib/FibStackPanel";
 import type {
@@ -209,7 +211,8 @@ export default function AiChatPanel({ activeConid, activeSymbol, fibonacci, char
   // Streaming analyze — replaces the old useMutation flow. Tokens flow into
   // the same `streamingContent` that the chat-stream hook already drives,
   // so the StreamingBubble keeps working without changes.
-  const { startAnalyze, cancelAnalyze } = useAiAnalyzeStream();
+  const { startAnalyze, startPreparedAnalyze, cancelAnalyze } = useAiAnalyzeStream();
+  const inspector = useAiRunInspector(startPreparedAnalyze);
 
   const requestedProvider = analysisProvider
     ?? (routingMode === "local_only" ? "ollama" : activeProvider);
@@ -275,21 +278,26 @@ export default function AiChatPanel({ activeConid, activeSymbol, fibonacci, char
       if (!aiAvailable || !activeConid || !activeSymbol) return;
       const route = resolveAnalysisRoute();
       if (route.providerName !== "ollama" && !route.model) return;
+      const request = {
+        conid: activeConid,
+        symbol: activeSymbol,
+        timeframes: config.timeframes,
+        indicators: config.indicators,
+        session_id: sessionId ?? undefined,
+        context_mode: config.contextMode,
+        context_bars: config.contextBars,
+        provider_name: route.providerName,
+        model: route.model,
+        task_type: "analysis" as const,
+      };
+      if (route.providerName === "openrouter") {
+        void inspector.review(request);
+        return;
+      }
       // Streams narrative tokens into streamingContent, then commits the
       // final message + signal + session_id once the SSE `done` event lands.
       void startAnalyze(
-        {
-          conid: activeConid,
-          symbol: activeSymbol,
-          timeframes: config.timeframes,
-          indicators: config.indicators,
-          session_id: sessionId ?? undefined,
-          context_mode: config.contextMode,
-          context_bars: config.contextBars,
-          provider_name: route.providerName,
-          model: route.model,
-          task_type: "analysis",
-        },
+        request,
         route.model,
       );
     },
@@ -300,6 +308,7 @@ export default function AiChatPanel({ activeConid, activeSymbol, fibonacci, char
       sessionId,
       resolveAnalysisRoute,
       startAnalyze,
+      inspector,
     ],
   );
 
@@ -408,9 +417,20 @@ export default function AiChatPanel({ activeConid, activeSymbol, fibonacci, char
                 <AiConfigPanel
                   onRunAnalysis={handleRunAnalysis}
                   chartIndicators={chartIndicators}
-                  isAnalyzing={isAnalyzing}
+                  isAnalyzing={isAnalyzing || inspector.isPreviewing}
                   isRunDisabled={analysisRunDisabled}
+                  runLabel={analysisRoute.providerName === "openrouter"
+                    ? "Review Cloud Run"
+                    : "Run Analysis"}
                 />
+                {inspector.error && (
+                  <div
+                    role="alert"
+                    className="border-b border-[var(--border)] px-4 py-2 text-[10px] text-[var(--clr-red)]"
+                  >
+                    {inspector.error.message}
+                  </div>
+                )}
                 <ActionSignalCard signal={signal} />
               </div>
 
@@ -523,6 +543,14 @@ export default function AiChatPanel({ activeConid, activeSymbol, fibonacci, char
             )}
           </div>
         </div>
+      )}
+      {inspector.preview && (
+        <AiRunInspectorDialog
+          open={inspector.open}
+          preview={inspector.preview}
+          onOpenChange={inspector.setOpen}
+          onConfirm={inspector.send}
+        />
       )}
     </div>
   );

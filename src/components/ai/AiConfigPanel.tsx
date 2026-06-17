@@ -178,6 +178,7 @@ interface AiConfigPanelProps {
   isAnalyzing?: boolean;
   /** Disable a run when the selected provider route is not executable. */
   isRunDisabled?: boolean;
+  runLabel?: string;
 }
 
 export default function AiConfigPanel({
@@ -185,6 +186,7 @@ export default function AiConfigPanel({
   chartIndicators,
   isAnalyzing = false,
   isRunDisabled = false,
+  runLabel = "Run Analysis",
 }: AiConfigPanelProps) {
   const [selectedTf, setSelectedTf] = useState<Set<AiTimeframe>>(
     () => new Set(DEFAULT_TIMEFRAMES)
@@ -377,7 +379,7 @@ export default function AiConfigPanel({
         }
         className="flex items-center justify-center gap-1.5 rounded-md border border-[var(--clr-cyan)] bg-[var(--glow-cyan)] px-3 py-2 text-xs font-semibold text-[var(--clr-cyan)] transition-all hover:shadow-[0_0_16px_var(--glow-cyan)] disabled:opacity-40 disabled:cursor-not-allowed"
       >
-        ▶ Run Analysis
+        ▶ {runLabel}
       </button>
     </div>
   );
