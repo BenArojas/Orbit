@@ -38,6 +38,11 @@ const mockStartAnalyze = vi.fn();
 const mockCancelAnalyze = vi.fn();
 const mockReviewCloudRun = vi.fn();
 const mockInspectorError = { current: null as Error | null };
+const mockOpenRouterCatalog = {
+  models: [] as Array<{ id: string; name: string }>,
+  isLoading: false,
+  error: null as string | null,
+};
 const mockAiStore = {
   activeProvider: "ollama",
   routingMode: "local_only",
@@ -92,6 +97,10 @@ vi.mock("@/hooks/useAiStatus", () => ({
     availableModels: [],
     ollamaError: null,
     isReady: mockOllamaReady.current,
+    openRouterModels: mockOpenRouterCatalog.models,
+    openRouterSelectedModel: null,
+    isLoadingOpenRouterModels: mockOpenRouterCatalog.isLoading,
+    openRouterModelsError: mockOpenRouterCatalog.error,
     selectModel: vi.fn(),
     refresh: vi.fn(),
     isRefreshing: false,
@@ -176,6 +185,12 @@ describe("AiChatPanel — fib section gating", () => {
     mockAiStore.analysisProvider = null;
     mockAiStore.analysisModel = null;
     mockAiStore.analysisFallbackEnabled = null;
+    mockOpenRouterCatalog.models = [
+      { id: "anthropic/claude-sonnet-4", name: "Claude Sonnet 4" },
+      { id: "google/gemini-2.5-pro", name: "Gemini 2.5 Pro" },
+    ];
+    mockOpenRouterCatalog.isLoading = false;
+    mockOpenRouterCatalog.error = null;
     mockInspectorError.current = null;
     mockAiStore.providers = [
       {
@@ -347,8 +362,32 @@ describe("AiChatPanel — provider routing", () => {
       .toBeDisabled();
   });
 
+  it("disables cloud review when an empty loaded catalog leaves only stale OpenRouter selections", async () => {
+    mockAiStore.analysisProvider = "openrouter";
+    mockAiStore.analysisModel = "google/gemini-2.5-pro";
+    mockOpenRouterCatalog.models = [];
+    const { default: AiChatPanel } = await import("../AiChatPanel");
+
+    renderAiChat(
+      createElement(AiChatPanel, {
+        activeConid: 265598,
+        activeSymbol: "AAPL",
+        fibonacci: null,
+      }),
+    );
+
+    fireEvent.click(screen.getByText("RSI"));
+
+    expect(screen.getByRole("button", { name: /review cloud run/i }))
+      .toBeDisabled();
+  });
+
   it("starts cloud analysis when Ollama is unavailable", async () => {
     mockOllamaReady.current = false;
+    mockAiStore.analysisProvider = "openrouter";
+    mockOpenRouterCatalog.models = [
+      { id: "anthropic/claude-sonnet-4", name: "Claude Sonnet 4" },
+    ];
     const { default: AiChatPanel } = await import("../AiChatPanel");
 
     renderAiChat(createElement(AiChatPanel, {

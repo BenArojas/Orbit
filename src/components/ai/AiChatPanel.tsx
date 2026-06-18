@@ -201,6 +201,9 @@ export default function AiChatPanel({ activeConid, activeSymbol, fibonacci, char
     availableModels,
     ollamaError,
     isReady,
+    openRouterModels = [],
+    isLoadingOpenRouterModels = false,
+    openRouterModelsError = null,
     selectModel,
     refresh,
     isRefreshing,
@@ -219,7 +222,14 @@ export default function AiChatPanel({ activeConid, activeSymbol, fibonacci, char
   const selectedCloudProvider = providers?.find(
     (provider) => provider.provider_name === requestedProvider && provider.kind === "cloud",
   );
-  const selectedCloudModel = analysisModel ?? selectedCloudProvider?.selected_model ?? null;
+  const emptyLoadedOpenRouterCatalog =
+    requestedProvider === "openrouter"
+    && !isLoadingOpenRouterModels
+    && !openRouterModelsError
+    && openRouterModels.length === 0;
+  const selectedCloudModel = emptyLoadedOpenRouterCatalog
+    ? null
+    : (analysisModel ?? selectedCloudProvider?.selected_model ?? null);
   const hasValidCloudRoute =
     routingMode !== "local_only" &&
     requestedProvider === "openrouter" &&
