@@ -8,7 +8,7 @@
 
 **Tech Stack:** Python 3.12, FastAPI, Pydantic v2, httpx, SQLite, pytest; React 19, TypeScript strict mode, Zustand, TanStack Query v5, Tailwind, Vitest and Testing Library.
 
-**Status:** APPROVED - Slice 1 in progress. This remediation supersedes the Settings ownership and Orbit-owned cost-cap decisions in `docs/superpowers/plans/2026-06-17-ai-run-inspector-openrouter-review.md` and must complete before that plan's Slice 5 manual smoke gate.
+**Status:** APPROVED - Slice 1 complete; Slice 2 in progress. This remediation supersedes the Settings ownership and Orbit-owned cost-cap decisions in `docs/superpowers/plans/2026-06-17-ai-run-inspector-openrouter-review.md` and must complete before that plan's Slice 5 manual smoke gate.
 
 ## Global Constraints
 
