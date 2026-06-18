@@ -27,6 +27,7 @@ import { API_BASE } from "@/config/endpoints";
 import type {
   AIProviderMetadata,
   AIProviderName,
+  AIRunReceipt,
   AiContextMode,
   FibonacciSnapshot,
 } from "@/modules/parallax/api";
@@ -63,9 +64,18 @@ interface SseDoneEvent {
   signal: unknown; // typed as SignalData on the consuming side
   message: string;
   provider?: AIProviderMetadata;
+  receipt?: AIRunReceipt;
 }
 
-type SseEvent = SseTokenEvent | SseDoneEvent;
+interface SseErrorEvent {
+  type: "error";
+  error: string;
+  message: string;
+  provider_name: AIProviderName;
+  receipt: AIRunReceipt;
+}
+
+type SseEvent = SseTokenEvent | SseDoneEvent | SseErrorEvent;
 
 /* ── Helpers ── */
 
@@ -104,7 +114,7 @@ function parseEventLine(line: string): SseEvent | null {
   if (!payload) return null;
   try {
     const obj = JSON.parse(payload) as SseEvent;
-    if (obj && (obj.type === "token" || obj.type === "done")) return obj;
+    if (obj && (obj.type === "token" || obj.type === "done" || obj.type === "error")) return obj;
     return null;
   } catch {
     return null;
@@ -127,6 +137,7 @@ export function useAiAnalyzeStream() {
     clearChat,
     pushResponseTime,
     setLastProviderMetadata,
+    setLastRunReceipt,
   } = useAiStore();
 
   const abortRef = useRef<AbortController | null>(null);
@@ -172,6 +183,8 @@ export function useAiAnalyzeStream() {
         let finalSignal: unknown = null;
         let finalMessage = "";
         let finalProviderMetadata: AIProviderMetadata | null = null;
+        let finalReceipt: AIRunReceipt | null = null;
+        let finalError: string | null = null;
         let sawDone = false;
 
         // SSE loop — read chunks, split on lines, parse `data: …` frames
@@ -194,7 +207,11 @@ export function useAiAnalyzeStream() {
               finalSignal = ev.signal;
               finalMessage = ev.message;
               finalProviderMetadata = ev.provider ?? null;
+              finalReceipt = ev.receipt ?? null;
               sawDone = true;
+            } else if (ev.type === "error") {
+              finalError = ev.message;
+              finalReceipt = ev.receipt;
             }
           }
         }
@@ -207,12 +224,24 @@ export function useAiAnalyzeStream() {
           finalSignal = trailing.signal;
           finalMessage = trailing.message;
           finalProviderMetadata = trailing.provider ?? null;
+          finalReceipt = trailing.receipt ?? null;
           sawDone = true;
+        } else if (trailing?.type === "error") {
+          finalError = trailing.message;
+          finalReceipt = trailing.receipt;
         }
 
         // Commit final state
         if (finalSessionId) setSessionId(finalSessionId);
-        if (sawDone) {
+        if (finalError) {
+          addMessage({
+            id: msgId(),
+            role: "assistant",
+            content: `[Analysis failed: ${finalError}]`,
+            timestamp: Date.now(),
+          });
+          setLastRunReceipt(finalReceipt);
+        } else if (sawDone) {
           // Use the authoritative `message` field (the full narrative) — the
           // streamingContent buffer should match, but `message` is what the
           // backend actually parsed the signal from.
@@ -225,6 +254,7 @@ export function useAiAnalyzeStream() {
           // SignalData typing lives in components/ai — store accepts unknown shape
           setSignal(finalSignal as never);
           setLastProviderMetadata(finalProviderMetadata);
+          setLastRunReceipt(finalReceipt);
           pushResponseTime({
             durationMs: performance.now() - startedAt,
             model,
@@ -272,6 +302,7 @@ export function useAiAnalyzeStream() {
       isAnalyzing, clearChat, setAnalyzing, setStreaming, setStreamingContent,
       appendStreamingContent, addMessage, setSessionId, setSignal,
       setLastProviderMetadata, pushResponseTime,
+      setLastRunReceipt,
     ],
   );
 

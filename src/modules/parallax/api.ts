@@ -641,6 +641,43 @@ export interface AIProviderMetadata {
     estimated_cost: number | null;
     actual_cost: number | null;
     fallback_used: boolean;
+    requested_model?: string;
+    resolved_model?: string;
+    provider_request_id?: string;
+    input_tokens?: number;
+    output_tokens?: number;
+    reasoning_tokens?: number;
+    cached_tokens?: number;
+    duration_ms?: number;
+}
+
+export interface AIRunAttempt {
+    provider_name: AIProviderName;
+    requested_model: string | null;
+    resolved_model: string | null;
+    status: "success" | "failed" | "fallback_success" | "blocked";
+    provider_request_id: string | null;
+    input_tokens: number | null;
+    output_tokens: number | null;
+    reasoning_tokens: number | null;
+    cached_tokens: number | null;
+    estimated_cost_usd: string | null;
+    actual_cost_usd: string | null;
+    duration_ms: number;
+    error_code: string | null;
+}
+
+export interface AIRunReceipt {
+    run_id: string;
+    requested_provider: AIProviderName;
+    requested_model: string | null;
+    executed_provider: AIProviderName | null;
+    resolved_model: string | null;
+    fallback_used: boolean;
+    fallback_reason: string | null;
+    status: "success" | "failed" | "fallback_success" | "blocked";
+    attempts: AIRunAttempt[];
+    created_at: string;
 }
 
 export interface AIProvidersResponse {
@@ -1141,6 +1178,8 @@ export const parallaxApi = {
 
     aiUsageSummary: () =>
         sidecarRequest<AIUsageSummaryResponse>("GET", "/ai/usage"),
+    aiRuns: (limit = 50) =>
+        sidecarRequest<AIRunReceipt[]>("GET", `/ai/runs?limit=${limit}`),
 
     aiUpdateRoutingPolicy: (req: AIRoutingPolicyUpdate) =>
         sidecarRequest<AIRoutingPolicyResponse>("PUT", "/ai/routing-policy", req),

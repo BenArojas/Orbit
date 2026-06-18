@@ -1084,6 +1084,14 @@ class AIProviderMetadata(BaseModel):
     estimated_cost: Optional[float] = None
     actual_cost: Optional[float] = None
     fallback_used: bool = False
+    requested_model: Optional[str] = Field(default=None, exclude_if=lambda value: value is None)
+    resolved_model: Optional[str] = Field(default=None, exclude_if=lambda value: value is None)
+    provider_request_id: Optional[str] = Field(default=None, exclude_if=lambda value: value is None)
+    input_tokens: Optional[int] = Field(default=None, exclude_if=lambda value: value is None)
+    output_tokens: Optional[int] = Field(default=None, exclude_if=lambda value: value is None)
+    reasoning_tokens: Optional[int] = Field(default=None, exclude_if=lambda value: value is None)
+    cached_tokens: Optional[int] = Field(default=None, exclude_if=lambda value: value is None)
+    duration_ms: Optional[int] = Field(default=None, exclude_if=lambda value: value is None)
 
 
 class AIProvidersResponse(BaseModel):
@@ -1171,6 +1179,35 @@ class AIUsageSummaryResponse(BaseModel):
     """Current-month AI spend summary."""
     monthly_actual_cost_usd: float = 0.0
     monthly_estimated_cost_usd: float = 0.0
+
+
+class AIRunAttempt(BaseModel):
+    provider_name: AIProviderName
+    requested_model: Optional[str] = None
+    resolved_model: Optional[str] = None
+    status: Literal["success", "failed", "fallback_success", "blocked"]
+    provider_request_id: Optional[str] = None
+    input_tokens: Optional[int] = None
+    output_tokens: Optional[int] = None
+    reasoning_tokens: Optional[int] = None
+    cached_tokens: Optional[int] = None
+    estimated_cost_usd: Optional[Decimal] = None
+    actual_cost_usd: Optional[Decimal] = None
+    duration_ms: int = 0
+    error_code: Optional[str] = None
+
+
+class AIRunReceipt(BaseModel):
+    run_id: str
+    requested_provider: AIProviderName
+    requested_model: Optional[str] = None
+    executed_provider: Optional[AIProviderName] = None
+    resolved_model: Optional[str] = None
+    fallback_used: bool
+    fallback_reason: Optional[str] = None
+    status: Literal["success", "failed", "fallback_success", "blocked"]
+    attempts: list[AIRunAttempt]
+    created_at: datetime
 
 
 class ChatMessage(BaseModel):

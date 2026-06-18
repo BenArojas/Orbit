@@ -548,6 +548,7 @@ export default function AiChatPanel({ activeConid, activeSymbol, fibonacci, char
         <AiRunInspectorDialog
           open={inspector.open}
           preview={inspector.preview}
+          receipt={inspector.receipt}
           onOpenChange={inspector.setOpen}
           onConfirm={inspector.send}
         />

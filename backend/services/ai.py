@@ -78,6 +78,7 @@ from services.ai_cloud_adapters import (
     AIProviderAuthError,
     AIProviderModelUnavailableError,
     AIProviderNetworkError,
+    AIProviderRequestError,
     AIProviderRateLimitError,
     AIProviderTimeoutError,
     AIProviderTextResult,
@@ -745,6 +746,7 @@ class AiService:
             AIProviderAuthError,
             AIProviderModelUnavailableError,
             AIProviderNetworkError,
+            AIProviderRequestError,
             AIProviderRateLimitError,
             AIProviderTimeoutError,
         ):
@@ -859,6 +861,7 @@ class AiService:
             AIProviderAuthError,
             AIProviderModelUnavailableError,
             AIProviderNetworkError,
+            AIProviderRequestError,
             AIProviderRateLimitError,
             AIProviderTimeoutError,
         ) as e:
@@ -870,6 +873,7 @@ class AiService:
                         AIProviderAuthError,
                         AIProviderModelUnavailableError,
                         AIProviderNetworkError,
+                        AIProviderRequestError,
                         AIProviderRateLimitError,
                         AIProviderTimeoutError,
                     ),
@@ -967,6 +971,7 @@ class AiService:
                 AIProviderAuthError,
                 AIProviderModelUnavailableError,
                 AIProviderNetworkError,
+                AIProviderRequestError,
                 AIProviderRateLimitError,
                 AIProviderTimeoutError,
             ):

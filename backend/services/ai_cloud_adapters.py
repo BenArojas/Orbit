@@ -6,6 +6,7 @@ calls stay disabled until a later manual smoke slice.
 from __future__ import annotations
 
 import json
+import time
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
@@ -34,6 +35,10 @@ class AIProviderTimeoutError(RuntimeError):
 
 class AIProviderModelUnavailableError(RuntimeError):
     """Provider does not expose the requested model."""
+
+
+class AIProviderRequestError(RuntimeError):
+    """Provider rejected a validly authenticated request."""
 
 
 @dataclass(frozen=True)
@@ -97,6 +102,7 @@ class OpenRouterProvider:
         model: str,
         max_tokens: int | None = None,
     ) -> AIProviderTextResult:
+        started_at = time.monotonic()
         data = await self._post_chat(
             messages=messages, model=model, stream=False, max_tokens=max_tokens,
         )
@@ -107,7 +113,13 @@ class OpenRouterProvider:
         )
         return AIProviderTextResult(
             content=content,
-            metadata=self._metadata(model=model, usage=data.get("usage")),
+            metadata=self._metadata(
+                model=model,
+                usage=data.get("usage"),
+                resolved_model=data.get("model"),
+                provider_request_id=data.get("id"),
+                duration_ms=int((time.monotonic() - started_at) * 1000),
+            ),
             provider_request_id=data.get("id"),
         )
 
@@ -118,6 +130,7 @@ class OpenRouterProvider:
         model: str,
         max_tokens: int | None = None,
     ) -> AsyncIterator[dict[str, Any]]:
+        started_at = time.monotonic()
         payload = self._payload(
             messages=messages, model=model, stream=True, max_tokens=max_tokens,
         )
@@ -139,8 +152,9 @@ class OpenRouterProvider:
                         data = json.loads(raw)
                     except json.JSONDecodeError:
                         continue
+                    choices = data.get("choices") or [{}]
                     content = (
-                        data.get("choices", [{}])[0]
+                        choices[0]
                         .get("delta", {})
                         .get("content", "")
                     )
@@ -152,6 +166,9 @@ class OpenRouterProvider:
                             "metadata": self._metadata(
                                 model=model,
                                 usage=data.get("usage"),
+                                resolved_model=data.get("model"),
+                                provider_request_id=data.get("id"),
+                                duration_ms=int((time.monotonic() - started_at) * 1000),
                             ).model_dump(),
                         }
         except httpx.TimeoutException as exc:
@@ -265,20 +282,53 @@ class OpenRouterProvider:
             raise AIProviderModelUnavailableError("OpenRouter model unavailable")
         if response.status_code == 429:
             raise AIProviderRateLimitError("OpenRouter rate limit reached")
+        if response.status_code == 400:
+            try:
+                message = str(response.json().get("error", {}).get("message", ""))
+            except (TypeError, ValueError):
+                message = ""
+            if "model" in message.lower() and any(
+                marker in message.lower()
+                for marker in ("no endpoint", "not found", "unavailable", "invalid")
+            ):
+                raise AIProviderModelUnavailableError("OpenRouter model unavailable")
+            raise AIProviderRequestError("OpenRouter request rejected")
         raise AIProviderNetworkError(f"OpenRouter returned HTTP {response.status_code}")
 
     @staticmethod
-    def _metadata(model: str, usage: dict[str, Any] | None) -> AIProviderMetadata:
+    def _metadata(
+        model: str,
+        usage: dict[str, Any] | None,
+        *,
+        resolved_model: str | None = None,
+        provider_request_id: str | None = None,
+        duration_ms: int | None = None,
+    ) -> AIProviderMetadata:
         cost = None
         if usage is not None and usage.get("cost") is not None:
             cost = float(usage["cost"])
+        usage = usage or {}
+        prompt_details = usage.get("prompt_tokens_details") or {}
+        completion_details = usage.get("completion_tokens_details") or {}
+        resolved_model = resolved_model or model
         return AIProviderMetadata(
             provider_name="openrouter",
             kind="cloud",
-            model=model,
+            model=resolved_model,
             estimated_cost=None,
             actual_cost=cost,
             fallback_used=False,
+            requested_model=model,
+            resolved_model=resolved_model,
+            provider_request_id=provider_request_id,
+            input_tokens=usage.get("prompt_tokens"),
+            output_tokens=usage.get("completion_tokens"),
+            reasoning_tokens=(
+                usage.get("reasoning_tokens")
+                or completion_details.get("reasoning_tokens")
+            ),
+            cached_tokens=prompt_details.get("cached_tokens"),
+            duration_ms=duration_ms,
         )
 
 

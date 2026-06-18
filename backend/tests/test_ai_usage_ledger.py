@@ -147,3 +147,80 @@ async def test_ai_usage_ledger_effective_spend_counts_actual_or_successful_estim
     assert await ledger.monthly_effective_spend_usd() == pytest.approx(0.15)
 
     await db.close()
+
+
+@pytest.mark.asyncio
+async def test_ai_usage_ledger_groups_fallback_attempts_into_metadata_only_receipt():
+    from services.ai_usage import AIUsageLedger
+
+    db = DatabaseService(db_path=":memory:")
+    await db.initialize()
+    ledger = AIUsageLedger(db)
+    run_id = "run-fallback-1"
+
+    await ledger.record_usage(
+        run_id=run_id,
+        requested_provider_name="openrouter",
+        requested_model="anthropic/claude-sonnet-4",
+        provider_name="openrouter",
+        model="anthropic/claude-sonnet-4",
+        resolved_model=None,
+        task_type="analysis",
+        routing_mode="cloud_with_local_fallback",
+        input_tokens=None,
+        output_tokens=None,
+        reasoning_tokens=None,
+        cached_tokens=None,
+        estimated_cost=0.02,
+        actual_cost=None,
+        status="failed",
+        provider_request_id=None,
+        duration_ms=125,
+        fallback_reason="ai_provider_network_error",
+        error_code="ai_provider_network_error",
+    )
+    await ledger.record_usage(
+        run_id=run_id,
+        requested_provider_name="openrouter",
+        requested_model="anthropic/claude-sonnet-4",
+        provider_name="ollama",
+        model="gemma4:26b",
+        resolved_model="gemma4:26b",
+        task_type="analysis",
+        routing_mode="cloud_with_local_fallback",
+        input_tokens=None,
+        output_tokens=None,
+        reasoning_tokens=None,
+        cached_tokens=None,
+        estimated_cost=None,
+        actual_cost=None,
+        status="fallback_success",
+        provider_request_id=None,
+        duration_ms=800,
+        fallback_reason="ai_provider_network_error",
+        error_code=None,
+    )
+
+    receipt = (await ledger.list_run_receipts(limit=10))[0]
+
+    assert receipt.run_id == run_id
+    assert receipt.requested_provider == "openrouter"
+    assert receipt.executed_provider == "ollama"
+    assert receipt.fallback_used is True
+    assert receipt.fallback_reason == "ai_provider_network_error"
+    assert [attempt.status for attempt in receipt.attempts] == [
+        "failed",
+        "fallback_success",
+    ]
+    assert receipt.attempts[0].actual_cost_usd is None
+    assert receipt.attempts[1].provider_name == "ollama"
+
+    columns = {
+        row[1]
+        for row in db._conn.execute("PRAGMA table_info(ai_usage_log)").fetchall()
+    }
+    assert columns.isdisjoint({
+        "messages", "prompt", "request_body", "api_key", "completion_text",
+    })
+
+    await db.close()

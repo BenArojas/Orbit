@@ -29,8 +29,9 @@ Flow:
 import json
 import logging
 from datetime import UTC, datetime
+from uuid import uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, status as http_status
+from fastapi import APIRouter, Depends, HTTPException, Query, status as http_status
 from fastapi.responses import StreamingResponse
 from pydantic import ValidationError
 
@@ -55,6 +56,8 @@ from models import (
     AIProviderName,
     AIProviderStatus,
     AIProvidersResponse,
+    AIRunAttempt,
+    AIRunReceipt,
     AIRoutingPolicyResponse,
     AIRoutingPolicyUpdate,
     AIUsageSummaryResponse,
@@ -86,6 +89,7 @@ from services.ai_cloud_adapters import (
     AIProviderAuthError,
     AIProviderModelUnavailableError,
     AIProviderNetworkError,
+    AIProviderRequestError,
     AIProviderRateLimitError,
     AIProviderTimeoutError,
     AnthropicProvider,
@@ -244,6 +248,12 @@ def _provider_error_detail(exc: Exception, provider_name: str) -> tuple[int, dic
             "message": "Cloud AI provider model is unavailable.",
             "provider_name": provider_name,
         }
+    if isinstance(exc, AIProviderRequestError):
+        return http_status.HTTP_400_BAD_REQUEST, {
+            "error": "ai_provider_request_error",
+            "message": "Cloud AI provider rejected the request.",
+            "provider_name": provider_name,
+        }
     if isinstance(exc, AIProviderTimeoutError):
         return http_status.HTTP_504_GATEWAY_TIMEOUT, {
             "error": "ai_provider_timeout_error",
@@ -266,7 +276,14 @@ async def _record_failed_cloud_usage(
     routing_mode: str,
     estimated_cost: float | None,
     error_code: str,
-) -> None:
+    run_id: str | None = None,
+    requested_provider: AIProviderName | None = None,
+    requested_model: str | None = None,
+    duration_ms: int = 0,
+) -> AIRunReceipt:
+    run_id = run_id or str(uuid4())
+    requested_provider = requested_provider or provider_name
+    requested_model = requested_model or model
     await usage_ledger.record_usage(
         provider_name=provider_name,
         model=model,
@@ -279,6 +296,32 @@ async def _record_failed_cloud_usage(
         status="failed",
         provider_request_id=None,
         error_code=error_code,
+        run_id=run_id,
+        requested_provider_name=requested_provider,
+        requested_model=requested_model,
+        resolved_model=None,
+        fallback_reason=None,
+        duration_ms=duration_ms,
+    )
+    return AIRunReceipt(
+        run_id=run_id,
+        requested_provider=requested_provider,
+        requested_model=requested_model,
+        executed_provider=None,
+        resolved_model=None,
+        fallback_used=False,
+        fallback_reason=None,
+        status="failed",
+        attempts=[AIRunAttempt(
+            provider_name=provider_name,
+            requested_model=requested_model,
+            resolved_model=None,
+            status="failed",
+            estimated_cost_usd=estimated_cost,
+            duration_ms=duration_ms,
+            error_code=error_code,
+        )],
+        created_at=datetime.now(UTC),
     )
 
 
@@ -350,7 +393,9 @@ async def _record_completed_usage(
     routing_mode: str,
     estimated_cost: float | None,
     fallback_error_code: str = "ai_provider_fallback",
-) -> None:
+    run_id: str | None = None,
+) -> AIRunReceipt:
+    run_id = run_id or str(uuid4())
     if provider_metadata.get("fallback_used"):
         await _record_failed_cloud_usage(
             usage_ledger=usage_ledger,
@@ -360,6 +405,9 @@ async def _record_completed_usage(
             routing_mode=routing_mode,
             estimated_cost=estimated_cost,
             error_code=fallback_error_code,
+            run_id=run_id,
+            requested_provider=requested_provider,
+            requested_model=requested_model,
         )
         await usage_ledger.record_usage(
             provider_name="ollama",
@@ -373,8 +421,41 @@ async def _record_completed_usage(
             status="fallback_success",
             provider_request_id=None,
             error_code=None,
+            run_id=run_id,
+            requested_provider_name=requested_provider,
+            requested_model=requested_model,
+            resolved_model=provider_metadata.get("resolved_model") or provider_metadata.get("model"),
+            fallback_reason=fallback_error_code,
+            duration_ms=provider_metadata.get("duration_ms"),
         )
-        return
+        local_model = provider_metadata.get("resolved_model") or provider_metadata.get("model")
+        return AIRunReceipt(
+            run_id=run_id,
+            requested_provider=requested_provider,
+            requested_model=requested_model,
+            executed_provider="ollama",
+            resolved_model=local_model,
+            fallback_used=True,
+            fallback_reason=fallback_error_code,
+            status="fallback_success",
+            attempts=[
+                AIRunAttempt(
+                    provider_name=requested_provider,
+                    requested_model=requested_model,
+                    status="failed",
+                    estimated_cost_usd=estimated_cost,
+                    error_code=fallback_error_code,
+                ),
+                AIRunAttempt(
+                    provider_name="ollama",
+                    requested_model=requested_model,
+                    resolved_model=local_model,
+                    status="fallback_success",
+                    duration_ms=provider_metadata.get("duration_ms") or 0,
+                ),
+            ],
+            created_at=datetime.now(UTC),
+        )
     provider_metadata["estimated_cost"] = (
         provider_metadata.get("estimated_cost") or estimated_cost
     )
@@ -383,13 +464,47 @@ async def _record_completed_usage(
         model=provider_metadata.get("model"),
         task_type=task_type,
         routing_mode=routing_mode,
-        input_tokens=None,
-        output_tokens=None,
+        input_tokens=provider_metadata.get("input_tokens"),
+        output_tokens=provider_metadata.get("output_tokens"),
         estimated_cost=provider_metadata.get("estimated_cost"),
         actual_cost=provider_metadata.get("actual_cost"),
         status="success",
-        provider_request_id=None,
+        provider_request_id=provider_metadata.get("provider_request_id"),
         error_code=None,
+        run_id=run_id,
+        requested_provider_name=requested_provider,
+        requested_model=requested_model,
+        resolved_model=provider_metadata.get("resolved_model") or provider_metadata.get("model"),
+        fallback_reason=None,
+        duration_ms=provider_metadata.get("duration_ms"),
+        reasoning_tokens=provider_metadata.get("reasoning_tokens"),
+        cached_tokens=provider_metadata.get("cached_tokens"),
+    )
+    resolved_model = provider_metadata.get("resolved_model") or provider_metadata.get("model")
+    return AIRunReceipt(
+        run_id=run_id,
+        requested_provider=requested_provider,
+        requested_model=requested_model,
+        executed_provider=provider_metadata["provider_name"],
+        resolved_model=resolved_model,
+        fallback_used=False,
+        fallback_reason=None,
+        status="success",
+        attempts=[AIRunAttempt(
+            provider_name=provider_metadata["provider_name"],
+            requested_model=requested_model,
+            resolved_model=resolved_model,
+            status="success",
+            provider_request_id=provider_metadata.get("provider_request_id"),
+            input_tokens=provider_metadata.get("input_tokens"),
+            output_tokens=provider_metadata.get("output_tokens"),
+            reasoning_tokens=provider_metadata.get("reasoning_tokens"),
+            cached_tokens=provider_metadata.get("cached_tokens"),
+            estimated_cost_usd=provider_metadata.get("estimated_cost"),
+            actual_cost_usd=provider_metadata.get("actual_cost"),
+            duration_ms=provider_metadata.get("duration_ms") or 0,
+        )],
+        created_at=datetime.now(UTC),
     )
 
 
@@ -718,6 +833,7 @@ async def openrouter_models(
         AIProviderModelUnavailableError,
         AIProviderTimeoutError,
         AIProviderNetworkError,
+        AIProviderRequestError,
     ) as exc:
         status_code, detail = _provider_error_detail(exc, "openrouter")
         raise HTTPException(status_code=status_code, detail=detail) from exc
@@ -765,6 +881,7 @@ async def select_openrouter_model(
         AIProviderModelUnavailableError,
         AIProviderTimeoutError,
         AIProviderNetworkError,
+        AIProviderRequestError,
     ) as exc:
         status_code, detail = _provider_error_detail(exc, "openrouter")
         raise HTTPException(status_code=status_code, detail=detail) from exc
@@ -831,6 +948,7 @@ async def preview_analysis(
         AIProviderModelUnavailableError,
         AIProviderTimeoutError,
         AIProviderNetworkError,
+        AIProviderRequestError,
     ) as exc:
         status_code, detail = _provider_error_detail(exc, "openrouter")
         raise HTTPException(status_code=status_code, detail=detail) from exc
@@ -921,6 +1039,15 @@ async def usage_summary(
 ):
     """Return current-month AI estimated and actual spend."""
     return AIUsageSummaryResponse(**await usage_ledger.monthly_spend_summary())
+
+
+@router.get("/runs", response_model=list[AIRunReceipt])
+async def recent_ai_runs(
+    limit: int = Query(default=50, ge=1, le=50),
+    usage_ledger: AIUsageLedger = Depends(get_ai_usage_ledger),
+):
+    """Return recent metadata-only AI run receipts."""
+    return await usage_ledger.list_run_receipts(limit=limit)
 
 
 @router.post("/providers/{provider_name}/key", response_model=AIProviderStatus)
@@ -1272,6 +1399,7 @@ async def analyze(
         AIProviderAuthError,
         AIProviderModelUnavailableError,
         AIProviderNetworkError,
+        AIProviderRequestError,
         AIProviderRateLimitError,
         AIProviderTimeoutError,
     ) as exc:
@@ -1419,6 +1547,8 @@ async def analyze_stream(
             cloud_provider = None
             fallback_error_code = "ai_keychain_unavailable"
 
+        run_id = str(uuid4())
+
         async def prepared_event_stream():
             try:
                 async for event in ai.analyze_prepared_stream(
@@ -1428,7 +1558,7 @@ async def analyze_stream(
                 ):
                     if event.get("type") == "done":
                         provider_metadata = event.get("provider") or {}
-                        await _record_completed_usage(
+                        receipt = await _record_completed_usage(
                             usage_ledger=usage_ledger,
                             requested_provider="openrouter",
                             requested_model=snapshot.model.id,
@@ -1437,17 +1567,23 @@ async def analyze_stream(
                             routing_mode=policy["routing_mode"],
                             estimated_cost=float(snapshot.cost.estimated_cost_usd),
                             fallback_error_code=fallback_error_code,
+                            run_id=run_id,
                         )
+                        event = {
+                            **event,
+                            "receipt": receipt.model_dump(mode="json"),
+                        }
                     yield f"data: {json.dumps(event)}\n\n"
             except (
                 AIProviderAuthError,
                 AIProviderModelUnavailableError,
                 AIProviderNetworkError,
+                AIProviderRequestError,
                 AIProviderRateLimitError,
                 AIProviderTimeoutError,
             ) as exc:
                 _, detail = _provider_error_detail(exc, "openrouter")
-                await _record_failed_cloud_usage(
+                receipt = await _record_failed_cloud_usage(
                     usage_ledger=usage_ledger,
                     provider_name="openrouter",
                     model=snapshot.model.id,
@@ -1455,8 +1591,9 @@ async def analyze_stream(
                     routing_mode=policy["routing_mode"],
                     estimated_cost=float(snapshot.cost.estimated_cost_usd),
                     error_code=detail["error"],
+                    run_id=run_id,
                 )
-                yield f"data: {json.dumps({'type': 'error', **detail})}\n\n"
+                yield f"data: {json.dumps({'type': 'error', **detail, 'receipt': receipt.model_dump(mode='json')})}\n\n"
             finally:
                 await _close_request_provider(cloud_provider)
 
@@ -1542,6 +1679,8 @@ async def analyze_stream(
         request.symbol, request.conid, provider_name, selected_model, request.timeframes,
     )
 
+    run_id = str(uuid4())
+
     async def event_stream():
         async def analysis_events():
             async for event in ai.analyze_stream(
@@ -1563,11 +1702,12 @@ async def analyze_stream(
         async def serialize_analysis_event(event: dict) -> str:
             if event.get("type") == "done":
                 provider_metadata = event.get("provider")
+                receipt = None
                 if provider_metadata is not None and estimated_cost is not None:
                     provider_metadata = dict(provider_metadata)
                     if provider_name == "ollama" and requested_provider_name != "ollama":
                         provider_metadata["fallback_used"] = True
-                    await _record_completed_usage(
+                    receipt = await _record_completed_usage(
                         usage_ledger=usage_ledger,
                         requested_provider=requested_provider_name,
                         requested_model=requested_model,
@@ -1576,11 +1716,13 @@ async def analyze_stream(
                         routing_mode=policy["routing_mode"],
                         estimated_cost=estimated_cost,
                         fallback_error_code=fallback_error_code,
+                        run_id=run_id,
                     )
                 event = {
                     **event,
                     "provider": provider_metadata
                     or _local_provider_metadata(selected_model).model_dump(),
+                    **({"receipt": receipt.model_dump(mode="json")} if receipt else {}),
                 }
             return f"data: {json.dumps(event)}\n\n"
 
@@ -1604,11 +1746,12 @@ async def analyze_stream(
             AIProviderAuthError,
             AIProviderModelUnavailableError,
             AIProviderNetworkError,
+            AIProviderRequestError,
             AIProviderRateLimitError,
             AIProviderTimeoutError,
         ) as exc:
             _, detail = _provider_error_detail(exc, provider_name)
-            await _record_failed_cloud_usage(
+            receipt = await _record_failed_cloud_usage(
                 usage_ledger=usage_ledger,
                 provider_name=provider_name,
                 model=selected_model,
@@ -1616,8 +1759,9 @@ async def analyze_stream(
                 routing_mode=policy["routing_mode"],
                 estimated_cost=estimated_cost,
                 error_code=detail["error"],
+                run_id=run_id,
             )
-            yield f"data: {json.dumps({'type': 'error', **detail})}\n\n"
+            yield f"data: {json.dumps({'type': 'error', **detail, 'receipt': receipt.model_dump(mode='json')})}\n\n"
         finally:
             await _close_request_provider(cloud_provider)
 
@@ -1677,6 +1821,7 @@ async def chat(
         AIProviderAuthError,
         AIProviderModelUnavailableError,
         AIProviderNetworkError,
+        AIProviderRequestError,
         AIProviderRateLimitError,
         AIProviderTimeoutError,
     ) as exc:
@@ -1764,6 +1909,7 @@ async def chat_stream(
             AIProviderAuthError,
             AIProviderModelUnavailableError,
             AIProviderNetworkError,
+            AIProviderRequestError,
             AIProviderRateLimitError,
             AIProviderTimeoutError,
         ) as exc:

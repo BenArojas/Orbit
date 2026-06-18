@@ -18,6 +18,7 @@ import { create } from "zustand";
 import type { SignalData } from "@/components/ai";
 import type {
   AIProviderMetadata,
+  AIRunReceipt,
   AIProviderName,
   AIProviderStatus,
   AIProvidersResponse,
@@ -75,6 +76,7 @@ interface AiState {
   perCallCostCapUsd: number;
   monthlyCostCapUsd: number;
   lastProviderMetadata: AIProviderMetadata | null;
+  lastRunReceipt: AIRunReceipt | null;
   analysisProvider: AIProviderName | null;
   analysisModel: string | null;
   analysisFallbackEnabled: boolean | null;
@@ -99,6 +101,7 @@ interface AiState {
   updateProviderStatus: (provider: AIProviderStatus) => void;
   setRoutingPolicy: (policy: AIRoutingPolicyResponse) => void;
   setLastProviderMetadata: (metadata: AIProviderMetadata | null) => void;
+  setLastRunReceipt: (receipt: AIRunReceipt | null) => void;
   setAnalysisProvider: (provider: AIProviderName) => void;
   setAnalysisModel: (model: string | null) => void;
   setAnalysisFallbackEnabled: (enabled: boolean) => void;
@@ -136,6 +139,7 @@ export const useAiStore = create<AiState>()((set) => ({
   perCallCostCapUsd: 1,
   monthlyCostCapUsd: 25,
   lastProviderMetadata: null,
+  lastRunReceipt: null,
   analysisProvider: null,
   analysisModel: null,
   analysisFallbackEnabled: null,
@@ -190,6 +194,7 @@ export const useAiStore = create<AiState>()((set) => ({
     }),
 
   setLastProviderMetadata: (metadata) => set({ lastProviderMetadata: metadata }),
+  setLastRunReceipt: (receipt) => set({ lastRunReceipt: receipt }),
 
   setAnalysisProvider: (provider) => set({ analysisProvider: provider }),
 
@@ -214,6 +219,7 @@ export const useAiStore = create<AiState>()((set) => ({
       signal: null,
       streamingContent: "",
       lastProviderMetadata: null,
+      lastRunReceipt: null,
     }),
 
   // ── Loading actions ──

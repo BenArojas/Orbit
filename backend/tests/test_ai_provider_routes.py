@@ -332,6 +332,14 @@ def test_cloud_stream_executes_snapshot_without_refetching_market_data(
                     "provider_name": "openrouter",
                     "kind": "cloud",
                     "model": snapshot.model.id,
+                    "requested_model": snapshot.model.id,
+                    "resolved_model": "anthropic/claude-sonnet-4",
+                    "provider_request_id": "gen-snapshot-1",
+                    "input_tokens": 120,
+                    "output_tokens": 80,
+                    "reasoning_tokens": 12,
+                    "cached_tokens": 20,
+                    "duration_ms": 640,
                     "estimated_cost": None,
                     "actual_cost": 0.01,
                     "fallback_used": False,
@@ -371,10 +379,125 @@ def test_cloud_stream_executes_snapshot_without_refetching_market_data(
         "POST", "/ai/analyze/stream", json={"snapshot_id": preview["snapshot_id"]},
     ) as response:
         assert response.status_code == 200
-        list(response.iter_lines())
+        events = [
+            json.loads(line.removeprefix("data: "))
+            for line in response.iter_lines()
+            if line.startswith("data: ")
+        ]
 
     assert fake_ibkr.history.await_count == 1
     assert fake_ai.executed_body == preview["request_body"]
+    receipt = events[-1]["receipt"]
+    assert receipt["requested_provider"] == "openrouter"
+    assert receipt["executed_provider"] == "openrouter"
+    assert receipt["resolved_model"] == "anthropic/claude-sonnet-4"
+    assert receipt["attempts"][0]["provider_request_id"] == "gen-snapshot-1"
+    assert receipt["attempts"][0]["input_tokens"] == 120
+    assert receipt["attempts"][0]["actual_cost_usd"] == "0.01"
+    assert receipt["attempts"][0]["duration_ms"] == 640
+
+
+@pytest.mark.asyncio
+async def test_cloud_stream_error_contains_failed_receipt(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    from deps import get_ai_keystore, get_ai_settings, get_ai_usage_ledger
+    from routers import ai as ai_router
+    from services.ai_analysis_preparation import AIAnalysisPreparationService
+    from services.ai_cloud_adapters import AIProviderNetworkError
+
+    class FakeProvider:
+        async def aclose(self) -> None:
+            return None
+
+    class FakeAi:
+        async def analyze_prepared_stream(self, **_kwargs):
+            raise AIProviderNetworkError("network failed")
+            yield
+
+    monkeypatch.setattr(
+        ai_router, "OpenRouterProvider", lambda *, api_key: FakeProvider(),
+    )
+    preparation = AIAnalysisPreparationService()
+    snapshot = await preparation.prepare(
+        AnalyzeRequest(
+            conid=265598,
+            symbol="AAPL",
+            provider_name="openrouter",
+            model="anthropic/claude-sonnet-4",
+        ),
+        provider_name="openrouter",
+        model=AIModelOption(
+            id="anthropic/claude-sonnet-4",
+            name="Claude Sonnet 4",
+            context_length=200000,
+            max_completion_tokens=4096,
+            prompt_price_per_token="0.000003",
+            completion_price_per_token="0.000015",
+            request_price="0",
+        ),
+        messages=[{"role": "user", "content": "Analyze AAPL."}],
+        fallback_enabled=False,
+    )
+    client = _client(
+        ai=FakeAi(), ibkr=MagicMock(), db=MagicMock(), preparation=preparation,
+    )
+    client.app.dependency_overrides[get_ai_settings] = lambda: _FakeCloudSettings()
+    client.app.dependency_overrides[get_ai_keystore] = lambda: _FakeReadableKeyStore()
+    client.app.dependency_overrides[get_ai_usage_ledger] = lambda: _FakeUsageLedger()
+
+    with client.stream(
+        "POST", "/ai/analyze/stream", json={"snapshot_id": snapshot.snapshot_id},
+    ) as response:
+        event = next(
+            json.loads(line.removeprefix("data: "))
+            for line in response.iter_lines()
+            if line.startswith("data: ")
+        )
+
+    assert event["type"] == "error"
+    assert event["error"] == "ai_provider_network_error"
+    assert event["receipt"]["status"] == "failed"
+    assert event["receipt"]["executed_provider"] is None
+    assert event["receipt"]["attempts"][0]["provider_request_id"] is None
+
+
+def test_recent_ai_runs_returns_grouped_metadata_receipts():
+    from deps import get_ai_usage_ledger
+    from models import AIRunAttempt, AIRunReceipt
+
+    class ReceiptLedger(_FakeUsageLedger):
+        async def list_run_receipts(self, *, limit: int = 50):
+            assert limit == 10
+            return [AIRunReceipt(
+                run_id="run-1",
+                requested_provider="openrouter",
+                requested_model="anthropic/claude-sonnet-4",
+                executed_provider="openrouter",
+                resolved_model="anthropic/claude-sonnet-4",
+                fallback_used=False,
+                fallback_reason=None,
+                status="success",
+                attempts=[AIRunAttempt(
+                    provider_name="openrouter",
+                    requested_model="anthropic/claude-sonnet-4",
+                    resolved_model="anthropic/claude-sonnet-4",
+                    status="success",
+                    provider_request_id="gen-1",
+                    duration_ms=500,
+                )],
+                created_at=datetime(2026, 6, 18, tzinfo=UTC),
+            )]
+
+    client = _client()
+    client.app.dependency_overrides[get_ai_usage_ledger] = lambda: ReceiptLedger()
+
+    response = client.get("/ai/runs?limit=10")
+
+    assert response.status_code == 200
+    assert response.json()[0]["run_id"] == "run-1"
+    assert "request_body" not in response.text
+    assert "messages" not in response.text
 
 
 @pytest.mark.asyncio
@@ -1186,21 +1309,25 @@ def test_analyze_returns_cloud_provider_metadata_for_enabled_openrouter():
         "actual_cost": 0.0123,
         "fallback_used": False,
     }
-    assert usage.records == [
-        {
-            "provider_name": "openrouter",
-            "model": "anthropic/claude-sonnet-4",
-            "task_type": "analysis",
-            "routing_mode": "cloud_manual",
-            "input_tokens": None,
-            "output_tokens": None,
-            "estimated_cost": 0.02,
-            "actual_cost": 0.0123,
-            "status": "success",
-            "provider_request_id": None,
-            "error_code": None,
-        }
-    ]
+    record = usage.records[0]
+    assert {key: record[key] for key in (
+        "provider_name", "model", "task_type", "routing_mode", "input_tokens",
+        "output_tokens", "estimated_cost", "actual_cost", "status",
+        "provider_request_id", "error_code",
+    )} == {
+        "provider_name": "openrouter",
+        "model": "anthropic/claude-sonnet-4",
+        "task_type": "analysis",
+        "routing_mode": "cloud_manual",
+        "input_tokens": None,
+        "output_tokens": None,
+        "estimated_cost": 0.02,
+        "actual_cost": 0.0123,
+        "status": "success",
+        "provider_request_id": None,
+        "error_code": None,
+    }
+    assert record["run_id"]
 
 
 def test_analyze_rejects_cloud_provider_when_routing_policy_is_local_only():
@@ -1338,7 +1465,12 @@ def test_analyze_stream_keychain_failure_falls_back_to_ollama():
 
     assert frames[-1]["provider"]["provider_name"] == "ollama"
     assert frames[-1]["provider"]["fallback_used"] is True
+    assert frames[-1]["receipt"]["status"] == "fallback_success"
+    assert [attempt["status"] for attempt in frames[-1]["receipt"]["attempts"]] == [
+        "failed", "fallback_success",
+    ]
     assert [record["status"] for record in usage.records] == ["failed", "fallback_success"]
+    assert usage.records[0]["run_id"] == usage.records[1]["run_id"]
 
 
 def test_analyze_registers_enabled_openrouter_from_keychain_ref(monkeypatch):
@@ -1614,7 +1746,14 @@ def test_analyze_maps_cloud_auth_error_to_typed_response_and_failed_usage(monkey
         "provider_name": "openrouter",
     }
     assert "sk-runtime-secret" not in resp.text
-    assert usage.records[-1] == {
+    assert usage.records[-1] | {
+        "run_id": None,
+        "requested_provider_name": None,
+        "requested_model": None,
+        "resolved_model": None,
+        "fallback_reason": None,
+        "duration_ms": None,
+    } == {
         "provider_name": "openrouter",
         "model": "anthropic/claude-sonnet-4",
         "task_type": "analysis",
@@ -1626,7 +1765,15 @@ def test_analyze_maps_cloud_auth_error_to_typed_response_and_failed_usage(monkey
         "status": "failed",
         "provider_request_id": None,
         "error_code": "ai_provider_auth_error",
+        "run_id": None,
+        "requested_provider_name": None,
+        "requested_model": None,
+        "resolved_model": None,
+        "fallback_reason": None,
+        "duration_ms": None,
     }
+    assert usage.records[-1]["run_id"]
+    assert usage.records[-1]["requested_provider_name"] == "openrouter"
 
 
 def test_analyze_resolves_cloud_route_before_ollama_readiness(monkeypatch):
@@ -1860,7 +2007,12 @@ def test_analyze_stream_done_event_contains_cloud_provider_metadata():
         "actual_cost": 0.0123,
         "fallback_used": False,
     }
-    assert usage.records[-1] == {
+    record = usage.records[-1]
+    assert {key: record[key] for key in (
+        "provider_name", "model", "task_type", "routing_mode", "input_tokens",
+        "output_tokens", "estimated_cost", "actual_cost", "status",
+        "provider_request_id", "error_code",
+    )} == {
         "provider_name": "openrouter",
         "model": "anthropic/claude-sonnet-4",
         "task_type": "analysis",
@@ -1873,6 +2025,8 @@ def test_analyze_stream_done_event_contains_cloud_provider_metadata():
         "provider_request_id": None,
         "error_code": None,
     }
+    assert record["run_id"]
+    assert record["requested_provider_name"] == "openrouter"
 
 
 def test_analyze_stream_maps_cloud_rate_limit_to_typed_sse_and_failed_usage(monkeypatch):
@@ -1949,14 +2103,19 @@ def test_analyze_stream_maps_cloud_rate_limit_to_typed_sse_and_failed_usage(monk
             if line.startswith("data: ")
         ]
 
-    assert frames == [
-        {
-            "type": "error",
-            "error": "ai_provider_rate_limit_error",
-            "message": "Cloud AI provider rate limit was reached.",
-            "provider_name": "openrouter",
-        }
-    ]
+    assert len(frames) == 1
+    assert {key: frames[0][key] for key in (
+        "type", "error", "message", "provider_name",
+    )} == {
+        "type": "error",
+        "error": "ai_provider_rate_limit_error",
+        "message": "Cloud AI provider rate limit was reached.",
+        "provider_name": "openrouter",
+    }
+    assert frames[0]["receipt"]["status"] == "failed"
+    assert frames[0]["receipt"]["attempts"][0]["error_code"] == (
+        "ai_provider_rate_limit_error"
+    )
     assert usage.records[-1]["status"] == "failed"
     assert usage.records[-1]["error_code"] == "ai_provider_rate_limit_error"
 

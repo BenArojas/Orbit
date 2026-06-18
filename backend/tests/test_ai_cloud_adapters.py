@@ -121,9 +121,12 @@ async def test_openrouter_provider_normalizes_chat_response_and_usage_cost():
                 "usage": {
                     "prompt_tokens": 120,
                     "completion_tokens": 80,
+                    "completion_tokens_details": {"reasoning_tokens": 10},
+                    "prompt_tokens_details": {"cached_tokens": 25},
                     "cost": 0.0123,
                 },
                 "id": "gen-123",
+                "model": "anthropic/claude-sonnet-4",
             },
         )
 
@@ -141,10 +144,18 @@ async def test_openrouter_provider_normalizes_chat_response_and_usage_cost():
     assert result.content == "Cloud narrative."
     assert result.metadata.provider_name == "openrouter"
     assert result.metadata.kind == "cloud"
-    assert result.metadata.model == "openrouter/auto"
+    assert result.metadata.model == "anthropic/claude-sonnet-4"
     assert result.metadata.estimated_cost is None
     assert result.metadata.actual_cost == 0.0123
     assert result.provider_request_id == "gen-123"
+    assert result.metadata.requested_model == "openrouter/auto"
+    assert result.metadata.resolved_model == "anthropic/claude-sonnet-4"
+    assert result.metadata.provider_request_id == "gen-123"
+    assert result.metadata.input_tokens == 120
+    assert result.metadata.output_tokens == 80
+    assert result.metadata.reasoning_tokens == 10
+    assert result.metadata.cached_tokens == 25
+    assert result.metadata.duration_ms is not None
     assert requests[0].url.path == "/api/v1/chat/completions"
 
     await client.aclose()
@@ -441,7 +452,16 @@ async def test_openrouter_provider_normalizes_stream_chunks_and_usage_cost():
             "data: " + json.dumps({"choices": [{"delta": {"content": "Cloud "}}]}),
             "data: " + json.dumps({"choices": [{"delta": {"content": "stream."}}]}),
             "data: " + json.dumps({
-                "usage": {"prompt_tokens": 10, "completion_tokens": 5, "cost": 0.0042}
+                "id": "gen-stream-123",
+                "model": "anthropic/claude-sonnet-4",
+                "choices": [],
+                "usage": {
+                    "prompt_tokens": 10,
+                    "completion_tokens": 5,
+                    "reasoning_tokens": 2,
+                    "prompt_tokens_details": {"cached_tokens": 3},
+                    "cost": 0.0042,
+                },
             }),
             "data: [DONE]",
             "",
@@ -462,21 +482,20 @@ async def test_openrouter_provider_normalizes_stream_chunks_and_usage_cost():
         )
     ]
 
-    assert events == [
+    assert events[:2] == [
         {"type": "token", "content": "Cloud "},
         {"type": "token", "content": "stream."},
-        {
-            "type": "metadata",
-            "metadata": {
-                "provider_name": "openrouter",
-                "kind": "cloud",
-                "model": "openrouter/auto",
-                "estimated_cost": None,
-                "actual_cost": 0.0042,
-                "fallback_used": False,
-            },
-        },
     ]
+    metadata = events[2]["metadata"]
+    assert metadata["requested_model"] == "openrouter/auto"
+    assert metadata["resolved_model"] == "anthropic/claude-sonnet-4"
+    assert metadata["provider_request_id"] == "gen-stream-123"
+    assert metadata["input_tokens"] == 10
+    assert metadata["output_tokens"] == 5
+    assert metadata["reasoning_tokens"] == 2
+    assert metadata["cached_tokens"] == 3
+    assert metadata["actual_cost"] == 0.0042
+    assert metadata["duration_ms"] >= 0
     assert sent_body["max_tokens"] == 4096
 
     await client.aclose()
@@ -503,5 +522,43 @@ async def test_openrouter_provider_maps_provider_errors_to_typed_exceptions():
             messages=[{"role": "user", "content": "Analyze AAPL"}],
             model="openrouter/auto",
         )
+
+    await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_openrouter_provider_maps_400_errors_without_leaking_response_body():
+    from services.ai_cloud_adapters import (
+        AIProviderModelUnavailableError,
+        AIProviderRequestError,
+        OpenRouterProvider,
+    )
+
+    responses = iter([
+        {"error": {"message": "No endpoints found for requested model"}},
+        {"error": {"message": "Rejected request containing secret prompt text"}},
+    ])
+
+    async def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(400, json=next(responses))
+
+    client = httpx.AsyncClient(
+        base_url="https://openrouter.ai",
+        transport=httpx.MockTransport(handler),
+    )
+    provider = OpenRouterProvider(api_key="sk-test", http_client=client)
+
+    with pytest.raises(AIProviderModelUnavailableError):
+        await provider.chat_with_metadata(
+            messages=[{"role": "user", "content": "Analyze AAPL"}],
+            model="missing/model",
+        )
+
+    with pytest.raises(AIProviderRequestError, match="OpenRouter request rejected") as exc:
+        await provider.chat_with_metadata(
+            messages=[{"role": "user", "content": "secret prompt text"}],
+            model="valid/model",
+        )
+    assert "secret prompt text" not in str(exc.value)
 
     await client.aclose()

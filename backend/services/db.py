@@ -309,6 +309,14 @@ class DatabaseService:
                 status              TEXT NOT NULL,
                 provider_request_id TEXT,
                 error_code          TEXT,
+                run_id              TEXT,
+                requested_provider_name TEXT,
+                requested_model     TEXT,
+                resolved_model      TEXT,
+                fallback_reason     TEXT,
+                duration_ms         INTEGER,
+                reasoning_tokens    INTEGER,
+                cached_tokens       INTEGER,
                 created_at          TEXT DEFAULT (datetime('now'))
             );
 
@@ -617,6 +625,14 @@ class DatabaseService:
             # Inflect P1-F: distinguish IBKR recent fills from PA/manual basis rows.
             "ALTER TABLE fills ADD COLUMN source TEXT NOT NULL DEFAULT 'IBKR_TRADES'",
             "ALTER TABLE ai_routing_policy ADD COLUMN active_provider TEXT NOT NULL DEFAULT 'ollama'",
+            "ALTER TABLE ai_usage_log ADD COLUMN run_id TEXT",
+            "ALTER TABLE ai_usage_log ADD COLUMN requested_provider_name TEXT",
+            "ALTER TABLE ai_usage_log ADD COLUMN requested_model TEXT",
+            "ALTER TABLE ai_usage_log ADD COLUMN resolved_model TEXT",
+            "ALTER TABLE ai_usage_log ADD COLUMN fallback_reason TEXT",
+            "ALTER TABLE ai_usage_log ADD COLUMN duration_ms INTEGER",
+            "ALTER TABLE ai_usage_log ADD COLUMN reasoning_tokens INTEGER",
+            "ALTER TABLE ai_usage_log ADD COLUMN cached_tokens INTEGER",
         ]
         for sql in migrations:
             try:
@@ -2019,6 +2035,14 @@ class DatabaseService:
         status: str,
         provider_request_id: str | None,
         error_code: str | None,
+        run_id: str,
+        requested_provider_name: str,
+        requested_model: str | None,
+        resolved_model: str | None,
+        fallback_reason: str | None,
+        duration_ms: int | None,
+        reasoning_tokens: int | None,
+        cached_tokens: int | None,
     ) -> dict[str, Any]:
         """Insert one AI usage row and return it."""
         def _do() -> dict[str, Any]:
@@ -2028,9 +2052,12 @@ class DatabaseService:
                     """INSERT INTO ai_usage_log (
                            provider_name, model, task_type, routing_mode,
                            input_tokens, output_tokens, estimated_cost,
-                           actual_cost, status, provider_request_id, error_code
+                           actual_cost, status, provider_request_id, error_code,
+                           run_id, requested_provider_name, requested_model,
+                           resolved_model, fallback_reason, duration_ms,
+                           reasoning_tokens, cached_tokens
                        )
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (
                         provider_name,
                         model,
@@ -2043,13 +2070,23 @@ class DatabaseService:
                         status,
                         provider_request_id,
                         error_code,
+                        run_id,
+                        requested_provider_name,
+                        requested_model,
+                        resolved_model,
+                        fallback_reason,
+                        duration_ms,
+                        reasoning_tokens,
+                        cached_tokens,
                     ),
                 )
                 row = self._conn.execute(
                     """SELECT id, provider_name, model, task_type, routing_mode,
                               input_tokens, output_tokens, estimated_cost,
                               actual_cost, currency, status, provider_request_id,
-                              error_code, created_at
+                              error_code, run_id, requested_provider_name,
+                              requested_model, resolved_model, fallback_reason,
+                              duration_ms, reasoning_tokens, cached_tokens, created_at
                        FROM ai_usage_log
                        WHERE id = ?""",
                     (cur.lastrowid,),
@@ -2066,10 +2103,38 @@ class DatabaseService:
                 """SELECT id, provider_name, model, task_type, routing_mode,
                           input_tokens, output_tokens, estimated_cost,
                           actual_cost, currency, status, provider_request_id,
-                          error_code, created_at
+                          error_code, run_id, requested_provider_name,
+                          requested_model, resolved_model, fallback_reason,
+                          duration_ms, reasoning_tokens, cached_tokens, created_at
                    FROM ai_usage_log
                    ORDER BY id DESC
                    LIMIT ?""",
+                (limit,),
+            )
+        )
+
+    async def list_ai_run_attempts(self, *, limit: int = 50) -> list[dict[str, Any]]:
+        """Return attempts for the newest logical AI runs."""
+        return await self._run_read(
+            lambda: self._fetchall(
+                """SELECT id, provider_name, model, input_tokens, output_tokens,
+                          estimated_cost, actual_cost, status, provider_request_id,
+                          error_code, COALESCE(run_id, 'legacy-' || id) AS run_id,
+                          COALESCE(requested_provider_name, provider_name)
+                              AS requested_provider_name,
+                          COALESCE(requested_model, model) AS requested_model,
+                          COALESCE(resolved_model, model) AS resolved_model,
+                          fallback_reason, COALESCE(duration_ms, 0) AS duration_ms,
+                          reasoning_tokens, cached_tokens, created_at
+                   FROM ai_usage_log
+                   WHERE COALESCE(run_id, 'legacy-' || id) IN (
+                       SELECT COALESCE(run_id, 'legacy-' || id)
+                       FROM ai_usage_log
+                       GROUP BY COALESCE(run_id, 'legacy-' || id)
+                       ORDER BY MAX(id) DESC
+                       LIMIT ?
+                   )
+                   ORDER BY id DESC""",
                 (limit,),
             )
         )

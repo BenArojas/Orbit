@@ -60,6 +60,7 @@ describe("useAiRunInspector", () => {
     expect(startPreparedAnalyze).not.toHaveBeenCalled();
     expect(result.current.open).toBe(true);
     act(() => result.current.send());
+    expect(result.current.open).toBe(true);
     expect(startPreparedAnalyze).toHaveBeenCalledWith(
       "snapshot-123", "anthropic/claude-sonnet-4",
     );

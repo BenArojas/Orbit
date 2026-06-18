@@ -18,6 +18,7 @@ const aiStoreState = {
   clearChat: vi.fn(),
   pushResponseTime: vi.fn(),
   setLastProviderMetadata: vi.fn(),
+  setLastRunReceipt: vi.fn(),
 };
 
 const activeFibs = [
@@ -230,6 +231,18 @@ describe("useAiAnalyzeStream", () => {
               actual_cost: 0.0123,
               fallback_used: false,
             },
+            receipt: {
+              run_id: "run-cloud-1",
+              requested_provider: "openrouter",
+              requested_model: "openrouter/auto",
+              executed_provider: "openrouter",
+              resolved_model: "openrouter/auto",
+              fallback_used: false,
+              fallback_reason: null,
+              status: "success",
+              attempts: [],
+              created_at: "2026-06-18T12:00:00Z",
+            },
           });
           controller.enqueue(new TextEncoder().encode(`data: ${payload}\n\n`));
           controller.close();
@@ -259,6 +272,66 @@ describe("useAiAnalyzeStream", () => {
       actual_cost: 0.0123,
       fallback_used: false,
     });
+    expect(aiStoreState.setLastRunReceipt).toHaveBeenCalledWith(
+      expect.objectContaining({ run_id: "run-cloud-1", status: "success" }),
+    );
+  });
+
+  it("surfaces typed SSE errors and stores their failed receipt", async () => {
+    const receipt = {
+      run_id: "run-failed-1",
+      requested_provider: "openrouter" as const,
+      requested_model: "anthropic/claude-sonnet-4",
+      executed_provider: null,
+      resolved_model: null,
+      fallback_used: false,
+      fallback_reason: null,
+      status: "failed" as const,
+      attempts: [{
+        provider_name: "openrouter" as const,
+        requested_model: "anthropic/claude-sonnet-4",
+        resolved_model: null,
+        status: "failed" as const,
+        provider_request_id: null,
+        input_tokens: null,
+        output_tokens: null,
+        reasoning_tokens: null,
+        cached_tokens: null,
+        estimated_cost_usd: "0.02",
+        actual_cost_usd: null,
+        duration_ms: 50,
+        error_code: "ai_provider_network_error",
+      }],
+      created_at: "2026-06-18T12:00:00Z",
+    };
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      body: new ReadableStream({
+        start(controller) {
+          const payload = JSON.stringify({
+            type: "error",
+            error: "ai_provider_network_error",
+            message: "Cloud AI provider network request failed.",
+            provider_name: "openrouter",
+            receipt,
+          });
+          controller.enqueue(new TextEncoder().encode(`data: ${payload}\n\n`));
+          controller.close();
+        },
+      }),
+    }) as typeof fetch;
+    const { result } = renderHook(() => useAiAnalyzeStream());
+
+    await act(async () => {
+      await result.current.startPreparedAnalyze(
+        "snapshot-123", "anthropic/claude-sonnet-4",
+      );
+    });
+
+    expect(aiStoreState.addMessage).toHaveBeenCalledWith(expect.objectContaining({
+      content: "[Analysis failed: Cloud AI provider network request failed.]",
+    }));
+    expect(aiStoreState.setLastRunReceipt).toHaveBeenCalledWith(receipt);
   });
 
   it("sends selected provider, model, and task type in the analyze request body", async () => {
