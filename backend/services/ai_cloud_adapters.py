@@ -249,7 +249,7 @@ class OpenRouterProvider:
         price_values = (
             pricing.get("prompt"),
             pricing.get("completion"),
-            pricing.get("request"),
+            pricing["request"] if "request" in pricing else "0",
         )
         if not all(isinstance(value, str) for value in price_values):
             return None

@@ -175,4 +175,29 @@ describe("AiAnalysisTargetControls", () => {
     expect(fallback).toHaveAttribute("aria-checked", "false");
     expect(useAiStore.getState().analysisFallbackEnabled).toBe(false);
   });
+
+  it("shows explicit empty-state text when no compatible OpenRouter models are available", async () => {
+    apiMocks.models.mockResolvedValueOnce({
+      provider_name: "openrouter",
+      selected_model: null,
+      fetched_at: "2026-06-18T00:00:00Z",
+      models: [],
+    });
+
+    renderControls();
+    fireEvent.click(screen.getByRole("button", { name: /openrouter/i }));
+
+    expect(await screen.findByText("No compatible OpenRouter models available."))
+      .toBeInTheDocument();
+  });
+
+  it("renders catalog fetch failures as alerts", async () => {
+    apiMocks.models.mockRejectedValueOnce(new Error("OpenRouter catalog unavailable"));
+
+    renderControls();
+    fireEvent.click(screen.getByRole("button", { name: /openrouter/i }));
+
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("OpenRouter catalog unavailable");
+  });
 });

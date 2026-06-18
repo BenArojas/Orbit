@@ -20,6 +20,7 @@ export default function AiAnalysisTargetControls() {
     openRouterModels = [],
     openRouterSelectedModel = null,
     isLoadingOpenRouterModels = false,
+    openRouterModelsError = null,
     selectOpenRouterModel = () => undefined,
     isSelectingOpenRouterModel = false,
   } = useAiStatus();
@@ -79,48 +80,63 @@ export default function AiAnalysisTargetControls() {
       </div>
       {target === "openrouter" && openRouterEnabled ? (
         <div className="mt-2 space-y-2">
-          <label
-            htmlFor="ai-analysis-openrouter-model"
-            className="mb-1 block text-[9px] uppercase text-[var(--text-3)]"
-          >
-            OpenRouter model
-          </label>
-          <select
-            id="ai-analysis-openrouter-model"
-            aria-label="OpenRouter model"
-            value={selectedModel}
-            disabled={isLoadingOpenRouterModels || isSelectingOpenRouterModel}
-            onChange={(event) => selectOpenRouterModel(event.target.value)}
-            className="h-7 w-full rounded border border-[var(--border)] bg-[var(--bg-0)] px-2 text-[10px] text-[var(--text-1)] focus:outline-none focus:ring-1 focus:ring-[var(--clr-cyan)]"
-          >
-            {!selectedModel ? <option value="">Select a model</option> : null}
-            {openRouterModels.map((model) => (
-              <option key={model.id} value={model.id}>
-                {model.name}
-              </option>
-            ))}
-          </select>
-          <div className="flex items-center justify-between gap-3">
-            <span className="text-[10px] text-[var(--text-2)]">Local fallback</span>
-            <button
-              type="button"
-              role="switch"
-              aria-label="Local fallback"
-              aria-checked={fallbackEnabled}
-              onClick={() => setAnalysisFallbackEnabled(!fallbackEnabled)}
-              className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full border transition-colors ${
-                fallbackEnabled
-                  ? "border-[var(--clr-cyan)] bg-[var(--clr-cyan)]"
-                  : "border-[var(--border)] bg-[var(--bg-4)]"
-              }`}
+          {openRouterModelsError ? (
+            <div
+              role="alert"
+              className="rounded border border-red-500/40 bg-red-500/10 px-2 py-1.5 text-[10px] text-red-200"
             >
-              <span
-                className={`h-3.5 w-3.5 rounded-full bg-white transition-transform ${
-                  fallbackEnabled ? "translate-x-[17px]" : "translate-x-[2px]"
-                }`}
-              />
-            </button>
-          </div>
+              {openRouterModelsError}
+            </div>
+          ) : !isLoadingOpenRouterModels && openRouterModels.length === 0 ? (
+            <p className="text-[10px] text-[var(--text-2)]">
+              No compatible OpenRouter models available.
+            </p>
+          ) : (
+            <>
+              <label
+                htmlFor="ai-analysis-openrouter-model"
+                className="mb-1 block text-[9px] uppercase text-[var(--text-3)]"
+              >
+                OpenRouter model
+              </label>
+              <select
+                id="ai-analysis-openrouter-model"
+                aria-label="OpenRouter model"
+                value={selectedModel}
+                disabled={isLoadingOpenRouterModels || isSelectingOpenRouterModel}
+                onChange={(event) => selectOpenRouterModel(event.target.value)}
+                className="h-7 w-full rounded border border-[var(--border)] bg-[var(--bg-0)] px-2 text-[10px] text-[var(--text-1)] focus:outline-none focus:ring-1 focus:ring-[var(--clr-cyan)]"
+              >
+                {!selectedModel ? <option value="">Select a model</option> : null}
+                {openRouterModels.map((model) => (
+                  <option key={model.id} value={model.id}>
+                    {model.name}
+                  </option>
+                ))}
+              </select>
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-[10px] text-[var(--text-2)]">Local fallback</span>
+                <button
+                  type="button"
+                  role="switch"
+                  aria-label="Local fallback"
+                  aria-checked={fallbackEnabled}
+                  onClick={() => setAnalysisFallbackEnabled(!fallbackEnabled)}
+                  className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full border transition-colors ${
+                    fallbackEnabled
+                      ? "border-[var(--clr-cyan)] bg-[var(--clr-cyan)]"
+                      : "border-[var(--border)] bg-[var(--bg-4)]"
+                  }`}
+                >
+                  <span
+                    className={`h-3.5 w-3.5 rounded-full bg-white transition-transform ${
+                      fallbackEnabled ? "translate-x-[17px]" : "translate-x-[2px]"
+                    }`}
+                  />
+                </button>
+              </div>
+            </>
+          )}
         </div>
       ) : null}
     </div>

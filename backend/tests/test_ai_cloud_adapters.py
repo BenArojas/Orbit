@@ -45,7 +45,6 @@ async def test_openrouter_list_models_keeps_only_fixed_priced_text_models():
         "pricing": {
             "prompt": "0.000003",
             "completion": "0.000015",
-            "request": "0",
         },
     }
     invalid_models = [

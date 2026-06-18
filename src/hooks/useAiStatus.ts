@@ -158,6 +158,12 @@ export function useAiStatus() {
     openRouterModels: openRouterModelsQuery.data?.models ?? [],
     openRouterSelectedModel: openRouterModelsQuery.data?.selected_model ?? null,
     isLoadingOpenRouterModels: openRouterModelsQuery.isLoading,
+    openRouterModelsError:
+      openRouterModelsQuery.error instanceof Error
+        ? openRouterModelsQuery.error.message
+        : openRouterModelsQuery.error
+          ? "Failed to load OpenRouter models."
+          : null,
 
     // Actions
     selectModel: selectModelMutation.mutate,
