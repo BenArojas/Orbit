@@ -1,4 +1,6 @@
 import { act, renderHook } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { createElement, type ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { parallaxApi } from "@/modules/parallax/api";
@@ -6,11 +8,26 @@ import { useAiRunInspector } from "../useAiRunInspector";
 
 vi.mock("@/modules/parallax/api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/modules/parallax/api")>();
-  return { ...actual, parallaxApi: { ...actual.parallaxApi, aiAnalysisPreview: vi.fn() } };
+  return {
+    ...actual,
+    parallaxApi: {
+      ...actual.parallaxApi,
+      aiAnalysisPreview: vi.fn(),
+      aiAnalysisCompare: vi.fn(),
+    },
+  };
 });
 
+const queryClient = new QueryClient();
+const wrapper = ({ children }: { children: ReactNode }) => createElement(
+  QueryClientProvider, { client: queryClient }, children,
+);
+
 describe("useAiRunInspector", () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => {
+    vi.clearAllMocks();
+    queryClient.clear();
+  });
 
   it("previews without streaming and confirms only the snapshot id", async () => {
     const startPreparedAnalyze = vi.fn();
@@ -43,7 +60,9 @@ describe("useAiRunInspector", () => {
       },
       fallback_enabled: false,
     });
-    const { result } = renderHook(() => useAiRunInspector(startPreparedAnalyze));
+    const { result } = renderHook(
+      () => useAiRunInspector(startPreparedAnalyze, true), { wrapper },
+    );
 
     await act(async () => {
       await result.current.review({
@@ -64,5 +83,40 @@ describe("useAiRunInspector", () => {
     expect(startPreparedAnalyze).toHaveBeenCalledWith(
       "snapshot-123", "anthropic/claude-sonnet-4",
     );
+  });
+
+  it("keeps comparison results in hook memory", async () => {
+    const comparison = {
+      snapshot_id: "snapshot-123",
+      same_input: true as const,
+      local: { message: "Local", signal: null, quality: {
+        response_completed: true, signal_parsed: false, entry_present: false,
+        stop_present: false, target_present: false, checks_count: 1,
+        narrative_characters: 5,
+      }, receipt: {} },
+      cloud: { message: "Cloud", signal: null, quality: {
+        response_completed: true, signal_parsed: false, entry_present: false,
+        stop_present: false, target_present: false, checks_count: 1,
+        narrative_characters: 5,
+      }, receipt: {} },
+    };
+    vi.mocked(parallaxApi.aiAnalysisCompare).mockResolvedValue(comparison as never);
+    const { result } = renderHook(
+      () => useAiRunInspector(vi.fn(), true), { wrapper },
+    );
+
+    await act(async () => {
+      await result.current.review({
+        conid: 265598, symbol: "AAPL", timeframes: ["D"], indicators: ["RSI"],
+        provider_name: "openrouter", model: "anthropic/claude-sonnet-4",
+        task_type: "analysis",
+      });
+    });
+    await act(async () => {
+      await result.current.compare();
+    });
+
+    expect(parallaxApi.aiAnalysisCompare).toHaveBeenCalledWith("snapshot-123");
+    expect(result.current.comparison).toEqual(comparison);
   });
 });

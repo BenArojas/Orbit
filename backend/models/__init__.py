@@ -1264,6 +1264,30 @@ class SignalData(BaseModel):
     checks: list[SignalCheck]                            # Confirmations + cautions
 
 
+class AIQualityChecks(BaseModel):
+    response_completed: bool
+    signal_parsed: bool
+    entry_present: bool
+    stop_present: bool
+    target_present: bool
+    checks_count: int
+    narrative_characters: int
+
+
+class AIComparisonSide(BaseModel):
+    receipt: AIRunReceipt
+    message: str
+    signal: Optional[SignalData] = None
+    quality: AIQualityChecks
+
+
+class AIComparisonResponse(BaseModel):
+    snapshot_id: str
+    same_input: Literal[True] = True
+    local: AIComparisonSide
+    cloud: AIComparisonSide
+
+
 class AnalyzeResponse(BaseModel):
     """
     Response from POST /ai/analyze — the AI's trading signal and analysis.

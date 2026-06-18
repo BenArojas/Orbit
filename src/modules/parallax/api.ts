@@ -680,6 +680,30 @@ export interface AIRunReceipt {
     created_at: string;
 }
 
+export interface AIQualityChecks {
+    response_completed: boolean;
+    signal_parsed: boolean;
+    entry_present: boolean;
+    stop_present: boolean;
+    target_present: boolean;
+    checks_count: number;
+    narrative_characters: number;
+}
+
+export interface AIComparisonSide {
+    receipt: AIRunReceipt;
+    message: string;
+    signal: SignalData | null;
+    quality: AIQualityChecks;
+}
+
+export interface AIComparisonResponse {
+    snapshot_id: string;
+    same_input: true;
+    local: AIComparisonSide;
+    cloud: AIComparisonSide;
+}
+
 export interface AIProvidersResponse {
     providers: AIProviderStatus[];
     active_provider: AIProviderName;
@@ -1172,6 +1196,11 @@ export const parallaxApi = {
 
     aiAnalysisPreview: (req: AnalyzeRequest) =>
         sidecarRequest<AIAnalysisPreview>("POST", "/ai/analysis/preview", req),
+
+    aiAnalysisCompare: (snapshotId: string) =>
+        sidecarRequest<AIComparisonResponse>(
+            "POST", "/ai/analysis/compare", { snapshot_id: snapshotId },
+        ),
 
     aiRoutingPolicy: () =>
         sidecarRequest<AIRoutingPolicyResponse>("GET", "/ai/routing-policy"),

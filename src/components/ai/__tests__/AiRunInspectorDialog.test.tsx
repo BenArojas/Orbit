@@ -53,6 +53,9 @@ describe("AiRunInspectorDialog", () => {
     fireEvent.click(screen.getByRole("tab", { name: "Payload" }));
     expect(screen.getByText(/Analyze AAPL/)).toBeTruthy();
     expect(screen.queryByText(/Authorization/)).toBeNull();
+    fireEvent.click(screen.getByRole("tab", { name: "Compare" }));
+    expect(screen.getByRole("button", { name: "Run comparison" })).toBeDisabled();
+    expect(screen.getByText("A ready local Ollama model is required for comparison.")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: /Send to OpenRouter/i }));
     expect(onConfirm).toHaveBeenCalledWith("snapshot-123");
   });
@@ -172,5 +175,61 @@ describe("AiRunInspectorDialog", () => {
     fireEvent.click(screen.getByRole("tab", { name: "Receipt" }));
     expect(screen.getByText("Blocked")).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Copy generation ID" })).toBeNull();
+  });
+
+  it("compares objective local and cloud results without declaring a winner", () => {
+    const receipt = {
+      run_id: "run-compare", requested_provider: "ollama" as const,
+      requested_model: "gemma4:26b", executed_provider: "ollama" as const,
+      resolved_model: "gemma4:26b", fallback_used: false, fallback_reason: null,
+      status: "success" as const, created_at: "2026-06-18T12:00:00Z",
+      attempts: [{
+        provider_name: "ollama" as const, requested_model: "gemma4:26b",
+        resolved_model: "gemma4:26b", status: "success" as const,
+        provider_request_id: null, input_tokens: null, output_tokens: null,
+        reasoning_tokens: null, cached_tokens: null, estimated_cost_usd: null,
+        actual_cost_usd: null, duration_ms: 900, error_code: null,
+      }],
+    };
+    const quality = {
+      response_completed: true, signal_parsed: true, entry_present: true,
+      stop_present: true, target_present: true, checks_count: 5,
+      narrative_characters: 21,
+    };
+    render(
+      <AiRunInspectorDialog
+        open preview={null} receipt={null} localReady
+        onOpenChange={vi.fn()} onConfirm={vi.fn()} onCompare={vi.fn()}
+        comparison={{
+          snapshot_id: "snapshot-123", same_input: true,
+          local: { receipt, message: "Local narrative", signal: null, quality },
+          cloud: {
+            receipt: {
+              ...receipt, run_id: "run-cloud", requested_provider: "openrouter",
+              requested_model: "anthropic/claude-sonnet-4",
+              executed_provider: "openrouter", resolved_model: "anthropic/claude-sonnet-4",
+              attempts: [{
+                ...receipt.attempts[0], provider_name: "openrouter",
+                requested_model: "anthropic/claude-sonnet-4",
+                resolved_model: "anthropic/claude-sonnet-4",
+                actual_cost_usd: "0.0027", duration_ms: 640,
+              }],
+            },
+            message: "Cloud narrative", signal: null, quality,
+          },
+        }}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("tab", { name: "Compare" }));
+    expect(screen.getByText("Same prepared market facts and prompt.")).toBeTruthy();
+    expect(screen.getByText("Local Ollama · gemma4:26b")).toBeTruthy();
+    expect(screen.getByText("OpenRouter · anthropic/claude-sonnet-4")).toBeTruthy();
+    expect(screen.getByText("Local narrative")).toBeTruthy();
+    expect(screen.getByText("Cloud narrative")).toBeTruthy();
+    expect(screen.getByText("Completeness")).toBeTruthy();
+    expect(screen.getByText("Latency")).toBeTruthy();
+    expect(screen.getByText("Cost")).toBeTruthy();
+    expect(screen.queryByText(/winner|accuracy|recommended model/i)).toBeNull();
   });
 });

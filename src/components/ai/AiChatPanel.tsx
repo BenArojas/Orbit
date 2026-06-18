@@ -212,7 +212,7 @@ export default function AiChatPanel({ activeConid, activeSymbol, fibonacci, char
   // the same `streamingContent` that the chat-stream hook already drives,
   // so the StreamingBubble keeps working without changes.
   const { startAnalyze, startPreparedAnalyze, cancelAnalyze } = useAiAnalyzeStream();
-  const inspector = useAiRunInspector(startPreparedAnalyze);
+  const inspector = useAiRunInspector(startPreparedAnalyze, isReady);
 
   const requestedProvider = analysisProvider
     ?? (routingMode === "local_only" ? "ollama" : activeProvider);
@@ -549,8 +549,14 @@ export default function AiChatPanel({ activeConid, activeSymbol, fibonacci, char
           open={inspector.open}
           preview={inspector.preview}
           receipt={inspector.receipt}
+          comparison={inspector.comparison}
+          localReady={isReady}
+          isComparing={inspector.isComparing}
+          runActive={isAnalyzing}
+          compareError={inspector.compareError}
           onOpenChange={inspector.setOpen}
           onConfirm={inspector.send}
+          onCompare={inspector.compare}
         />
       )}
     </div>

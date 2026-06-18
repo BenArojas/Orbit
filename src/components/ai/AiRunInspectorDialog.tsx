@@ -10,22 +10,40 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import type { AIAnalysisPreview, AIRunAttempt, AIRunReceipt } from "@/modules/parallax/api";
+import type {
+  AIAnalysisPreview,
+  AIComparisonResponse,
+  AIComparisonSide,
+  AIRunAttempt,
+  AIRunReceipt,
+} from "@/modules/parallax/api";
 
 interface Props {
   open: boolean;
   preview: AIAnalysisPreview | null;
   receipt?: AIRunReceipt | null;
+  comparison?: AIComparisonResponse | null;
+  localReady?: boolean;
+  isComparing?: boolean;
+  runActive?: boolean;
+  compareError?: Error | null;
   onOpenChange: (open: boolean) => void;
   onConfirm: (snapshotId: string) => void;
+  onCompare?: () => void;
 }
 
 export default function AiRunInspectorDialog({
   open,
   preview,
   receipt = null,
+  comparison = null,
+  localReady = false,
+  isComparing = false,
+  runActive = false,
+  compareError = null,
   onOpenChange,
   onConfirm,
+  onCompare,
 }: Props) {
   const payload = preview ? JSON.stringify(preview.request_body, null, 2) : null;
   const money = (value: string) => `$${Number(value).toFixed(4)}`;
@@ -47,6 +65,7 @@ export default function AiRunInspectorDialog({
             <TabsTrigger value="summary">Summary</TabsTrigger>
             <TabsTrigger value="payload">Payload</TabsTrigger>
             <TabsTrigger value="receipt">Receipt</TabsTrigger>
+            <TabsTrigger value="compare">Compare</TabsTrigger>
           </TabsList>
           <TabsContent value="summary" className="min-h-0 overflow-y-auto">
             {preview ? (
@@ -97,6 +116,29 @@ export default function AiRunInspectorDialog({
               </p>
             )}
           </TabsContent>
+          <TabsContent value="compare" className="min-h-0 overflow-y-auto">
+            <p className="mb-3 text-xs text-muted-foreground">
+              Same prepared market facts and prompt.
+            </p>
+            {comparison ? <ComparisonDetails comparison={comparison} /> : (
+              <div className="space-y-3 text-xs">
+                <p className="text-muted-foreground">
+                  {localReady
+                    ? "Run both providers to compare completeness, latency, and cost."
+                    : "A ready local Ollama model is required for comparison."}
+                </p>
+                {compareError && <p role="alert" className="text-destructive">{compareError.message}</p>}
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={!preview || !localReady || isComparing || runActive}
+                  onClick={onCompare}
+                >
+                  {isComparing ? "Comparing..." : "Run comparison"}
+                </Button>
+              </div>
+            )}
+          </TabsContent>
         </Tabs>
 
         {preview && (
@@ -109,6 +151,42 @@ export default function AiRunInspectorDialog({
       </DialogContent>
     </Dialog>
   );
+}
+
+function ComparisonDetails({ comparison }: { comparison: AIComparisonResponse }) {
+  return (
+    <div className="space-y-4 text-xs">
+      <div className="grid gap-4 md:grid-cols-2">
+        <ComparisonSide title="Local Ollama" side={comparison.local} />
+        <ComparisonSide title="OpenRouter" side={comparison.cloud} />
+      </div>
+      <div className="grid grid-cols-[1fr_auto_auto] gap-x-4 gap-y-2 border-t border-border pt-3">
+        <span className="font-medium">Measure</span><span>Local</span><span>Cloud</span>
+        <ComparisonRow label="Completeness" local={`${comparison.local.quality.checks_count}/5`} cloud={`${comparison.cloud.quality.checks_count}/5`} />
+        <ComparisonRow label="Latency" local={`${comparison.local.receipt.attempts[0]?.duration_ms ?? 0} ms`} cloud={`${comparison.cloud.receipt.attempts[0]?.duration_ms ?? 0} ms`} />
+        <ComparisonRow label="Cost" local={costLabel(comparison.local)} cloud={costLabel(comparison.cloud)} />
+      </div>
+    </div>
+  );
+}
+
+function ComparisonSide({ title, side }: { title: string; side: AIComparisonSide }) {
+  return (
+    <section className="min-w-0 border-t border-border pt-3">
+      <h3 className="font-semibold">{title} · {side.receipt.resolved_model}</h3>
+      <p className="mt-2 whitespace-pre-wrap text-muted-foreground">{side.message}</p>
+      {side.signal && <p className="mt-2">{side.signal.direction}: {side.signal.description}</p>}
+    </section>
+  );
+}
+
+function ComparisonRow({ label, local, cloud }: { label: string; local: string; cloud: string }) {
+  return <><span>{label}</span><span>{local}</span><span>{cloud}</span></>;
+}
+
+function costLabel(side: AIComparisonSide) {
+  const cost = side.receipt.attempts[0]?.actual_cost_usd;
+  return cost ? `$${Number(cost).toFixed(4)}` : "$0.0000";
 }
 
 function ReceiptSummary({ receipt }: { receipt: AIRunReceipt }) {

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import asyncio
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -395,6 +396,206 @@ def test_cloud_stream_executes_snapshot_without_refetching_market_data(
     assert receipt["attempts"][0]["input_tokens"] == 120
     assert receipt["attempts"][0]["actual_cost_usd"] == "0.01"
     assert receipt["attempts"][0]["duration_ms"] == 640
+
+
+def test_comparison_runs_local_and_cloud_over_one_prepared_snapshot(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    from deps import get_ai_keystore, get_ai_settings, get_ai_usage_ledger
+    from models import AIProviderMetadata
+    from routers import ai as ai_router
+    from services.ai import AiService
+    from services.ai_cloud_adapters import OpenRouterModel
+    from services.ai_providers import AIProviderRegistry
+
+    response_text = (
+        "Constructive setup.\n\n```json\n"
+        '{"direction":"LONG","confidence":70,"description":"Constructive",'
+        '"entry":{"price":100},"stop":{"price":95},"target":{"price":110},'
+        '"meta":{},"confirmations":["RSI"],"cautions":[]}\n```'
+    )
+
+    class FakeOllamaProvider:
+        messages: list[dict[str, str]] | None = None
+
+        async def chat_stream(self, *, messages, model, think=None):
+            self.messages = messages
+            yield response_text
+
+    local_provider = FakeOllamaProvider()
+
+    class FakeOpenRouterProvider:
+        messages: list[dict[str, str]] | None = None
+
+        def __init__(self, *, api_key: str) -> None:
+            assert api_key == "sk-runtime-secret"
+
+        async def list_models(self) -> list[OpenRouterModel]:
+            return [OpenRouterModel(
+                id="anthropic/claude-sonnet-4",
+                name="Claude Sonnet 4",
+                context_length=200000,
+                max_completion_tokens=4096,
+                prompt_price_per_token="0.000003",
+                completion_price_per_token="0.000015",
+                request_price="0",
+            )]
+
+        async def chat_stream_with_metadata(self, *, messages, model, max_tokens):
+            self.__class__.messages = messages
+            yield {"type": "token", "content": response_text}
+            yield {
+                "type": "metadata",
+                "metadata": AIProviderMetadata(
+                    provider_name="openrouter",
+                    kind="cloud",
+                    model=model,
+                    requested_model=model,
+                    resolved_model=model,
+                    provider_request_id="gen-compare-1",
+                    input_tokens=120,
+                    output_tokens=80,
+                    duration_ms=640,
+                    actual_cost=0.0027,
+                ).model_dump(),
+            }
+
+        async def aclose(self) -> None:
+            return None
+
+    monkeypatch.setattr(ai_router, "OpenRouterProvider", FakeOpenRouterProvider)
+    fake_ibkr = MagicMock()
+    fake_ibkr.history = AsyncMock(return_value={"data": []})
+    fake_db = MagicMock()
+    fake_db.get_setting = AsyncMock(return_value=None)
+    usage = _FakeUsageLedger()
+    ai = AiService(provider_registry=AIProviderRegistry({"ollama": local_provider}))
+    client = _client(ai=ai, ibkr=fake_ibkr, db=fake_db)
+    client.app.dependency_overrides[get_ai_settings] = lambda: _FakeCloudSettings()
+    client.app.dependency_overrides[get_ai_keystore] = lambda: _FakeReadableKeyStore()
+    client.app.dependency_overrides[get_ai_usage_ledger] = lambda: usage
+
+    preview = client.post("/ai/analysis/preview", json={
+        "conid": 265598,
+        "symbol": "AAPL",
+        "timeframes": ["D"],
+        "indicators": ["RSI"],
+        "provider_name": "openrouter",
+        "model": "anthropic/claude-sonnet-4",
+    }).json()
+    response = client.post(
+        "/ai/analysis/compare",
+        json={"snapshot_id": preview["snapshot_id"]},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["same_input"] is True
+    assert local_provider.messages == FakeOpenRouterProvider.messages
+    assert fake_ibkr.history.await_count == 1
+    assert body["local"]["quality"]["entry_present"] is True
+    assert body["cloud"]["receipt"]["attempts"][0]["actual_cost_usd"] == "0.0027"
+
+
+def _prepared_comparison_snapshot(preparation):
+    return asyncio.run(preparation.prepare(
+        AnalyzeRequest(
+            conid=265598,
+            symbol="AAPL",
+            timeframes=["D"],
+            indicators=["RSI"],
+            provider_name="openrouter",
+            model="anthropic/claude-sonnet-4",
+        ),
+        provider_name="openrouter",
+        model=AIModelOption(
+            id="anthropic/claude-sonnet-4",
+            name="Claude Sonnet 4",
+            context_length=200000,
+            max_completion_tokens=4096,
+            prompt_price_per_token="0.000003",
+            completion_price_per_token="0.000015",
+            request_price="0",
+        ),
+        messages=[{"role": "user", "content": "Analyze AAPL."}],
+        fallback_enabled=True,
+        local_model="gemma4:26b",
+    ))
+
+
+def test_comparison_requires_ready_local_ollama():
+    from deps import get_ai_keystore, get_ai_settings, get_ai_usage_ledger
+    from services.ai_analysis_preparation import AIAnalysisPreparationService
+
+    preparation = AIAnalysisPreparationService()
+    snapshot = _prepared_comparison_snapshot(preparation)
+    client = _client(
+        ollama_status={
+            "state": "error", "ready": False, "selected_model": None,
+            "error": "offline", "platform": "darwin",
+        },
+        ai=MagicMock(),
+        preparation=preparation,
+    )
+    client.app.dependency_overrides[get_ai_settings] = lambda: _FakeCloudSettings()
+    client.app.dependency_overrides[get_ai_keystore] = lambda: _FakeReadableKeyStore()
+    client.app.dependency_overrides[get_ai_usage_ledger] = lambda: _FakeUsageLedger()
+
+    response = client.post(
+        "/ai/analysis/compare", json={"snapshot_id": snapshot.snapshot_id},
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"]["error"] == "ai_comparison_local_unavailable"
+
+
+def test_comparison_rejects_expired_snapshot():
+    from deps import get_ai_keystore, get_ai_settings, get_ai_usage_ledger
+    from services.ai_analysis_preparation import AIAnalysisPreparationService
+
+    now = [datetime(2026, 6, 18, 12, 0, tzinfo=UTC)]
+    preparation = AIAnalysisPreparationService(clock=lambda: now[0])
+    snapshot = _prepared_comparison_snapshot(preparation)
+    now[0] += timedelta(minutes=11)
+    client = _client(ai=MagicMock(), preparation=preparation)
+    client.app.dependency_overrides[get_ai_settings] = lambda: _FakeCloudSettings()
+    client.app.dependency_overrides[get_ai_keystore] = lambda: _FakeReadableKeyStore()
+    client.app.dependency_overrides[get_ai_usage_ledger] = lambda: _FakeUsageLedger()
+
+    response = client.post(
+        "/ai/analysis/compare", json={"snapshot_id": snapshot.snapshot_id},
+    )
+
+    assert response.status_code == 410
+    assert response.json()["detail"]["error"] == "ai_analysis_snapshot_expired"
+
+
+def test_comparison_rejects_changed_cloud_model():
+    from deps import get_ai_settings, get_ai_usage_ledger
+    from services.ai_analysis_preparation import AIAnalysisPreparationService
+
+    class ChangedModelSettings(_FakeCloudSettings):
+        async def list_provider_configs(self) -> list[dict]:
+            configs = await super().list_provider_configs()
+            return [
+                {**config, "selected_model": "openai/gpt-4.1"}
+                if config["provider_name"] == "openrouter"
+                else config
+                for config in configs
+            ]
+
+    preparation = AIAnalysisPreparationService()
+    snapshot = _prepared_comparison_snapshot(preparation)
+    client = _client(ai=MagicMock(), preparation=preparation)
+    client.app.dependency_overrides[get_ai_settings] = lambda: ChangedModelSettings()
+    client.app.dependency_overrides[get_ai_usage_ledger] = lambda: _FakeUsageLedger()
+
+    response = client.post(
+        "/ai/analysis/compare", json={"snapshot_id": snapshot.snapshot_id},
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"]["error"] == "ai_analysis_snapshot_model_changed"
 
 
 @pytest.mark.asyncio

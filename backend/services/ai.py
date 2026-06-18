@@ -25,6 +25,7 @@ import logging
 import re
 import uuid
 from collections import OrderedDict
+from time import monotonic
 from typing import TYPE_CHECKING, AsyncIterator, Optional
 
 if TYPE_CHECKING:
@@ -1007,6 +1008,52 @@ class AiService:
             "signal": session.signal,
             "message": clean_text,
             "provider": provider_metadata,
+        }
+
+    async def execute_prepared_analysis(
+        self,
+        *,
+        messages: list[dict[str, str]],
+        model: str,
+        provider: object,
+        max_tokens: int | None = None,
+    ) -> dict:
+        """Execute prepared messages once without creating a chat session."""
+        started = monotonic()
+        chunks: list[str] = []
+        metadata: dict | None = None
+        stream_with_metadata = getattr(provider, "chat_stream_with_metadata", None)
+        if stream_with_metadata is not None:
+            kwargs = {"messages": messages, "model": model}
+            if max_tokens is not None:
+                kwargs["max_tokens"] = max_tokens
+            async for event in stream_with_metadata(**kwargs):
+                if event.get("type") == "token":
+                    chunks.append(event["content"])
+                elif event.get("type") == "metadata":
+                    metadata = event["metadata"]
+        else:
+            async for token in provider.chat_stream(
+                messages=messages, model=model, think=None,
+            ):
+                chunks.append(token)
+
+        full_text = "".join(chunks)
+        raw_signal = parse_signal_from_response(full_text)
+        metadata = metadata or AIProviderMetadata(
+            provider_name="ollama",
+            kind="local",
+            model=model,
+            requested_model=model,
+            resolved_model=model,
+            duration_ms=round((monotonic() - started) * 1000),
+        ).model_dump()
+        if metadata.get("duration_ms") is None:
+            metadata["duration_ms"] = round((monotonic() - started) * 1000)
+        return {
+            "message": strip_signal_json_from_response(full_text),
+            "signal": self._finalize_signal(raw_signal),
+            "provider": metadata,
         }
 
     async def follow_up(

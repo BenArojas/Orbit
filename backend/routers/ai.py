@@ -49,6 +49,9 @@ from models import (
     AIModelOption,
     AIAnalysisPreviewResponse,
     AIAnalysisSnapshotRunRequest,
+    AIComparisonResponse,
+    AIComparisonSide,
+    AIQualityChecks,
     AIProviderKeySaveRequest,
     AIProviderModelUpdateRequest,
     AIProviderModelsResponse,
@@ -265,6 +268,25 @@ def _provider_error_detail(exc: Exception, provider_name: str) -> tuple[int, dic
         "message": "Cloud AI provider network request failed.",
         "provider_name": provider_name,
     }
+
+
+def _quality_checks(message: str, signal: SignalData | None) -> AIQualityChecks:
+    present_levels = {
+        level.label.lower()
+        for level in signal.levels
+        if level.value not in {"N/A", "$0.00", "0"}
+    } if signal else set()
+    checks = [bool(message), signal is not None]
+    checks.extend(label in present_levels for label in ("entry", "stop", "target"))
+    return AIQualityChecks(
+        response_completed=checks[0],
+        signal_parsed=checks[1],
+        entry_present=checks[2],
+        stop_present=checks[3],
+        target_present=checks[4],
+        checks_count=sum(checks),
+        narrative_characters=len(message),
+    )
 
 
 async def _record_failed_cloud_usage(
@@ -1006,6 +1028,157 @@ async def preview_analysis(
             },
         ) from exc
     return AIAnalysisPreviewResponse(**snapshot.__dict__)
+
+
+@router.post("/analysis/compare", response_model=AIComparisonResponse)
+async def compare_analysis(
+    request: AIAnalysisSnapshotRunRequest,
+    ai: AiService = Depends(get_ai),
+    preparation: AIAnalysisPreparationService = Depends(get_ai_analysis_preparation),
+    ollama: OllamaLifecycle = Depends(get_ollama),
+    ai_settings: AISettingsService = Depends(get_ai_settings),
+    usage_ledger: AIUsageLedger = Depends(get_ai_usage_ledger),
+    key_store: AIKeyStore = Depends(get_ai_keystore),
+):
+    try:
+        snapshot = preparation.get_snapshot(request.snapshot_id)
+    except AIAnalysisSnapshotExpiredError as exc:
+        raise HTTPException(
+            status_code=http_status.HTTP_410_GONE,
+            detail={
+                "error": "ai_analysis_snapshot_expired",
+                "message": "The reviewed cloud analysis snapshot has expired.",
+            },
+        ) from exc
+    except AIAnalysisSnapshotNotFoundError as exc:
+        raise HTTPException(
+            status_code=http_status.HTTP_404_NOT_FOUND,
+            detail={
+                "error": "ai_analysis_snapshot_not_found",
+                "message": "The reviewed cloud analysis snapshot was not found.",
+            },
+        ) from exc
+
+    local_status = ollama.status()
+    local_model = local_status.get("selected_model")
+    if not local_status.get("ready") or not local_model:
+        raise HTTPException(
+            status_code=http_status.HTTP_409_CONFLICT,
+            detail={
+                "error": "ai_comparison_local_unavailable",
+                "message": "A ready local Ollama model is required for comparison.",
+            },
+        )
+
+    policy = await _get_routing_policy(ai_settings)
+    if policy["routing_mode"] == "local_only":
+        raise _cloud_local_only_http_error()
+    configs = await ai_settings.list_provider_configs()
+    provider_config = next(
+        (config for config in configs if config["provider_name"] == snapshot.provider_name),
+        None,
+    )
+    if (
+        provider_config is None
+        or not provider_config.get("enabled")
+        or not provider_config.get("api_key_ref")
+    ):
+        raise _cloud_provider_unavailable_http_error(snapshot.provider_name)
+    if provider_config.get("selected_model") != snapshot.model.id:
+        raise HTTPException(
+            status_code=http_status.HTTP_409_CONFLICT,
+            detail={
+                "error": "ai_analysis_snapshot_model_changed",
+                "message": "The selected OpenRouter model changed after preview.",
+            },
+        )
+    await _enforce_cloud_cost_caps(
+        provider_name="openrouter",
+        model=snapshot.model.id,
+        task_type=snapshot.request.task_type,
+        policy=policy,
+        usage_ledger=usage_ledger,
+        quoted_estimated_cost=float(snapshot.cost.estimated_cost_usd),
+        maximum_cost=float(snapshot.cost.maximum_cost_usd),
+    )
+
+    local_provider = ai.provider_registry.require("ollama")
+    cloud_provider = None
+    try:
+        local_result = await ai.execute_prepared_analysis(
+            messages=snapshot.messages,
+            model=local_model,
+            provider=local_provider,
+        )
+        local_receipt = await _record_completed_usage(
+            usage_ledger=usage_ledger,
+            requested_provider="ollama",
+            requested_model=local_model,
+            provider_metadata=local_result["provider"],
+            task_type=snapshot.request.task_type,
+            routing_mode=policy["routing_mode"],
+            estimated_cost=None,
+        )
+        cloud_provider = await _create_cloud_provider_for_request(
+            provider_config=provider_config,
+            key_store=key_store,
+        )
+        cloud_result = await ai.execute_prepared_analysis(
+            messages=snapshot.messages,
+            model=snapshot.model.id,
+            provider=cloud_provider,
+            max_tokens=snapshot.cost.max_output_tokens,
+        )
+        cloud_receipt = await _record_completed_usage(
+            usage_ledger=usage_ledger,
+            requested_provider="openrouter",
+            requested_model=snapshot.model.id,
+            provider_metadata=cloud_result["provider"],
+            task_type=snapshot.request.task_type,
+            routing_mode=policy["routing_mode"],
+            estimated_cost=float(snapshot.cost.estimated_cost_usd),
+        )
+    except AIKeyStoreUnavailableError as exc:
+        raise _keychain_unavailable_http_error() from exc
+    except (
+        AIProviderAuthError,
+        AIProviderModelUnavailableError,
+        AIProviderNetworkError,
+        AIProviderRequestError,
+        AIProviderRateLimitError,
+        AIProviderTimeoutError,
+    ) as exc:
+        status_code, detail = _provider_error_detail(exc, "openrouter")
+        await _record_failed_cloud_usage(
+            usage_ledger=usage_ledger,
+            provider_name="openrouter",
+            model=snapshot.model.id,
+            task_type=snapshot.request.task_type,
+            routing_mode=policy["routing_mode"],
+            estimated_cost=float(snapshot.cost.estimated_cost_usd),
+            error_code=detail["error"],
+        )
+        raise HTTPException(status_code=status_code, detail=detail) from exc
+    finally:
+        await _close_request_provider(cloud_provider)
+
+    local_signal = _parse_signal(local_result["signal"])
+    cloud_signal = _parse_signal(cloud_result["signal"])
+    return AIComparisonResponse(
+        snapshot_id=snapshot.snapshot_id,
+        local=AIComparisonSide(
+            receipt=local_receipt,
+            message=local_result["message"],
+            signal=local_signal,
+            quality=_quality_checks(local_result["message"], local_signal),
+        ),
+        cloud=AIComparisonSide(
+            receipt=cloud_receipt,
+            message=cloud_result["message"],
+            signal=cloud_signal,
+            quality=_quality_checks(cloud_result["message"], cloud_signal),
+        ),
+    )
 
 
 @router.get("/routing-policy", response_model=AIRoutingPolicyResponse)
