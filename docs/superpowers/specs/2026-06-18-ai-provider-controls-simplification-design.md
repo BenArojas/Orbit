@@ -1,7 +1,7 @@
 # AI Provider Controls Simplification Design
 
 **Date:** 2026-06-18  
-**Status:** Approved design, awaiting written-spec review  
+**Status:** Approved on 2026-06-18; implementation plan awaiting approval  
 **Branch:** `feature/orbit-v2-cloud-hybrid-ai-spec`
 
 ## Problem
