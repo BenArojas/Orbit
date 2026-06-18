@@ -14,6 +14,7 @@ import {
   AI_OPENROUTER_MODELS_QUERY_KEY,
   AI_PROVIDERS_QUERY_KEY,
   parallaxApi,
+  type AIRoutingPolicyUpdate,
 } from "@/modules/parallax/api";
 import { useAiStore } from "@/store";
 
@@ -37,7 +38,10 @@ export function useAiStatus() {
     activeProvider = "ollama",
     routingMode = "local_only",
     analysisProvider,
+    setRoutingPolicy,
+    setAnalysisProvider,
     setAnalysisModel,
+    setAnalysisFallbackEnabled,
     updateProviderStatus,
   } = useAiStore();
 
@@ -76,6 +80,50 @@ export function useAiStatus() {
       setProvidersStatus(providersQuery.data);
     }
   }, [providersQuery.data, setProvidersStatus]);
+
+  const routingPolicyQuery = useQuery({
+    queryKey: ["ai", "routing-policy"],
+    queryFn: () => parallaxApi.aiRoutingPolicy(),
+    staleTime: 30_000,
+  });
+
+  useEffect(() => {
+    if (routingPolicyQuery.data) {
+      setRoutingPolicy(routingPolicyQuery.data);
+      setAnalysisProvider(routingPolicyQuery.data.active_provider);
+      setAnalysisFallbackEnabled(
+        routingPolicyQuery.data.local_fallback_enabled,
+      );
+    }
+  }, [
+    routingPolicyQuery.data,
+    setAnalysisFallbackEnabled,
+    setAnalysisProvider,
+    setRoutingPolicy,
+  ]);
+
+  const updateAnalysisRouteMutation = useMutation({
+    mutationFn: (policy: AIRoutingPolicyUpdate) =>
+      parallaxApi.aiUpdateRoutingPolicy(policy),
+    onMutate: async (policy) => {
+      await queryClient.cancelQueries({ queryKey: ["ai", "routing-policy"] });
+      queryClient.setQueryData(["ai", "routing-policy"], policy);
+      setRoutingPolicy(policy);
+      setAnalysisProvider(policy.active_provider);
+      setAnalysisFallbackEnabled(policy.local_fallback_enabled);
+    },
+    onSuccess: (policy) => {
+      queryClient.setQueryData(["ai", "routing-policy"], policy);
+      setRoutingPolicy(policy);
+      setAnalysisProvider(policy.active_provider);
+      setAnalysisFallbackEnabled(policy.local_fallback_enabled);
+      void queryClient.invalidateQueries({ queryKey: AI_PROVIDERS_QUERY_KEY });
+      void queryClient.invalidateQueries({ queryKey: ["ai", "routing-policy"] });
+    },
+    onError: () => {
+      void queryClient.invalidateQueries({ queryKey: ["ai", "routing-policy"] });
+    },
+  });
 
   const requestedProvider = analysisProvider ?? activeProvider;
   const openRouterProvider = providers.find(
@@ -172,5 +220,8 @@ export function useAiStatus() {
     isRefreshing: refreshMutation.isPending,
     selectOpenRouterModel: selectOpenRouterModelMutation.mutate,
     isSelectingOpenRouterModel: selectOpenRouterModelMutation.isPending,
+    updateAnalysisRoute: updateAnalysisRouteMutation.mutate,
+    isUpdatingAnalysisRoute: updateAnalysisRouteMutation.isPending,
+    updateAnalysisRouteError: updateAnalysisRouteMutation.error,
   };
 }

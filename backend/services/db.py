@@ -1909,8 +1909,7 @@ class DatabaseService:
         await self.ensure_ai_settings_defaults()
         row = await self._run_read(
             lambda: self._fetchone(
-                """SELECT active_provider, routing_mode, local_fallback_enabled,
-                          per_call_cost_cap_usd, monthly_cost_cap_usd
+                """SELECT active_provider, routing_mode, local_fallback_enabled
                    FROM ai_routing_policy
                    WHERE id = 1"""
             )
@@ -1920,8 +1919,6 @@ class DatabaseService:
             "active_provider": row["active_provider"],
             "routing_mode": row["routing_mode"],
             "local_fallback_enabled": bool(row["local_fallback_enabled"]),
-            "per_call_cost_cap_usd": float(row["per_call_cost_cap_usd"]),
-            "monthly_cost_cap_usd": float(row["monthly_cost_cap_usd"]),
         }
 
     async def update_ai_routing_policy(
@@ -1930,10 +1927,8 @@ class DatabaseService:
         active_provider: str,
         routing_mode: str,
         local_fallback_enabled: bool,
-        per_call_cost_cap_usd: float,
-        monthly_cost_cap_usd: float,
     ) -> dict[str, Any]:
-        """Persist non-secret AI routing and cost-cap settings."""
+        """Persist non-secret AI routing settings."""
         await self.ensure_ai_settings_defaults()
 
         def _do() -> None:
@@ -1944,16 +1939,12 @@ class DatabaseService:
                        SET active_provider = ?,
                            routing_mode = ?,
                            local_fallback_enabled = ?,
-                           per_call_cost_cap_usd = ?,
-                           monthly_cost_cap_usd = ?,
                            updated_at = datetime('now')
                        WHERE id = 1""",
                     (
                         active_provider,
                         routing_mode,
                         1 if local_fallback_enabled else 0,
-                        per_call_cost_cap_usd,
-                        monthly_cost_cap_usd,
                     ),
                 )
 

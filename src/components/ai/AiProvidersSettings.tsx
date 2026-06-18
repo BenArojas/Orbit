@@ -3,13 +3,8 @@ import { Cloud, Cpu } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { AI_PROVIDERS_QUERY_KEY, parallaxApi } from "@/modules/parallax/api";
-import type { AIRoutingPolicyUpdate, AIProviderStatus } from "@/modules/parallax/api";
+import type { AIProviderStatus } from "@/modules/parallax/api";
 import { useAiStore } from "@/store";
-
-function formatCost(value: number): string {
-  if (value < 0.01) return `$${value.toFixed(4)}`;
-  return `$${value.toFixed(2)}`;
-}
 
 function ProviderCard({ provider }: { provider: AIProviderStatus }) {
   const Icon = provider.kind === "local" ? Cpu : Cloud;
@@ -129,33 +124,11 @@ function ProviderCard({ provider }: { provider: AIProviderStatus }) {
 }
 
 export default function AiProvidersSettings() {
-  const {
-    providers,
-    activeProvider,
-    routingMode,
-    localFallbackEnabled,
-    perCallCostCapUsd,
-    monthlyCostCapUsd,
-    setProvidersStatus,
-    setRoutingPolicy,
-  } = useAiStore();
-  const queryClient = useQueryClient();
+  const { providers, setProvidersStatus } = useAiStore();
 
   const providersQuery = useQuery({
     queryKey: AI_PROVIDERS_QUERY_KEY,
     queryFn: () => parallaxApi.aiProviders(),
-    staleTime: 30_000,
-  });
-
-  const routingPolicyQuery = useQuery({
-    queryKey: ["ai", "routing-policy"],
-    queryFn: () => parallaxApi.aiRoutingPolicy(),
-    staleTime: 30_000,
-  });
-
-  const usageSummaryQuery = useQuery({
-    queryKey: ["ai", "usage-summary"],
-    queryFn: () => parallaxApi.aiUsageSummary(),
     staleTime: 30_000,
   });
 
@@ -165,62 +138,7 @@ export default function AiProvidersSettings() {
     }
   }, [providersQuery.data, setProvidersStatus]);
 
-  useEffect(() => {
-    if (routingPolicyQuery.data) {
-      setRoutingPolicy(routingPolicyQuery.data);
-    }
-  }, [routingPolicyQuery.data, setRoutingPolicy]);
-
-  const updatePolicy = useMutation({
-    mutationFn: (policy: AIRoutingPolicyUpdate) =>
-      parallaxApi.aiUpdateRoutingPolicy(policy),
-    onSuccess: (policy) => {
-      setRoutingPolicy(policy);
-      void queryClient.invalidateQueries({ queryKey: AI_PROVIDERS_QUERY_KEY });
-      void queryClient.invalidateQueries({ queryKey: ["ai", "routing-policy"] });
-    },
-  });
-
-  const [perCallDraft, setPerCallDraft] = useState(String(perCallCostCapUsd));
-  const [monthlyDraft, setMonthlyDraft] = useState(String(monthlyCostCapUsd));
-  const [costError, setCostError] = useState<string | null>(null);
-
-  useEffect(() => {
-    setPerCallDraft(String(perCallCostCapUsd));
-  }, [perCallCostCapUsd]);
-
-  useEffect(() => {
-    setMonthlyDraft(String(monthlyCostCapUsd));
-  }, [monthlyCostCapUsd]);
-
-  function savePolicy(patch: Partial<AIRoutingPolicyUpdate>) {
-    const current = useAiStore.getState();
-    updatePolicy.mutate({
-      routing_mode: current.routingMode,
-      active_provider: current.activeProvider,
-      local_fallback_enabled: current.localFallbackEnabled,
-      per_call_cost_cap_usd: current.perCallCostCapUsd,
-      monthly_cost_cap_usd: current.monthlyCostCapUsd,
-      ...patch,
-    });
-  }
-
-  function parseDraftCost(value: string): number | null {
-    const next = Number(value);
-    return Number.isFinite(next) && next >= 0 ? next : null;
-  }
-
-  function saveCostDraft(field: "per_call_cost_cap_usd" | "monthly_cost_cap_usd", value: string) {
-    const next = parseDraftCost(value);
-    if (next === null) {
-      setCostError("Enter a non-negative cost cap.");
-      return;
-    }
-    setCostError(null);
-    savePolicy({ [field]: next });
-  }
-
-  const loading = providersQuery.isLoading || routingPolicyQuery.isLoading;
+  const loading = providersQuery.isLoading;
 
   return (
     <div className="py-2">
@@ -241,141 +159,6 @@ export default function AiProvidersSettings() {
         )}
       </div>
 
-      {loading ? null : (
-        <div className="border-t border-border pt-4">
-          <div className="flex items-center justify-between gap-6 border-b border-border py-3">
-            <div className="min-w-0 flex-1">
-              <label htmlFor="ai-routing-mode" className="text-[12px] font-medium text-[var(--text-1)]">
-                Routing mode
-              </label>
-              <p className="mt-0.5 text-[10px] text-[var(--text-3)]">
-                Choose local execution or an explicitly enabled cloud route.
-              </p>
-            </div>
-            <select
-              id="ai-routing-mode"
-              aria-label="Routing mode"
-              value={routingMode}
-              onChange={(event) =>
-                savePolicy({ routing_mode: event.target.value as AIRoutingPolicyUpdate["routing_mode"] })
-              }
-              className="min-w-[150px] rounded-md border border-border bg-[var(--bg-3)] px-3 py-1.5 text-[11px] text-[var(--text-1)] focus:outline-none focus:ring-1 focus:ring-[var(--clr-cyan)]"
-            >
-              <option value="local_only">Local only</option>
-              <option value="cloud_manual">Cloud manual</option>
-              <option value="cloud_with_local_fallback">Cloud with fallback</option>
-            </select>
-          </div>
-
-          <div className="flex items-center justify-between gap-6 border-b border-border py-3">
-            <label htmlFor="ai-active-provider" className="text-[12px] font-medium text-[var(--text-1)]">
-              Active provider
-            </label>
-            <select
-              id="ai-active-provider"
-              aria-label="Active provider"
-              value={activeProvider}
-              onChange={(event) => savePolicy({ active_provider: event.target.value as AIProviderStatus["provider_name"] })}
-              className="min-w-[150px] rounded-md border border-border bg-[var(--bg-3)] px-3 py-1.5 text-[11px] text-[var(--text-1)]"
-            >
-              {providers.filter((provider) => provider.kind === "local" || (provider.enabled && provider.has_key)).map((provider) => (
-                <option key={provider.provider_name} value={provider.provider_name}>{provider.display_name}</option>
-              ))}
-            </select>
-          </div>
-
-          <div className="flex items-center justify-between gap-6 border-b border-border py-3">
-            <div className="min-w-0 flex-1">
-              <p className="text-[12px] font-medium text-[var(--text-1)]">Local fallback</p>
-              <p className="mt-0.5 text-[10px] text-[var(--text-3)]">
-                Keep local analysis available when cloud routing is unavailable.
-              </p>
-            </div>
-            <button
-              role="switch"
-              aria-checked={localFallbackEnabled}
-              aria-label="Local fallback"
-              onClick={() => savePolicy({ local_fallback_enabled: !localFallbackEnabled })}
-              className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full border transition-colors focus:outline-none focus:ring-1 focus:ring-[var(--clr-cyan)] ${
-                localFallbackEnabled
-                  ? "border-[var(--clr-cyan)] bg-[var(--clr-cyan)]"
-                  : "border-border bg-[var(--bg-4)]"
-              }`}
-            >
-              <span
-                className={`inline-block h-3.5 w-3.5 rounded-full bg-white shadow-sm transition-transform ${
-                  localFallbackEnabled ? "translate-x-[18px]" : "translate-x-[2px]"
-                }`}
-              />
-            </button>
-          </div>
-
-          <div className="flex items-center justify-between gap-6 border-b border-border py-3">
-            <div className="min-w-0 flex-1">
-              <label htmlFor="ai-per-call-cap" className="text-[12px] font-medium text-[var(--text-1)]">
-                Per-call cost cap
-              </label>
-              <p className="mt-0.5 text-[10px] text-[var(--text-3)]">
-                Stored for future cloud calls; not enforced while local-only.
-              </p>
-            </div>
-            <input
-              id="ai-per-call-cap"
-              aria-label="Per-call cost cap"
-              type="number"
-              min="0"
-              step="0.1"
-              value={perCallDraft}
-              onChange={(event) => setPerCallDraft(event.target.value)}
-              onBlur={() => saveCostDraft("per_call_cost_cap_usd", perCallDraft)}
-              className="w-[90px] rounded-md border border-border bg-[var(--bg-3)] px-2 py-1.5 text-right font-data text-[11px] text-[var(--text-1)] focus:outline-none focus:ring-1 focus:ring-[var(--clr-cyan)]"
-            />
-          </div>
-
-          <div className="flex items-center justify-between gap-6 py-3">
-            <div className="min-w-0 flex-1">
-              <label htmlFor="ai-monthly-cap" className="text-[12px] font-medium text-[var(--text-1)]">
-                Monthly cost cap
-              </label>
-              <p className="mt-0.5 text-[10px] text-[var(--text-3)]">
-                Stored locally and used by later cloud-cost enforcement.
-              </p>
-            </div>
-            <input
-              id="ai-monthly-cap"
-              aria-label="Monthly cost cap"
-              type="number"
-              min="0"
-              step="1"
-              value={monthlyDraft}
-              onChange={(event) => setMonthlyDraft(event.target.value)}
-              onBlur={() => saveCostDraft("monthly_cost_cap_usd", monthlyDraft)}
-              className="w-[90px] rounded-md border border-border bg-[var(--bg-3)] px-2 py-1.5 text-right font-data text-[11px] text-[var(--text-1)] focus:outline-none focus:ring-1 focus:ring-[var(--clr-cyan)]"
-            />
-          </div>
-
-          {costError ? <p className="py-2 text-[10px] text-[var(--clr-red)]">{costError}</p> : null}
-
-          {usageSummaryQuery.data ? (
-            <div className="flex items-center justify-between gap-6 border-t border-border py-3">
-              <div className="min-w-0 flex-1">
-                <p className="text-[12px] font-medium text-[var(--text-1)]">Monthly spend</p>
-                <p className="mt-0.5 text-[10px] text-[var(--text-3)]">
-                  Cloud AI usage recorded this month.
-                </p>
-              </div>
-              <div className="flex shrink-0 flex-wrap justify-end gap-2 text-[10px]">
-                <span className="rounded-md border border-border px-2 py-1 font-data text-[var(--text-2)]">
-                  Actual {formatCost(usageSummaryQuery.data.monthly_actual_cost_usd)}
-                </span>
-                <span className="rounded-md border border-border px-2 py-1 font-data text-[var(--text-3)]">
-                  Estimated {formatCost(usageSummaryQuery.data.monthly_estimated_cost_usd)}
-                </span>
-              </div>
-            </div>
-          ) : null}
-        </div>
-      )}
     </div>
   );
 }

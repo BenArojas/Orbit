@@ -759,11 +759,9 @@ export interface AIProviderKeySaveRequest {
 }
 
 export interface AIRoutingPolicyResponse {
-    active_provider: AIProviderName;
-    routing_mode: AIRoutingMode;
-    local_fallback_enabled: boolean;
-    per_call_cost_cap_usd: number;
-    monthly_cost_cap_usd: number;
+  active_provider: AIProviderName;
+  routing_mode: AIRoutingMode;
+  local_fallback_enabled: boolean;
 }
 
 export type AIRoutingPolicyUpdate = AIRoutingPolicyResponse;
@@ -775,11 +773,6 @@ export const AI_OPENROUTER_MODELS_QUERY_KEY = [
     "openrouter",
     "models",
 ] as const;
-
-export interface AIUsageSummaryResponse {
-    monthly_actual_cost_usd: number;
-    monthly_estimated_cost_usd: number;
-}
 
 export interface AiStatusResponse {
     state:
@@ -1205,8 +1198,6 @@ export const parallaxApi = {
     aiRoutingPolicy: () =>
         sidecarRequest<AIRoutingPolicyResponse>("GET", "/ai/routing-policy"),
 
-    aiUsageSummary: () =>
-        sidecarRequest<AIUsageSummaryResponse>("GET", "/ai/usage"),
     aiRuns: (limit = 50) =>
         sidecarRequest<AIRunReceipt[]>("GET", `/ai/runs?limit=${limit}`),
 

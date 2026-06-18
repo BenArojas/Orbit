@@ -29,11 +29,9 @@ import { useAiRunInspector } from "@/hooks/useAiRunInspector";
 import AiConfigPanel, { type AiTimeframe, type AiIndicator } from "./AiConfigPanel";
 import ActionSignalCard from "./ActionSignalCard";
 import AiSetupGuide from "./AiSetupGuide";
-import AiModelSelector from "./AiModelSelector";
 import AiProviderBadge from "./AiProviderBadge";
 import AiAnalysisTargetControls from "./AiAnalysisTargetControls";
 import AiRunInspectorDialog from "./AiRunInspectorDialog";
-import ResponseTimeBadge from "./ResponseTimeBadge";
 import FibStackPanel from "./fib/FibStackPanel";
 import type {
   AIProviderName,
@@ -198,13 +196,11 @@ export default function AiChatPanel({ activeConid, activeSymbol, fibonacci, char
   const {
     ollamaState,
     selectedModel,
-    availableModels,
     ollamaError,
     isReady,
     openRouterModels = [],
     isLoadingOpenRouterModels = false,
     openRouterModelsError = null,
-    selectModel,
     refresh,
     isRefreshing,
   } = useAiStatus();
@@ -370,31 +366,16 @@ export default function AiChatPanel({ activeConid, activeSymbol, fibonacci, char
           AI Analysis
         </div>
 
-        {/* Model selector + rolling response-time badge */}
-        {showChat && (availableModels.length > 0 || lastProviderMetadata) && (
+        {showChat && lastProviderMetadata && (
           <div className="flex items-center gap-1.5">
-            {lastProviderMetadata && (
-              <AiProviderBadge
-                providerName={lastProviderMetadata.provider_name}
-                model={lastProviderMetadata.model}
-                kind={lastProviderMetadata.kind}
-                fallbackUsed={lastProviderMetadata.fallback_used}
-                estimatedCost={lastProviderMetadata.estimated_cost}
-                actualCost={lastProviderMetadata.actual_cost}
-              />
-            )}
-            {availableModels.length > 0 && (
-              <>
-                <ResponseTimeBadge selectedModel={selectedModel} />
-                <AiModelSelector
-                  models={availableModels}
-                  selectedModel={selectedModel}
-                  onSelect={selectModel}
-                  onRefresh={refresh}
-                  isRefreshing={isRefreshing}
-                />
-              </>
-            )}
+            <AiProviderBadge
+              providerName={lastProviderMetadata.provider_name}
+              model={lastProviderMetadata.model}
+              kind={lastProviderMetadata.kind}
+              fallbackUsed={lastProviderMetadata.fallback_used}
+              estimatedCost={lastProviderMetadata.estimated_cost}
+              actualCost={lastProviderMetadata.actual_cost}
+            />
           </div>
         )}
       </div>

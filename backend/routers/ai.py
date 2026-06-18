@@ -63,7 +63,6 @@ from models import (
     AIRunReceipt,
     AIRoutingPolicyResponse,
     AIRoutingPolicyUpdate,
-    AIUsageSummaryResponse,
     AiStatusResponse,
     AnalyzeRequest,
     AnalyzeResponse,
@@ -212,22 +211,6 @@ def _cloud_provider_model_required_http_error(provider_name: str) -> HTTPExcepti
             "error": "ai_provider_model_required",
             "message": "Select a validated cloud model before running analysis.",
             "provider_name": provider_name,
-        },
-    )
-
-
-def _cloud_cost_limit_http_error(
-    *,
-    estimated_cost: float,
-    per_call_cost_cap_usd: float,
-) -> HTTPException:
-    return HTTPException(
-        status_code=http_status.HTTP_402_PAYMENT_REQUIRED,
-        detail={
-            "error": "ai_cost_limit_exceeded",
-            "message": "Estimated cloud AI cost exceeds the per-call cap.",
-            "estimated_cost": estimated_cost,
-            "per_call_cost_cap_usd": per_call_cost_cap_usd,
         },
     )
 
@@ -580,59 +563,11 @@ async def _get_routing_policy(ai_settings: AISettingsService) -> dict:
     get_policy = getattr(ai_settings, "get_routing_policy", None)
     if get_policy is None:
         return {
+            "active_provider": "ollama",
             "routing_mode": "local_only",
             "local_fallback_enabled": True,
-            "per_call_cost_cap_usd": 1.0,
-            "monthly_cost_cap_usd": 25.0,
         }
     return await get_policy()
-
-
-async def _enforce_cloud_cost_caps(
-    *,
-    provider_name: AIProviderName,
-    model: str,
-    task_type: str,
-    policy: dict,
-    usage_ledger: AIUsageLedger,
-    quoted_estimated_cost: float | None = None,
-    maximum_cost: float | None = None,
-) -> float | None:
-    estimated_cost = (
-        quoted_estimated_cost
-        if quoted_estimated_cost is not None
-        else _estimate_cloud_analysis_cost(provider_name, model)
-    )
-    if estimated_cost is None:
-        return None
-
-    enforced_cost = maximum_cost if maximum_cost is not None else estimated_cost
-    monthly_effective_spend = await usage_ledger.monthly_effective_spend_usd()
-    projected_monthly = monthly_effective_spend + enforced_cost
-    blocked = (
-        enforced_cost > policy["per_call_cost_cap_usd"]
-        or projected_monthly > policy["monthly_cost_cap_usd"]
-    )
-    if not blocked:
-        return estimated_cost
-
-    await usage_ledger.record_usage(
-        provider_name=provider_name,
-        model=model,
-        task_type=task_type,
-        routing_mode=policy["routing_mode"],
-        input_tokens=None,
-        output_tokens=None,
-        estimated_cost=estimated_cost,
-        actual_cost=None,
-        status="blocked",
-        provider_request_id=None,
-        error_code="ai_cost_limit_exceeded",
-    )
-    raise _cloud_cost_limit_http_error(
-        estimated_cost=enforced_cost,
-        per_call_cost_cap_usd=policy["per_call_cost_cap_usd"],
-    )
 
 
 # ── Timeframe → IBKR period mapping for AI analysis ────────
@@ -1092,16 +1027,6 @@ async def compare_analysis(
                 "message": "The selected OpenRouter model changed after preview.",
             },
         )
-    await _enforce_cloud_cost_caps(
-        provider_name="openrouter",
-        model=snapshot.model.id,
-        task_type=snapshot.request.task_type,
-        policy=policy,
-        usage_ledger=usage_ledger,
-        quoted_estimated_cost=float(snapshot.cost.estimated_cost_usd),
-        maximum_cost=float(snapshot.cost.maximum_cost_usd),
-    )
-
     local_provider = ai.provider_registry.require("ollama")
     cloud_provider = None
     try:
@@ -1185,7 +1110,7 @@ async def compare_analysis(
 async def routing_policy(
     ai_settings: AISettingsService = Depends(get_ai_settings),
 ):
-    """Return non-secret AI routing and cost-cap settings."""
+    """Return non-secret AI routing settings."""
     return AIRoutingPolicyResponse(**await ai_settings.get_routing_policy())
 
 
@@ -1194,24 +1119,14 @@ async def update_routing_policy(
     request: AIRoutingPolicyUpdate,
     ai_settings: AISettingsService = Depends(get_ai_settings),
 ):
-    """Persist non-secret AI routing and cost-cap settings."""
+    """Persist non-secret AI routing settings."""
     return AIRoutingPolicyResponse(
         **await ai_settings.update_routing_policy(
             active_provider=request.active_provider,
             routing_mode=request.routing_mode,
             local_fallback_enabled=request.local_fallback_enabled,
-            per_call_cost_cap_usd=request.per_call_cost_cap_usd,
-            monthly_cost_cap_usd=request.monthly_cost_cap_usd,
         )
     )
-
-
-@router.get("/usage", response_model=AIUsageSummaryResponse)
-async def usage_summary(
-    usage_ledger: AIUsageLedger = Depends(get_ai_usage_ledger),
-):
-    """Return current-month AI estimated and actual spend."""
-    return AIUsageSummaryResponse(**await usage_ledger.monthly_spend_summary())
 
 
 @router.get("/runs", response_model=list[AIRunReceipt])
@@ -1491,13 +1406,7 @@ async def analyze(
     fallback_error_code = "ai_provider_fallback"
     if provider_name != "ollama":
         policy = await _get_routing_policy(ai_settings)
-        estimated_cost = await _enforce_cloud_cost_caps(
-            provider_name=provider_name,
-            model=model,
-            task_type=request.task_type,
-            policy=policy,
-            usage_ledger=usage_ledger,
-        )
+        estimated_cost = _estimate_cloud_analysis_cost(provider_name, model)
         try:
             cloud_provider = await _create_cloud_provider_for_request(
                 provider_config=provider_config,
@@ -1693,15 +1602,6 @@ async def analyze_stream(
                     "message": "The selected OpenRouter model changed after preview.",
                 },
             )
-        await _enforce_cloud_cost_caps(
-            provider_name="openrouter",
-            model=snapshot.model.id,
-            task_type=snapshot.request.task_type,
-            policy=policy,
-            usage_ledger=usage_ledger,
-            quoted_estimated_cost=float(snapshot.cost.estimated_cost_usd),
-            maximum_cost=float(snapshot.cost.maximum_cost_usd),
-        )
         registry = getattr(ai, "provider_registry", None)
         fallback_provider = (
             registry.require("ollama")
@@ -1808,13 +1708,7 @@ async def analyze_stream(
     fallback_error_code = "ai_provider_fallback"
     if provider_name != "ollama":
         policy = await _get_routing_policy(ai_settings)
-        estimated_cost = await _enforce_cloud_cost_caps(
-            provider_name=provider_name,
-            model=selected_model,
-            task_type=request.task_type,
-            policy=policy,
-            usage_ledger=usage_ledger,
-        )
+        estimated_cost = _estimate_cloud_analysis_cost(provider_name, selected_model)
         try:
             cloud_provider = await _create_cloud_provider_for_request(
                 provider_config=provider_config,

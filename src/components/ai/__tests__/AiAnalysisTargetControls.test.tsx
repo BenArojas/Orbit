@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { useAiStore } from "@/store/ai";
@@ -8,6 +8,8 @@ import AiAnalysisTargetControls from "../AiAnalysisTargetControls";
 const apiMocks = vi.hoisted(() => ({
   models: vi.fn(),
   selectModel: vi.fn(),
+  routingPolicy: vi.fn(),
+  updateRoutingPolicy: vi.fn(),
 }));
 
 vi.mock("@/modules/parallax/api", () => ({
@@ -48,11 +50,23 @@ vi.mock("@/modules/parallax/api", () => ({
       routing_mode: "cloud_manual",
       cloud_enabled: true,
     }),
-    aiModels: vi.fn().mockResolvedValue([]),
+    aiModels: vi.fn().mockResolvedValue([
+      {
+        name: "gemma4:4b",
+        size_bytes: 4_000_000_000,
+        size_gb: 4,
+        family: "gemma4",
+        parameter_size: "4B",
+        quantization: "Q4_K_M",
+        modified_at: "2026-06-18T00:00:00Z",
+      },
+    ]),
     aiSelectModel: vi.fn(),
     aiRefresh: vi.fn(),
     aiOpenRouterModels: apiMocks.models,
     aiSelectOpenRouterModel: apiMocks.selectModel,
+    aiRoutingPolicy: apiMocks.routingPolicy,
+    aiUpdateRoutingPolicy: apiMocks.updateRoutingPolicy,
   },
 }));
 
@@ -73,6 +87,10 @@ function renderControls() {
 describe("AiAnalysisTargetControls", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    apiMocks.models.mockReset();
+    apiMocks.selectModel.mockReset();
+    apiMocks.routingPolicy.mockReset();
+    apiMocks.updateRoutingPolicy.mockReset();
     apiMocks.models.mockResolvedValue({
       provider_name: "openrouter",
       selected_model: "anthropic/claude-sonnet-4",
@@ -102,6 +120,15 @@ describe("AiAnalysisTargetControls", () => {
       ...(await apiMocks.models()),
       selected_model: model,
     }));
+    apiMocks.routingPolicy.mockResolvedValue({
+      active_provider: "ollama",
+      routing_mode: "local_only",
+      local_fallback_enabled: true,
+    });
+    apiMocks.updateRoutingPolicy.mockImplementation(async (policy) => {
+      apiMocks.routingPolicy.mockResolvedValue(policy);
+      return policy;
+    });
     useAiStore.setState({
       providers: [
         {
@@ -127,6 +154,10 @@ describe("AiAnalysisTargetControls", () => {
       ],
       activeProvider: "ollama",
       routingMode: "cloud_manual",
+      localFallbackEnabled: true,
+      analysisProvider: null,
+      analysisModel: null,
+      analysisFallbackEnabled: null,
     });
   });
 
@@ -138,10 +169,70 @@ describe("AiAnalysisTargetControls", () => {
     expect(screen.queryByText(/hybrid auto/i)).not.toBeInTheDocument();
   });
 
+  it("renders the Ollama model selector beneath Local Ollama", async () => {
+    renderControls();
+
+    expect(await screen.findByRole("button", { name: /gemma4:4b/i }))
+      .toBeInTheDocument();
+  });
+
+  it("persists OpenRouter selection with local fallback", async () => {
+    renderControls();
+
+    fireEvent.click(screen.getByRole("button", { name: /openrouter/i }));
+
+    await waitFor(() => {
+      expect(apiMocks.updateRoutingPolicy).toHaveBeenCalledWith({
+        active_provider: "openrouter",
+        routing_mode: "cloud_with_local_fallback",
+        local_fallback_enabled: true,
+      });
+    });
+  });
+
+  it("disables the Local model control while routing persistence is pending", async () => {
+    let resolveUpdate: ((policy: {
+      active_provider: string;
+      routing_mode: string;
+      local_fallback_enabled: boolean;
+    }) => void) | undefined;
+    apiMocks.updateRoutingPolicy.mockImplementation(
+      (policy) => new Promise((resolve) => {
+        resolveUpdate = () => resolve(policy);
+      }),
+    );
+    useAiStore.setState({
+      activeProvider: "openrouter",
+      routingMode: "cloud_manual",
+      analysisProvider: "openrouter",
+    });
+    apiMocks.routingPolicy.mockResolvedValue({
+      active_provider: "openrouter",
+      routing_mode: "cloud_manual",
+      local_fallback_enabled: true,
+    });
+    renderControls();
+
+    fireEvent.click(screen.getByRole("button", { name: /local ollama/i }));
+
+    const modelTrigger = await screen.findByRole("button", { name: /gemma4:4b/i });
+    expect(modelTrigger).toBeDisabled();
+
+    await act(async () => {
+      resolveUpdate?.({
+        active_provider: "ollama",
+        routing_mode: "local_only",
+        local_fallback_enabled: true,
+      });
+    });
+  });
+
   it("loads authenticated models and persists the selected OpenRouter model", async () => {
     renderControls();
 
     fireEvent.click(screen.getByRole("button", { name: /openrouter/i }));
+
+    await waitFor(() => expect(apiMocks.updateRoutingPolicy).toHaveBeenCalled());
 
     const modelSelect = await screen.findByRole("combobox", {
       name: /openrouter model/i,
@@ -161,9 +252,11 @@ describe("AiAnalysisTargetControls", () => {
       .toBe("openrouter");
   });
 
-  it("stores the local fallback choice for the next OpenRouter run", async () => {
+  it("persists disabled fallback as cloud manual routing", async () => {
     renderControls();
     fireEvent.click(screen.getByRole("button", { name: /openrouter/i }));
+
+    await waitFor(() => expect(apiMocks.updateRoutingPolicy).toHaveBeenCalledTimes(1));
 
     const fallback = await screen.findByRole("switch", {
       name: /local fallback/i,
@@ -172,12 +265,38 @@ describe("AiAnalysisTargetControls", () => {
 
     fireEvent.click(fallback);
 
-    expect(fallback).toHaveAttribute("aria-checked", "false");
-    expect(useAiStore.getState().analysisFallbackEnabled).toBe(false);
+    await waitFor(() => {
+      expect(apiMocks.updateRoutingPolicy).toHaveBeenLastCalledWith({
+        active_provider: "openrouter",
+        routing_mode: "cloud_manual",
+        local_fallback_enabled: false,
+      });
+    });
+  });
+
+  it("rehydrates the persisted provider and fallback policy", async () => {
+    useAiStore.setState({
+      analysisProvider: "ollama",
+      analysisFallbackEnabled: true,
+    });
+    apiMocks.routingPolicy.mockResolvedValue({
+      active_provider: "openrouter",
+      routing_mode: "cloud_manual",
+      local_fallback_enabled: false,
+    });
+
+    renderControls();
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /openrouter/i }))
+        .toHaveAttribute("aria-pressed", "true");
+      expect(screen.getByRole("switch", { name: /local fallback/i }))
+        .toHaveAttribute("aria-checked", "false");
+    });
   });
 
   it("shows explicit empty-state text when no compatible OpenRouter models are available", async () => {
-    apiMocks.models.mockResolvedValueOnce({
+    apiMocks.models.mockReset().mockResolvedValue({
       provider_name: "openrouter",
       selected_model: null,
       fetched_at: "2026-06-18T00:00:00Z",
@@ -187,15 +306,21 @@ describe("AiAnalysisTargetControls", () => {
     renderControls();
     fireEvent.click(screen.getByRole("button", { name: /openrouter/i }));
 
+    await waitFor(() => expect(apiMocks.updateRoutingPolicy).toHaveBeenCalled());
+
     expect(await screen.findByText("No compatible OpenRouter models available."))
       .toBeInTheDocument();
   });
 
   it("renders catalog fetch failures as alerts", async () => {
-    apiMocks.models.mockRejectedValueOnce(new Error("OpenRouter catalog unavailable"));
+    apiMocks.models.mockReset().mockRejectedValue(
+      new Error("OpenRouter catalog unavailable"),
+    );
 
     renderControls();
     fireEvent.click(screen.getByRole("button", { name: /openrouter/i }));
+
+    await waitFor(() => expect(apiMocks.updateRoutingPolicy).toHaveBeenCalled());
 
     const alert = await screen.findByRole("alert");
     expect(alert).toHaveTextContent("OpenRouter catalog unavailable");

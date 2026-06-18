@@ -47,24 +47,23 @@ async def test_ai_settings_service_round_trips_routing_policy():
         "active_provider": "ollama",
         "routing_mode": "local_only",
         "local_fallback_enabled": True,
-        "per_call_cost_cap_usd": 1.0,
-        "monthly_cost_cap_usd": 25.0,
     }
 
     updated = await service.update_routing_policy(
         active_provider="openrouter",
-        routing_mode="cloud_manual",
-        local_fallback_enabled=False,
-        per_call_cost_cap_usd=2.5,
-        monthly_cost_cap_usd=50.0,
+        routing_mode="cloud_with_local_fallback",
+        local_fallback_enabled=True,
     )
 
     assert updated == {
         "active_provider": "openrouter",
-        "routing_mode": "cloud_manual",
-        "local_fallback_enabled": False,
-        "per_call_cost_cap_usd": 2.5,
-        "monthly_cost_cap_usd": 50.0,
+        "routing_mode": "cloud_with_local_fallback",
+        "local_fallback_enabled": True,
+    }
+    assert set(updated) == {
+        "active_provider",
+        "routing_mode",
+        "local_fallback_enabled",
     }
     assert await service.get_routing_policy() == updated
 
@@ -115,8 +114,6 @@ async def test_ai_settings_service_migrates_hybrid_auto_routing_mode(
         active_provider="openrouter",
         routing_mode="hybrid_auto",
         local_fallback_enabled=fallback_enabled,
-        per_call_cost_cap_usd=1.0,
-        monthly_cost_cap_usd=25.0,
     )
 
     policy = await AISettingsService(db).get_routing_policy()

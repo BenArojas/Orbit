@@ -75,8 +75,6 @@ class _FakeSettings:
             "active_provider": "ollama",
             "routing_mode": "local_only",
             "local_fallback_enabled": True,
-            "per_call_cost_cap_usd": 1.0,
-            "monthly_cost_cap_usd": 25.0,
         }
 
 
@@ -110,8 +108,6 @@ class _FakeCloudSettings(_FakeSettings):
             "active_provider": "openrouter",
             "routing_mode": "cloud_manual",
             "local_fallback_enabled": True,
-            "per_call_cost_cap_usd": 1.0,
-            "monthly_cost_cap_usd": 25.0,
         }
 
 
@@ -121,8 +117,6 @@ class _FakeLocalOnlyCloudSettings(_FakeCloudSettings):
             "active_provider": "openrouter",
             "routing_mode": "local_only",
             "local_fallback_enabled": True,
-            "per_call_cost_cap_usd": 1.0,
-            "monthly_cost_cap_usd": 25.0,
         }
 
 
@@ -137,25 +131,12 @@ class _FakeCloudSettingsWithoutModel(_FakeCloudSettings):
         ]
 
 
-class _FakeLowCapCloudSettings(_FakeCloudSettings):
-    async def get_routing_policy(self) -> dict:
-        return {
-            "active_provider": "openrouter",
-            "routing_mode": "cloud_manual",
-            "local_fallback_enabled": True,
-            "per_call_cost_cap_usd": 0.01,
-            "monthly_cost_cap_usd": 25.0,
-        }
-
-
 class _FakeNoFallbackCloudSettings(_FakeCloudSettings):
     async def get_routing_policy(self) -> dict:
         return {
             "active_provider": "openrouter",
             "routing_mode": "cloud_manual",
             "local_fallback_enabled": False,
-            "per_call_cost_cap_usd": 1.0,
-            "monthly_cost_cap_usd": 25.0,
         }
 
 
@@ -811,7 +792,7 @@ async def test_cloud_stream_rejects_snapshot_when_selected_model_changed(
 
 
 @pytest.mark.asyncio
-async def test_cloud_stream_enforces_cost_cap_against_snapshot_maximum(
+async def test_reviewed_cloud_snapshot_is_not_blocked_by_legacy_cost_columns(
     monkeypatch: pytest.MonkeyPatch,
 ):
     from deps import get_ai_keystore, get_ai_settings, get_ai_usage_ledger
@@ -876,9 +857,9 @@ async def test_cloud_stream_enforces_cost_cap_against_snapshot_maximum(
 
     assert snapshot.cost.estimated_cost_usd < Decimal("0.03")
     assert snapshot.cost.maximum_cost_usd > Decimal("0.03")
-    assert response.status_code == 402
-    assert response.json()["detail"]["error"] == "ai_cost_limit_exceeded"
-    assert fake_ai.executed is False
+    assert response.status_code == 200
+    assert fake_ai.executed is True
+    assert all(record["status"] != "blocked" for record in usage.records)
 
 
 def test_openrouter_models_returns_user_filtered_catalog_and_selected_model(
@@ -1140,8 +1121,6 @@ async def test_routing_policy_round_trips_non_secret_settings():
         "active_provider": "ollama",
         "routing_mode": "local_only",
         "local_fallback_enabled": True,
-        "per_call_cost_cap_usd": 1.0,
-        "monthly_cost_cap_usd": 25.0,
     }
 
     updated = client.put(
@@ -1150,8 +1129,6 @@ async def test_routing_policy_round_trips_non_secret_settings():
             "active_provider": "openrouter",
             "routing_mode": "cloud_manual",
             "local_fallback_enabled": False,
-            "per_call_cost_cap_usd": 2.5,
-            "monthly_cost_cap_usd": 50.0,
         },
     )
 
@@ -1160,8 +1137,6 @@ async def test_routing_policy_round_trips_non_secret_settings():
         "active_provider": "openrouter",
         "routing_mode": "cloud_manual",
         "local_fallback_enabled": False,
-        "per_call_cost_cap_usd": 2.5,
-        "monthly_cost_cap_usd": 50.0,
     }
     assert client.get("/ai/routing-policy").json() == updated.json()
 
@@ -2066,86 +2041,6 @@ def test_analyze_resolves_cloud_route_before_ollama_readiness(monkeypatch):
     assert resp.json()["provider"]["provider_name"] == "openrouter"
 
 
-def test_analyze_blocks_over_per_call_cap_before_cloud_ai_call():
-    from deps import get_ai_settings, get_ai_usage_ledger
-
-    fake_ai = MagicMock()
-    fake_ibkr = MagicMock()
-    fake_ibkr.history = AsyncMock(return_value={"data": []})
-    fake_db = MagicMock()
-    fake_db.get_setting = AsyncMock(return_value=None)
-
-    usage = _FakeUsageLedger()
-    client = _client(ai=fake_ai, ibkr=fake_ibkr, db=fake_db)
-    client.app.dependency_overrides[get_ai_settings] = lambda: _FakeLowCapCloudSettings()
-    client.app.dependency_overrides[get_ai_usage_ledger] = lambda: usage
-
-    resp = client.post(
-        "/ai/analyze",
-        json={
-            "conid": 265598,
-            "symbol": "AAPL",
-            "timeframes": ["D"],
-            "indicators": ["RSI"],
-            "provider_name": "openrouter",
-        },
-    )
-
-    assert resp.status_code == 402
-    assert resp.json()["detail"] == {
-        "error": "ai_cost_limit_exceeded",
-        "message": "Estimated cloud AI cost exceeds the per-call cap.",
-        "estimated_cost": 0.02,
-        "per_call_cost_cap_usd": 0.01,
-    }
-    fake_ai.analyze.assert_not_called()
-    assert usage.records == [
-        {
-            "provider_name": "openrouter",
-            "model": "anthropic/claude-sonnet-4",
-            "task_type": "analysis",
-            "routing_mode": "cloud_manual",
-            "input_tokens": None,
-            "output_tokens": None,
-            "estimated_cost": 0.02,
-            "actual_cost": None,
-            "status": "blocked",
-            "provider_request_id": None,
-            "error_code": "ai_cost_limit_exceeded",
-        }
-    ]
-
-
-def test_analyze_stream_blocks_over_per_call_cap_before_cloud_ai_call():
-    from deps import get_ai_settings, get_ai_usage_ledger
-
-    fake_ai = MagicMock()
-    fake_ibkr = MagicMock()
-    fake_ibkr.history = AsyncMock(return_value={"data": []})
-    fake_db = MagicMock()
-    fake_db.get_setting = AsyncMock(return_value=None)
-
-    usage = _FakeUsageLedger()
-    client = _client(ai=fake_ai, ibkr=fake_ibkr, db=fake_db)
-    client.app.dependency_overrides[get_ai_settings] = lambda: _FakeLowCapCloudSettings()
-    client.app.dependency_overrides[get_ai_usage_ledger] = lambda: usage
-
-    resp = client.post(
-        "/ai/analyze/stream",
-        json={
-            "conid": 265598,
-            "symbol": "AAPL",
-            "timeframes": ["D"],
-            "indicators": ["RSI"],
-            "provider_name": "openrouter",
-        },
-    )
-
-    assert resp.status_code == 402
-    assert resp.json()["detail"]["error"] == "ai_cost_limit_exceeded"
-    fake_ai.analyze_stream.assert_not_called()
-
-
 def test_analyze_stream_done_event_contains_cloud_provider_metadata():
     from deps import get_ai_keystore, get_ai_settings, get_ai_usage_ledger
 
@@ -2319,25 +2214,6 @@ def test_analyze_stream_maps_cloud_rate_limit_to_typed_sse_and_failed_usage(monk
     )
     assert usage.records[-1]["status"] == "failed"
     assert usage.records[-1]["error_code"] == "ai_provider_rate_limit_error"
-
-
-def test_ai_usage_route_returns_monthly_spend_summary():
-    from deps import get_ai_usage_ledger
-
-    usage = _FakeUsageLedger(
-        monthly_actual_cost_usd=3.25,
-        monthly_estimated_cost_usd=5.0,
-    )
-    client = _client()
-    client.app.dependency_overrides[get_ai_usage_ledger] = lambda: usage
-
-    resp = client.get("/ai/usage")
-
-    assert resp.status_code == 200
-    assert resp.json() == {
-        "monthly_actual_cost_usd": 3.25,
-        "monthly_estimated_cost_usd": 5.0,
-    }
 
 
 def test_analyze_blocks_cloud_for_execution_sensitive_tasks():

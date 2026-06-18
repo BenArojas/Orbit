@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createElement, type ReactElement } from "react";
 
 import { parallaxApi } from "@/modules/parallax/api";
-import type { AIProviderName, AIProvidersResponse, AIRoutingPolicyResponse } from "@/modules/parallax/api";
+import type { AIProviderName, AIProvidersResponse } from "@/modules/parallax/api";
 import { useAiStore } from "@/store";
 
 import AiProvidersSettings from "../AiProvidersSettings";
@@ -16,9 +16,6 @@ vi.mock("@/modules/parallax/api", async (importOriginal) => {
     parallaxApi: {
       ...actual.parallaxApi,
       aiProviders: vi.fn(),
-      aiRoutingPolicy: vi.fn(),
-      aiUsageSummary: vi.fn(),
-      aiUpdateRoutingPolicy: vi.fn(),
       aiSaveProviderKey: vi.fn(),
       aiDeleteProviderKey: vi.fn(),
     },
@@ -71,14 +68,6 @@ const providersResponse: AIProvidersResponse = {
   ],
 };
 
-const routingPolicy: AIRoutingPolicyResponse = {
-  active_provider: "ollama",
-  routing_mode: "local_only",
-  local_fallback_enabled: true,
-  per_call_cost_cap_usd: 1,
-  monthly_cost_cap_usd: 25,
-};
-
 describe("AiProvidersSettings", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -88,16 +77,8 @@ describe("AiProvidersSettings", () => {
       routingMode: "local_only",
       cloudEnabled: false,
       localFallbackEnabled: true,
-      perCallCostCapUsd: 1,
-      monthlyCostCapUsd: 25,
     });
     vi.mocked(parallaxApi.aiProviders).mockResolvedValue(providersResponse);
-    vi.mocked(parallaxApi.aiRoutingPolicy).mockResolvedValue(routingPolicy);
-    vi.mocked(parallaxApi.aiUsageSummary).mockResolvedValue({
-      monthly_actual_cost_usd: 3.25,
-      monthly_estimated_cost_usd: 5,
-    });
-    vi.mocked(parallaxApi.aiUpdateRoutingPolicy).mockImplementation(async (policy) => policy);
     vi.mocked(parallaxApi.aiSaveProviderKey).mockImplementation(
       async (providerName) => ({
         provider_name: providerName,
@@ -135,66 +116,16 @@ describe("AiProvidersSettings", () => {
     expect(screen.queryByDisplayValue("sk-or-secret")).not.toBeInTheDocument();
   });
 
-  it("round-trips non-secret routing and cost-cap settings", async () => {
+  it("renders credential management without execution or spend controls", async () => {
     renderWithQueryClient(<AiProvidersSettings />);
 
-    const perCall = await screen.findByLabelText("Per-call cost cap");
-    fireEvent.change(perCall, { target: { value: "2.5" } });
-    fireEvent.blur(perCall);
-
-    await waitFor(() => {
-      expect(parallaxApi.aiUpdateRoutingPolicy).toHaveBeenCalledWith({
-        active_provider: "ollama",
-        routing_mode: "local_only",
-        local_fallback_enabled: true,
-        per_call_cost_cap_usd: 2.5,
-        monthly_cost_cap_usd: 25,
-      });
-    });
-    expect(useAiStore.getState().perCallCostCapUsd).toBe(2.5);
-  });
-
-  it("enables cloud routing and persists an explicit provider selection", async () => {
-    vi.mocked(parallaxApi.aiProviders).mockResolvedValue({
-      ...providersResponse,
-      cloud_enabled: true,
-      providers: providersResponse.providers.map((provider) =>
-        provider.provider_name === "openrouter"
-          ? { ...provider, enabled: true, has_key: true, selected_model: "anthropic/claude-sonnet-4" }
-          : provider,
-      ),
-    });
-    renderWithQueryClient(<AiProvidersSettings />);
-
-    const routing = await screen.findByLabelText("Routing mode");
-    expect((screen.getByRole("option", { name: "Cloud manual" }) as HTMLOptionElement).disabled).toBe(false);
-    expect(screen.queryByRole("option", { name: "Hybrid auto" })).not.toBeInTheDocument();
-    expect(screen.queryByText(/execution remains local-only/i)).not.toBeInTheDocument();
-    fireEvent.change(routing, { target: { value: "cloud_manual" } });
-    fireEvent.change(screen.getByLabelText("Active provider"), { target: { value: "openrouter" } });
-
-    await waitFor(() => expect(parallaxApi.aiUpdateRoutingPolicy).toHaveBeenLastCalledWith(
-      expect.objectContaining({ active_provider: "openrouter" }),
-    ));
-  });
-
-  it("rejects a negative cost cap without mutating persisted state", async () => {
-    renderWithQueryClient(<AiProvidersSettings />);
-    const perCall = await screen.findByLabelText("Per-call cost cap");
-    fireEvent.change(perCall, { target: { value: "-1" } });
-    fireEvent.blur(perCall);
-
-    expect(await screen.findByText("Enter a non-negative cost cap.")).toBeInTheDocument();
-    expect(parallaxApi.aiUpdateRoutingPolicy).not.toHaveBeenCalled();
-    expect(useAiStore.getState().perCallCostCapUsd).toBe(1);
-  });
-
-  it("renders current monthly cloud AI spend summary", async () => {
-    renderWithQueryClient(<AiProvidersSettings />);
-
-    expect(await screen.findByText("Monthly spend")).toBeInTheDocument();
-    expect(screen.getByText("Actual $3.25")).toBeInTheDocument();
-    expect(screen.getByText("Estimated $5.00")).toBeInTheDocument();
+    expect(await screen.findByLabelText("OpenRouter API key")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Routing mode")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Active provider")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Local fallback")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Per-call cost cap")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Monthly cost cap")).not.toBeInTheDocument();
+    expect(screen.queryByText("Monthly spend")).not.toBeInTheDocument();
   });
 
   it("saves a cloud provider key without rendering the secret after success", async () => {

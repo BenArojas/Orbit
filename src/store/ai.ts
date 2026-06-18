@@ -73,8 +73,6 @@ interface AiState {
   routingMode: AIRoutingMode;
   cloudEnabled: boolean;
   localFallbackEnabled: boolean;
-  perCallCostCapUsd: number;
-  monthlyCostCapUsd: number;
   lastProviderMetadata: AIProviderMetadata | null;
   lastRunReceipt: AIRunReceipt | null;
   analysisProvider: AIProviderName | null;
@@ -136,8 +134,6 @@ export const useAiStore = create<AiState>()((set) => ({
   routingMode: "local_only",
   cloudEnabled: false,
   localFallbackEnabled: true,
-  perCallCostCapUsd: 1,
-  monthlyCostCapUsd: 25,
   lastProviderMetadata: null,
   lastRunReceipt: null,
   analysisProvider: null,
@@ -189,8 +185,6 @@ export const useAiStore = create<AiState>()((set) => ({
       activeProvider: policy.active_provider,
       routingMode: policy.routing_mode,
       localFallbackEnabled: policy.local_fallback_enabled,
-      perCallCostCapUsd: policy.per_call_cost_cap_usd,
-      monthlyCostCapUsd: policy.monthly_cost_cap_usd,
     }),
 
   setLastProviderMetadata: (metadata) => set({ lastProviderMetadata: metadata }),

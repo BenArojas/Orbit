@@ -1158,27 +1158,14 @@ class AIProviderKeySaveRequest(BaseModel):
 
 
 class AIRoutingPolicyResponse(BaseModel):
-    """Non-secret AI routing and cost-cap settings."""
+    """Non-secret AI routing settings."""
     active_provider: AIProviderName = "ollama"
     routing_mode: AIRoutingMode = "local_only"
     local_fallback_enabled: bool = True
-    per_call_cost_cap_usd: float = Field(default=1.0, ge=0)
-    monthly_cost_cap_usd: float = Field(default=25.0, ge=0)
 
 
-class AIRoutingPolicyUpdate(BaseModel):
-    """Update body for non-secret AI routing and cost-cap settings."""
-    active_provider: AIProviderName = "ollama"
-    routing_mode: AIRoutingMode = "local_only"
-    local_fallback_enabled: bool = True
-    per_call_cost_cap_usd: float = Field(default=1.0, ge=0)
-    monthly_cost_cap_usd: float = Field(default=25.0, ge=0)
-
-
-class AIUsageSummaryResponse(BaseModel):
-    """Current-month AI spend summary."""
-    monthly_actual_cost_usd: float = 0.0
-    monthly_estimated_cost_usd: float = 0.0
+class AIRoutingPolicyUpdate(AIRoutingPolicyResponse):
+    """Update body for non-secret AI routing settings."""
 
 
 class AIRunAttempt(BaseModel):

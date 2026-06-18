@@ -9,7 +9,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { createElement, type ReactElement } from "react";
 import type { AIProviderStatus } from "@/modules/parallax/api";
@@ -69,19 +69,22 @@ afterEach(() => {
 
 vi.mock("@/store", () => ({
   useAiStore: Object.assign(
-    () => ({
-      sessionId: null,
-      messages: [],
-      signal: null,
-      isAnalyzing: mockAnalyzing.current,
-      responseTimes: [],
-      activeProvider: mockAiStore.activeProvider,
-      routingMode: mockAiStore.routingMode,
-      providers: mockAiStore.providers,
-      analysisProvider: mockAiStore.analysisProvider,
-      analysisModel: mockAiStore.analysisModel,
-      analysisFallbackEnabled: mockAiStore.analysisFallbackEnabled,
-    }),
+    (selector?: (state: Record<string, unknown>) => unknown) => {
+      const state = {
+        sessionId: null,
+        messages: [],
+        signal: null,
+        isAnalyzing: mockAnalyzing.current,
+        responseTimes: [],
+        activeProvider: mockAiStore.activeProvider,
+        routingMode: mockAiStore.routingMode,
+        providers: mockAiStore.providers,
+        analysisProvider: mockAiStore.analysisProvider,
+        analysisModel: mockAiStore.analysisModel,
+        analysisFallbackEnabled: mockAiStore.analysisFallbackEnabled,
+      };
+      return selector ? selector(state) : state;
+    },
     {
       // Allow useAiStore.getState() lookups in the hook (not used here, but
       // keeps the import shape compatible with the real export).
@@ -94,7 +97,15 @@ vi.mock("@/hooks/useAiStatus", () => ({
   useAiStatus: () => ({
     ollamaState: mockOllamaReady.current ? "ready" : "not_installed",
     selectedModel: "gemma4:4b",
-    availableModels: [],
+    availableModels: [{
+      name: "gemma4:4b",
+      size_bytes: 4_000_000_000,
+      size_gb: 4,
+      family: "gemma4",
+      parameter_size: "4B",
+      quantization: "Q4_K_M",
+      modified_at: "2026-06-18T00:00:00Z",
+    }],
     ollamaError: null,
     isReady: mockOllamaReady.current,
     openRouterModels: mockOpenRouterCatalog.models,
@@ -105,6 +116,10 @@ vi.mock("@/hooks/useAiStatus", () => ({
     refresh: vi.fn(),
     isRefreshing: false,
   }),
+}));
+
+vi.mock("../ResponseTimeBadge", () => ({
+  default: () => null,
 }));
 
 vi.mock("@/hooks/useAiStream", () => ({
@@ -289,6 +304,25 @@ describe("AiChatPanel — provider routing", () => {
         error: null,
       },
     ];
+  });
+
+  it("does not render an editable Ollama model trigger in the header", async () => {
+    mockAiStore.activeProvider = "ollama";
+    mockAiStore.routingMode = "local_only";
+    const { default: AiChatPanel } = await import("../AiChatPanel");
+
+    renderAiChat(
+      createElement(AiChatPanel, {
+        activeConid: 265598,
+        activeSymbol: "AAPL",
+        fibonacci: null,
+      }),
+    );
+
+    const header = screen.getAllByText("AI Analysis")[0].parentElement;
+    expect(header).not.toBeNull();
+    expect(within(header as HTMLElement).queryByRole("button", { name: /gemma4:4b/i }))
+      .not.toBeInTheDocument();
   });
 
   it("previews the derived cloud route without starting inference", async () => {

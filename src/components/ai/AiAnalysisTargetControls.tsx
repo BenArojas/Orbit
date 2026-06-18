@@ -2,11 +2,12 @@ import { Cloud, Cpu } from "lucide-react";
 
 import { useAiStatus } from "@/hooks/useAiStatus";
 import { useAiStore } from "@/store";
+import AiModelSelector from "./AiModelSelector";
+import ResponseTimeBadge from "./ResponseTimeBadge";
 
 export default function AiAnalysisTargetControls() {
   const {
     activeProvider = "ollama",
-    routingMode,
     providers = [],
     analysisProvider,
     analysisModel,
@@ -17,21 +18,27 @@ export default function AiAnalysisTargetControls() {
     setAnalysisFallbackEnabled,
   } = useAiStore();
   const {
+    selectedModel: selectedOllamaModel,
+    availableModels,
+    selectModel,
+    isSelectingModel,
+    refresh,
+    isRefreshing,
     openRouterModels = [],
     openRouterSelectedModel = null,
     isLoadingOpenRouterModels = false,
     openRouterModelsError = null,
     selectOpenRouterModel = () => undefined,
     isSelectingOpenRouterModel = false,
+    updateAnalysisRoute = () => undefined,
+    isUpdatingAnalysisRoute = false,
   } = useAiStatus();
   const openRouter = providers.find(
     (provider) => provider.provider_name === "openrouter",
   );
   const target = analysisProvider
     ?? (activeProvider === "openrouter" ? "openrouter" : "ollama");
-  const openRouterEnabled = Boolean(
-    routingMode !== "local_only" && openRouter?.enabled && openRouter.has_key,
-  );
+  const openRouterEnabled = Boolean(openRouter?.enabled && openRouter.has_key);
   const fallbackEnabled = analysisFallbackEnabled ?? localFallbackEnabled;
   const selectedModel = analysisModel
     ?? openRouterSelectedModel
@@ -43,6 +50,25 @@ export default function AiAnalysisTargetControls() {
     if (provider === "openrouter") {
       setAnalysisModel(openRouter?.selected_model ?? null);
     }
+    updateAnalysisRoute({
+      active_provider: provider,
+      routing_mode: provider === "ollama"
+        ? "local_only"
+        : fallbackEnabled
+          ? "cloud_with_local_fallback"
+          : "cloud_manual",
+      local_fallback_enabled: fallbackEnabled,
+    });
+  };
+
+  const toggleFallback = () => {
+    const enabled = !fallbackEnabled;
+    setAnalysisFallbackEnabled(enabled);
+    updateAnalysisRoute({
+      active_provider: "openrouter",
+      routing_mode: enabled ? "cloud_with_local_fallback" : "cloud_manual",
+      local_fallback_enabled: enabled,
+    });
   };
 
   return (
@@ -52,6 +78,7 @@ export default function AiAnalysisTargetControls() {
           type="button"
           aria-label="Local Ollama"
           aria-pressed={target === "ollama"}
+          disabled={isUpdatingAnalysisRoute}
           onClick={() => chooseTarget("ollama")}
           className={`flex h-7 items-center justify-center gap-1.5 rounded px-2 text-[10px] font-medium transition-colors ${
             target === "ollama"
@@ -66,7 +93,7 @@ export default function AiAnalysisTargetControls() {
           type="button"
           aria-label="OpenRouter"
           aria-pressed={target === "openrouter"}
-          disabled={!openRouterEnabled}
+          disabled={!openRouterEnabled || isUpdatingAnalysisRoute}
           onClick={() => chooseTarget("openrouter")}
           className={`flex h-7 items-center justify-center gap-1.5 rounded px-2 text-[10px] font-medium transition-colors ${
             target === "openrouter"
@@ -78,6 +105,19 @@ export default function AiAnalysisTargetControls() {
           OpenRouter
         </button>
       </div>
+      {target === "ollama" ? (
+        <div className="mt-2 flex items-center justify-between gap-2">
+          <ResponseTimeBadge selectedModel={selectedOllamaModel} />
+          <AiModelSelector
+            models={availableModels}
+            selectedModel={selectedOllamaModel}
+            onSelect={selectModel}
+            onRefresh={refresh}
+            isRefreshing={isRefreshing || isSelectingModel}
+            disabled={isUpdatingAnalysisRoute}
+          />
+        </div>
+      ) : null}
       {target === "openrouter" && openRouterEnabled ? (
         <div className="mt-2 space-y-2">
           {openRouterModelsError ? (
@@ -103,7 +143,11 @@ export default function AiAnalysisTargetControls() {
                 id="ai-analysis-openrouter-model"
                 aria-label="OpenRouter model"
                 value={selectedModel}
-                disabled={isLoadingOpenRouterModels || isSelectingOpenRouterModel}
+                disabled={
+                  isLoadingOpenRouterModels
+                  || isSelectingOpenRouterModel
+                  || isUpdatingAnalysisRoute
+                }
                 onChange={(event) => selectOpenRouterModel(event.target.value)}
                 className="h-7 w-full rounded border border-[var(--border)] bg-[var(--bg-0)] px-2 text-[10px] text-[var(--text-1)] focus:outline-none focus:ring-1 focus:ring-[var(--clr-cyan)]"
               >
@@ -121,7 +165,8 @@ export default function AiAnalysisTargetControls() {
                   role="switch"
                   aria-label="Local fallback"
                   aria-checked={fallbackEnabled}
-                  onClick={() => setAnalysisFallbackEnabled(!fallbackEnabled)}
+                  disabled={isUpdatingAnalysisRoute}
+                  onClick={toggleFallback}
                   className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full border transition-colors ${
                     fallbackEnabled
                       ? "border-[var(--clr-cyan)] bg-[var(--clr-cyan)]"
