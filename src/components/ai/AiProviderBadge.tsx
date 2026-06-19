@@ -42,20 +42,23 @@ export default function AiProviderBadge({
   const Icon = kind === "local" ? Cpu : Cloud;
 
   return (
-    <div className="flex min-w-0 items-center gap-1.5 rounded-md border border-[var(--border)] bg-[var(--bg-0)] px-2 py-1 text-[10px] text-[var(--text-2)]">
+    <div className="flex w-full min-w-0 items-center gap-1.5 rounded-md border border-[var(--border)] bg-[var(--bg-0)] px-2 py-1 text-[10px] text-[var(--text-2)]">
       <Icon size={12} className="shrink-0 text-[var(--clr-cyan)]" />
       <span className="font-medium">{kind === "local" ? "Local" : "Cloud"}</span>
       <span className="text-[var(--text-3)]">{PROVIDER_LABELS[providerName]}</span>
       {model && (
-        <span className="max-w-[140px] truncate font-mono text-[var(--text-3)]">
+        <span
+          title={model}
+          className="min-w-0 flex-1 truncate font-mono text-[var(--text-3)]"
+        >
           {model}
         </span>
       )}
       {costLabel && (
-        <span className="font-mono text-[var(--text-3)]">{costLabel}</span>
+        <span className="shrink-0 font-mono text-[var(--text-3)]">{costLabel}</span>
       )}
       {fallbackUsed && (
-        <span className="inline-flex items-center gap-1 rounded border border-[var(--clr-amber,#ff9f1c)] px-1 py-0.5 text-[9px] text-[var(--clr-amber,#ff9f1c)]">
+        <span className="inline-flex shrink-0 items-center gap-1 rounded border border-[var(--clr-amber,#ff9f1c)] px-1 py-0.5 text-[9px] text-[var(--clr-amber,#ff9f1c)]">
           <RotateCcw size={10} />
           Fallback
         </span>

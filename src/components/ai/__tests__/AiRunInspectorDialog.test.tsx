@@ -4,6 +4,64 @@ import { describe, expect, it, vi } from "vitest";
 import AiRunInspectorDialog from "../AiRunInspectorDialog";
 
 describe("AiRunInspectorDialog", () => {
+  it("contains long payloads without changing copied JSON", () => {
+    const writeText = vi.fn();
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    });
+    const requestBody = {
+      model: "anthropic/claude-sonnet-4",
+      messages: [{ role: "user", content: "W".repeat(2_000) }],
+      stream: true,
+      max_tokens: 4096,
+    };
+
+    render(
+      <AiRunInspectorDialog
+        open
+        onOpenChange={vi.fn()}
+        onConfirm={vi.fn()}
+        preview={{
+          snapshot_id: "snapshot-long",
+          expires_at: "2026-06-19T12:10:00Z",
+          provider_name: "openrouter",
+          model: {
+            id: "anthropic/claude-sonnet-4",
+            name: "Claude Sonnet 4",
+            context_length: 200000,
+            max_completion_tokens: 4096,
+            prompt_price_per_token: "0.000003",
+            completion_price_per_token: "0.000015",
+            request_price: "0",
+          },
+          request_body: requestBody,
+          disclosure: {
+            sent_to_cloud: ["technical indicators and chart context"],
+            kept_local: ["IBKR credentials", "API keys"],
+            exact_payload_available_until: "2026-06-19T12:10:00Z",
+          },
+          cost: {
+            currency: "USD",
+            estimated_input_tokens: 1000,
+            expected_output_tokens: 1024,
+            max_output_tokens: 4096,
+            estimated_cost_usd: "0.01836",
+            maximum_cost_usd: "0.06444",
+          },
+          fallback_enabled: false,
+        }}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("tab", { name: "Payload" }));
+    const payload = screen.getByTestId("ai-run-payload");
+    expect(payload).toHaveClass("whitespace-pre-wrap", "break-words", "max-w-full");
+
+    fireEvent.click(screen.getByRole("button", { name: "Copy payload" }));
+    expect(writeText).toHaveBeenCalledWith(JSON.stringify(requestBody, null, 2));
+  });
+
   it("shows the reviewed summary and exact payload, then confirms only the snapshot", () => {
     const onConfirm = vi.fn();
     render(

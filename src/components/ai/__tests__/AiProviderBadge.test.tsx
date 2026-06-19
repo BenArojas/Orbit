@@ -4,6 +4,25 @@ import { describe, expect, it } from "vitest";
 import AiProviderBadge from "../AiProviderBadge";
 
 describe("AiProviderBadge", () => {
+  it("truncates long model ids while keeping the full native tooltip", () => {
+    const model = "z-ai/glm-5.2-very-long-provider-variant";
+    render(
+      <AiProviderBadge
+        providerName="openrouter"
+        model={model}
+        kind="cloud"
+        fallbackUsed
+        estimatedCost={0.02}
+        actualCost={null}
+      />,
+    );
+
+    const modelLabel = screen.getByTitle(model);
+    expect(modelLabel).toHaveClass("min-w-0", "flex-1", "truncate");
+    expect(screen.getByText("Estimated $0.02")).toHaveClass("shrink-0");
+    expect(screen.getByText("Fallback")).toHaveClass("shrink-0");
+  });
+
   it("renders local Ollama provider metadata", () => {
     render(
       <AiProviderBadge

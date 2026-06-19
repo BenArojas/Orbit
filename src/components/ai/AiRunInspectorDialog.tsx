@@ -50,7 +50,7 @@ export default function AiRunInspectorDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="h-[calc(100dvh-1rem)] max-w-[calc(100%-1rem)] grid-rows-[auto_1fr_auto] sm:h-auto sm:max-h-[85vh] sm:max-w-3xl">
+      <DialogContent className="grid h-[calc(100dvh-1rem)] min-w-0 max-w-[calc(100%-1rem)] grid-cols-[minmax(0,1fr)] grid-rows-[auto_1fr_auto] sm:h-auto sm:max-h-[85vh] sm:max-w-3xl">
         <DialogHeader>
           <DialogTitle>{preview ? "Review Cloud Run" : "AI Run Inspector"}</DialogTitle>
           <DialogDescription>
@@ -60,14 +60,14 @@ export default function AiRunInspectorDialog({
           </DialogDescription>
         </DialogHeader>
 
-        <Tabs defaultValue="summary" className="min-h-0">
+        <Tabs defaultValue="summary" className="min-h-0 min-w-0 max-w-full">
           <TabsList>
             <TabsTrigger value="summary">Summary</TabsTrigger>
             <TabsTrigger value="payload">Payload</TabsTrigger>
             <TabsTrigger value="receipt">Receipt</TabsTrigger>
             <TabsTrigger value="compare">Compare</TabsTrigger>
           </TabsList>
-          <TabsContent value="summary" className="min-h-0 overflow-y-auto">
+          <TabsContent value="summary" className="min-h-0 min-w-0 max-w-full overflow-y-auto">
             {preview ? (
               <>
                 <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 text-xs">
@@ -85,7 +85,7 @@ export default function AiRunInspectorDialog({
               </>
             ) : receipt ? <ReceiptSummary receipt={receipt} /> : null}
           </TabsContent>
-          <TabsContent value="payload" className="relative min-h-0 overflow-auto">
+          <TabsContent value="payload" className="relative min-h-0 min-w-0 max-w-full overflow-y-auto">
             {payload ? (
               <>
                 <Button
@@ -99,7 +99,10 @@ export default function AiRunInspectorDialog({
                 >
                   <Copy />
                 </Button>
-                <pre className="max-h-[55vh] overflow-auto rounded-md bg-muted p-3 pr-10 text-[11px] leading-relaxed">
+                <pre
+                  data-testid="ai-run-payload"
+                  className="max-h-[55vh] max-w-full whitespace-pre-wrap break-words rounded-md bg-muted p-3 pr-10 text-[11px] leading-relaxed"
+                >
                   {payload}
                 </pre>
               </>
@@ -109,14 +112,14 @@ export default function AiRunInspectorDialog({
               </p>
             )}
           </TabsContent>
-          <TabsContent value="receipt" className="min-h-0 overflow-y-auto">
+          <TabsContent value="receipt" className="min-h-0 min-w-0 max-w-full overflow-y-auto">
             {receipt ? <ReceiptDetails receipt={receipt} /> : (
               <p className="py-6 text-center text-xs text-muted-foreground">
                 Receipt available after the run completes.
               </p>
             )}
           </TabsContent>
-          <TabsContent value="compare" className="min-h-0 overflow-y-auto">
+          <TabsContent value="compare" className="min-h-0 min-w-0 max-w-full overflow-y-auto">
             <p className="mb-3 text-xs text-muted-foreground">
               Same prepared market facts and prompt.
             </p>

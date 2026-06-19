@@ -358,8 +358,8 @@ export default function AiChatPanel({ activeConid, activeSymbol, fibonacci, char
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden bg-[var(--bg-1)]">
       {/* ── Header ── */}
-      <div className="flex shrink-0 items-center justify-between border-b border-[var(--border)] px-4 py-2">
-        <div className="flex items-center gap-1.5 text-xs font-semibold">
+      <div className="shrink-0 border-b border-[var(--border)] px-4 py-2">
+        <div className="flex min-w-0 items-center gap-1.5 whitespace-nowrap text-xs font-semibold">
           <div
             className="h-2 w-2 rounded-full"
             style={{
@@ -373,7 +373,7 @@ export default function AiChatPanel({ activeConid, activeSymbol, fibonacci, char
         </div>
 
         {showChat && lastProviderMetadata && (
-          <div className="flex items-center gap-1.5">
+          <div data-testid="ai-run-metadata-row" className="mt-1 min-w-0">
             <AiProviderBadge
               providerName={lastProviderMetadata.provider_name}
               model={lastProviderMetadata.model}

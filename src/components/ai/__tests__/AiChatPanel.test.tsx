@@ -48,6 +48,14 @@ const mockAiStore = {
   analysisProvider: null as "ollama" | "openrouter" | null,
   analysisModel: null as string | null,
   analysisFallbackEnabled: null as boolean | null,
+  lastProviderMetadata: null as {
+    provider_name: "ollama" | "openrouter";
+    model: string | null;
+    kind: "local" | "cloud";
+    fallback_used: boolean;
+    estimated_cost: number | null;
+    actual_cost: number | null;
+  } | null,
   providers: [
     {
       provider_name: "ollama",
@@ -81,6 +89,7 @@ vi.mock("@/store", () => ({
         analysisProvider: mockAiStore.analysisProvider,
         analysisModel: mockAiStore.analysisModel,
         analysisFallbackEnabled: mockAiStore.analysisFallbackEnabled,
+        lastProviderMetadata: mockAiStore.lastProviderMetadata,
       };
       return selector ? selector(state) : state;
     },
@@ -199,6 +208,7 @@ describe("AiChatPanel — fib section gating", () => {
     mockAiStore.analysisProvider = null;
     mockAiStore.analysisModel = null;
     mockAiStore.analysisFallbackEnabled = null;
+    mockAiStore.lastProviderMetadata = null;
     mockOpenRouterCatalog.models = [
       { id: "anthropic/claude-sonnet-4", name: "Claude Sonnet 4" },
       { id: "google/gemini-2.5-pro", name: "Gemini 2.5 Pro" },
@@ -281,6 +291,7 @@ describe("AiChatPanel — provider routing", () => {
     mockAiStore.analysisProvider = null;
     mockAiStore.analysisModel = null;
     mockAiStore.analysisFallbackEnabled = null;
+    mockAiStore.lastProviderMetadata = null;
     mockAiStore.providers = [
       {
         provider_name: "ollama",
@@ -303,6 +314,31 @@ describe("AiChatPanel — provider routing", () => {
         error: null,
       },
     ];
+  });
+
+  it("keeps the title on one line and provider metadata on a bounded second row", async () => {
+    const model = "z-ai/glm-5.2-very-long-provider-variant";
+    mockAiStore.lastProviderMetadata = {
+      provider_name: "openrouter",
+      model,
+      kind: "cloud",
+      fallback_used: true,
+      estimated_cost: 0.02,
+      actual_cost: null,
+    };
+    const { default: AiChatPanel } = await import("../AiChatPanel");
+
+    renderAiChat(createElement(AiChatPanel, {
+      activeConid: 265598,
+      activeSymbol: "AAPL",
+      fibonacci: null,
+    }));
+
+    expect(screen.getAllByText("AI Analysis")[0])
+      .toHaveClass("whitespace-nowrap");
+    expect(screen.getByTestId("ai-run-metadata-row"))
+      .toHaveClass("min-w-0");
+    expect(screen.getByTitle(model)).toBeInTheDocument();
   });
 
   it("does not render an editable Ollama model trigger in the header", async () => {
