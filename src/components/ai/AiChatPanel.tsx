@@ -2,7 +2,7 @@
  * AiChatPanel — The full AI panel for the Analysis page right sidebar.
  *
  * Composes everything:
- *   - Header with model selector (when ready)
+ *   - Header with the latest-run provider badge
  *   - AiConfigPanel (timeframe/indicator selection + Run Analysis)
  *   - ActionSignalCard (signal result after analysis)
  *   - Chat message list (scrollable, with streaming support)
@@ -11,7 +11,7 @@
  *
  * State flow:
  *   1. On mount, useAiStatus polls GET /ai/status
- *   2. If not ready → show AiSetupGuide instead of chat
+ *   2. If Ollama is not ready → show AiSetupGuide and any available cloud controls
  *   3. If ready → show config + signal + chat
  *   4. "Run Analysis" → POST /ai/analyze → signal + first message appear
  *   5. Follow-up messages → stream via useAiStream
