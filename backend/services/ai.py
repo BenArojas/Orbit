@@ -34,7 +34,7 @@ if TYPE_CHECKING:
 
 from exceptions import AIAnalysisTimeoutError
 
-from models import AIProviderMetadata, CandleData
+from models import AIProviderMetadata
 
 # ── Per-stage analysis timeouts (seconds) ────────────────────
 # Defined at module level so tests can patch them without touching internals.
@@ -70,12 +70,11 @@ from services.prompt_builder import (
     build_analysis_user_message,
     build_system_prompt,
     get_budget_for_model,
-    truncate_context,
     SIGNAL_EXTRACTION_PROMPT,       # noqa: F401 — kept for legacy callers/tests
     SIGNAL_JSON_SCHEMA,             # noqa: F401 — kept for legacy callers/tests
 )
-from services.ai_providers import AIProviderRegistry, OllamaLLMProvider
-from services.ai_cloud_adapters import (
+from services.ai_providers import AIProviderRegistry, OllamaLLMProvider  # noqa: E402
+from services.ai_cloud_adapters import (  # noqa: E402
     AIProviderAuthError,
     AIProviderModelUnavailableError,
     AIProviderNetworkError,

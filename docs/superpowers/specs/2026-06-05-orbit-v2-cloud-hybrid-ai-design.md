@@ -1,6 +1,6 @@
 # Orbit v2 Cloud + Hybrid AI Design
 
-> Status: Draft for user review
+> Status: Active branch design updated through provider-controls remediation; manual OpenRouter smoke gate still pending
 > Branch: `feature/orbit-v2-cloud-hybrid-ai-spec`
 > Date: 2026-06-05
 
@@ -10,6 +10,23 @@ Add optional cloud AI and hybrid local/cloud inference to Orbit while preserving
 the local-first product model. The cloud path improves analysis quality and
 reasoning depth for users who explicitly opt in. It must not create any path for
 AI to place, arm, modify, or cancel orders.
+
+## Active Branch Note (2026-06-19)
+
+The current branch implements the local-first OpenRouter review workflow through
+the FastAPI sidecar, but the provider-controls remediation changed ownership and
+spending semantics:
+
+- Analysis owns persistent provider, model, and local-fallback selection.
+- Settings owns provider status plus OS-keychain key save/remove only.
+- Orbit surfaces preview and receipt cost metadata, but provider accounts own
+  budgets and caps.
+- The active cloud-analysis path uses authenticated fixed OpenRouter models.
+  Direct-provider analysis controls for OpenAI, Anthropic, Gemini, and Grok
+  remain deferred.
+- Supported routing modes on this branch are `local_only`, `cloud_manual`, and
+  `cloud_with_local_fallback`. Legacy `hybrid_auto` rows migrate to one of the
+  explicit OpenRouter modes during rehydration.
 
 ## Approved Policy
 
@@ -26,10 +43,8 @@ AI to place, arm, modify, or cancel orders.
 v2 starts with these provider families:
 
 - Ollama: local default and fallback.
-- OpenAI: cloud frontier/reasoning provider.
-- Anthropic: cloud frontier/reasoning provider.
-- Gemini: cloud frontier/reasoning provider.
-- Grok/xAI: cloud frontier/reasoning provider.
+- OpenRouter fixed-model catalog: current cloud analysis surface.
+- OpenAI, Anthropic, Gemini, and Grok/xAI: deferred direct-provider parity.
 
 Model names, prices, limits, supported features, and SDK details must be loaded
 from provider configuration or refreshed against official docs during
@@ -66,14 +81,15 @@ Core backend services:
   cloud adapters with provider-specific auth, request format, streaming, and
   structured-output behavior.
 - `AIProviderRegistry`: resolves active providers and validates capabilities.
-- `AISettingsService`: stores enabled providers, selected models, routing mode,
-  cost limits, and fallback preferences.
+- `AISettingsService`: stores provider status, selected models, routing mode,
+  and local-fallback preferences. It does not enforce Orbit-owned cloud caps.
 - `AIKeyStore`: stores provider secrets in the OS keychain and returns secrets
   only to provider adapters at call time.
 - `HybridInferenceRouter`: chooses local or cloud per task using policy,
   privacy level, expected cost, latency, context size, and required reasoning.
-- `AIUsageLedger`: records provider, model, tokens, cost estimate, status, and
-  provider request id when available.
+- `AIUsageLedger`: records metadata-only provider, model, token, estimate,
+  actual-cost, status, and provider-request-id fields for receipts. It does not
+  block new runs on aggregate Orbit caps.
 
 The existing prompt-fact layer remains the boundary between Orbit data and LLM
 input. Cloud providers receive structured facts, user-visible analysis context,
@@ -85,8 +101,8 @@ or order mutation tools.
 Users can choose:
 
 - `local_only`: Ollama only. No cloud calls.
-- `cloud_manual`: user chooses a provider/model per analysis.
-- `hybrid_auto`: router chooses local or cloud by task policy.
+- `cloud_manual`: user chooses OpenRouter plus a fixed authenticated model per
+  analysis.
 - `cloud_with_local_fallback`: cloud first, Ollama fallback on allowed failures.
 
 Default after upgrade is `local_only`.
@@ -117,7 +133,8 @@ Hybrid task policy:
 1. User enables cloud AI in settings.
 2. User adds provider key. The key is stored in the OS keychain and never
    displayed again after save.
-3. User selects provider/model defaults and optional cost caps.
+3. User saves an OpenRouter key in Settings, then chooses provider/model/fallback
+   controls from Analysis.
 4. Analysis request enters the existing `/ai/analyze` or streaming flow.
 5. Backend builds structured prompt facts using existing services.
 6. `HybridInferenceRouter` chooses provider according to mode and policy.
@@ -178,14 +195,13 @@ SQLite fallback.
 New or expanded endpoints:
 
 - `GET /ai/providers`: provider status, enabled flags, selected models.
-- `PUT /ai/providers/{provider_name}`: enable/disable provider and settings.
 - `POST /ai/providers/{provider_name}/key`: save or replace API key.
 - `DELETE /ai/providers/{provider_name}/key`: remove API key.
-- `POST /ai/providers/{provider_name}/test`: validate auth and basic request.
 - `GET /ai/providers/{provider_name}/models`: list configured/available models.
-- `GET /ai/routing-policy`: read hybrid routing mode and task policy.
-- `PUT /ai/routing-policy`: update mode, fallback, caps, and task overrides.
-- `GET /ai/usage`: local usage/cost log for settings UI.
+- `GET /ai/routing-policy`: read persistent provider, routing mode, and local
+  fallback.
+- `PUT /ai/routing-policy`: update persistent provider, routing mode, and local
+  fallback.
 
 Existing `/ai/analyze`, `/ai/analyze_stream`, and AI chat endpoints should route
 through the registry instead of calling Ollama directly.
@@ -195,20 +211,15 @@ through the registry instead of calling Ollama directly.
 Add an AI Providers settings surface:
 
 - local-first status at the top
-- provider cards for Ollama, OpenAI, Anthropic, Gemini, Grok
-- explicit cloud enable switch
-- API key save/remove/test controls
-- selected model control per provider
-- routing mode control
-- local fallback toggle
-- per-analysis and monthly cost cap controls
-- usage table with provider/model/cost/status
+- provider status cards for Ollama plus deferred cloud providers
+- API key save/remove controls for supported cloud providers
+- no routing, fallback, or cap controls in Settings
 
 AI analysis surfaces should show:
 
 - provider and model used
 - local/cloud badge
-- estimated cost when cloud is used
+- preview and receipt cost metadata when cloud is used
 - fallback indicator when fallback happened
 - clear disabled state when cloud is not enabled
 
@@ -251,11 +262,10 @@ Required test coverage:
 - provider protocol conformance with fake providers
 - key redaction in logs and errors
 - settings persistence through `DatabaseService`
-- router selection for all routing modes
+- router selection for the supported explicit routing modes
 - cloud-blocked task enforcement
 - fallback behavior
 - usage ledger writes
-- cost cap blocking
 - structured output validation per adapter
 - streaming adapter event normalization
 - frontend settings controls

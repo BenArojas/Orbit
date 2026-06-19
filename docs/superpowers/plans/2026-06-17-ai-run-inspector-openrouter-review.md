@@ -8,7 +8,18 @@
 
 **Tech Stack:** Python 3.12, FastAPI, Pydantic v2, httpx, SQLite, Decimal, pytest; React 19, TypeScript strict mode, Zustand, TanStack Query v5, Tailwind/shadcn Dialog and Tabs, Vitest and Testing Library; OpenRouter Chat Completions and Models APIs.
 
-**Status:** Approved for execution on 2026-06-17. PROJECT_PLAN.md tracks the mission as IN PROGRESS. Execution starts with Slice 1 only.
+**Status:** Approved for execution on 2026-06-17. PROJECT_PLAN.md tracks the
+mission as IN PROGRESS. AI Run Inspector Slices 1-4 and the provider-controls
+remediation are implemented on this branch; the remaining gate is the
+user-approved real OpenRouter smoke test followed by final review/merge
+handling.
+
+**Execution status:** Slices 1-4 are implemented. Their detailed steps below
+preserve the original execution history. Where those historical steps mention
+Settings-owned defaults/caps or Orbit-enforced aggregate caps, the approved
+[`2026-06-18 AI provider-controls simplification plan`](2026-06-18-ai-provider-controls-simplification.md)
+supersedes them. The active contract is Analysis-owned provider/model/fallback,
+credential-only Settings, and provider-account-owned budgets.
 
 ## Global Constraints
 
@@ -32,7 +43,10 @@
 
 The product decisions are resolved and the work is ready to execute after this plan is approved.
 
-The current branch already contains provider settings, OS-keychain storage, request-scoped cloud adapters, routing, fallback, usage logging, and cost caps. The missing review workflow caused the observed failure:
+The current branch already contains provider settings, OS-keychain storage,
+request-scoped cloud adapters, routing, fallback, and metadata-only usage
+logging. Legacy Orbit cost-cap columns remain inert; provider accounts own
+budgets and limits. The missing review workflow caused the observed failure:
 
 ~~~text
 [stream] Running AI analysis for WULF (532497563) with openrouter/gemma4:e4b
@@ -57,8 +71,9 @@ Execution precondition: preserve the current dirty worktree. Do not reset, rever
 
 ### UX ownership
 
-- Settings owns API-key save/remove, provider enablement, default provider/model, and monthly/per-call caps.
-- Analysis owns the per-run target, OpenRouter model, fallback choice, preflight review, run receipt, and comparison.
+- Settings owns provider status plus API-key save/remove only.
+- Analysis owns the persistent provider/model/fallback controls, preflight
+  review, run receipt, and comparison.
 - The AI Run Inspector is a permanent wide Dialog opened from the Analysis panel. It uses four tabs: Summary, Payload, Receipt, Compare.
 - Local target: Run Analysis executes immediately.
 - OpenRouter target: Run Analysis becomes Review Cloud Run. The inspector opens on Summary; Send to OpenRouter is the only action that performs the cloud call.
@@ -92,7 +107,8 @@ Execution precondition: preserve the current dirty worktree. Do not reset, rever
 - Each request sets max_tokens to the lesser of 4096, the model endpoint limit, and remaining model context.
 - Estimated cost uses estimated input tokens plus an expected output allowance of min(1024, max_tokens).
 - Maximum cost uses estimated input tokens plus the full max_tokens allowance.
-- Per-call and projected monthly caps are checked against maximum cost before the request.
+- Orbit does not enforce per-call or projected monthly caps. Those budgets live
+  in the provider account; Orbit only shows the preview/receipt cost metadata.
 - Actual cost and native token counts come from OpenRouter usage in the final response or final SSE chunk.
 - UI copy is compact: Estimated ~$0.0032, Max $0.0118. Actual $0.0027 appears after completion.
 
@@ -182,7 +198,7 @@ After this plan is approved, use project-plan-update before coding to mark the A
 - Create src/components/ai/AiRunInspectorDialog.tsx: Summary/Payload/Receipt/Compare user surface.
 - Modify src/components/ai/AiProviderBadge.tsx: requested versus executed model, generation/cost/fallback status.
 - Modify src/components/ai/AiChatPanel.tsx: integrate target controls and inspector; remove local-model leakage into cloud requests.
-- Modify src/components/ai/AiProvidersSettings.tsx: defaults/caps only, remove Hybrid auto, correct stale local-only copy.
+- Modify src/components/ai/AiProvidersSettings.tsx: credential management and provider status only.
 - Create src/components/ai/__tests__/AiAnalysisTargetControls.test.tsx.
 - Create src/components/ai/__tests__/AiRunInspectorDialog.test.tsx.
 - Modify src/components/ai/__tests__/AiChatPanel.test.tsx.
@@ -1025,7 +1041,7 @@ git commit -m "docs: complete OpenRouter run inspector plan"
 - A cloud call cannot start without a valid fixed selected model and unexpired preview snapshot.
 - The user can inspect the exact outbound JSON body before sending; secrets and HTTP headers are absent.
 - The user can see meaningful sent-to-cloud and kept-local disclosures.
-- The user sees expected and maximum cost before sending; caps enforce maximum cost.
+- The user sees expected and maximum cost before sending; Orbit does not enforce aggregate caps.
 - The adapter sends max_tokens and captures the concrete model, generation ID, final tokens, and actual cost.
 - Success, typed error, blocked, and fallback outcomes all produce truthful receipts.
 - Fallback creates separate failed-cloud and successful-local attempts; local execution never receives cloud cost.

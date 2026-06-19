@@ -16,6 +16,12 @@
 
 Slices 1 through 7 are implemented on `feature/orbit-v2-cloud-hybrid-ai-spec`. PR #30 remains draft while review remediation and verification complete. Slice 8 manual provider smoke tests remain a human review gate and have not been claimed complete.
 
+Provider-controls remediation on this branch supersedes the earlier settings and
+cost-cap assumptions in this plan: Analysis now owns persistent
+provider/model/fallback selection, Settings owns OS-keychain credential
+management only, and Orbit surfaces preview/receipt cost metadata without
+enforcing aggregate provider-account budgets or caps.
+
 ## API Key Storage Decision
 
 Locked decision:
@@ -47,7 +53,7 @@ Do not merge or push PR #30 until focused AI verification, build, policy drift, 
 | 3. Provider settings shell | Implemented |
 | 4. OS-keychain enablement | Implemented |
 | 5. OpenRouter analysis and fallback | Implemented |
-| 6. Usage ledger and cost caps | Implemented |
+| 6. Usage ledger and receipt costs; Orbit caps removed | Implemented |
 | 7. Direct cloud adapters | Implemented |
 | 8. Manual provider smoke tests | Pending HITL verification |
 
@@ -2826,9 +2832,10 @@ Expected:
 - Typecheck passes.
 - Build passes or any failure is documented as an unrelated existing baseline with evidence.
 
-## Implementation Handoff Prompt
+## Historical Implementation Handoff Prompt
 
-Use this prompt only after the user approves execution:
+This prompt records the original kickoff and must not be executed again. Use
+the readiness verdict and current review gate above for branch status.
 
 ```text
 You are implementing Orbit v2 Cloud + Hybrid AI in /Users/benarojasmac/Desktop/Projects/Orbit.

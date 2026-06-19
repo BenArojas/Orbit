@@ -8,7 +8,10 @@
 
 **Tech Stack:** Python 3.12, FastAPI, Pydantic v2, httpx, SQLite, pytest; React 19, TypeScript strict mode, Zustand, TanStack Query v5, Tailwind, Vitest and Testing Library.
 
-**Status:** APPROVED - Slice 1 complete; Slice 2 in progress. This remediation supersedes the Settings ownership and Orbit-owned cost-cap decisions in `docs/superpowers/plans/2026-06-17-ai-run-inspector-openrouter-review.md` and must complete before that plan's Slice 5 manual smoke gate.
+**Status:** COMPLETE ON BRANCH - Slices 1-3 are done. Analysis owns persistent
+provider/model/fallback controls, Settings owns OS-keychain credential
+management only, and the remaining user-facing gate lives in
+`docs/superpowers/plans/2026-06-17-ai-run-inspector-openrouter-review.md`.
 
 ## Global Constraints
 
