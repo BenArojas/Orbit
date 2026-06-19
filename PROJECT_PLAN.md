@@ -40,7 +40,7 @@ These are locked in. Don't revisit unless something breaks.
 | Instrument scope | Any instrument IBKR supports | Focus is US equities/ETFs, but don't restrict — if IBKR has data, show it |
 | Desktop framework | Tauri v2 | Local-only, lightweight, cross-platform |
 | Charts | TradingView Lightweight Charts v5 | Familiar, open source, high quality |
-| AI model | Local Ollama by default; optional v2 cloud providers only after explicit enable | Local-first remains the default; OpenAI, Anthropic, Gemini, and Grok support belongs to the Cloud + Hybrid AI spec |
+| AI model | Local Ollama by default; fixed OpenRouter models after explicit cloud opt-in | Analysis owns the selected provider/model; direct-provider parity is deferred |
 | AI input | Structured JSON (pre-computed signals) | Not raw OHLCV — cleaner, more reliable |
 | AI scope | Full chat + signal card | Signal card on first response, then follow-up chat |
 | Ollama lifecycle | Detect-only, never auto-install | Guide user, don't decide for them |
@@ -61,6 +61,7 @@ These are locked in. Don't revisit unless something breaks.
 These notes are intentionally tracked in the project plan because they affect the next Orbit/MoonMarket implementation passes.
 
 - **Budget-first AI workflow:** DONE on `feature/budget-first-ai-workflow`. Scoped architecture/testing docs are canonical, Claude imports/symlinks shared guidance, four duplicated domain skills are removed, and critical-promises testing replaces mandatory TDD. Verified with JavaScript syntax, policy-drift, structure, and diff checks; no runtime application behavior changed. Design: `docs/superpowers/specs/2026-06-20-budget-first-ai-workflow-design.md`; plan: `docs/superpowers/plans/2026-06-20-budget-first-ai-workflow.md`.
+- **Cloud + Hybrid AI:** CODE COMPLETE on `feature/orbit-v2-cloud-hybrid-ai-spec`; the manual OpenRouter smoke/merge gate remains pending. Local Ollama stays the default, cloud is explicit opt-in, keys stay in the OS keychain, and SQLite stores only opaque `api_key_ref` values. Design: `docs/superpowers/specs/2026-06-05-orbit-v2-cloud-hybrid-ai-design.md`.
 - **Plan #6: MoonMarket Options Chain** ships single-leg option orders first. Selecting a call/put contract opens the shared OrderTicket as `OPTION`, but option brackets are disabled in the UI and rejected server-side if an option order payload tries to submit a multi-order group.
 - **OrderTicket enhancement pass:** trailing stops (`TRAIL`/`TRAILLMT`), outside-RTH, plain-English labels, risk/reward readout, cash sizing, and percent-of-buying-power sizing are merged to local `dev`.
 - **Deferred but required follow-up:** option bracket orders belong in a later MoonMarket trading-depth pass after single-leg option orders are validated against the IBKR paper account. Revisit this before any options trading polish or "bracket parity" work.
@@ -596,13 +597,16 @@ but only behind explicit settings and connection gates.
      within, a user-reviewed and user-armed plan.
 
 2. **Cloud LLM provider support**
-   - Optional providers: OpenAI, Anthropic, Gemini, Grok, and any later provider
-     that fits the same interface.
-   - Local Ollama remains the default and fallback.
+   - The current cloud analysis surface uses authenticated fixed OpenRouter
+     models. Direct OpenAI, Anthropic, Gemini, and Grok controls are deferred.
+   - Local Ollama remains the default. It is used as fallback only when the user
+     enables the explicit `cloud_with_local_fallback` routing mode.
    - API keys live only in the OS keychain and are never logged. SQLite may
      store only an opaque `api_key_ref`; there is no encrypted SQLite fallback.
-   - Add per-provider token budgets, streaming parity, rate-limit handling,
-     usage/cost logging, and optional monthly cost caps.
+   - Analysis owns persistent provider, model, and fallback selection. Settings
+     owns provider status and API-key save/remove only.
+   - Orbit records metadata-only usage and cost receipts. Provider accounts own
+     budgets and caps; Orbit does not enforce an aggregate monthly cap.
 
 3. **Hybrid agentic inference**
    - Split work between local and cloud models instead of treating provider choice
@@ -721,4 +725,4 @@ Parallax/MoonMarket journal hooks (`docs/architecture/modules.md`).
 | Q8 | ~~Can Ollama be bundled into Tauri?~~ | 4.12 | RESOLVED: detect-only, never auto-install. Guide user instead |
 | Q9 | ~~TWS API or IBKR Client Portal Web API for v1 market data/order ticket?~~ | ALL | RESOLVED: v1 stays with Client Portal Web API. TWS is not the v1 data path. |
 | Q10 | What should the TWS-gated execution assistant support first? | v2 execution assistant | OPEN — likely paper-mode tiered scale-out assistance first, then advanced order types, then a separate live-account safety review. |
-| Q11 | How should hybrid local/cloud inference route tasks? | v2 AI | OPEN — define task classes, privacy/cost thresholds, provider fallback, and when frontier models are allowed to override local analysis. |
+| Q11 | How should hybrid local/cloud inference route tasks? | v2 AI | PARTLY RESOLVED: the current modes are `local_only`, `cloud_manual`, and `cloud_with_local_fallback`; automatic task-class routing remains deferred. |
