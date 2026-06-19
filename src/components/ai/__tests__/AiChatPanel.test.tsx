@@ -4,8 +4,7 @@
  * Covers:
  *   - Cancel button is not shown when isAnalyzing is false
  *   - 'Analyzing <symbol>…' shown when isAnalyzing is true
- *   - ResponseTimeBadge wired in the header (renders nothing until samples,
- *     so we just assert the panel doesn't crash with the new hook in place)
+ *   - Analysis controls remain available when the persisted local route is down
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
@@ -323,6 +322,23 @@ describe("AiChatPanel — provider routing", () => {
     expect(header).not.toBeNull();
     expect(within(header as HTMLElement).queryByRole("button", { name: /gemma4:4b/i }))
       .not.toBeInTheDocument();
+  });
+
+  it("renders Analysis provider controls when Ollama is unavailable and routing is local only", async () => {
+    mockOllamaReady.current = false;
+    mockAiStore.activeProvider = "ollama";
+    mockAiStore.routingMode = "local_only";
+    const { default: AiChatPanel } = await import("../AiChatPanel");
+
+    renderAiChat(
+      createElement(AiChatPanel, {
+        activeConid: 265598,
+        activeSymbol: "AAPL",
+        fibonacci: null,
+      }),
+    );
+
+    expect(screen.getByRole("button", { name: /openrouter/i })).toBeEnabled();
   });
 
   it("previews the derived cloud route without starting inference", async () => {

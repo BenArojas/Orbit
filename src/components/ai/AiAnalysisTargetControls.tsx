@@ -32,6 +32,7 @@ export default function AiAnalysisTargetControls() {
     isSelectingOpenRouterModel = false,
     updateAnalysisRoute = () => undefined,
     isUpdatingAnalysisRoute = false,
+    updateAnalysisRouteError = null,
   } = useAiStatus();
   const openRouter = providers.find(
     (provider) => provider.provider_name === "openrouter",
@@ -44,6 +45,11 @@ export default function AiAnalysisTargetControls() {
     ?? openRouterSelectedModel
     ?? openRouter?.selected_model
     ?? "";
+  const routingError = updateAnalysisRouteError instanceof Error
+    ? updateAnalysisRouteError.message
+    : updateAnalysisRouteError
+      ? "Failed to save the AI routing policy."
+      : null;
 
   const chooseTarget = (provider: "ollama" | "openrouter") => {
     setAnalysisProvider(provider);
@@ -105,6 +111,14 @@ export default function AiAnalysisTargetControls() {
           OpenRouter
         </button>
       </div>
+      {routingError ? (
+        <div
+          role="alert"
+          className="mt-2 rounded border border-red-500/40 bg-red-500/10 px-2 py-1.5 text-[10px] text-red-200"
+        >
+          {routingError}
+        </div>
+      ) : null}
       {target === "ollama" ? (
         <div className="mt-2 flex items-center justify-between gap-2">
           <ResponseTimeBadge selectedModel={selectedOllamaModel} />

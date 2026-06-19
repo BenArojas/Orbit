@@ -235,6 +235,12 @@ export default function AiChatPanel({ activeConid, activeSymbol, fibonacci, char
       && selectedCloudModel,
     );
   const aiAvailable = isReady || hasValidCloudRoute;
+  const canSelectOpenRouter = providers.some(
+    (provider) =>
+      provider.provider_name === "openrouter"
+      && provider.enabled
+      && provider.has_key,
+  );
 
   const resolveAnalysisRoute = useCallback((): {
     providerName: AIProviderName;
@@ -379,6 +385,8 @@ export default function AiChatPanel({ activeConid, activeSymbol, fibonacci, char
           </div>
         )}
       </div>
+
+      {showSetupGuide && canSelectOpenRouter && <AiAnalysisTargetControls />}
 
       {/* ── Setup guide (when not ready) ── */}
       {showSetupGuide && (

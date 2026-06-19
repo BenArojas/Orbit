@@ -295,6 +295,35 @@ describe("AiAnalysisTargetControls", () => {
     });
   });
 
+  it("restores the persisted route and shows the typed error when provider persistence fails", async () => {
+    apiMocks.routingPolicy
+      .mockReset()
+      .mockResolvedValueOnce({
+        active_provider: "ollama",
+        routing_mode: "local_only",
+        local_fallback_enabled: true,
+      })
+      .mockImplementation(() => new Promise(() => undefined));
+    apiMocks.updateRoutingPolicy.mockRejectedValue(
+      new Error("Routing policy rejected"),
+    );
+
+    renderControls();
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /local ollama/i }))
+        .toHaveAttribute("aria-pressed", "true");
+    });
+    fireEvent.click(screen.getByRole("button", { name: /openrouter/i }));
+
+    expect(await screen.findByRole("alert"))
+      .toHaveTextContent("Routing policy rejected");
+    expect(screen.getByRole("button", { name: /local ollama/i }))
+      .toHaveAttribute("aria-pressed", "true");
+    expect(useAiStore.getState().activeProvider).toBe("ollama");
+    expect(useAiStore.getState().localFallbackEnabled).toBe(true);
+  });
+
   it("shows explicit empty-state text when no compatible OpenRouter models are available", async () => {
     apiMocks.models.mockReset().mockResolvedValue({
       provider_name: "openrouter",

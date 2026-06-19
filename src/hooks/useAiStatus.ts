@@ -14,6 +14,7 @@ import {
   AI_OPENROUTER_MODELS_QUERY_KEY,
   AI_PROVIDERS_QUERY_KEY,
   parallaxApi,
+  type AIRoutingPolicyResponse,
   type AIRoutingPolicyUpdate,
 } from "@/modules/parallax/api";
 import { useAiStore } from "@/store";
@@ -107,10 +108,19 @@ export function useAiStatus() {
       parallaxApi.aiUpdateRoutingPolicy(policy),
     onMutate: async (policy) => {
       await queryClient.cancelQueries({ queryKey: ["ai", "routing-policy"] });
+      const state = useAiStore.getState();
+      const previousPolicy = queryClient.getQueryData<AIRoutingPolicyResponse>(
+        ["ai", "routing-policy"],
+      ) ?? {
+        active_provider: state.activeProvider,
+        routing_mode: state.routingMode,
+        local_fallback_enabled: state.localFallbackEnabled,
+      };
       queryClient.setQueryData(["ai", "routing-policy"], policy);
       setRoutingPolicy(policy);
       setAnalysisProvider(policy.active_provider);
       setAnalysisFallbackEnabled(policy.local_fallback_enabled);
+      return { previousPolicy };
     },
     onSuccess: (policy) => {
       queryClient.setQueryData(["ai", "routing-policy"], policy);
@@ -120,7 +130,18 @@ export function useAiStatus() {
       void queryClient.invalidateQueries({ queryKey: AI_PROVIDERS_QUERY_KEY });
       void queryClient.invalidateQueries({ queryKey: ["ai", "routing-policy"] });
     },
-    onError: () => {
+    onError: (_error, _policy, context) => {
+      if (context?.previousPolicy) {
+        queryClient.setQueryData(
+          ["ai", "routing-policy"],
+          context.previousPolicy,
+        );
+        setRoutingPolicy(context.previousPolicy);
+        setAnalysisProvider(context.previousPolicy.active_provider);
+        setAnalysisFallbackEnabled(
+          context.previousPolicy.local_fallback_enabled,
+        );
+      }
       void queryClient.invalidateQueries({ queryKey: ["ai", "routing-policy"] });
     },
   });
