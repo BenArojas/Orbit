@@ -195,7 +195,7 @@ Mirrors the MoonMarket module shape (`MoonMarketModule.tsx` + layout + pages).
 Styling reuses the dark/glow Orbit system; calendar green/red uses the existing
 trading-color tokens.
 
-## 9. Module boundary compliance (`parallax-hub`)
+## 9. Module boundary compliance (`docs/architecture/modules.md`)
 
 - Inflect **reads** `instruments`/`fills`; it does not modify Parallax behavior.
 - No journal hooks, callbacks, or "save to journal" buttons added to Parallax or

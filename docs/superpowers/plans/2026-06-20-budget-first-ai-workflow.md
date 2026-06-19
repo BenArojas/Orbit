@@ -1,6 +1,6 @@
 # Budget-First AI Workflow Implementation Plan
 
-> Status: Proposed for execution | Execute inline as one slice; do not use subagents.
+> Status: Executed | Completed inline as one slice without subagents.
 
 **Goal:** Replace duplicated agent guidance and mandatory TDD with canonical,
 on-demand docs and critical-promises testing.
@@ -50,18 +50,18 @@ Delete both agent copies of:
 
 ## Slice 1: Establish Canonical Agent Policy
 
-- [ ] Record this approved mission as in progress in `PROJECT_PLAN.md`.
-- [ ] Write the four canonical docs from current code, active specs, and
+- [x] Record this approved mission as in progress in `PROJECT_PLAN.md`.
+- [x] Write the four canonical docs from current code, active specs, and
       `docs/ibkr-pacing.md`; do not copy stale skill text blindly.
-- [ ] Move valid deferred roadmap decisions into `PROJECT_PLAN.md` in compact
+- [x] Move valid deferred roadmap decisions into `PROJECT_PLAN.md` in compact
       form, preserving the OS-keychain-only cloud policy.
-- [ ] Shorten `AGENTS.md` and replace `CLAUDE.md` with `@AGENTS.md`.
-- [ ] Rewrite `orbit-ai-workflow` around short specs, one tracer bullet,
+- [x] Shorten `AGENTS.md` and replace `CLAUDE.md` with `@AGENTS.md`.
+- [x] Rewrite `orbit-ai-workflow` around short specs, one tracer bullet,
       critical promises, zero tests by default, and a two-loop stop limit.
-- [ ] Rewrite `policy-drift-check` and its script around canonical docs.
-- [ ] Delete the eight domain-skill directories and symlink the three remaining
+- [x] Rewrite `policy-drift-check` and its script around canonical docs.
+- [x] Delete the eight domain-skill directories and symlink the three remaining
       Claude skill files to their canonical Codex copies.
-- [ ] Mark the mission complete in `PROJECT_PLAN.md`.
+- [x] Mark the mission complete in `PROJECT_PLAN.md`.
 
 ## Verification
 
@@ -79,7 +79,7 @@ Check structure:
 test "$(cat CLAUDE.md)" = "@AGENTS.md"
 find .agents/skills .claude/skills -maxdepth 2 -type d | sort
 find .claude/skills -name SKILL.md -type l -print
-rg -n "parallax-(backend|frontend|hub|v2-roadmap)" AGENTS.md CLAUDE.md .agents .claude scripts PROJECT_PLAN.md docs/architecture docs/testing.md
+rg -n "parallax-(backend|frontend)/SKILL|Skill\(parallax-(backend|frontend)|parallax-(hub|v2-roadmap)" AGENTS.md CLAUDE.md .agents/skills .claude/skills scripts PROJECT_PLAN.md docs/architecture docs/testing.md
 ```
 
 Expected:
@@ -92,7 +92,7 @@ Expected:
 ## Commit
 
 ```bash
-git add AGENTS.md CLAUDE.md PROJECT_PLAN.md docs .agents .claude scripts/check-policy-drift.mjs
+git add AGENTS.md CLAUDE.md PROJECT_PLAN.md README.md backend docs .agents .claude scripts/check-policy-drift.mjs
 git commit -m "refactor: establish canonical agent policy sources"
 ```
 

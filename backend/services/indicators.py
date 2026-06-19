@@ -77,7 +77,7 @@ INSIDE_TOLERANCE = 0.15
 #   - the DB is unreachable
 #
 # Future v2 learning algorithm will adjust these per-conid in a
-# separate table (parallax-v2-roadmap).
+# separate table (see `PROJECT_PLAN.md`).
 #
 # These must sum to 1.0. `_validate_and_normalize_weights` in
 # routers/fibonacci.py enforces that for user submissions.
@@ -665,8 +665,7 @@ class IndicatorService:
     # self-contained — it does NOT read EMAs, watchlists, or any other
     # indicator. Cross-indicator confluence (fib level sitting on an
     # EMA, watchlist-aware framing, etc.) happens at the LLM prompt
-    # layer in services/ai.py — see parallax-v2-roadmap skill for the
-    # architectural boundary.
+    # layer in services/ai.py — see `PROJECT_PLAN.md` for the deferred scope.
     #
     # The algorithm:
     #   1. Find fractal pivot highs and lows (±PIVOT_WINDOW bars)

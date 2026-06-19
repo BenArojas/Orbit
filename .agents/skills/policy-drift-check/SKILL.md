@@ -1,36 +1,32 @@
 ---
 name: policy-drift-check
-description: Use at the merge-to-dev gate when a branch changes rules, safety behavior, architecture conventions, API contracts, local/cloud boundaries, agent instructions, skills, or important docs.
+description: Merge-to-dev gate for changes to safety, architecture, API contracts, data ownership, local/cloud policy, agent guidance, or canonical docs.
 ---
 
 # Policy Drift Check
 
-Use this skill at the merge-to-`dev` gate when the work may change any project policy.
+Use only when preparing an implemented branch for merge to `dev`.
 
-Policy includes product rules, trading safety, local/cloud boundaries, API contracts, data ownership, module boundaries, typed-error rules, pacing limits, agent instructions, and active design docs.
+## Canonical Sources
 
-During planning or execution, policy changes should be highlighted and discussed in the plan. Run this check only after the plan is fully executed and the branch is being prepared for merge/push to `dev`.
+- `AGENTS.md`
+- `docs/architecture/*.md`
+- `docs/testing.md`
+- `docs/ibkr-pacing.md`
+- `PROJECT_PLAN.md`
+- active `docs/superpowers/specs/` and `docs/superpowers/plans/`
+- canonical `.agents/skills/*/SKILL.md`
 
-## Required Workflow
+`CLAUDE.md` imports `AGENTS.md`; Claude skill files symlink to `.agents`. They
+are discovery surfaces, not additional policy sources. `docs/archive/` is history.
 
-1. Compare the branch against `dev`:
+## Merge Gate
 
-```bash
-npm run check:policy-drift
-```
+1. Compare the branch with `dev`.
+2. Run `npm run check:policy-drift`.
+3. If policy-bearing code changed, update the matching canonical source.
+4. Remove contradictory active guidance instead of copying fixes everywhere.
+5. Rerun the check immediately before merge/push.
 
-2. If the check flags policy-bearing changes, inspect the changed code/config and update the matching active docs or skills:
-   - `AGENTS.md` and `CLAUDE.md`
-   - `.agents/skills/*/SKILL.md` and `.claude/skills/*/SKILL.md`
-   - `docs/superpowers/specs/*.md`
-   - `docs/superpowers/plans/*.md`
-   - other active policy docs such as `docs/ibkr-pacing.md`
-3. Keep Codex and Claude skill copies mirrored.
-4. Rerun `npm run check:policy-drift` immediately before merge/push to `dev`.
-
-## Rules
-
-- Do not leave active docs contradicting current code behavior.
-- Do not update only one agent surface when a policy affects both Codex and Claude.
-- Do not treat `docs/archive/` as active policy; archive docs are historical.
-- Ask before changing product or safety policy. Updating docs to match an already-approved policy does not need a new product decision.
+Ask before changing product or safety policy. Updating canonical docs for an
+already-approved decision does not require a new product decision.

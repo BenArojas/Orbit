@@ -7,13 +7,23 @@ const ROOT = process.cwd();
 const BASE_REF = process.env.POLICY_DRIFT_BASE || process.argv.find((arg) => arg.startsWith("--base="))?.slice(7) || "dev";
 
 const ACTIVE_DOC_DIRS = [
+  "docs/architecture",
   "docs/superpowers/specs",
   "docs/superpowers/plans",
 ];
 
+const ACTIVE_DOC_FILES = [
+  "AGENTS.md",
+  "PROJECT_PLAN.md",
+  "docs/testing.md",
+  "docs/ibkr-pacing.md",
+];
+
 const POLICY_DOC_PATTERNS = [
   /^AGENTS\.md$/,
-  /^CLAUDE\.md$/,
+  /^PROJECT_PLAN\.md$/,
+  /^docs\/architecture\/.*\.md$/,
+  /^docs\/testing\.md$/,
   /^docs\/superpowers\/specs\/.*\.md$/,
   /^docs\/superpowers\/plans\/.*\.md$/,
   /^docs\/ibkr-pacing\.md$/,
@@ -21,7 +31,6 @@ const POLICY_DOC_PATTERNS = [
 
 const SKILL_PATTERNS = [
   /^\.agents\/skills\/[^/]+\/SKILL\.md$/,
-  /^\.claude\/skills\/[^/]+\/SKILL\.md$/,
 ];
 
 const POLICY_SOURCE_PATTERNS = [
@@ -30,9 +39,7 @@ const POLICY_SOURCE_PATTERNS = [
   /^src-tauri\/.*\.(rs|toml|json)$/,
   /^package\.json$/,
   /^AGENTS\.md$/,
-  /^CLAUDE\.md$/,
   /^\.agents\/skills\/[^/]+\/SKILL\.md$/,
-  /^\.claude\/skills\/[^/]+\/SKILL\.md$/,
 ];
 
 const POLICY_KEYWORDS = /\b(policy|guard|allowed|blocked|required|must|never|safety|confirmation|permission|auth|live|paper|cloud|local|conid|typed error|rate[- ]?limit|pacing|autonomous|IBKR|Ollama|sidecar|merge to dev)\b/i;
@@ -54,6 +61,14 @@ const KNOWN_STALE_PATTERNS = [
       /mutation controls are disabled/i,
       /403-on-live/i,
       /No live account can place, confirm, cancel, or modify orders/i,
+    ],
+  },
+  {
+    name: "cloud-key-sqlite-storage",
+    message: "Cloud keys use OS keychain only; SQLite stores opaque api_key_ref values.",
+    patterns: [
+      /api_key_encrypted/i,
+      /API keys stay local:\s*encrypted at rest/i,
     ],
   },
 ];
@@ -147,25 +162,28 @@ function changedPolicySources(base, files) {
 
 async function staleDocFindings() {
   const findings = [];
+  const files = [];
   for (const relativeDir of ACTIVE_DOC_DIRS) {
     const dir = path.join(ROOT, relativeDir);
-    for (const file of await listMarkdownFiles(dir)) {
-      const text = await readFile(file, "utf8");
-      const lines = text.split(/\r?\n/);
-      lines.forEach((line, index) => {
-        for (const family of KNOWN_STALE_PATTERNS) {
-          const matched = family.patterns.find((pattern) => pattern.test(line));
-          if (matched) {
-            findings.push({
-              family,
-              file: path.relative(ROOT, file),
-              line: index + 1,
-              text: line.trim(),
-            });
-          }
+    files.push(...await listMarkdownFiles(dir));
+  }
+  files.push(...ACTIVE_DOC_FILES.filter(existsSync).map((file) => path.join(ROOT, file)));
+  for (const file of unique(files)) {
+    const text = await readFile(file, "utf8");
+    const lines = text.split(/\r?\n/);
+    lines.forEach((line, index) => {
+      for (const family of KNOWN_STALE_PATTERNS) {
+        const matched = family.patterns.find((pattern) => pattern.test(line));
+        if (matched) {
+          findings.push({
+            family,
+            file: path.relative(ROOT, file),
+            line: index + 1,
+            text: line.trim(),
+          });
         }
-      });
-    }
+      }
+    });
   }
   return findings;
 }
@@ -180,14 +198,6 @@ const staleFindings = await staleDocFindings();
 const failures = [];
 if (policySources.length && !changedPolicyDocs.length && !changedSkills.length) {
   failures.push("Policy-bearing code/config changed, but no active policy docs or skills changed.");
-}
-
-if (policySources.length && changedSkills.length) {
-  const codexSkills = changedSkills.filter((file) => file.startsWith(".agents/skills/"));
-  const claudeSkills = changedSkills.filter((file) => file.startsWith(".claude/skills/"));
-  if (!codexSkills.length || !claudeSkills.length) {
-    failures.push("Policy skill changes must be mirrored in both .agents/skills and .claude/skills.");
-  }
 }
 
 if (staleFindings.length) {

@@ -1,83 +1,54 @@
 ---
 name: orbit-ai-workflow
-description: Orbit AI coding workflow. Use before planning or implementing non-trivial features, fixes, or refactors in Orbit. Guides resolved-context PRDs/specs, tracer-bullet vertical slices, TDD through public interfaces, deep-module boundaries, and human checkpoints. Pair with parallax-backend, parallax-frontend, parallax-git, parallax-hub, or parallax-v2-roadmap when their domain applies.
+description: Budget-first Orbit workflow for non-trivial features, fixes, and refactors. Resolves focused context, writes short specs, implements one tracer bullet, and verifies only uncovered critical promises.
 ---
 
 # Orbit AI Workflow
 
-Use this skill to keep AI-assisted work small, testable, and aligned with Orbit's product rules.
-
-## Non-Negotiables
-
-- Respect `AGENTS.md` project rules.
-- Create a new branch for every feature or fix.
-- Keep all IBKR and Ollama access behind the Python sidecar.
-- Use `conid` across module boundaries.
-- Never add autonomous trading behavior.
-- Add tests for changed behavior.
+Use this process for non-trivial Orbit work. Product and architecture rules live
+in `AGENTS.md` and its canonical docs; do not copy them into this skill.
 
 ## Workflow
 
-1. **Resolve context**
-   - Inspect relevant docs, code, recent commits, and existing patterns.
-   - Ask only for unresolved decisions.
-   - If context is already resolved, synthesize it instead of interviewing again.
+1. **Resolve focused context**
+   - Inspect the relevant code, canonical docs, recent diff, and nearby pattern.
+   - Do not read broad directories or test suites by default.
+   - Ask only about decisions that remain unresolved.
 
-2. **Write or refresh the PRD/spec**
-   - Use `docs/superpowers/specs/YYYY-MM-DD-<topic>-design.md` for substantial work.
-   - Include problem, solution, user stories, implementation decisions, testing decisions, out-of-scope items, and module impact.
-   - Sketch deep-module opportunities: public interface, hidden implementation, dependencies, tests.
-   - Include a `Policy impact` section:
-     - `None expected` when no Orbit rule, safety behavior, public contract, local/cloud boundary, agent instruction, skill, or active design doc is expected to change.
-     - `Proposed policy change` when the plan may require policy/doc/skill updates. Name the rule, affected files, and the reason for the change.
+2. **Write one short spec when needed**
+   - Use `docs/superpowers/specs/YYYY-MM-DD-<topic>-design.md`.
+   - Target fewer than 100 lines.
+   - State problem, chosen solution, out-of-scope work, verification, and policy
+     impact.
+   - Skip a separate implementation plan unless work has multiple slices or is
+     being handed off.
 
-3. **Break work into tracer-bullet slices**
-   - Prefer vertical slices that prove one behavior end-to-end.
-   - Each slice should include only the schema, service, API, UI, and tests needed for that behavior.
-   - Avoid horizontal plans like "build schema", "build API", "build UI" as separate deliverables.
-   - Mark each slice as `AFK` when it can be implemented without a human checkpoint, or `HITL` when it changes product, design, architecture, safety, or module boundaries.
+3. **Get approval**
+   - Stop after writing or materially changing a spec/plan.
+   - After approval, record the mission in `PROJECT_PLAN.md` before coding.
+   - Pause if execution discovers a new architecture, safety, ownership, public
+     contract, or local/cloud decision.
 
-4. **Wait for execution approval**
-   - After the `.md` plan/spec is written or refreshed, stop and ask the user to approve execution.
-   - Do not start implementation until the user confirms the tracer-bullet slices are vertical enough.
-   - Policy changes are allowed, but they must be visible in the plan and discussed before approval. If a new policy change appears during execution, pause before implementing that part.
-   - After approval, use `project-plan-update` to record the mission in `PROJECT_PLAN.md` before coding.
+4. **Implement one tracer bullet**
+   - Touch the real path end to end with the fewest files and smallest interface.
+   - Define TypeScript or Pydantic contracts only at changed public/trust
+     boundaries.
+   - Do not add abstractions, configuration, or flexibility for hypothetical use.
 
-5. **Implement with TDD**
-   - Test one behavior through a public interface.
-   - Run the test and verify it fails for the expected reason.
-   - Implement the minimum code to pass.
-   - Run the focused test and then relevant broader checks.
-   - Refactor only after green.
+5. **Verify the critical promise**
+   - Follow `docs/testing.md`.
+   - Default to zero new tests.
+   - Reuse existing coverage; add at most one public-workflow test unless two
+     distinct critical promises require success and fail-safe coverage.
+   - Use typecheck, build, policy check, or manual smoke for non-critical work.
+   - Stop after two unsuccessful verification loops and ask for direction.
 
 6. **Stop at the slice boundary**
-   - Report what the tracer bullet proved.
-   - List files changed and verification run.
-   - Ask before expanding to the next slice when scope, UI, architecture, trading safety, or public interfaces change.
+   - Report the behavior or policy proven, files changed, and checks run.
+   - Update `PROJECT_PLAN.md` when the mission is complete.
+   - Ask before widening scope or starting another slice.
 
-## Deep Module Check
+## Interface Check
 
-Before adding or changing a module, answer:
-
-- What is the small public interface?
-- What complexity is hidden behind it?
-- Which tests prove behavior through the interface?
-- Which other modules may import it?
-- Does it preserve Orbit boundaries and `conid` ownership?
-
-If the interface is hard to describe, pause and propose boundary options.
-
-## TDD Test Shape
-
-Good tests:
-
-- read like behavior specs
-- use public functions, routes, hooks, or components
-- avoid private functions and internal collaborators
-- survive implementation refactors
-
-Bad tests:
-
-- assert private helper calls
-- mock the module under test
-- test broad imagined behavior before the first slice works
+Before adding a module or boundary, state its small public interface, hidden
+complexity, owners, and consumers. If that is unclear, present options and stop.

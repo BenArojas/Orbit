@@ -1,76 +1,63 @@
 # Orbit
 
-Orbit is the local desktop trading decision-support platform. It unifies:
+Orbit is a local-first desktop trading decision-support platform:
 
-- **Parallax** — technical analysis, screening, watchlists, and alerts.
-- **MoonMarket** — portfolio, account, and trading workflows.
-- **Inflect** — trading journal, planned after Parallax and MoonMarket.
+- **Parallax:** technical analysis, screening, watchlists, and alerts.
+- **MoonMarket:** portfolio, account, options, and order workflows.
+- **Inflect:** trading journal and trade review.
 
-Orbit was previously called **IBKR Hub** during planning. Keep that name only as historical context; do not use it as the product name because it sounds official/affiliated with IBKR.
+Stack: Tauri v2, React 19/TypeScript, Tailwind/shadcn, FastAPI/Python 3.12,
+Polars with a pandas-ta bridge, SQLite, IBKR Client Portal, and Ollama.
 
-Orbit connects to Interactive Brokers through the Client Portal Web API. It supports any instrument IBKR provides data for (stocks, ETFs, futures, forex, options, etc.). It does not support autonomous trading. v2 may add a TWS-gated execution assistant, trade manager, and decision-support execution workflow, but every trade plan must be explicitly reviewed and armed by the user.
+## Non-Negotiable Rules
 
-**Stack**: Tauri v2 + React 19/TS + Tailwind/shadcn | Python FastAPI sidecar (httpx + websockets for IBKR) + Polars + pandas-ta bridge + Ollama | SQLite
+1. Orbit is decision support, never an autonomous trading bot.
+2. All broker, AI-provider, and persistence access flows through FastAPI.
+3. Use `conid` across module boundaries; ticker text is display metadata.
+4. Use Polars for dataframe work; pandas is allowed only for pandas-ta bridging.
+5. Use typed errors at trust boundaries; never add a bare `except Exception`.
+6. Orbit is local-first. Cloud AI requires explicit opt-in; keys live only in
+   the OS keychain and are never stored in SQLite or logs.
+7. Create a new branch for every feature or fix.
 
-## Rules
+## Development Workflow
 
-1. **Tests for everything.** Every new feature, service, and endpoint gets tests. No PR without test coverage for the changed code.
-2. **Polars, never Pandas.** All dataframe operations use Polars. pandas-ta is the only exception (bridged).
-3. **Local-first with optional cloud AI.** Orbit runs locally by default. Optional cloud AI is allowed only when explicitly enabled by the user. API keys stay local, encrypted, and never logged.
-4. **Typed errors only.** Never bare `except Exception`. Distinguish auth, network, rate-limit, and data errors.
-5. **All data flows through Python.** Frontend never talks to IBKR or Ollama directly; everything goes through the FastAPI sidecar.
-6. **conid is the universal key.** Never store or link instruments by ticker string across module boundaries; always use IBKR contract ID (`conid`).
-7. **Always create a new branch for each feature/fix.**
-8. **No autonomous trading.** AI, scanners, and triggers may draft ideas or alerts, but they must never place, arm, modify, or cancel orders. Every order must be created by, or execute within, a user-reviewed and user-armed plan.
+- Use `orbit-ai-workflow` for non-trivial features, fixes, and refactors.
+- Resolve context from relevant code and canonical docs; do not read the whole repo.
+- Keep non-trivial specs under 100 lines when practical.
+- Implement one smallest tracer-bullet slice, then stop and report.
+- Tests follow `docs/testing.md`: zero new tests by default; protect uncovered
+  critical promises rather than every file or layer.
+- Ask before changing architecture, module boundaries, trading safety, data
+  ownership, public contracts, or local/cloud policy.
+- After plan approval, update `PROJECT_PLAN.md` before and after execution.
+- Before merging to `dev`, use `policy-drift-check`. `main` changes require a PR.
 
-## AI Coding Workflow
+## Canonical Sources
 
-Use `orbit-ai-workflow` before planning or implementing non-trivial features, fixes, or refactors.
+- Backend: `docs/architecture/backend.md`
+- Frontend: `docs/architecture/frontend.md`
+- Module ownership and trading safety: `docs/architecture/modules.md`
+- Testing: `docs/testing.md`
+- IBKR pacing/cold start: `docs/ibkr-pacing.md`
+- Roadmap and deferred work: `PROJECT_PLAN.md`
+- Active feature decisions: `docs/superpowers/specs/` and `docs/superpowers/plans/`
+- Shipped history: `docs/archive/README.md`
 
-Default workflow:
+## Commands
 
-1. **Resolve context first.** Inspect relevant docs, code, recent commits, and existing module patterns before proposing changes.
-2. **PRD/spec before large work.** For substantial work, turn resolved context into a spec in `docs/superpowers/specs/`. Do not re-interview the user when the context is already resolved.
-3. **Policy impact before approval.** Every implementation plan/spec must say whether policy changes are expected. Policy changes are allowed, but must be highlighted and discussed before execution approval.
-4. **Plan approval gate.** After writing or refreshing an `.md` plan/spec, stop and wait for user approval before executing it.
-5. **Project plan tracking.** After a plan is approved for execution, update `PROJECT_PLAN.md`; update it again when the mission is completed.
-6. **Tracer bullets over layers.** Break work into narrow vertical slices that touch the real path end-to-end. Avoid horizontal tasks like "schema", then "API", then "UI" unless they are only preparatory steps inside one vertical slice.
-7. **TDD one behavior at a time.** Write one failing behavior test through a public interface, verify red, implement the minimum code, verify green, then refactor.
-8. **Design deep modules.** Keep meaningful complexity behind small, stable, testable interfaces. Tests should target those interfaces, not private implementation details.
-9. **Review critical choices.** Ask before changing architecture, module boundaries, trading safety behavior, data ownership, or public interfaces.
-10. **Stop after the slice.** After a tracer bullet passes, report what was proven and ask before widening scope.
-11. **Merge gate.** When the user approves merging to `dev`, run `policy-drift-check`, update `PROJECT_PLAN.md`, handle plan/spec cleanup or archival, then merge/push to `dev`. Direct merge/push to `dev` is allowed for solo work. `main` still requires a PR.
+```bash
+npm run tauri dev
+npm run typecheck
+npm run build
+cd backend && uv run uvicorn main:app --reload --port 8000
+```
+
+Run focused tests only when `docs/testing.md` calls for them. Full relevant
+suites belong at the merge gate.
 
 ## Agent Support
 
-This repo supports both Codex and Claude Code:
-
-- Codex reads this `AGENTS.md`.
-- Claude Code reads `CLAUDE.md`.
-- Keep both files aligned when changing project rules.
-
-Detailed conventions live in both agent folders and should remain mirrored:
-
-- `.agents/skills/` — Codex skills.
-- `.claude/skills/` — Claude Code skills.
-
-Skill names are still `parallax-*` because most conventions currently target the Parallax module and its backend/frontend patterns:
-
-- `parallax-frontend` — React/TS component patterns, state management, chart wrappers.
-- `parallax-backend` — FastAPI conventions, indicator set, IBKR service patterns, architecture.
-- `parallax-git` — branch structure, commit format, PR workflow, merge policy.
-- `parallax-hub` — Orbit module boundaries, shared database concerns, Parallax/MoonMarket/Inflect relationships.
-- `parallax-v2-roadmap` — deferred work and v2 scope.
-- `orbit-ai-workflow` — PRD/spec, tracer-bullet issue, TDD, and deep-module workflow for AI-assisted coding.
-- `policy-drift-check` — merge-to-`dev` policy audits, including active docs and mirrored skill updates.
-
-Global workflow skills may also be used when available:
-
-- `project-plan-update` — update the main planning file after approved plans and completed missions.
-- `dev-merge-completion` — final merge-to-`dev` gate: policy drift, planning status, plan cleanup, merge/push.
-
-## Design Docs
-
-Active, forward-looking design lives in `docs/superpowers/plans/`, `docs/superpowers/specs/`, and `docs/ibkr-pacing.md`. These are the docs v2 still builds on (v1 master design, foundation, MoonMarket options, OrderTicket, Inflect journal, IBKR pacing).
-
-Plans/specs for **already-shipped v1 features** were moved to `docs/archive/` during the v1 close-out cleanup — see `docs/archive/README.md` for the index. They are historical reference (the rationale behind shipped code), not active design. Do not treat them as forgotten: check the archive index when you need the original "why" behind a shipped v1 feature.
+- Codex reads `AGENTS.md`; Claude Code imports it from `CLAUDE.md`.
+- `.agents/skills/` contains the canonical shared workflow skills.
+- Matching `.claude/skills/*/SKILL.md` files are symlinks to canonical skills.
