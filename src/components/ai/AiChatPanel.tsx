@@ -373,15 +373,29 @@ export default function AiChatPanel({ activeConid, activeSymbol, fibonacci, char
         </div>
 
         {showChat && lastProviderMetadata && (
-          <div data-testid="ai-run-metadata-row" className="mt-1 min-w-0">
-            <AiProviderBadge
-              providerName={lastProviderMetadata.provider_name}
-              model={lastProviderMetadata.model}
-              kind={lastProviderMetadata.kind}
-              fallbackUsed={lastProviderMetadata.fallback_used}
-              estimatedCost={lastProviderMetadata.estimated_cost}
-              actualCost={lastProviderMetadata.actual_cost}
-            />
+          <div
+            data-testid="ai-run-metadata-row"
+            className="mt-1 flex min-w-0 items-center gap-1.5"
+          >
+            <div className="min-w-0 flex-1">
+              <AiProviderBadge
+                providerName={lastProviderMetadata.provider_name}
+                model={lastProviderMetadata.model}
+                kind={lastProviderMetadata.kind}
+                fallbackUsed={lastProviderMetadata.fallback_used}
+                estimatedCost={lastProviderMetadata.estimated_cost}
+                actualCost={lastProviderMetadata.actual_cost}
+              />
+            </div>
+            {inspector.receipt && (
+              <button
+                type="button"
+                className="shrink-0 text-[9px] text-[var(--clr-cyan)] hover:underline"
+                onClick={inspector.openLastRun}
+              >
+                View last run
+              </button>
+            )}
           </div>
         )}
       </div>
@@ -551,7 +565,19 @@ export default function AiChatPanel({ activeConid, activeSymbol, fibonacci, char
           comparison={inspector.comparison}
           localReady={isReady}
           isComparing={inspector.isComparing}
-          runActive={isAnalyzing}
+          runActive={
+            isAnalyzing
+            || inspector.phase === "submitting"
+            || inspector.phase === "running"
+          }
+          phase={inspector.phase}
+          error={inspector.error}
+          initialTab={
+            inspector.receipt
+            && (inspector.phase === "completed" || inspector.phase === "failed")
+              ? "receipt"
+              : "summary"
+          }
           compareError={inspector.compareError}
           onOpenChange={inspector.setOpen}
           onConfirm={inspector.send}

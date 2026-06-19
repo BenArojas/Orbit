@@ -53,6 +53,12 @@ interface PreparedAnalyzeStreamRequest {
   snapshot_id: string;
 }
 
+export interface PreparedAnalyzeLifecycle {
+  onAccepted?: (runId: string | null) => void;
+  onCompleted?: (receipt: AIRunReceipt | null) => void;
+  onRejected?: (error: Error, receipt: AIRunReceipt | null) => void;
+}
+
 interface SseTokenEvent {
   type: "token";
   content: string;
@@ -146,6 +152,7 @@ export function useAiAnalyzeStream() {
     async (
       req: AnalyzeStreamRequest | PreparedAnalyzeStreamRequest,
       model: string | null,
+      lifecycle?: PreparedAnalyzeLifecycle,
     ) => {
       if (isAnalyzing) return;
 
@@ -171,9 +178,20 @@ export function useAiAnalyzeStream() {
           signal: controller.signal,
         });
 
-        if (!resp.ok || !resp.body) {
+        if (!resp.ok) {
+          let message = `Stream request failed: ${resp.status}`;
+          try {
+            const payload = await resp.json() as { detail?: { message?: string } };
+            message = payload.detail?.message ?? message;
+          } catch {
+            // Keep the status fallback when the response is not JSON.
+          }
+          throw new Error(message);
+        }
+        if (!resp.body) {
           throw new Error(`Stream request failed: ${resp.status}`);
         }
+        lifecycle?.onAccepted?.(resp.headers?.get("X-Orbit-AI-Run-ID") ?? null);
 
         const reader = resp.body.getReader();
         const decoder = new TextDecoder();
@@ -241,6 +259,7 @@ export function useAiAnalyzeStream() {
             timestamp: Date.now(),
           });
           setLastRunReceipt(finalReceipt);
+          lifecycle?.onRejected?.(new Error(finalError), finalReceipt);
         } else if (sawDone) {
           // Use the authoritative `message` field (the full narrative) — the
           // streamingContent buffer should match, but `message` is what the
@@ -255,6 +274,7 @@ export function useAiAnalyzeStream() {
           setSignal(finalSignal as never);
           setLastProviderMetadata(finalProviderMetadata);
           setLastRunReceipt(finalReceipt);
+          lifecycle?.onCompleted?.(finalReceipt);
           pushResponseTime({
             durationMs: performance.now() - startedAt,
             model,
@@ -290,6 +310,7 @@ export function useAiAnalyzeStream() {
             content: `[Analysis failed: ${(err as Error).message}]`,
             timestamp: Date.now(),
           });
+          lifecycle?.onRejected?.(err as Error, null);
         }
       } finally {
         setAnalyzing(false);
@@ -307,8 +328,8 @@ export function useAiAnalyzeStream() {
   );
 
   const startPreparedAnalyze = useCallback(
-    (snapshotId: string, model: string) =>
-      startAnalyze({ snapshot_id: snapshotId }, model),
+    (snapshotId: string, model: string, lifecycle?: PreparedAnalyzeLifecycle) =>
+      startAnalyze({ snapshot_id: snapshotId }, model, lifecycle),
     [startAnalyze],
   );
 

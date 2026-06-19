@@ -77,6 +77,7 @@ describe("useAiAnalyzeStream", () => {
 
     global.fetch = vi.fn().mockResolvedValue({
       ok: true,
+      headers: new Headers(),
       body: new ReadableStream({
         start(controller) {
           const payload = JSON.stringify({
@@ -162,6 +163,87 @@ describe("useAiAnalyzeStream", () => {
     expect(JSON.parse(String(options?.body))).toEqual({ snapshot_id: "snapshot-123" });
   });
 
+  it("reports prepared-stream acceptance before terminal completion", async () => {
+    const receipt = {
+      run_id: "run-123",
+      requested_provider: "openrouter" as const,
+      requested_model: "anthropic/claude-sonnet-4",
+      executed_provider: "openrouter" as const,
+      resolved_model: "anthropic/claude-sonnet-4",
+      fallback_used: false,
+      fallback_reason: null,
+      status: "success" as const,
+      attempts: [],
+      created_at: "2026-06-19T12:00:00Z",
+    };
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      headers: new Headers({ "X-Orbit-AI-Run-ID": "run-123" }),
+      body: new ReadableStream({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode(`data: ${JSON.stringify({
+            type: "done",
+            session_id: "sess-cloud",
+            signal: null,
+            message: "Cloud analysis complete.",
+            receipt,
+          })}\n\n`));
+          controller.close();
+        },
+      }),
+    }) as typeof fetch;
+    const onAccepted = vi.fn();
+    const onCompleted = vi.fn();
+    const { result } = renderHook(() => useAiAnalyzeStream());
+
+    await act(async () => {
+      await result.current.startPreparedAnalyze(
+        "snapshot-123",
+        "anthropic/claude-sonnet-4",
+        { onAccepted, onCompleted },
+      );
+    });
+
+    expect(onAccepted).toHaveBeenCalledWith("run-123");
+    expect(onCompleted).toHaveBeenCalledWith(receipt);
+    expect(onAccepted.mock.invocationCallOrder[0])
+      .toBeLessThan(onCompleted.mock.invocationCallOrder[0]);
+  });
+
+  it("rejects typed HTTP failures without accepting the run", async () => {
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 409,
+      headers: new Headers(),
+      body: null,
+      json: vi.fn().mockResolvedValue({
+        detail: {
+          error: "ai_analysis_snapshot_model_changed",
+          message: "The selected OpenRouter model changed after preview.",
+        },
+      }),
+    }) as typeof fetch;
+    const onAccepted = vi.fn();
+    const onRejected = vi.fn();
+    const { result } = renderHook(() => useAiAnalyzeStream());
+
+    await act(async () => {
+      await result.current.startPreparedAnalyze(
+        "snapshot-123",
+        "anthropic/claude-sonnet-4",
+        { onAccepted, onRejected },
+      );
+    });
+
+    expect(onAccepted).not.toHaveBeenCalled();
+    expect(onRejected).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: "The selected OpenRouter model changed after preview.",
+      }),
+      null,
+    );
+  });
+
   it("excludes hidden fibs from the analyze request body", async () => {
     // Hide the locked fib — it should drop out of the AI payload entirely.
     (activeFibs[1] as { hidden?: boolean }).hidden = true;
@@ -216,6 +298,7 @@ describe("useAiAnalyzeStream", () => {
   it("stores cloud provider cost metadata from the final done event", async () => {
     global.fetch = vi.fn().mockResolvedValue({
       ok: true,
+      headers: new Headers(),
       body: new ReadableStream({
         start(controller) {
           const payload = JSON.stringify({
@@ -306,6 +389,7 @@ describe("useAiAnalyzeStream", () => {
     };
     global.fetch = vi.fn().mockResolvedValue({
       ok: true,
+      headers: new Headers({ "X-Orbit-AI-Run-ID": "run-failed-1" }),
       body: new ReadableStream({
         start(controller) {
           const payload = JSON.stringify({
@@ -320,11 +404,14 @@ describe("useAiAnalyzeStream", () => {
         },
       }),
     }) as typeof fetch;
+    const onAccepted = vi.fn();
+    const onRejected = vi.fn();
     const { result } = renderHook(() => useAiAnalyzeStream());
 
     await act(async () => {
       await result.current.startPreparedAnalyze(
         "snapshot-123", "anthropic/claude-sonnet-4",
+        { onAccepted, onRejected },
       );
     });
 
@@ -332,6 +419,13 @@ describe("useAiAnalyzeStream", () => {
       content: "[Analysis failed: Cloud AI provider network request failed.]",
     }));
     expect(aiStoreState.setLastRunReceipt).toHaveBeenCalledWith(receipt);
+    expect(onAccepted).toHaveBeenCalledWith("run-failed-1");
+    expect(onRejected).toHaveBeenCalledWith(
+      expect.objectContaining({ message: "Cloud AI provider network request failed." }),
+      receipt,
+    );
+    expect(onAccepted.mock.invocationCallOrder[0])
+      .toBeLessThan(onRejected.mock.invocationCallOrder[0]);
   });
 
   it("sends selected provider, model, and task type in the analyze request body", async () => {

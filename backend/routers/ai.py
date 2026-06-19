@@ -1671,7 +1671,9 @@ async def analyze_stream(
                 await _close_request_provider(cloud_provider)
 
         return StreamingResponse(
-            prepared_event_stream(), media_type="text/event-stream",
+            prepared_event_stream(),
+            media_type="text/event-stream",
+            headers={"X-Orbit-AI-Run-ID": run_id},
         )
 
     (

@@ -3,7 +3,147 @@ import { describe, expect, it, vi } from "vitest";
 
 import AiRunInspectorDialog from "../AiRunInspectorDialog";
 
+const preview = {
+  snapshot_id: "snapshot-123",
+  expires_at: "2026-06-19T12:10:00Z",
+  provider_name: "openrouter" as const,
+  model: {
+    id: "anthropic/claude-sonnet-4",
+    name: "Claude Sonnet 4",
+    context_length: 200000,
+    max_completion_tokens: 4096,
+    prompt_price_per_token: "0.000003",
+    completion_price_per_token: "0.000015",
+    request_price: "0",
+  },
+  request_body: {},
+  disclosure: {
+    sent_to_cloud: [],
+    kept_local: [],
+    exact_payload_available_until: "2026-06-19T12:10:00Z",
+  },
+  cost: {
+    currency: "USD" as const,
+    estimated_input_tokens: 1,
+    expected_output_tokens: 1,
+    max_output_tokens: 1,
+    estimated_cost_usd: "0.001",
+    maximum_cost_usd: "0.002",
+  },
+  fallback_enabled: false,
+};
+
 describe("AiRunInspectorDialog", () => {
+  it("disables duplicate actions and shows typed errors while submitting", () => {
+    render(
+      <AiRunInspectorDialog
+        open
+        preview={preview}
+        phase="submitting"
+        error={new Error("The selected OpenRouter model changed after preview.")}
+        localReady
+        onOpenChange={vi.fn()}
+        onConfirm={vi.fn()}
+        onCompare={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: "Sending..." })).toBeDisabled();
+    expect(screen.getByRole("alert"))
+      .toHaveTextContent("The selected OpenRouter model changed after preview.");
+    fireEvent.click(screen.getByRole("tab", { name: "Compare" }));
+    expect(screen.getByRole("button", { name: "Run comparison" })).toBeDisabled();
+  });
+
+  it("renders a zero actual receipt cost truthfully", () => {
+    render(
+      <AiRunInspectorDialog
+        open
+        preview={null}
+        onOpenChange={vi.fn()}
+        onConfirm={vi.fn()}
+        receipt={{
+          run_id: "run-zero",
+          requested_provider: "openrouter",
+          requested_model: "model-1",
+          executed_provider: "openrouter",
+          resolved_model: "model-1",
+          fallback_used: false,
+          fallback_reason: null,
+          status: "success",
+          attempts: [{
+            provider_name: "openrouter", requested_model: "model-1",
+            resolved_model: "model-1", status: "success",
+            provider_request_id: "gen-zero", input_tokens: 1, output_tokens: 1,
+            reasoning_tokens: null, cached_tokens: null,
+            estimated_cost_usd: "0.02", actual_cost_usd: "0",
+            duration_ms: 10, error_code: null,
+          }],
+          created_at: "2026-06-19T12:00:00Z",
+        }}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("tab", { name: "Receipt" }));
+    expect(screen.getByText("$0.0000 actual")).toBeInTheDocument();
+  });
+
+  it("renders estimated receipt cost when actual cost is unavailable", () => {
+    render(
+      <AiRunInspectorDialog
+        open
+        preview={null}
+        onOpenChange={vi.fn()}
+        onConfirm={vi.fn()}
+        receipt={{
+          run_id: "run-estimated",
+          requested_provider: "openrouter",
+          requested_model: "model-1",
+          executed_provider: null,
+          resolved_model: null,
+          fallback_used: false,
+          fallback_reason: null,
+          status: "failed",
+          attempts: [{
+            provider_name: "openrouter", requested_model: "model-1",
+            resolved_model: null, status: "failed", provider_request_id: null,
+            input_tokens: null, output_tokens: null, reasoning_tokens: null,
+            cached_tokens: null, estimated_cost_usd: "0.02", actual_cost_usd: null,
+            duration_ms: 10, error_code: "ai_provider_network_error",
+          }],
+          created_at: "2026-06-19T12:00:00Z",
+        }}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("tab", { name: "Receipt" }));
+    expect(screen.getByText("$0.0200 estimated")).toBeInTheDocument();
+  });
+
+  it("opens completed runs on the Receipt tab", () => {
+    render(
+      <AiRunInspectorDialog
+        open
+        preview={preview}
+        phase="completed"
+        initialTab="receipt"
+        onOpenChange={vi.fn()}
+        onConfirm={vi.fn()}
+        receipt={{
+          run_id: "run-complete", requested_provider: "openrouter",
+          requested_model: "model-1", executed_provider: "openrouter",
+          resolved_model: "model-1", fallback_used: false, fallback_reason: null,
+          status: "success", attempts: [], created_at: "2026-06-19T12:00:00Z",
+        }}
+      />,
+    );
+
+    expect(screen.getByRole("tab", { name: "Receipt" })).toHaveAttribute(
+      "aria-selected", "true",
+    );
+    expect(screen.getByText("Success")).toBeInTheDocument();
+  });
+
   it("contains long payloads without changing copied JSON", () => {
     const writeText = vi.fn();
     Object.defineProperty(navigator, "clipboard", {

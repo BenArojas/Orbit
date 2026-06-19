@@ -5,6 +5,7 @@ import asyncio
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from uuid import UUID
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -361,6 +362,8 @@ def test_cloud_stream_executes_snapshot_without_refetching_market_data(
         "POST", "/ai/analyze/stream", json={"snapshot_id": preview["snapshot_id"]},
     ) as response:
         assert response.status_code == 200
+        run_id = response.headers["X-Orbit-AI-Run-ID"]
+        UUID(run_id)
         events = [
             json.loads(line.removeprefix("data: "))
             for line in response.iter_lines()
@@ -370,6 +373,7 @@ def test_cloud_stream_executes_snapshot_without_refetching_market_data(
     assert fake_ibkr.history.await_count == 1
     assert fake_ai.executed_body == preview["request_body"]
     receipt = events[-1]["receipt"]
+    assert receipt["run_id"] == run_id
     assert receipt["requested_provider"] == "openrouter"
     assert receipt["executed_provider"] == "openrouter"
     assert receipt["resolved_model"] == "anthropic/claude-sonnet-4"

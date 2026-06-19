@@ -36,7 +36,11 @@ const mockOllamaReady = { current: true };
 const mockStartAnalyze = vi.fn();
 const mockCancelAnalyze = vi.fn();
 const mockReviewCloudRun = vi.fn();
+const mockOpenLastRun = vi.fn();
 const mockInspectorError = { current: null as Error | null };
+const mockInspectorPhase = { current: "review" as "review" | "submitting" | "running" | "completed" | "failed" };
+const mockInspectorReceipt = { current: null as Record<string, unknown> | null };
+const mockInspectorPreview = { current: null as Record<string, unknown> | null };
 const mockOpenRouterCatalog = {
   models: [] as Array<{ id: string; name: string }>,
   isLoading: false,
@@ -151,13 +155,16 @@ vi.mock("@/hooks/useAiAnalyzeStream", () => ({
 
 vi.mock("@/hooks/useAiRunInspector", () => ({
   useAiRunInspector: () => ({
-    preview: null,
-    open: false,
+    preview: mockInspectorPreview.current,
+    open: Boolean(mockInspectorPreview.current),
     setOpen: vi.fn(),
     isPreviewing: false,
     error: mockInspectorError.current,
+    phase: mockInspectorPhase.current,
+    receipt: mockInspectorReceipt.current,
     review: mockReviewCloudRun,
     send: vi.fn(),
+    openLastRun: mockOpenLastRun,
   }),
 }));
 
@@ -216,6 +223,9 @@ describe("AiChatPanel — fib section gating", () => {
     mockOpenRouterCatalog.isLoading = false;
     mockOpenRouterCatalog.error = null;
     mockInspectorError.current = null;
+    mockInspectorPhase.current = "review";
+    mockInspectorReceipt.current = null;
+    mockInspectorPreview.current = null;
     mockAiStore.providers = [
       {
         provider_name: "ollama",
@@ -292,6 +302,9 @@ describe("AiChatPanel — provider routing", () => {
     mockAiStore.analysisModel = null;
     mockAiStore.analysisFallbackEnabled = null;
     mockAiStore.lastProviderMetadata = null;
+    mockInspectorPhase.current = "review";
+    mockInspectorReceipt.current = null;
+    mockInspectorPreview.current = null;
     mockAiStore.providers = [
       {
         provider_name: "ollama",
@@ -339,6 +352,66 @@ describe("AiChatPanel — provider routing", () => {
     expect(screen.getByTestId("ai-run-metadata-row"))
       .toHaveClass("min-w-0");
     expect(screen.getByTitle(model)).toBeInTheDocument();
+  });
+
+  it("reopens the latest run receipt from provider metadata", async () => {
+    mockAiStore.lastProviderMetadata = {
+      provider_name: "openrouter",
+      model: "anthropic/claude-sonnet-4",
+      kind: "cloud",
+      fallback_used: false,
+      estimated_cost: 0.02,
+      actual_cost: 0.01,
+    };
+    mockInspectorReceipt.current = { run_id: "run-123", status: "success" };
+    const { default: AiChatPanel } = await import("../AiChatPanel");
+
+    renderAiChat(createElement(AiChatPanel, {
+      activeConid: 265598,
+      activeSymbol: "AAPL",
+      fibonacci: null,
+    }));
+
+    fireEvent.click(screen.getByRole("button", { name: "View last run" }));
+    expect(mockOpenLastRun).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps pre-acceptance failures on Summary when no receipt exists", async () => {
+    mockInspectorPhase.current = "failed";
+    mockInspectorError.current = new Error(
+      "The selected OpenRouter model changed after preview.",
+    );
+    mockInspectorPreview.current = {
+      snapshot_id: "snapshot-123", expires_at: "2026-06-19T12:10:00Z",
+      provider_name: "openrouter",
+      model: {
+        id: "anthropic/claude-sonnet-4", name: "Claude Sonnet 4",
+        context_length: 200000, max_completion_tokens: 4096,
+        prompt_price_per_token: "0.000003",
+        completion_price_per_token: "0.000015", request_price: "0",
+      },
+      request_body: {},
+      disclosure: {
+        sent_to_cloud: [], kept_local: [],
+        exact_payload_available_until: "2026-06-19T12:10:00Z",
+      },
+      cost: {
+        currency: "USD", estimated_input_tokens: 1, expected_output_tokens: 1,
+        max_output_tokens: 1, estimated_cost_usd: "0.001",
+        maximum_cost_usd: "0.002",
+      },
+      fallback_enabled: false,
+    };
+    const { default: AiChatPanel } = await import("../AiChatPanel");
+
+    renderAiChat(createElement(AiChatPanel, {
+      activeConid: 265598, activeSymbol: "AAPL", fibonacci: null,
+    }));
+
+    expect(screen.getByRole("tab", { name: "Summary" }))
+      .toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("alert"))
+      .toHaveTextContent("The selected OpenRouter model changed after preview.");
   });
 
   it("does not render an editable Ollama model trigger in the header", async () => {

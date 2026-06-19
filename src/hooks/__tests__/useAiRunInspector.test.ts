@@ -1,4 +1,4 @@
-import { act, renderHook } from "@testing-library/react";
+import { act, renderHook, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { createElement, type ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -14,6 +14,7 @@ vi.mock("@/modules/parallax/api", async (importOriginal) => {
       ...actual.parallaxApi,
       aiAnalysisPreview: vi.fn(),
       aiAnalysisCompare: vi.fn(),
+      aiRuns: vi.fn(),
     },
   };
 });
@@ -23,43 +24,45 @@ const wrapper = ({ children }: { children: ReactNode }) => createElement(
   QueryClientProvider, { client: queryClient }, children,
 );
 
+const preview = {
+  snapshot_id: "snapshot-123",
+  expires_at: "2026-06-18T12:10:00Z",
+  provider_name: "openrouter" as const,
+  model: {
+    id: "anthropic/claude-sonnet-4",
+    name: "Claude Sonnet 4",
+    context_length: 200000,
+    max_completion_tokens: 4096,
+    prompt_price_per_token: "0.000003",
+    completion_price_per_token: "0.000015",
+    request_price: "0",
+  },
+  request_body: {},
+  disclosure: {
+    sent_to_cloud: [],
+    kept_local: [],
+    exact_payload_available_until: "2026-06-18T12:10:00Z",
+  },
+  cost: {
+    currency: "USD" as const,
+    estimated_input_tokens: 1,
+    expected_output_tokens: 1,
+    max_output_tokens: 1,
+    estimated_cost_usd: "0.001",
+    maximum_cost_usd: "0.002",
+  },
+  fallback_enabled: false,
+};
+
 describe("useAiRunInspector", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     queryClient.clear();
+    vi.mocked(parallaxApi.aiAnalysisPreview).mockResolvedValue(preview);
   });
 
   it("previews without streaming and confirms only the snapshot id", async () => {
     const startPreparedAnalyze = vi.fn();
-    vi.mocked(parallaxApi.aiAnalysisPreview).mockResolvedValue({
-      snapshot_id: "snapshot-123",
-      expires_at: "2026-06-18T12:10:00Z",
-      provider_name: "openrouter",
-      model: {
-        id: "anthropic/claude-sonnet-4",
-        name: "Claude Sonnet 4",
-        context_length: 200000,
-        max_completion_tokens: 4096,
-        prompt_price_per_token: "0.000003",
-        completion_price_per_token: "0.000015",
-        request_price: "0",
-      },
-      request_body: {},
-      disclosure: {
-        sent_to_cloud: [],
-        kept_local: [],
-        exact_payload_available_until: "2026-06-18T12:10:00Z",
-      },
-      cost: {
-        currency: "USD",
-        estimated_input_tokens: 1,
-        expected_output_tokens: 1,
-        max_output_tokens: 1,
-        estimated_cost_usd: "0.001",
-        maximum_cost_usd: "0.002",
-      },
-      fallback_enabled: false,
-    });
     const { result } = renderHook(
       () => useAiRunInspector(startPreparedAnalyze, true), { wrapper },
     );
@@ -81,8 +84,119 @@ describe("useAiRunInspector", () => {
     act(() => result.current.send());
     expect(result.current.open).toBe(true);
     expect(startPreparedAnalyze).toHaveBeenCalledWith(
-      "snapshot-123", "anthropic/claude-sonnet-4",
+      "snapshot-123", "anthropic/claude-sonnet-4", expect.any(Object),
     );
+  });
+
+  it("closes on acceptance and reopens the completed receipt", async () => {
+    const startPreparedAnalyze = vi.fn();
+    const receipt = {
+      run_id: "run-123",
+      requested_provider: "openrouter" as const,
+      requested_model: "anthropic/claude-sonnet-4",
+      executed_provider: "openrouter" as const,
+      resolved_model: "anthropic/claude-sonnet-4",
+      fallback_used: false,
+      fallback_reason: null,
+      status: "success" as const,
+      attempts: [],
+      created_at: "2026-06-19T12:00:00Z",
+    };
+    const { result } = renderHook(
+      () => useAiRunInspector(startPreparedAnalyze, true), { wrapper },
+    );
+
+    await act(async () => {
+      await result.current.review({
+        conid: 265598, symbol: "AAPL", timeframes: ["D"], indicators: ["RSI"],
+        provider_name: "openrouter", model: "anthropic/claude-sonnet-4",
+        task_type: "analysis",
+      });
+    });
+    act(() => result.current.send());
+    expect(result.current.phase).toBe("submitting");
+    expect(result.current.open).toBe(true);
+    act(() => result.current.send());
+    expect(startPreparedAnalyze).toHaveBeenCalledTimes(1);
+
+    const lifecycle = startPreparedAnalyze.mock.calls[0][2];
+    act(() => lifecycle.onAccepted("run-123"));
+    expect(result.current.phase).toBe("running");
+    expect(result.current.open).toBe(false);
+
+    await act(async () => {
+      await lifecycle.onCompleted(receipt);
+    });
+    expect(result.current.phase).toBe("completed");
+    act(() => result.current.openLastRun());
+    expect(result.current.open).toBe(true);
+    expect(result.current.receipt).toEqual(receipt);
+  });
+
+  it("recovers a missed terminal receipt by exact accepted run id", async () => {
+    const startPreparedAnalyze = vi.fn();
+    const receipt = {
+      run_id: "run-123",
+      requested_provider: "openrouter" as const,
+      requested_model: "anthropic/claude-sonnet-4",
+      executed_provider: "openrouter" as const,
+      resolved_model: "anthropic/claude-sonnet-4",
+      fallback_used: false,
+      fallback_reason: null,
+      status: "success" as const,
+      attempts: [],
+      created_at: "2026-06-19T12:00:00Z",
+    };
+    vi.mocked(parallaxApi.aiRuns).mockResolvedValue([
+      { ...receipt, run_id: "another-run" },
+      receipt,
+    ]);
+    const { result } = renderHook(
+      () => useAiRunInspector(startPreparedAnalyze, true), { wrapper },
+    );
+
+    await act(async () => {
+      await result.current.review({
+        conid: 265598, symbol: "AAPL", timeframes: ["D"], indicators: ["RSI"],
+        provider_name: "openrouter", model: "anthropic/claude-sonnet-4",
+        task_type: "analysis",
+      });
+    });
+    act(() => result.current.send());
+    const lifecycle = startPreparedAnalyze.mock.calls[0][2];
+    act(() => lifecycle.onAccepted("run-123"));
+    await act(async () => {
+      await lifecycle.onCompleted(null);
+    });
+
+    await waitFor(() => expect(result.current.receipt).toEqual(receipt));
+    expect(parallaxApi.aiRuns).toHaveBeenCalledWith(10);
+  });
+
+  it("keeps typed HTTP rejection visible before acceptance", async () => {
+    const startPreparedAnalyze = vi.fn();
+    const { result } = renderHook(
+      () => useAiRunInspector(startPreparedAnalyze, true), { wrapper },
+    );
+
+    await act(async () => {
+      await result.current.review({
+        conid: 265598, symbol: "AAPL", timeframes: ["D"], indicators: ["RSI"],
+        provider_name: "openrouter", model: "anthropic/claude-sonnet-4",
+        task_type: "analysis",
+      });
+    });
+    act(() => result.current.send());
+    const lifecycle = startPreparedAnalyze.mock.calls[0][2];
+    act(() => lifecycle.onRejected(
+      new Error("The selected OpenRouter model changed after preview."),
+      null,
+    ));
+
+    expect(result.current.phase).toBe("failed");
+    expect(result.current.open).toBe(true);
+    expect(result.current.error?.message)
+      .toBe("The selected OpenRouter model changed after preview.");
   });
 
   it("keeps comparison results in hook memory", async () => {

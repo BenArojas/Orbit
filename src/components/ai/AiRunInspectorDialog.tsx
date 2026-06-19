@@ -17,6 +17,7 @@ import type {
   AIRunAttempt,
   AIRunReceipt,
 } from "@/modules/parallax/api";
+import type { InspectorPhase } from "@/hooks/useAiRunInspector";
 
 interface Props {
   open: boolean;
@@ -27,6 +28,9 @@ interface Props {
   isComparing?: boolean;
   runActive?: boolean;
   compareError?: Error | null;
+  error?: Error | null;
+  phase?: InspectorPhase;
+  initialTab?: "summary" | "receipt";
   onOpenChange: (open: boolean) => void;
   onConfirm: (snapshotId: string) => void;
   onCompare?: () => void;
@@ -41,6 +45,9 @@ export default function AiRunInspectorDialog({
   isComparing = false,
   runActive = false,
   compareError = null,
+  error = null,
+  phase = "review",
+  initialTab = "summary",
   onOpenChange,
   onConfirm,
   onCompare,
@@ -58,9 +65,14 @@ export default function AiRunInspectorDialog({
               ? "Inspect the exact OpenRouter request before sending it."
               : "Review metadata retained for this AI run."}
           </DialogDescription>
+          {error && <p role="alert" className="text-xs text-destructive">{error.message}</p>}
         </DialogHeader>
 
-        <Tabs defaultValue="summary" className="min-h-0 min-w-0 max-w-full">
+        <Tabs
+          key={initialTab}
+          defaultValue={initialTab}
+          className="min-h-0 min-w-0 max-w-full"
+        >
           <TabsList>
             <TabsTrigger value="summary">Summary</TabsTrigger>
             <TabsTrigger value="payload">Payload</TabsTrigger>
@@ -134,7 +146,10 @@ export default function AiRunInspectorDialog({
                 <Button
                   type="button"
                   variant="outline"
-                  disabled={!preview || !localReady || isComparing || runActive}
+                  disabled={
+                    !preview || !localReady || isComparing || runActive
+                    || phase === "submitting" || phase === "running"
+                  }
                   onClick={onCompare}
                 >
                   {isComparing ? "Comparing..." : "Run comparison"}
@@ -144,10 +159,15 @@ export default function AiRunInspectorDialog({
           </TabsContent>
         </Tabs>
 
-        {preview && (
+        {preview && (phase === "review" || phase === "submitting") && (
           <DialogFooter>
-            <Button onClick={() => onConfirm(preview.snapshot_id)}>
-              Send to OpenRouter · max {money(preview.cost.maximum_cost_usd)}
+            <Button
+              disabled={phase !== "review"}
+              onClick={() => onConfirm(preview.snapshot_id)}
+            >
+              {phase === "submitting"
+                ? "Sending..."
+                : `Send to OpenRouter · max ${money(preview.cost.maximum_cost_usd)}`}
             </Button>
           </DialogFooter>
         )}
@@ -221,6 +241,11 @@ function Attempt({ attempt }: { attempt: AIRunAttempt }) {
   const outcome = attempt.status === "fallback_success"
     ? "fallback succeeded"
     : attempt.status === "success" ? "succeeded" : attempt.status;
+  const cost = attempt.actual_cost_usd !== null
+    ? `$${Number(attempt.actual_cost_usd).toFixed(4)} actual`
+    : attempt.estimated_cost_usd !== null
+      ? `$${Number(attempt.estimated_cost_usd).toFixed(4)} estimated`
+      : null;
   return (
     <section className="border-t border-border pt-3">
       <h3 className="font-medium">{provider} {outcome}</h3>
@@ -228,7 +253,7 @@ function Attempt({ attempt }: { attempt: AIRunAttempt }) {
         <dt>Model</dt><dd>{attempt.resolved_model ?? attempt.requested_model ?? "None"}</dd>
         <dt>Tokens</dt><dd>{attempt.input_tokens ?? 0} in / {attempt.output_tokens ?? 0} out</dd>
         <dt>Duration</dt><dd>{attempt.duration_ms} ms</dd>
-        {attempt.actual_cost_usd && <><dt>Cost</dt><dd>${Number(attempt.actual_cost_usd).toFixed(4)} actual</dd></>}
+        {cost && <><dt>Cost</dt><dd>{cost}</dd></>}
         {attempt.provider_request_id && <>
           <dt>Generation</dt>
           <dd className="flex items-center gap-1">
