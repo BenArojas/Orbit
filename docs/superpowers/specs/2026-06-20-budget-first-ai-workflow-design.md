@@ -1,6 +1,6 @@
 # Budget-First AI Workflow Design
 
-> Status: Proposed for user review | Branch: `feature/budget-first-ai-workflow` | Date: 2026-06-20
+> Status: Approved | Branch: `feature/budget-first-ai-workflow` | Date: 2026-06-20
 
 ## Problem
 
