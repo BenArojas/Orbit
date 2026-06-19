@@ -46,7 +46,7 @@ These are locked in. Don't revisit unless something breaks.
 | Ollama lifecycle | Detect-only, never auto-install | Guide user, don't decide for them |
 | Persistence | SQLite (local) | Survives restarts, shared across Orbit modules |
 | Market data | IBKR Client Portal Web API (port 5001) | Staying with this — TWS is not the current data path. `IBKRService` owns the httpx transport. |
-| TWS usage | v2 execution assistant only | TWS is a separate, explicitly gated decision-support execution subsystem, never an autonomous bot. |
+| TWS usage | v2 fourth-module execution assistant | TWS mode is exclusive: it enables the user-armed assistant and disables Client Portal-dependent modules until the session returns to Client Portal mode. |
 | Multi-timeframe | Single chart + timeframe switcher | Simpler UX |
 | Background scanner | Runs while app is open only | No system tray mode |
 | Dynamic watchlists | Auto-populated by trigger rules | Separate from master IBKR watchlist |
@@ -64,6 +64,7 @@ These notes are intentionally tracked in the project plan because they affect th
 - **Budget-first AI workflow:** DONE on `feature/budget-first-ai-workflow`. Scoped architecture/testing docs are canonical, Claude imports/symlinks shared guidance, four duplicated domain skills are removed, and critical-promises testing replaces mandatory TDD. Verified with JavaScript syntax, policy-drift, structure, and diff checks; no runtime application behavior changed. Design and plan archived under `docs/archive/` (`2026-06-20-budget-first-ai-workflow-design.md`, `2026-06-20-budget-first-ai-workflow.md`).
 - **Cloud + Hybrid AI:** SHIPPED to `dev` from `feature/orbit-v2-cloud-hybrid-ai-spec` (parent mission slices 1–8, including the manual OpenRouter smoke/review gate). Delivered: validated OpenRouter model selection, cloud payload preview, inspectable run receipts, provider controls owned by Analysis, fact-grounded signals with fail-closed validation, the AI Run Inspector + UX lifecycle, the data/grounding pipeline (true 1h/4h candle semantics, EMA fact grouping, sufficient history, explicit groundable price candidates), neutral-vs-rejected signal handling, and streaming reliability (`finish_reason` capture + reformat retry that preserves the original narrative). Local Ollama stays the default, cloud is explicit opt-in, keys stay in the OS keychain, and SQLite stores only opaque `api_key_ref` values. Master design (kept active): `docs/superpowers/specs/2026-06-05-orbit-v2-cloud-hybrid-ai-design.md`. Shipped plans/specs archived under `docs/archive/` (see its README index).
 - **AI semantic-reasoning quality (remaining forward track):** the prompt-grounding evaluation loop is code-complete (deterministic validator, graders, HITL runner) but its **live OpenRouter evaluation and prompt promotion never ran** — this is the open track for improving semantic reasoning (e.g. "below" ≠ "broke below", prefer NEUTRAL when the only target is structurally remote, non-equity instrument handling). Run candidates one variable at a time through the existing harness; do not hand-tune the prompt by vibes. Also pending: use the newly captured `finish_reason` distribution from real runs to decide whether the cloud `max_output_tokens` cost cap needs raising (do not raise it speculatively). Plan (kept active): `docs/superpowers/plans/2026-06-19-ai-prompt-grounding-evaluation-loop.md`.
+- **TWS Execution Assistant:** SPEC UPDATED on `feature/tws-execution-assistant-spec`; implementation has not started. The fourth-module design remains stocks-first, paper-first, explicitly user-armed, and non-autonomous. Design: `docs/superpowers/specs/2026-06-05-tws-execution-assistant-design.md`.
 - **Plan #6: MoonMarket Options Chain** ships single-leg option orders first. Selecting a call/put contract opens the shared OrderTicket as `OPTION`, but option brackets are disabled in the UI and rejected server-side if an option order payload tries to submit a multi-order group.
 - **OrderTicket enhancement pass:** trailing stops (`TRAIL`/`TRAILLMT`), outside-RTH, plain-English labels, risk/reward readout, cash sizing, and percent-of-buying-power sizing are merged to local `dev`.
 - **Deferred but required follow-up:** option bracket orders belong in a later MoonMarket trading-depth pass after single-leg option orders are validated against the IBKR paper account. Revisit this before any options trading polish or "bracket parity" work.
@@ -588,9 +589,14 @@ but only behind explicit settings and connection gates.
 **Primary v2 themes**
 
 1. **TWS-gated execution assistant**
+   - Ships as a fourth Orbit module under a working name until product naming.
    - Only available when TWS is connected and explicitly selected by the user.
-   - Separate from the current Client Portal Web API decision-support path.
+   - TWS mode is exclusive: Parallax, MoonMarket, and Inflect are disabled because
+     their contracts depend on Client Portal data.
    - Starts in paper mode before any separately approved live path.
+   - Uses `ib_async` only behind Orbit's `TwsBrokerAdapter`; third-party types do
+     not leak into services, database/API models, or UI.
+   - Uses NautilusTrader as an architecture reference, not a dependency.
    - Handles tiered scale-outs, trailing/advanced order management, GTD, MOC/LOC,
      and multi-leg option strategy execution after single-leg validation.
    - Must have its own safety design: live-account guardrails, max order size,
@@ -728,5 +734,5 @@ Parallax/MoonMarket journal hooks (`docs/architecture/modules.md`).
 | Q7 | ~~Sector Rotation RRG calculation?~~ | 3.4 | RESOLVED: standard JdK method |
 | Q8 | ~~Can Ollama be bundled into Tauri?~~ | 4.12 | RESOLVED: detect-only, never auto-install. Guide user instead |
 | Q9 | ~~TWS API or IBKR Client Portal Web API for v1 market data/order ticket?~~ | ALL | RESOLVED: v1 stays with Client Portal Web API. TWS is not the v1 data path. |
-| Q10 | What should the TWS-gated execution assistant support first? | v2 execution assistant | OPEN — likely paper-mode tiered scale-out assistance first, then advanced order types, then a separate live-account safety review. |
+| Q10 | What should the TWS-gated execution assistant support first? | v2 execution assistant | DRAFTED: fourth Orbit module, exclusive TWS mode, stocks and paper first; live requires settings/session/plan arming and pauses for re-arm after restart. `ib_async` stays behind `TwsBrokerAdapter`; NautilusTrader is reference only. |
 | Q11 | How should hybrid local/cloud inference route tasks? | v2 AI | PARTLY RESOLVED: the current modes are `local_only`, `cloud_manual`, and `cloud_with_local_fallback`; automatic task-class routing remains deferred. |
