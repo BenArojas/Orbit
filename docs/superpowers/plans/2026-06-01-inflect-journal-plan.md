@@ -237,8 +237,8 @@ window (skip weekends) if the call fails. No direct "is open now" endpoint exist
 ## Definition of done
 
 - All Phase A–D checkboxes complete; C1–C4 confirmations recorded.
-- New backend + frontend tests cover changed code (CLAUDE.md Rule 1).
+- Verification follows `docs/testing.md`.
 - Polars-only, typed exceptions, conid-keyed, all data through the sidecar,
-  no Parallax/MoonMarket journal hooks (Rules 2–6, parallax-hub).
+  no Parallax/MoonMarket journal hooks (`docs/architecture/modules.md`).
 - Inflect reachable from the launcher; calendar + trades + journaling work
   against the paper account.

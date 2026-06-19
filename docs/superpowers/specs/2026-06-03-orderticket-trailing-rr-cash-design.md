@@ -29,7 +29,7 @@ All five ship together on one branch.
 - Making the bracket's stop-loss leg itself trailing. Trailing stays its own standalone order type; brackets keep their fixed `STP` leg.
 - `GTD` (good-till-date) and `MOC`/`LOC` (market/limit-on-close) order types — noted as backlog, pair better with the v2 TWS-mode engine.
 - Options brackets (already deferred/rejected server-side).
-- Anything in the v2 tiered scale-out execution engine (separate subsystem, separate spec — see `parallax-v2-roadmap` / dual-mode bot direction).
+- Anything in the v2 tiered scale-out execution assistant (separate subsystem; see `PROJECT_PLAN.md`).
 
 ---
 

@@ -824,7 +824,7 @@ class IndicatorComputeResponse(BaseModel):
 # for their style. Weights are stored in the existing `settings` table
 # under key="fib_weights" as a JSON blob — no new table is needed.
 #
-# A future v2 learning algorithm (parallax-v2-roadmap) will adjust
+# A future v2 learning algorithm (`PROJECT_PLAN.md`) will adjust
 # these weights automatically based on subsequent price action. Until
 # then they are purely user-controlled.
 
