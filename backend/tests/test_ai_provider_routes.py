@@ -230,8 +230,8 @@ def test_preview_returns_exact_body_without_starting_cloud_inference(
             return None
 
     class FakeAi:
-        async def prepare_analysis_messages(self, **_kwargs) -> list[dict[str, str]]:
-            return [{"role": "user", "content": "Analyze AAPL."}]
+        async def _prepare_analysis_payload(self, **_kwargs):
+            return ([{"role": "user", "content": "Analyze AAPL."}], {})
 
     monkeypatch.setattr(
         ai_router,
@@ -301,8 +301,8 @@ def test_cloud_stream_executes_snapshot_without_refetching_market_data(
     class FakeAi:
         executed_body = None
 
-        async def prepare_analysis_messages(self, **_kwargs) -> list[dict[str, str]]:
-            return [{"role": "user", "content": "Analyze AAPL."}]
+        async def _prepare_analysis_payload(self, **_kwargs):
+            return ([{"role": "user", "content": "Analyze AAPL."}], {})
 
         async def analyze_prepared_stream(self, *, snapshot, **_kwargs):
             self.executed_body = snapshot.request_body

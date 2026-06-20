@@ -2,7 +2,11 @@
 from __future__ import annotations
 
 from models import CandleData, IndicatorResult, IndicatorValue
-from services.prompt_builder import build_indicator_context, build_system_prompt
+from services.prompt_builder import (
+    build_analysis_user_message,
+    build_indicator_context,
+    build_system_prompt,
+)
 
 
 def _candles(closes: list[float]) -> list[CandleData]:
@@ -105,3 +109,28 @@ class TestBuildSystemPrompt:
         """Legacy callers with indicators= must not crash."""
         out = build_system_prompt(indicators=["rsi", "ema_9"])
         assert "Parallax AI" in out  # _SYSTEM_BASE still present
+
+    def test_prompt_removes_institutional_claims_and_frames_atr_as_distance(self):
+        out = build_system_prompt(
+            indicators_display=["VWAP", "ATR", "OBV", "Volume"],
+            indicator_names=["vwap", "atr", "obv", "volume"],
+        )
+
+        assert "institutional benchmark" not in out
+        assert "institutional flow" not in out
+        assert "do not prove institutional participation" in out
+        assert "ATR is a distance, not an absolute price level" in out
+
+    def test_analysis_user_message_makes_levels_conditional(self):
+        out = build_analysis_user_message(
+            symbol="AAPL",
+            context="Verified Facts:\n- [D.ema.stack_bullish] Trend is up.",
+            timeframes=["D"],
+            indicators_requested=["EMA Stack"],
+        )
+
+        assert "Specific entry price with rationale" not in out
+        assert "If any of entry, stop, or target lacks an exact grounded price" in out
+        assert "both the prose and JSON must be NEUTRAL with null levels" in out
+        assert "one fact ID per bracket" in out
+        assert "at most 350 words before the JSON block" in out

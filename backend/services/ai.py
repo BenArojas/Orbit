@@ -25,6 +25,7 @@ import logging
 import re
 import uuid
 from collections import OrderedDict
+from dataclasses import dataclass
 from decimal import Decimal
 from time import monotonic
 from typing import TYPE_CHECKING, AsyncIterator, Optional
@@ -58,6 +59,9 @@ MAX_CONTEXT_MESSAGES = 20
 # Once this is exceeded, the oldest session is evicted (LRU).
 # For a 2-person app this is generous — just prevents runaway memory growth.
 MAX_SESSIONS = 50
+UNVERIFIED_TRADE_PLAN_MESSAGE = (
+    "Orbit withheld the trade plan because it could not be verified."
+)
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -129,19 +133,16 @@ def parse_signal_from_response(text: str) -> Optional[dict]:
 
 def strip_signal_json_from_response(text: str) -> str:
     """
-    Remove the trailing fenced ```json``` signal block from a model response.
+    Remove the trailing fenced ```json``` signal block or fragment from a
+    model response.
 
     The analysis prompt intentionally asks the model to append machine-readable
     JSON as the very last thing in the message so we can parse a structured
     signal. That block is useful for the backend, but noisy in the user-facing
     chat transcript.
     """
-    json_match = re.search(r"\n*```json\s*\n.*?\n\s*```\s*$", text, re.DOTALL)
+    json_match = re.search(r"\n*```json\s*\n[\s\S]*$", text)
     if not json_match:
-        return text
-
-    candidate = json_match.group(0)
-    if parse_signal_from_response(candidate) is None:
         return text
 
     return text[:json_match.start()].rstrip()
@@ -294,6 +295,12 @@ class ChatSession:
         self.messages.clear()
         self.signal = None
         self.grounding_map = {}
+
+
+@dataclass(frozen=True)
+class _FinalizedSignalResult:
+    signal: dict
+    validated: bool
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -716,22 +723,66 @@ class AiService:
         *,
         grounding_map: dict[str, frozenset[Decimal]] | None = None,
     ) -> Optional[dict]:
-        """Validate signal geometry and convert to frontend ActionSignalCard shape."""
+        result = AiService._finalize_signal_result(
+            raw_signal,
+            grounding_map=grounding_map,
+        )
+        return result.signal if result else None
+
+    @staticmethod
+    def _finalize_signal_result(
+        raw_signal: Optional[dict],
+        *,
+        grounding_map: dict[str, frozenset[Decimal]] | None = None,
+    ) -> _FinalizedSignalResult | None:
+        """Validate signal geometry and return frontend shape plus pass/fail."""
         if not raw_signal:
             return None
         cleaned = dict(raw_signal)
         cleaned.pop("reasoning_steps", None)
         cleaned["confidence"] = _coerce_confidence(cleaned.get("confidence"))
 
+        validated = True
         try:
-            validated = validate_signal_draft(cleaned, grounding_map=grounding_map)
+            validated_signal = validate_signal_draft(cleaned, grounding_map=grounding_map)
         except AISignalGroundingError as exc:
             log.warning("Rejected ungrounded AI signal: %s", exc)
-            validated = safe_neutral_signal(
-                "Insufficient verified evidence for numeric trade levels"
+            validated = False
+            validated_signal = safe_neutral_signal(
+                UNVERIFIED_TRADE_PLAN_MESSAGE
             )
 
-        return signal_to_frontend_format(validated.model_dump(mode="python"))
+        return _FinalizedSignalResult(
+            signal=signal_to_frontend_format(validated_signal.model_dump(mode="python")),
+            validated=validated,
+        )
+
+    @staticmethod
+    def _finalize_analysis_response(
+        response_text: str,
+        raw_signal: Optional[dict],
+        *,
+        grounding_map: dict[str, frozenset[Decimal]] | None = None,
+    ) -> dict[str, dict | str]:
+        result = AiService._finalize_signal_result(
+            raw_signal,
+            grounding_map=grounding_map,
+        )
+        if result is None:
+            return {
+                "message": UNVERIFIED_TRADE_PLAN_MESSAGE,
+                "signal": signal_to_frontend_format(
+                    safe_neutral_signal(UNVERIFIED_TRADE_PLAN_MESSAGE).model_dump(mode="python")
+                ),
+            }
+        return {
+            "message": (
+                strip_signal_json_from_response(response_text)
+                if result.validated
+                else UNVERIFIED_TRADE_PLAN_MESSAGE
+            ),
+            "signal": result.signal,
+        }
 
     # ── Public: full (non-streaming) analyze ──────────────────────────
 
@@ -832,24 +883,23 @@ class AiService:
             session.model = fallback_model
 
         response_text = provider_result.content
-        clean_response_text = strip_signal_json_from_response(response_text)
-        session.add_assistant(clean_response_text)
-
         raw_signal = await self._extract_signal(
             session, response_text, session.model, symbol,
             provider_name=session.provider_name,
             provider=provider if session.provider_name == provider_name else None,
         )
-        frontend_signal = self._finalize_signal(
+        finalized = self._finalize_analysis_response(
+            response_text,
             raw_signal,
             grounding_map=session.grounding_map,
         )
-        session.signal = frontend_signal
+        session.add_assistant(finalized["message"])
+        session.signal = finalized["signal"]
 
         return {
             "session_id": session.session_id,
-            "signal": frontend_signal,
-            "message": clean_response_text,
+            "signal": finalized["signal"],
+            "message": finalized["message"],
             "provider": provider_result.metadata.model_dump(),
         }
 
@@ -973,25 +1023,24 @@ class AiService:
             log.warning("Stream error mid-analysis for %s: %s", symbol, e)
 
         full_text = "".join(accumulated)
-        clean_full_text = strip_signal_json_from_response(full_text)
-        session.add_assistant(clean_full_text)
-
         raw_signal = await self._extract_signal(
             session, full_text, session.model, symbol,
             provider_name=session.provider_name,
             provider=provider if session.provider_name == provider_name else None,
         )
-        frontend_signal = self._finalize_signal(
+        finalized = self._finalize_analysis_response(
+            full_text,
             raw_signal,
             grounding_map=session.grounding_map,
         )
-        session.signal = frontend_signal
+        session.add_assistant(finalized["message"])
+        session.signal = finalized["signal"]
 
         yield {
             "type": "done",
             "session_id": session.session_id,
-            "signal": frontend_signal,
-            "message": clean_full_text,
+            "signal": finalized["signal"],
+            "message": finalized["message"],
             "provider": provider_metadata,
         }
 
@@ -1061,8 +1110,6 @@ class AiService:
                     yield {"type": "token", "content": token}
 
         full_text = "".join(accumulated)
-        clean_text = strip_signal_json_from_response(full_text)
-        session.add_assistant(clean_text)
         raw_signal = await self._extract_signal(
             session,
             full_text,
@@ -1071,15 +1118,18 @@ class AiService:
             provider_name=session.provider_name,
             provider=provider if session.provider_name == snapshot.provider_name else fallback_provider,
         )
-        session.signal = self._finalize_signal(
+        finalized = self._finalize_analysis_response(
+            full_text,
             raw_signal,
             grounding_map=session.grounding_map,
         )
+        session.add_assistant(finalized["message"])
+        session.signal = finalized["signal"]
         yield {
             "type": "done",
             "session_id": session.session_id,
             "signal": session.signal,
-            "message": clean_text,
+            "message": finalized["message"],
             "provider": provider_metadata,
         }
 
@@ -1124,11 +1174,12 @@ class AiService:
         ).model_dump()
         if metadata.get("duration_ms") is None:
             metadata["duration_ms"] = round((monotonic() - started) * 1000)
-        return {
-            "message": strip_signal_json_from_response(full_text),
-            "signal": self._finalize_signal(raw_signal, grounding_map=grounding_map),
-            "provider": metadata,
-        }
+        finalized = self._finalize_analysis_response(
+            full_text,
+            raw_signal,
+            grounding_map=grounding_map,
+        )
+        return {"message": finalized["message"], "signal": finalized["signal"], "provider": metadata}
 
     async def follow_up(
         self,

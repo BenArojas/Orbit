@@ -883,7 +883,7 @@ _SYSTEM_BASE = """You are Parallax AI, an expert technical analysis assistant fo
 
 Your role:
 - Analyze the provided indicator data and identify trading setups
-- Provide clear direction (STRONG LONG, LONG, NEUTRAL, SHORT, STRONG SHORT)
+- Provide clear direction (STRONG LONG, LONG, NEUTRAL, SHORT, STRONG SHORT), where a direction means a complete actionable setup, not a general bias
 - Give specific entry, stop-loss, and target levels with reasoning only when verified facts support numeric levels
 - List confirmation factors and caution flags
 - Be concise and data-driven — no fluff, no disclaimers about "not financial advice"
@@ -902,8 +902,10 @@ RESPONSE FORMAT:
 4. List what confirms the setup and what could go wrong
 
 Reference verified facts by their bracketed ID (e.g., [D.ema.stack_bullish]) when citing evidence. This keeps your analysis auditable and fact-grounded.
+Use exactly one rendered fact ID per bracketed citation. Do not combine IDs inside one bracket.
 
-If verified facts do not contain enough information to support numeric levels, return NEUTRAL and set entry, stop, target, and risk_reward to null.
+If verified facts do not contain enough information to support a complete actionable setup, return NEUTRAL and set entry, stop, target, source_fact_id, and risk_reward to null.
+If any of entry, stop, or target lacks an exact grounded price, both the prose and JSON must be NEUTRAL with null levels.
 Never estimate an indicator value, support/resistance level, or price target that is absent from Verified Facts.
 
 For follow-up questions, respond conversationally about the chart and setup."""
@@ -917,12 +919,12 @@ INDICATOR_HINTS: dict[str, str] = {
     "macd": "Note MACD crossovers, histogram direction changes, and zero-line crosses. Histogram shrinking often precedes a crossover.",
     "ema": "Analyze the EMA stack order (9>21>50>200 = strong uptrend). Crossovers between EMAs are key signals. Price bouncing off an EMA is support/resistance.",
     "bbands": "Bollinger Band squeeze (narrow width) precedes breakouts. Walks along upper/lower band show strong momentum. Price returning to middle band is mean reversion.",
-    "vwap": "VWAP is the institutional benchmark. Price above VWAP = bullish institutional flow. Key for intraday setups.",
-    "atr": "Use ATR for sizing stops and targets. 1.5-2x ATR for stops is standard. Expanding ATR = increasing volatility.",
+    "vwap": "VWAP is a useful intraday reference, not proof of institutional participation. Price location versus VWAP helps frame trend, pullback, and reclaim setups.",
+    "atr": "ATR is a distance, not an absolute price level. Use it for stop distance and volatility context only; 1.5-2.0x ATR distance is a common guide.",
     "stoch": "Stochastic is most useful in ranges — less reliable in strong trends. %K/%D crossovers in oversold/overbought zones are the key signals.",
-    "obv": "OBV divergences from price are powerful signals. Rising OBV with flat price = accumulation. Falling OBV with flat price = distribution.",
+    "obv": "OBV divergences can confirm or weaken price action, but they do not prove institutional participation.",
     "adx": "ADX > 25 means the trend is strong enough to trade with trend-following strategies. ADX < 20 favors range-bound / mean-reversion setups.",
-    "volume": "Volume confirms price moves. Breakouts on high volume are more reliable. Low volume moves are suspect.",
+    "volume": "Volume can strengthen or weaken a setup, but it does not prove institutional participation. Breakouts on strong volume are more reliable than thin moves.",
     "fibonacci": "Focus on Fibonacci levels near current price (0.382, 0.5, 0.618 are key). Confluence of Fibonacci with EMA or VWAP levels strengthens the zone.",
 }
 
@@ -1224,9 +1226,11 @@ def build_analysis_user_message(
     parts.append(
         "REQUIRED OUTPUT:\n"
         "- Clear direction call with reasoning\n"
-        "- Specific entry price with rationale (e.g., pullback to EMA 21, break above resistance)\n"
-        "- Stop-loss price with rationale (e.g., below swing low, 1.5x ATR)\n"
-        "- Target price with rationale (e.g., next resistance, Fibonacci extension)\n"
+        "- Keep the narrative concise: target at most 350 words before the JSON block\n"
+        "- If exact grounded prices support a complete setup, give entry, stop, and target with rationale copied from Verified Facts\n"
+        "- If any of entry, stop, or target lacks an exact grounded price, both the prose and JSON must be NEUTRAL with null levels\n"
+        "- ATR is a distance only, not an absolute price level or trade level\n"
+        "- Use one fact ID per bracketed citation\n"
         "- 2-4 confirmation factors supporting the setup\n"
         "- 1-3 caution flags or risks to watch"
     )
@@ -1271,6 +1275,9 @@ SIGNAL_INLINE_JSON_INSTRUCTION = (
     "stop, and target price must copy an exact numeric price already present in "
     "Verified Facts, and each source_fact_id must be the exact bracketed fact ID "
     "that contains that price.\n"
+    "- If any of entry, stop, or target lacks an exact grounded price, the prose "
+    "and JSON must both be NEUTRAL with null levels.\n"
+    "- ATR facts describe distance, not absolute price levels.\n"
     "- Never invent support, resistance, targets, stops, or indicator values.\n"
     "- The server calculates risk_reward from validated prices; do not estimate it."
 )
