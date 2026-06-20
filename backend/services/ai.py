@@ -1208,16 +1208,21 @@ class AiService:
             provider_name=session.provider_name,
             provider=provider,
         )
-        clean_response_text = strip_signal_json_from_response(response_text)
-        session.add_assistant(clean_response_text)
 
         # Check if the response contains an updated signal
         raw_signal = parse_signal_from_response(response_text)
         if raw_signal:
-            session.signal = self._finalize_signal(
+            finalized = self._finalize_analysis_response(
+                response_text,
                 raw_signal,
                 grounding_map=session.grounding_map,
             )
+            session.add_assistant(finalized["message"])
+            session.signal = finalized["signal"]
+            clean_response_text = finalized["message"]
+        else:
+            clean_response_text = strip_signal_json_from_response(response_text)
+            session.add_assistant(clean_response_text)
 
         return {
             "session_id": session.session_id,
@@ -1231,14 +1236,14 @@ class AiService:
         message: str,
         model: Optional[str] = None,
         provider: object | None = None,
-    ) -> AsyncIterator[str]:
+    ) -> AsyncIterator[dict]:
         """
         Streaming version of follow_up — yields tokens as they arrive.
         After the stream completes, the full response is added to the session.
         """
         session = self.sessions.get(session_id)
         if not session:
-            yield "[Error: Session not found]"
+            yield {"type": "error", "message": "[Error: Session not found]"}
             return
 
         session.add_user(message)
@@ -1253,18 +1258,29 @@ class AiService:
             if event.get("type") == "token":
                 token = event["content"]
                 full_response += token
-                yield token
-
-        clean_full_response = strip_signal_json_from_response(full_response)
-        session.add_assistant(clean_full_response)
+                yield {"type": "token", "content": token}
 
         # Check for signal update
         raw_signal = parse_signal_from_response(full_response)
         if raw_signal:
-            session.signal = self._finalize_signal(
+            finalized = self._finalize_analysis_response(
+                full_response,
                 raw_signal,
                 grounding_map=session.grounding_map,
             )
+            session.add_assistant(finalized["message"])
+            session.signal = finalized["signal"]
+            final_message = finalized["message"]
+        else:
+            final_message = strip_signal_json_from_response(full_response)
+            session.add_assistant(final_message)
+
+        yield {
+            "type": "done",
+            "session_id": session.session_id,
+            "signal": session.signal,
+            "message": final_message,
+        }
 
     # ── Cleanup ─────────────────────────────────────────────────
 

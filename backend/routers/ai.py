@@ -1969,12 +1969,13 @@ async def chat_stream(
 
     async def token_stream():
         try:
-            async for token in ai.follow_up_stream(
+            async for event in ai.follow_up_stream(
                 session_id=request.session_id,
                 message=request.message,
                 provider=request_provider,
             ):
-                yield f"data: {token}\n\n"
+                payload = event if isinstance(event, str) else json.dumps(event)
+                yield f"data: {payload}\n\n"
             yield "data: [DONE]\n\n"
         except ValueError as e:
             yield f"data: Error: {e}\n\n"

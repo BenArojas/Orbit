@@ -92,6 +92,57 @@ def _service_for(content: str) -> _PromptStubAiService:
     )
 
 
+class _QueuedProvider(_FakeProvider):
+    def __init__(self, contents: list[str]) -> None:
+        self.contents = list(contents)
+
+    def _next(self) -> str:
+        assert self.contents, "No queued content left"
+        return self.contents.pop(0)
+
+    async def chat(self, *, messages: list[dict[str, str]], model: str, think=None) -> str:
+        assert messages
+        del model, think
+        return self._next()
+
+    async def chat_with_metadata(self, *, messages: list[dict[str, str]], model: str):
+        assert messages
+        return AIProviderTextResult(
+            content=self._next(),
+            metadata=AIProviderMetadata(
+                provider_name="ollama",
+                kind="local",
+                model=model,
+                estimated_cost=None,
+                actual_cost=None,
+                fallback_used=False,
+            ),
+            provider_request_id=None,
+        )
+
+    async def chat_stream_with_metadata(
+        self,
+        *,
+        messages: list[dict[str, str]],
+        model: str,
+        max_tokens: int | None = None,
+    ) -> AsyncIterator[dict]:
+        assert messages
+        del max_tokens
+        yield {"type": "token", "content": self._next()}
+        yield {
+            "type": "metadata",
+            "metadata": AIProviderMetadata(
+                provider_name="ollama",
+                kind="local",
+                model=model,
+                estimated_cost=None,
+                actual_cost=None,
+                fallback_used=False,
+            ).model_dump(),
+        }
+
+
 # ── _coerce_confidence ────────────────────────────────────────
 
 
@@ -432,6 +483,91 @@ async def test_analyze_prepared_stream_done_message_uses_authoritative_withheld_
             provider=provider,
             fallback_provider=None,
             grounding_map=GROUNDING_MAP,
+        )
+    ]
+
+    assert events[-1]["type"] == "done"
+    assert events[-1]["message"] == "Orbit withheld the trade plan because it could not be verified."
+    assert events[-1]["signal"]["direction"] == "NEUTRAL"
+
+
+@pytest.mark.asyncio
+async def test_follow_up_rejected_signal_update_returns_withheld_message_and_safe_neutral_card():
+    provider = _QueuedProvider([
+        (
+            "Initial grounded setup.\n\n```json\n"
+            '{"direction":"LONG","confidence":72,"description":"Bullish setup",'
+            '"entry":{"price":100.0,"source_fact_id":"D.ema.price_near_21","note":"entry"},'
+            '"stop":{"price":98.0,"source_fact_id":"D.bbands.outside_lower","note":"stop"},'
+            '"target":{"price":104.0,"source_fact_id":"D.fibonacci.target_extension_1272","note":"target"},'
+            '"confirmations":["EMA stack"],"cautions":[],"meta":{"risk_reward":null}}\n```'
+        ),
+        (
+            "Actually this is still a LONG.\n\n```json\n"
+            '{"direction":"LONG","confidence":"HIGH","description":"Broken update",'
+            '"entry":{"price":999.0,"source_fact_id":"D.ema.price_near_21","note":"entry"},'
+            '"stop":{"price":998.0,"source_fact_id":"D.bbands.outside_lower","note":"stop"},'
+            '"target":{"price":1001.0,"source_fact_id":"D.fibonacci.target_extension_1272","note":"target"},'
+            '"confirmations":["EMA stack"],"cautions":[],"meta":{"risk_reward":null}}\n```'
+        ),
+    ])
+    service = _PromptStubAiService(
+        provider_registry=AIProviderRegistry({"ollama": provider})
+    )
+
+    analysis = await service.analyze(
+        symbol="AAPL",
+        timeframe_data={},
+        indicators_display=["EMA Stack"],
+        indicator_names=["ema"],
+        model="gemma4:26b",
+    )
+    result = await service.follow_up(
+        session_id=analysis["session_id"],
+        message="Are the levels still valid?",
+    )
+
+    assert result["message"] == "Orbit withheld the trade plan because it could not be verified."
+    assert result["signal"]["direction"] == "NEUTRAL"
+    assert [level["value"] for level in result["signal"]["levels"]] == ["—", "—", "—"]
+
+
+@pytest.mark.asyncio
+async def test_follow_up_stream_rejected_signal_update_emits_authoritative_done_message():
+    provider = _QueuedProvider([
+        (
+            "Initial grounded setup.\n\n```json\n"
+            '{"direction":"LONG","confidence":72,"description":"Bullish setup",'
+            '"entry":{"price":100.0,"source_fact_id":"D.ema.price_near_21","note":"entry"},'
+            '"stop":{"price":98.0,"source_fact_id":"D.bbands.outside_lower","note":"stop"},'
+            '"target":{"price":104.0,"source_fact_id":"D.fibonacci.target_extension_1272","note":"target"},'
+            '"confirmations":["EMA stack"],"cautions":[],"meta":{"risk_reward":null}}\n```'
+        ),
+        (
+            "Actually this is still a LONG.\n\n```json\n"
+            '{"direction":"LONG","confidence":"HIGH","description":"Broken update",'
+            '"entry":{"price":999.0,"source_fact_id":"D.ema.price_near_21","note":"entry"},'
+            '"stop":{"price":998.0,"source_fact_id":"D.bbands.outside_lower","note":"stop"},'
+            '"target":{"price":1001.0,"source_fact_id":"D.fibonacci.target_extension_1272","note":"target"},'
+            '"confirmations":["EMA stack"],"cautions":[],"meta":{"risk_reward":null}}\n```'
+        ),
+    ])
+    service = _PromptStubAiService(
+        provider_registry=AIProviderRegistry({"ollama": provider})
+    )
+
+    analysis = await service.analyze(
+        symbol="AAPL",
+        timeframe_data={},
+        indicators_display=["EMA Stack"],
+        indicator_names=["ema"],
+        model="gemma4:26b",
+    )
+    events = [
+        event
+        async for event in service.follow_up_stream(
+            session_id=analysis["session_id"],
+            message="Are the levels still valid?",
         )
     ]
 

@@ -1653,6 +1653,46 @@ def test_analyze_stream_keychain_failure_falls_back_to_ollama():
     assert usage.records[0]["run_id"] == usage.records[1]["run_id"]
 
 
+def test_chat_stream_serializes_authoritative_done_message():
+    class FakeAi:
+        def __init__(self) -> None:
+            self.sessions = {
+                "sess-1": type("Session", (), {
+                    "provider_name": "ollama",
+                    "model": "gemma4:26b",
+                    "fallback_model": None,
+                })(),
+            }
+
+        async def follow_up_stream(self, **_kwargs) -> AsyncIterator[dict]:
+            yield {"type": "token", "content": "Raw LONG prose."}
+            yield {
+                "type": "done",
+                "session_id": "sess-1",
+                "signal": {"direction": "NEUTRAL"},
+                "message": "Orbit withheld the trade plan because it could not be verified.",
+            }
+
+    client = _client(ai=FakeAi(), db=MagicMock())
+
+    with client.stream(
+        "POST",
+        "/ai/chat/stream",
+        json={"session_id": "sess-1", "message": "Are the levels still valid?"},
+    ) as response:
+        assert response.status_code == 200
+        frames = [
+            json.loads(line.removeprefix("data: "))
+            for line in response.iter_lines()
+            if line.startswith("data: {")
+        ]
+
+    assert frames[0] == {"type": "token", "content": "Raw LONG prose."}
+    assert frames[-1]["type"] == "done"
+    assert frames[-1]["message"] == "Orbit withheld the trade plan because it could not be verified."
+    assert frames[-1]["signal"] == {"direction": "NEUTRAL"}
+
+
 def test_analyze_registers_enabled_openrouter_from_keychain_ref(monkeypatch):
     from deps import get_ai_keystore, get_ai_settings, get_ai_usage_ledger
     from services.ai import AiService
