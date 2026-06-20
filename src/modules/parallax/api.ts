@@ -128,18 +128,20 @@ export interface FibonacciLevel {
 /**
  * Per-candidate status reflects whether the swing is currently tradeable.
  *
- *   - "active"     — current price is still inside the swing range
- *                    (with INSIDE_TOLERANCE band on the backend, default 0.15).
- *                    Only "active" candidates are eligible to become the
- *                    primary (rendered) fib.
- *   - "played_out" — price decisively moved past the 1.0 boundary. The
- *                    swing reached its target side — useful context, not
- *                    an entry candidate.
- *   - "broken"     — price decisively moved past the 0 boundary. The
- *                    swing was invalidated.
+ *   - "active"     — current price is still inside the swing's wick range
+ *                    (strictly between swing_low and swing_high). Only
+ *                    "active" candidates are eligible to become the primary
+ *                    (rendered) fib.
+ *   - "played_out" — a post-swing wick crossed the target boundary (above
+ *                    swing_high for up swings, below swing_low for down).
+ *                    The swing reached its target side — useful context,
+ *                    not an entry candidate.
+ *   - "broken"     — a post-swing wick crossed the invalidation boundary
+ *                    (below swing_low for up swings, above swing_high for
+ *                    down). The swing was invalidated.
  *
- * See backend/services/indicators.py::INSIDE_TOLERANCE and
- * docs/fibonacci-improvements-plan.md (decisions 1A/1B).
+ * Classification uses strict wick comparisons with no tolerance buffer.
+ * See backend/models/__init__.py::FibonacciCandidate.status.
  */
 export type FibonacciCandidateStatus = "active" | "played_out" | "broken";
 

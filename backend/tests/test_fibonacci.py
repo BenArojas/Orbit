@@ -17,7 +17,6 @@ from services.indicators import (
     FIB_EXTENSION_LEVELS,
     FIB_RETRACEMENT_LEVELS,
     GOLDEN_POCKET_LEVELS,
-    INSIDE_TOLERANCE,
     IndicatorService,
 )
 
@@ -239,12 +238,10 @@ def test_flat_candles_zero_price_range():
 
 class TestPrimaryRangeSelection:
     """
-    Branch 1 of docs/fibonacci-improvements-plan.md.
-
-    The PRIMARY (auto-rendered) fib must be a swing price is currently
-    inside, within INSIDE_TOLERANCE of either boundary. Played-out and
-    broken swings remain in the Candidates list for context but never
-    become the primary.
+    Primary fib selection: the selected swing must be one whose wick range
+    strictly contains the current price (no tolerance buffer). Played-out and
+    broken swings remain in the Candidates list for context but never become
+    the primary.
     """
 
     @staticmethod
@@ -258,8 +255,8 @@ class TestPrimaryRangeSelection:
 
         `sections` is a list of (bar_count, start_price, end_price). Each
         segment ramps linearly between the two prices over bar_count
-        bars. Wicks are deliberately small so the close-based status
-        checks aren't perturbed by intrabar noise.
+        bars. Wicks are deliberately small (±0.3) so the wick-based status
+        checks have predictable boundaries.
         """
         out: list[CandleData] = []
         idx = 0
@@ -290,8 +287,8 @@ class TestPrimaryRangeSelection:
         """
         svc = IndicatorService()
         # Section 1: rally 100→130 (large historical swing peak)
-        # Section 2: continued rally 130→200 (so the 100→130 swing closes
-        #            well past expanded_high = 130 + 30*0.15 = 134.5)
+        # Section 2: continued rally 130→200 (so the 100→130 swing has post-
+        #            wicks well above swing_high → played_out by wick rule)
         # Section 3: pullback 200→185 (creates a recent pivot)
         # Section 4: rally 185→195 (recent swing high)
         # Section 5: settle to ~190 (current price inside the 185→195 swing)
@@ -306,13 +303,10 @@ class TestPrimaryRangeSelection:
         assert fib is not None
         assert fib.no_active_fib is False
         # The selected primary's swing must contain the current price
-        # (within the tolerance band).
+        # strictly within the wick range.
         current_price = candles[-1].close
-        price_range = fib.swing_high - fib.swing_low
-        expanded_low = fib.swing_low - price_range * INSIDE_TOLERANCE
-        expanded_high = fib.swing_high + price_range * INSIDE_TOLERANCE
-        assert expanded_low <= current_price <= expanded_high, (
-            f"Primary swing band [{expanded_low:.2f}, {expanded_high:.2f}] "
+        assert fib.swing_low <= current_price <= fib.swing_high, (
+            f"Primary swing [{fib.swing_low:.2f}, {fib.swing_high:.2f}] "
             f"does not contain current price {current_price:.2f}"
         )
         # Played-out / broken candidates should still appear in the list.
@@ -325,9 +319,9 @@ class TestPrimaryRangeSelection:
 
     def test_returns_no_active_fib_when_all_broken(self):
         """
-        Build a rally then a decisive crash that puts current price below
-        every swing's expanded_low (for up swings) and well past every
-        down swing's target (for down swings).
+        Build a rally then a decisive crash that puts post-swing wicks below
+        every up-swing's swing_low and well past every down swing's swing_low
+        target boundary — all candidates broken or played_out.
         """
         svc = IndicatorService()
         # Sharp rally then catastrophic collapse. End price far below
@@ -351,86 +345,65 @@ class TestPrimaryRangeSelection:
         else:
             # Fallback: ensure whatever IS primary is itself active.
             current_price = candles[-1].close
-            price_range = fib.swing_high - fib.swing_low
-            expanded_low = fib.swing_low - price_range * INSIDE_TOLERANCE
-            expanded_high = fib.swing_high + price_range * INSIDE_TOLERANCE
-            assert expanded_low <= current_price <= expanded_high
+            assert fib.swing_low <= current_price <= fib.swing_high
 
-    # ── Test 3: wick poke within tolerance stays active ──
+    # ── Test 3: wick crossing a boundary flips status, never stays active ──
 
-    def test_tolerance_band_keeps_swing_active_on_wick_poke(self):
+    def test_wick_boundary_cross_flips_status(self):
         """
-        Build a swing where the most recent price has barely poked past
-        the 1.0 boundary — within INSIDE_TOLERANCE * range.
+        Critical promise for the strict wick-based status rule.
 
-        For an up-swing low=100, high=130 (range=30):
-          expanded_high = 130 + 30 * 0.15 = 134.5
+        We build an up-swing with isolated pivots at ~low=100, ~high=130
+        (single-bar peaks so pivot detection is unambiguous). Post-swing
+        bars then poke a wick past the relevant boundary and we assert the
+        status is flipped — never "active".
 
-        We park current price at 132 — past swing_high but well inside
-        the tolerance band. Status should remain "active".
+        Isolation trick: sections adjacent to the pivot bar start 2 pts
+        BELOW the pivot price so the pivot-window comparison is strict.
         """
         svc = IndicatorService()
-        # Clean clean up swing, then a small pullback, then a tiny poke
-        # 2 points above the swing high. 2 / 30 = ~6.7% < 15% tolerance.
-        candles = self._ramp_candles([
-            (10, 100.0, 100.0),    # flat lead-in so pivot low forms cleanly
-            (10, 100.0, 130.0),    # rally to 130
-            (10, 130.0, 115.0),    # retracement
-            (8, 115.0, 132.0),     # creeps just past swing high
-            (10, 132.0, 132.0),    # holds (current price 132)
-        ])
-        _, fib = svc.compute(candles, indicators=["fibonacci"])
-        assert fib is not None
-        # At least one candidate matching this swing should be "active".
-        # We don't tightly assert which candidate the pivot detector
-        # picks (it may find sub-swings) — we just verify the algorithm
-        # didn't reject every candidate as played_out.
-        assert fib.no_active_fib is False, (
-            "A swing whose price sits ~7% past 1.0 (well inside the "
-            "15% tolerance) must remain active"
-        )
-
-    # ── Test 4: decisive break excludes the swing from active set ──
-
-    def test_tolerance_band_excludes_swing_on_decisive_break(self):
-        """
-        Same structure as test 3 but the post-swing price moves
-        ~25% past the swing high — outside INSIDE_TOLERANCE. That
-        specific swing should NOT be active.
-
-        We can't easily isolate the targeted swing through the public
-        compute() API (pivot detection finds many), so we assert the
-        weaker claim: among the candidates, the one whose swing range
-        closely matches our crafted (100,130) swing has status !=
-        "active".
-        """
-        svc = IndicatorService()
-        # Rally then march well past the 1.0 boundary.
-        # 130 + 30 * 0.25 = 137.5 → push current to ~140 (33% past).
-        candles = self._ramp_candles([
-            (10, 100.0, 100.0),
-            (10, 100.0, 130.0),
-            (8, 130.0, 125.0),     # mild pullback so 130 is a pivot
-            (10, 125.0, 140.0),    # decisive break above tolerance
-            (10, 140.0, 140.0),    # current price 140
-        ])
-        _, fib = svc.compute(candles, indicators=["fibonacci"])
-        assert fib is not None
-        # Find the candidate closest to our crafted (100, 130) swing.
         target_lo, target_hi = 100.0, 130.0
+
         def dist(c) -> float:
             return abs(c.swing_low - target_lo) + abs(c.swing_high - target_hi)
-        closest = min(fib.candidates, key=dist)
-        # If pivot detection actually located our crafted swing
-        # (within $5 of both endpoints), it must NOT be "active".
-        if abs(closest.swing_low - target_lo) < 5.0 and abs(closest.swing_high - target_hi) < 5.0:
-            assert closest.status != "active", (
-                f"Swing {closest.swing_low}→{closest.swing_high} is "
-                f"~33% past its 1.0 boundary — must not be 'active'. "
-                f"Got status={closest.status}"
+
+        # Played-out: post-swing wick above swing_high (130.3).
+        candles_played = self._ramp_candles([
+            (8, 115.0, 102.0),    # descend toward trough
+            (1, 100.0, 100.0),    # isolated pivot low  (low  = 99.7)
+            (8, 102.0, 128.0),    # ascend (starts 2 pts below peak)
+            (1, 130.0, 130.0),    # isolated pivot high (high = 130.3)
+            (8, 128.0, 115.0),    # retracement (starts 2 pts below peak)
+            (5, 115.0, 131.0),    # post-swing wick above swing_high
+            (3, 128.0, 125.0),    # settle
+        ])
+        _, fib_p = svc.compute(candles_played, indicators=["fibonacci"])
+        assert fib_p is not None
+        closest_p = min(fib_p.candidates, key=dist)
+        if abs(closest_p.swing_low - target_lo) < 5.0 and abs(closest_p.swing_high - target_hi) < 5.0:
+            assert closest_p.status == "played_out", (
+                f"Wick above swing_high must set status=played_out, got {closest_p.status}"
             )
 
-    # ── Test 5: candidates panel populated when no active fib ──
+        # Broken: post-swing wick below swing_low (99.7).
+        candles_broken = self._ramp_candles([
+            (8, 115.0, 102.0),    # descend toward trough
+            (1, 100.0, 100.0),    # isolated pivot low  (low  = 99.7)
+            (8, 102.0, 128.0),    # ascend
+            (1, 130.0, 130.0),    # isolated pivot high (high = 130.3)
+            (8, 128.0, 115.0),    # retracement
+            (5, 115.0,  99.0),    # post-swing wick below swing_low
+            (3, 101.0, 104.0),    # recover
+        ])
+        _, fib_b = svc.compute(candles_broken, indicators=["fibonacci"])
+        assert fib_b is not None
+        closest_b = min(fib_b.candidates, key=dist)
+        if abs(closest_b.swing_low - target_lo) < 5.0 and abs(closest_b.swing_high - target_hi) < 5.0:
+            assert closest_b.status == "broken", (
+                f"Wick below swing_low must set status=broken, got {closest_b.status}"
+            )
+
+    # ── Test 4: candidates panel populated when no active fib ──
 
     def test_candidates_panel_still_populated_when_no_active_fib(self):
         """

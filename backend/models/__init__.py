@@ -711,14 +711,14 @@ class FibonacciCandidate(BaseModel):
     can see what else was in play).
 
     `status` indicates whether the swing is currently tradeable:
-      - "active"     — current price is still inside the swing range
-                       (with INSIDE_TOLERANCE band). Eligible to become
-                       the primary fib.
-      - "played_out" — price has decisively moved beyond the 1.0
-                       boundary (target side). Useful historical context,
-                       not an entry candidate.
-      - "broken"     — price has decisively moved beyond the 0 boundary
-                       (invalidation side). The swing is invalidated.
+      - "active"     — current price is still inside the swing's wick
+                       range. Eligible to become the primary fib.
+      - "played_out" — a post-swing wick has crossed the target boundary
+                       (above swing_high for up, below swing_low for down).
+                       Useful historical context, not an entry candidate.
+      - "broken"     — a post-swing wick has crossed the invalidation
+                       boundary (below swing_low for up, above swing_high
+                       for down). The swing is invalidated.
     """
     swing_high: float
     swing_low: float
@@ -768,12 +768,12 @@ class FibonacciResult(BaseModel):
     reasoning: str                  # Human-readable explanation for the LLM
     source: str = "auto"            # "auto", "manual", or "locked"
 
-    # When no candidate is currently inside any detected swing (with
-    # INSIDE_TOLERANCE band), `no_active_fib` is True. In that state the
-    # swing/levels fields carry placeholder values (typically copied from
-    # the highest-scored historical candidate) and MUST NOT be rendered as
-    # an authoritative fib on the chart. The Candidates panel still gets
-    # populated so the user can pick a historical swing to study.
+    # When no candidate is currently inside the swing's wick range,
+    # `no_active_fib` is True. In that state the swing/levels fields carry
+    # placeholder values (typically copied from the highest-scored historical
+    # candidate) and MUST NOT be rendered as an authoritative fib on the
+    # chart. The Candidates panel still gets populated so the user can pick
+    # a historical swing to study.
     no_active_fib: bool = False
     no_active_fib_reason: Optional[str] = None
 
