@@ -825,24 +825,27 @@ _SYSTEM_BASE = """You are Parallax AI, an expert technical analysis assistant fo
 Your role:
 - Analyze the provided indicator data and identify trading setups
 - Provide clear direction (STRONG LONG, LONG, NEUTRAL, SHORT, STRONG SHORT)
-- Give specific entry, stop-loss, and target levels with reasoning
+- Give specific entry, stop-loss, and target levels with reasoning only when verified facts support numeric levels
 - List confirmation factors and caution flags
 - Be concise and data-driven — no fluff, no disclaimers about "not financial advice"
 
 DIRECTION CRITERIA — use these thresholds consistently:
 - STRONG LONG: 3+ primary indicators align bullish, no major cautions, trend confirmed by ADX > 25 or strong EMA stack
 - LONG: Majority of indicators lean bullish, minor cautions acceptable
-- NEUTRAL: Mixed signals, no clear edge, or conflicting timeframes
+- NEUTRAL: Mixed or insufficient verified evidence. Do not invent a trade plan.
 - SHORT: Majority of indicators lean bearish, minor bullish outliers acceptable
 - STRONG SHORT: 3+ primary indicators align bearish, no major bullish signals, trend confirmed
 
 RESPONSE FORMAT:
 1. Start with a 2-3 paragraph analysis explaining what the indicators show
 2. Structure your analysis: higher timeframe trend first, then lower timeframe entry timing
-3. Be explicit about entry price, stop-loss, and target with brief reasoning for each
+3. Be explicit about entry price, stop-loss, and target with brief reasoning for each when the verified facts support numeric levels
 4. List what confirms the setup and what could go wrong
 
 Reference verified facts by their bracketed ID (e.g., [D.ema.stack_bullish]) when citing evidence. This keeps your analysis auditable and fact-grounded.
+
+If verified facts do not contain enough information to support numeric levels, return NEUTRAL and set entry, stop, target, and risk_reward to null.
+Never estimate an indicator value, support/resistance level, or price target that is absent from Verified Facts.
 
 For follow-up questions, respond conversationally about the chart and setup."""
 
@@ -1198,19 +1201,21 @@ def build_analysis_user_message(
 SIGNAL_INLINE_JSON_INSTRUCTION = (
     "After your full written analysis, append a fenced JSON block in this "
     "EXACT format. The JSON block is REQUIRED and must be the LAST thing "
-    "in your response:\n\n"
+    "in your response.\n"
+    "If verified facts do not support numeric levels, return NEUTRAL and set "
+    "entry.price, stop.price, target.price, and meta.risk_reward to null.\n\n"
     "```json\n"
     "{\n"
     '  "direction": "STRONG LONG | LONG | NEUTRAL | SHORT | STRONG SHORT",\n'
     '  "confidence": 0-100,\n'
     '  "description": "one-sentence setup summary",\n'
-    '  "entry":  {"price": 0.00, "note": "rationale"},\n'
-    '  "stop":   {"price": 0.00, "note": "rationale"},\n'
-    '  "target": {"price": 0.00, "note": "rationale"},\n'
+    '  "entry":  {"price": null, "note": "No grounded level"},\n'
+    '  "stop":   {"price": null, "note": "No grounded level"},\n'
+    '  "target": {"price": null, "note": "No grounded level"},\n'
     '  "confirmations": ["...", "..."],\n'
     '  "cautions": ["..."],\n'
     '  "meta": {\n'
-    '    "risk_reward":   "e.g. 2.5:1",\n'
+    '    "risk_reward":   null,\n'
     '    "score":         "e.g. 7/10",\n'
     '    "adx_trend":     "e.g. Strong (28.5)",\n'
     '    "volume_signal": "e.g. Above avg"\n'
@@ -1269,7 +1274,7 @@ SIGNAL_JSON_SCHEMA: dict = {
         "entry": {
             "type": "object",
             "properties": {
-                "price": {"type": "number"},
+                "price": {"type": ["number", "null"]},
                 "note": {"type": "string"},
             },
             "required": ["price", "note"],
@@ -1277,7 +1282,7 @@ SIGNAL_JSON_SCHEMA: dict = {
         "stop": {
             "type": "object",
             "properties": {
-                "price": {"type": "number"},
+                "price": {"type": ["number", "null"]},
                 "note": {"type": "string"},
             },
             "required": ["price", "note"],
@@ -1285,7 +1290,7 @@ SIGNAL_JSON_SCHEMA: dict = {
         "target": {
             "type": "object",
             "properties": {
-                "price": {"type": "number"},
+                "price": {"type": ["number", "null"]},
                 "note": {"type": "string"},
             },
             "required": ["price", "note"],
@@ -1303,7 +1308,7 @@ SIGNAL_JSON_SCHEMA: dict = {
         "meta": {
             "type": "object",
             "properties": {
-                "risk_reward": {"type": "string", "description": "e.g. 2.5:1"},
+                "risk_reward": {"type": ["string", "null"], "description": "e.g. 2.5:1"},
                 "score": {"type": "string", "description": "e.g. 7/10"},
                 "adx_trend": {"type": "string", "description": "e.g. Strong (28.5)"},
                 "volume_signal": {"type": "string", "description": "e.g. Above avg"},

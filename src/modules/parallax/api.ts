@@ -572,7 +572,7 @@ export interface ChatRequest {
 
 export interface SignalLevel {
     label: string;
-    value: string;
+    value: string; // "$123.45" or "—" when no grounded level exists
     sub: string;
     color?: "green" | "red";
 }
@@ -584,7 +584,7 @@ export interface SignalCheck {
 
 export interface SignalMeta {
     label: string;
-    value: string;
+    value: string; // e.g. "2:1" or "—" when not applicable
 }
 
 export interface SignalData {

@@ -119,7 +119,9 @@ export default function ActionSignalCard({ signal }: ActionSignalCardProps) {
             >
               {level.value}
             </div>
-            <div className="text-[8px] text-[var(--text-3)]">{level.sub}</div>
+            <div className="text-[8px] text-[var(--text-3)]">
+              {level.sub || (level.value === "—" ? "No grounded level" : "")}
+            </div>
           </div>
         ))}
       </div>

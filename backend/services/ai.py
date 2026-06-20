@@ -25,6 +25,7 @@ import logging
 import re
 import uuid
 from collections import OrderedDict
+from decimal import Decimal
 from time import monotonic
 from typing import TYPE_CHECKING, AsyncIterator, Optional
 
@@ -82,6 +83,11 @@ from services.ai_cloud_adapters import (  # noqa: E402
     AIProviderRateLimitError,
     AIProviderTimeoutError,
     AIProviderTextResult,
+)
+from services.ai_signal_validation import (  # noqa: E402
+    AISignalGroundingError,
+    safe_neutral_signal,
+    validate_signal_draft,
 )
 
 
@@ -179,6 +185,27 @@ def signal_to_frontend_format(signal: dict) -> dict:
     target = signal.get("target", {})
     meta = signal.get("meta", {})
 
+    def _format_price(value: object) -> str:
+        if isinstance(value, Decimal):
+            return f"${value:.2f}"
+        if isinstance(value, (int, float)):
+            return f"${value:.2f}"
+        if value is None:
+            return "—"
+        return str(value)
+
+    def _format_level_sub(value: object, note: object) -> str:
+        if value is None:
+            return "No grounded level"
+        if isinstance(note, str) and note:
+            return note
+        return ""
+
+    def _format_meta_value(value: object) -> str:
+        if value is None:
+            return "—"
+        return str(value)
+
     return {
         "direction": signal.get("direction", "NEUTRAL"),
         "description": signal.get("description", ""),
@@ -186,27 +213,27 @@ def signal_to_frontend_format(signal: dict) -> dict:
         "levels": [
             {
                 "label": "Entry",
-                "value": f"${entry.get('price', 0):.2f}" if isinstance(entry.get('price'), (int, float)) else str(entry.get('price', 'N/A')),
-                "sub": entry.get("note", ""),
+                "value": _format_price(entry.get("price")),
+                "sub": _format_level_sub(entry.get("price"), entry.get("note")),
             },
             {
                 "label": "Stop",
-                "value": f"${stop.get('price', 0):.2f}" if isinstance(stop.get('price'), (int, float)) else str(stop.get('price', 'N/A')),
-                "sub": stop.get("note", ""),
+                "value": _format_price(stop.get("price")),
+                "sub": _format_level_sub(stop.get("price"), stop.get("note")),
                 "color": "red",
             },
             {
                 "label": "Target",
-                "value": f"${target.get('price', 0):.2f}" if isinstance(target.get('price'), (int, float)) else str(target.get('price', 'N/A')),
-                "sub": target.get("note", ""),
+                "value": _format_price(target.get("price")),
+                "sub": _format_level_sub(target.get("price"), target.get("note")),
                 "color": "green",
             },
         ],
         "meta": [
-            {"label": "R:R", "value": meta.get("risk_reward", "N/A")},
-            {"label": "Score", "value": meta.get("score", "N/A")},
-            {"label": "ADX", "value": meta.get("adx_trend", "N/A")},
-            {"label": "Vol", "value": meta.get("volume_signal", "N/A")},
+            {"label": "R:R", "value": _format_meta_value(meta.get("risk_reward"))},
+            {"label": "Score", "value": _format_meta_value(meta.get("score", "N/A"))},
+            {"label": "ADX", "value": _format_meta_value(meta.get("adx_trend", "N/A"))},
+            {"label": "Vol", "value": _format_meta_value(meta.get("volume_signal", "N/A"))},
         ],
         "checks": [
             *[{"text": c, "type": "confirm"} for c in signal.get("confirmations", [])],
@@ -663,12 +690,21 @@ class AiService:
 
     @staticmethod
     def _finalize_signal(raw_signal: Optional[dict]) -> Optional[dict]:
-        """Strip reasoning_steps + convert to frontend ActionSignalCard shape."""
+        """Validate signal geometry and convert to frontend ActionSignalCard shape."""
         if not raw_signal:
             return None
-        if "reasoning_steps" in raw_signal:
-            del raw_signal["reasoning_steps"]
-        return signal_to_frontend_format(raw_signal)
+        cleaned = dict(raw_signal)
+        cleaned.pop("reasoning_steps", None)
+
+        try:
+            validated = validate_signal_draft(cleaned)
+        except AISignalGroundingError as exc:
+            log.warning("Rejected ungrounded AI signal: %s", exc)
+            validated = safe_neutral_signal(
+                "Insufficient verified evidence for numeric trade levels"
+            )
+
+        return signal_to_frontend_format(validated.model_dump(mode="python"))
 
     # ── Public: full (non-streaming) analyze ──────────────────────────
 
@@ -1088,7 +1124,7 @@ class AiService:
         # Check if the response contains an updated signal
         raw_signal = parse_signal_from_response(response_text)
         if raw_signal:
-            session.signal = signal_to_frontend_format(raw_signal)
+            session.signal = self._finalize_signal(raw_signal)
 
         return {
             "session_id": session.session_id,
@@ -1132,7 +1168,7 @@ class AiService:
         # Check for signal update
         raw_signal = parse_signal_from_response(full_response)
         if raw_signal:
-            session.signal = signal_to_frontend_format(raw_signal)
+            session.signal = self._finalize_signal(raw_signal)
 
     # ── Cleanup ─────────────────────────────────────────────────
 
