@@ -7,6 +7,7 @@ import sys
 from dataclasses import asdict, dataclass
 from decimal import Decimal
 from pathlib import Path
+from time import monotonic
 from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -28,39 +29,12 @@ from services.ai_settings import AISettingsService
 from services.db import DatabaseService
 from services.prompt_builder import (
     build_analysis_user_message,
-    build_full_prompt_context,
     build_system_prompt,
 )
 from tests.fixtures.ai_prompt_eval_cases import EVAL_CASES, PromptEvalCase
 
 _MIN_REPETITIONS = 1
 _MAX_REPETITIONS = 3
-_INDICATOR_DISPLAY = {
-    "adx": "ADX",
-    "atr": "ATR",
-    "bbands": "Bollinger Bands",
-    "ema": "EMA Stack",
-    "fibonacci": "Fibonacci Retracement",
-    "macd": "MACD",
-    "obv": "OBV",
-    "rsi": "RSI",
-    "stoch": "Stochastic",
-    "volume": "Volume",
-    "vwap": "VWAP",
-}
-_INDICATOR_ORDER = (
-    "fibonacci",
-    "ema",
-    "rsi",
-    "macd",
-    "volume",
-    "bbands",
-    "vwap",
-    "atr",
-    "stoch",
-    "obv",
-    "adx",
-)
 
 
 @dataclass(frozen=True)
@@ -69,8 +43,8 @@ class RunnerSummary:
     weighted_mean: float
     per_case_scores: dict[str, float]
     hard_gate_failures: int
-    mean_actual_cost_usd: float
-    mean_latency_ms: float
+    mean_actual_cost_usd: float | None
+    mean_latency_ms: float | None
     mean_input_tokens: float
     mean_output_tokens: float
     cases_run: int
@@ -119,7 +93,9 @@ async def run_prompt_eval(
             messages = _build_messages(case)
             scores: list[int] = []
             for _ in range(repetitions):
+                started = monotonic()
                 response = await provider.chat_with_metadata(model=model, messages=messages)
+                elapsed_ms = (monotonic() - started) * 1000
                 content, metadata = _unpack_response(response)
                 result = grade_prompt_output(case, content)
                 if not result.eligible:
@@ -127,8 +103,11 @@ async def run_prompt_eval(
                 scores.append(result.weighted_score)
                 if metadata.actual_cost is not None:
                     costs.append(Decimal(str(metadata.actual_cost)))
-                if metadata.duration_ms is not None:
-                    latencies.append(float(metadata.duration_ms))
+                latencies.append(
+                    float(metadata.duration_ms)
+                    if metadata.duration_ms is not None
+                    else elapsed_ms
+                )
                 if metadata.input_tokens is not None:
                     input_tokens.append(metadata.input_tokens)
                 if metadata.output_tokens is not None:
@@ -155,65 +134,24 @@ async def run_prompt_eval(
 
 
 def _build_messages(case: PromptEvalCase) -> list[dict[str, str]]:
-    scenario = case.candles if isinstance(case.candles, dict) else {}
-    symbol = str(scenario.get("symbol") or case.case_id.upper())
-    timeframe = str(scenario.get("timeframe") or "D")
-    indicator_names = _indicator_names(case, scenario)
-    indicators_display = [
-        _INDICATOR_DISPLAY[name]
-        for name in indicator_names
-        if name in _INDICATOR_DISPLAY
-    ]
-    timeframe_data = {
-        timeframe: {
-            "candles": scenario.get("candles", []),
-            "indicators": scenario.get("indicators", []),
-            "fibs": scenario.get("fibs", []),
-            "fibonacci": scenario.get("fibonacci"),
-        }
-    }
-    context = build_full_prompt_context(
-        symbol=symbol,
-        timeframe_data=timeframe_data,
-        indicator_priority=[],
-        budget_tokens=3500,
-    )
     return [
         {
             "role": "system",
             "content": build_system_prompt(
-                indicators_display=indicators_display,
-                indicator_names=indicator_names,
+                indicators_display=list(case.indicators_display),
+                indicator_names=list(case.indicator_names),
             ),
         },
         {
             "role": "user",
             "content": build_analysis_user_message(
-                symbol=symbol,
-                context=context,
-                timeframes=[timeframe],
-                indicators_requested=indicators_display,
+                symbol=case.symbol,
+                context=case.context,
+                timeframes=list(case.timeframe_data.keys()),
+                indicators_requested=list(case.indicators_display),
             ),
         },
     ]
-
-
-def _indicator_names(case: PromptEvalCase, scenario: dict[str, Any]) -> list[str]:
-    names: set[str] = set()
-
-    for indicator in scenario.get("indicators", []):
-        raw_name = str(getattr(indicator, "name", "")).lower()
-        if not raw_name:
-            continue
-        names.add("fibonacci" if raw_name == "fib" else raw_name)
-
-    for fact_id in case.allowed_fact_ids:
-        family = fact_id.split(".", 1)[0].lower()
-        if family == "close":
-            continue
-        names.add("fibonacci" if family == "fib" else family)
-
-    return [name for name in _INDICATOR_ORDER if name in names]
 
 
 def _unpack_response(response: AIProviderTextResult | dict[str, Any]) -> tuple[str, AIProviderMetadata]:
@@ -236,8 +174,8 @@ def _mean(values: list[int] | list[float]) -> float:
     return sum(values) / len(values) if values else 0.0
 
 
-def _mean_decimal(values: list[Decimal]) -> float:
-    return float(sum(values) / len(values)) if values else 0.0
+def _mean_decimal(values: list[Decimal]) -> float | None:
+    return float(sum(values) / len(values)) if values else None
 
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -303,12 +241,22 @@ def _print_report(summary: RunnerSummary) -> None:
     print(f"cases_run={summary.cases_run} weighted_mean={summary.weighted_mean:.1f}")
     for case_id, score in summary.per_case_scores.items():
         print(f"  {case_id}: {score:.1f}")
+    mean_cost = (
+        f"{summary.mean_actual_cost_usd:.4f}"
+        if summary.mean_actual_cost_usd is not None
+        else "n/a"
+    )
+    mean_latency = (
+        f"{summary.mean_latency_ms:.0f}"
+        if summary.mean_latency_ms is not None
+        else "n/a"
+    )
     print(
         f"hard_gate_failures={summary.hard_gate_failures} "
         f"mean_input_tokens={summary.mean_input_tokens:.1f} "
         f"mean_output_tokens={summary.mean_output_tokens:.1f} "
-        f"mean_cost_usd={summary.mean_actual_cost_usd:.4f} "
-        f"mean_latency_ms={summary.mean_latency_ms:.0f}"
+        f"mean_cost_usd={mean_cost} "
+        f"mean_latency_ms={mean_latency}"
     )
 
 

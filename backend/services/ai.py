@@ -67,7 +67,7 @@ MAX_SESSIONS = 50
 from services.prompt_builder import (
     build_indicator_context,        # noqa: F401 — re-export for backwards compat
     build_multi_timeframe_context,  # noqa: F401
-    build_full_prompt_context,
+    build_full_prompt_context_bundle,
     build_analysis_user_message,
     build_system_prompt,
     get_budget_for_model,
@@ -262,6 +262,7 @@ class ChatSession:
         self.provider_name: str = "ollama"
         self.model: str = ""
         self.fallback_model: Optional[str] = None
+        self.grounding_map: dict[str, frozenset[Decimal]] = {}
 
     def add_system(self, content: str) -> None:
         """Add a system message (indicator context, etc.)."""
@@ -292,6 +293,7 @@ class ChatSession:
         """Clear conversation history."""
         self.messages.clear()
         self.signal = None
+        self.grounding_map = {}
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -558,7 +560,7 @@ class AiService:
         indicator_names: resolved backend names (e.g. ["ema", "rsi"]) — used
             by the fact builders and system prompt.
         """
-        messages = await self.prepare_analysis_messages(
+        messages, grounding_map = await self._prepare_analysis_payload(
             symbol=symbol,
             timeframe_data=timeframe_data,
             indicators_display=indicators_display,
@@ -571,6 +573,7 @@ class AiService:
         session.symbol = symbol
         session.clear()
         session.messages = [dict(message) for message in messages]
+        session.grounding_map = grounding_map
         return session
 
     async def prepare_analysis_messages(
@@ -584,40 +587,59 @@ class AiService:
         watchlist: Optional[str] = None,
         indicator_priority: Optional[list[str]] = None,
     ) -> list[dict[str, str]]:
+        messages, _grounding_map = await self._prepare_analysis_payload(
+            symbol=symbol,
+            timeframe_data=timeframe_data,
+            indicators_display=indicators_display,
+            indicator_names=indicator_names,
+            model=model,
+            watchlist=watchlist,
+            indicator_priority=indicator_priority,
+        )
+        return messages
+
+    async def _prepare_analysis_payload(
+        self,
+        *,
+        symbol: str,
+        timeframe_data: dict[str, dict],
+        indicators_display: list[str],
+        indicator_names: list[str],
+        model: str,
+        watchlist: Optional[str] = None,
+        indicator_priority: Optional[list[str]] = None,
+    ) -> tuple[list[dict[str, str]], dict[str, frozenset[Decimal]]]:
         if self._context_service is not None:
             budget = await self._context_service.get_budget_for_model(model)
         else:
             budget = get_budget_for_model(model)
 
-        context = build_full_prompt_context(
+        bundle = build_full_prompt_context_bundle(
             symbol=symbol,
             timeframe_data=timeframe_data,
             indicator_priority=indicator_priority or [],
             budget_tokens=budget,
         )
-
         system_prompt = build_system_prompt(
             indicators_display=indicators_display,
             indicator_names=indicator_names,
             watchlist=watchlist,
             indicator_priority=indicator_priority,
         )
-
-        # The analysis user message now ends with SIGNAL_INLINE_JSON_INSTRUCTION,
-        # asking the model to emit a fenced ```json``` block as the LAST thing
-        # in its response. We parse that block locally — no second Ollama call.
         user_message = build_analysis_user_message(
             symbol=symbol,
-            context=context,
+            context=bundle.context,
             timeframes=list(timeframe_data.keys()),
             indicators_requested=indicators_display,
             indicator_priority=indicator_priority,
         )
-
-        return [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_message},
-        ]
+        return (
+            [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_message},
+            ],
+            bundle.grounding_map,
+        )
 
     # ── Internal: parse + (one) reformat fallback ─────────────────────
 
@@ -689,15 +711,20 @@ class AiService:
     # ── Internal: post-process raw signal into frontend shape ─────────
 
     @staticmethod
-    def _finalize_signal(raw_signal: Optional[dict]) -> Optional[dict]:
+    def _finalize_signal(
+        raw_signal: Optional[dict],
+        *,
+        grounding_map: dict[str, frozenset[Decimal]] | None = None,
+    ) -> Optional[dict]:
         """Validate signal geometry and convert to frontend ActionSignalCard shape."""
         if not raw_signal:
             return None
         cleaned = dict(raw_signal)
         cleaned.pop("reasoning_steps", None)
+        cleaned["confidence"] = _coerce_confidence(cleaned.get("confidence"))
 
         try:
-            validated = validate_signal_draft(cleaned)
+            validated = validate_signal_draft(cleaned, grounding_map=grounding_map)
         except AISignalGroundingError as exc:
             log.warning("Rejected ungrounded AI signal: %s", exc)
             validated = safe_neutral_signal(
@@ -813,7 +840,10 @@ class AiService:
             provider_name=session.provider_name,
             provider=provider if session.provider_name == provider_name else None,
         )
-        frontend_signal = self._finalize_signal(raw_signal)
+        frontend_signal = self._finalize_signal(
+            raw_signal,
+            grounding_map=session.grounding_map,
+        )
         session.signal = frontend_signal
 
         return {
@@ -951,7 +981,10 @@ class AiService:
             provider_name=session.provider_name,
             provider=provider if session.provider_name == provider_name else None,
         )
-        frontend_signal = self._finalize_signal(raw_signal)
+        frontend_signal = self._finalize_signal(
+            raw_signal,
+            grounding_map=session.grounding_map,
+        )
         session.signal = frontend_signal
 
         yield {
@@ -968,12 +1001,14 @@ class AiService:
         snapshot: "PreparedAnalysisSnapshot",
         provider: object | None,
         fallback_provider: object | None,
+        grounding_map: dict[str, frozenset[Decimal]] | None = None,
     ) -> AsyncIterator[dict]:
         session = self.get_or_create_session(snapshot.request.session_id)
         session.symbol = snapshot.request.symbol
         session.messages = [dict(message) for message in snapshot.messages]
         session.provider_name = snapshot.provider_name
         session.model = snapshot.model.id
+        session.grounding_map = grounding_map or {}
 
         accumulated: list[str] = []
         provider_metadata: dict | None = None
@@ -1036,7 +1071,10 @@ class AiService:
             provider_name=session.provider_name,
             provider=provider if session.provider_name == snapshot.provider_name else fallback_provider,
         )
-        session.signal = self._finalize_signal(raw_signal)
+        session.signal = self._finalize_signal(
+            raw_signal,
+            grounding_map=session.grounding_map,
+        )
         yield {
             "type": "done",
             "session_id": session.session_id,
@@ -1052,6 +1090,7 @@ class AiService:
         model: str,
         provider: object,
         max_tokens: int | None = None,
+        grounding_map: dict[str, frozenset[Decimal]] | None = None,
     ) -> dict:
         """Execute prepared messages once without creating a chat session."""
         started = monotonic()
@@ -1087,7 +1126,7 @@ class AiService:
             metadata["duration_ms"] = round((monotonic() - started) * 1000)
         return {
             "message": strip_signal_json_from_response(full_text),
-            "signal": self._finalize_signal(raw_signal),
+            "signal": self._finalize_signal(raw_signal, grounding_map=grounding_map),
             "provider": metadata,
         }
 
@@ -1124,7 +1163,10 @@ class AiService:
         # Check if the response contains an updated signal
         raw_signal = parse_signal_from_response(response_text)
         if raw_signal:
-            session.signal = self._finalize_signal(raw_signal)
+            session.signal = self._finalize_signal(
+                raw_signal,
+                grounding_map=session.grounding_map,
+            )
 
         return {
             "session_id": session.session_id,
@@ -1168,7 +1210,10 @@ class AiService:
         # Check for signal update
         raw_signal = parse_signal_from_response(full_response)
         if raw_signal:
-            session.signal = self._finalize_signal(raw_signal)
+            session.signal = self._finalize_signal(
+                raw_signal,
+                grounding_map=session.grounding_map,
+            )
 
     # ── Cleanup ─────────────────────────────────────────────────
 

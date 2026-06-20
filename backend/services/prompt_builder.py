@@ -28,6 +28,8 @@ Signal extraction:
 
 import datetime
 import logging
+from dataclasses import dataclass
+from decimal import Decimal, ROUND_HALF_UP
 from typing import Any, Optional
 
 from models import CandleData, IndicatorResult, FibonacciResult, FibonacciSnapshot
@@ -41,6 +43,49 @@ from services.prompt_facts.render import render_prompt_facts
 from services.prompt_facts.truncate import truncate_by_value
 
 log = logging.getLogger("parallax.prompt")
+
+_GROUNDING_CENT = Decimal("0.01")
+
+
+@dataclass(frozen=True)
+class PromptContextBundle:
+    context: str
+    allowed_fact_ids: frozenset[str]
+    grounding_map: dict[str, frozenset[Decimal]]
+
+
+def _quantize_ground_price(value: float) -> Decimal:
+    return Decimal(str(value)).quantize(_GROUNDING_CENT, rounding=ROUND_HALF_UP)
+
+
+def _build_grounding_map(blocks: list["PromptContextBlock"]) -> dict[str, frozenset[Decimal]]:
+    grounding_map: dict[str, frozenset[Decimal]] = {}
+    for block in blocks:
+        for fact in block.facts:
+            if not fact.price_values:
+                continue
+            grounding_map[fact.id] = frozenset(_quantize_ground_price(value) for value in fact.price_values)
+    return grounding_map
+
+
+def _build_prompt_context_bundle(
+    *,
+    symbol: str,
+    timeframe_data: dict[str, dict[str, Any]],
+    indicator_priority: list[str],
+    budget_tokens: int,
+) -> PromptContextBundle:
+    blocks = build_prompt_facts(
+        symbol=symbol,
+        timeframe_data=timeframe_data,
+        indicator_priority=indicator_priority,
+    )
+    blocks = truncate_by_value(blocks, budget_tokens=budget_tokens)
+    return PromptContextBundle(
+        context=render_prompt_facts(blocks),
+        allowed_fact_ids=frozenset(fact.id for block in blocks for fact in block.facts),
+        grounding_map=_build_grounding_map(blocks),
+    )
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -738,13 +783,27 @@ def build_full_prompt_context(
     timeframe_data: dict of timeframe → {"candles", "indicators", "fibs",
         "fibonacci"}  (same shape as the router produces).
     """
-    blocks = build_prompt_facts(
+    return build_full_prompt_context_bundle(
         symbol=symbol,
         timeframe_data=timeframe_data,
         indicator_priority=indicator_priority,
+        budget_tokens=budget_tokens,
+    ).context
+
+
+def build_full_prompt_context_bundle(
+    *,
+    symbol: str,
+    timeframe_data: dict[str, dict[str, Any]],
+    indicator_priority: list[str],
+    budget_tokens: int,
+) -> PromptContextBundle:
+    return _build_prompt_context_bundle(
+        symbol=symbol,
+        timeframe_data=timeframe_data,
+        indicator_priority=indicator_priority,
+        budget_tokens=budget_tokens,
     )
-    blocks = truncate_by_value(blocks, budget_tokens=budget_tokens)
-    return render_prompt_facts(blocks)
 
 
 def build_multi_timeframe_context(
@@ -1199,29 +1258,21 @@ def build_analysis_user_message(
 # fails, but it's rare in practice.
 
 SIGNAL_INLINE_JSON_INSTRUCTION = (
-    "After your full written analysis, append a fenced JSON block in this "
-    "EXACT format. The JSON block is REQUIRED and must be the LAST thing "
-    "in your response.\n"
-    "If verified facts do not support numeric levels, return NEUTRAL and set "
-    "entry.price, stop.price, target.price, and meta.risk_reward to null.\n\n"
-    "```json\n"
-    "{\n"
-    '  "direction": "STRONG LONG | LONG | NEUTRAL | SHORT | STRONG SHORT",\n'
-    '  "confidence": 0-100,\n'
-    '  "description": "one-sentence setup summary",\n'
-    '  "entry":  {"price": null, "note": "No grounded level"},\n'
-    '  "stop":   {"price": null, "note": "No grounded level"},\n'
-    '  "target": {"price": null, "note": "No grounded level"},\n'
-    '  "confirmations": ["...", "..."],\n'
-    '  "cautions": ["..."],\n'
-    '  "meta": {\n'
-    '    "risk_reward":   null,\n'
-    '    "score":         "e.g. 7/10",\n'
-    '    "adx_trend":     "e.g. Strong (28.5)",\n'
-    '    "volume_signal": "e.g. Above avg"\n'
-    "  }\n"
-    "}\n"
-    "```"
+    "After your full written analysis, append one fenced ```json``` block. "
+    "That JSON block is REQUIRED and must be the LAST thing in your response.\n"
+    "Return valid JSON with these top-level keys: direction, confidence, "
+    "description, entry, stop, target, confirmations, cautions, meta.\n"
+    "Each of entry, stop, and target must contain price, source_fact_id, and note.\n"
+    "Conditional contract:\n"
+    "- If direction is NEUTRAL, set entry.price, stop.price, target.price, "
+    "entry.source_fact_id, stop.source_fact_id, target.source_fact_id, and "
+    "meta.risk_reward to null.\n"
+    "- If direction is STRONG LONG, LONG, SHORT, or STRONG SHORT, every entry, "
+    "stop, and target price must copy an exact numeric price already present in "
+    "Verified Facts, and each source_fact_id must be the exact bracketed fact ID "
+    "that contains that price.\n"
+    "- Never invent support, resistance, targets, stops, or indicator values.\n"
+    "- The server calculates risk_reward from validated prices; do not estimate it."
 )
 
 
@@ -1275,25 +1326,28 @@ SIGNAL_JSON_SCHEMA: dict = {
             "type": "object",
             "properties": {
                 "price": {"type": ["number", "null"]},
+                "source_fact_id": {"type": ["string", "null"]},
                 "note": {"type": "string"},
             },
-            "required": ["price", "note"],
+            "required": ["price", "source_fact_id", "note"],
         },
         "stop": {
             "type": "object",
             "properties": {
                 "price": {"type": ["number", "null"]},
+                "source_fact_id": {"type": ["string", "null"]},
                 "note": {"type": "string"},
             },
-            "required": ["price", "note"],
+            "required": ["price", "source_fact_id", "note"],
         },
         "target": {
             "type": "object",
             "properties": {
                 "price": {"type": ["number", "null"]},
+                "source_fact_id": {"type": ["string", "null"]},
                 "note": {"type": "string"},
             },
-            "required": ["price", "note"],
+            "required": ["price", "source_fact_id", "note"],
         },
         "confirmations": {
             "type": "array",

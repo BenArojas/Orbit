@@ -9,11 +9,11 @@ from services.prompt_facts.types import PromptFact
 
 
 def _make(tf: str, condition: str, text: str, polarity: str,
-          strength: int, priority: int, data: dict) -> PromptFact:
+          strength: int, priority: int, data: dict, price_values: tuple[float, ...] = ()) -> PromptFact:
     return PromptFact(
         id=f"{tf}.bbands.{condition}", timeframe=tf, indicator="bbands",
         text=text, polarity=polarity, strength=strength,
-        priority=priority, data=data,
+        priority=priority, data=data, price_values=price_values,
     )
 
 
@@ -55,18 +55,20 @@ def build_bbands_facts(
 
     # Outside-band closes
     if last_close > upper:
-        facts.append(_make(
-            timeframe, "outside_upper",
-            f"Last close ${last_close:.2f} above upper band ${upper:.2f}.",
-            polarity="caution", strength=55, priority=78,
-            data={"upper": upper, "close": last_close},
-        ))
+            facts.append(_make(
+                timeframe, "outside_upper",
+                f"Last close ${last_close:.2f} above upper band ${upper:.2f}.",
+                polarity="caution", strength=55, priority=78,
+                data={"upper": upper, "close": last_close},
+                price_values=(last_close, upper),
+            ))
     elif last_close < lower:
         facts.append(_make(
             timeframe, "outside_lower",
             f"Last close ${last_close:.2f} below lower band ${lower:.2f}.",
             polarity="caution", strength=55, priority=78,
             data={"lower": lower, "close": last_close},
+            price_values=(last_close, lower),
         ))
 
     # Band walks — 3+ of last 5 closes in upper/lower third.

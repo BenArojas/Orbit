@@ -1,14 +1,17 @@
 from __future__ import annotations
 
+from collections.abc import Mapping, Set as AbstractSet
 from decimal import Decimal
 from typing import Literal
 
 from pydantic import BaseModel, Field, ValidationError
 
 Direction = Literal["STRONG LONG", "LONG", "NEUTRAL", "SHORT", "STRONG SHORT"]
+GroundingMap = Mapping[str, AbstractSet[Decimal | float | int | str]]
 
 _LONG_DIRECTIONS = {"STRONG LONG", "LONG"}
 _SHORT_DIRECTIONS = {"STRONG SHORT", "SHORT"}
+_PRICE_CENT = Decimal("0.01")
 
 
 class AISignalGroundingError(Exception):
@@ -17,6 +20,7 @@ class AISignalGroundingError(Exception):
 
 class SignalLevelDraft(BaseModel):
     price: Decimal | None = None
+    source_fact_id: str | None = None
     note: str
 
 
@@ -62,29 +66,86 @@ def _format_risk_reward(value: Decimal) -> str:
     return f"{value}:1"
 
 
-def validate_signal_draft(raw: object) -> ValidatedSignal:
+def _quantize_price(value: Decimal | float | int | str) -> Decimal:
+    return Decimal(str(value)).quantize(_PRICE_CENT)
+
+
+def _normalize_grounding_map(grounding_map: GroundingMap | None) -> dict[str, frozenset[Decimal]]:
+    if grounding_map is None:
+        return {}
+    normalized: dict[str, frozenset[Decimal]] = {}
+    for fact_id, prices in grounding_map.items():
+        normalized[fact_id] = frozenset(_quantize_price(price) for price in prices)
+    return normalized
+
+
+def _validate_grounded_level(
+    *,
+    level_name: str,
+    level: SignalLevelDraft,
+    grounding_map: dict[str, frozenset[Decimal]],
+) -> Decimal:
+    if level.price is None or level.source_fact_id is None:
+        raise AISignalGroundingError(
+            f"{level_name} requires a numeric price and source_fact_id"
+        )
+
+    allowed_prices = grounding_map.get(level.source_fact_id)
+    if allowed_prices is None:
+        raise AISignalGroundingError(
+            f"{level_name} cites unknown source fact ID {level.source_fact_id}"
+        )
+
+    price = _quantize_price(level.price)
+    if price not in allowed_prices:
+        raise AISignalGroundingError(
+            f"{level_name} price {price} is not present in cited fact {level.source_fact_id}"
+        )
+    level.price = price
+    return price
+
+
+def validate_signal_draft(
+    raw: object,
+    *,
+    grounding_map: GroundingMap | None = None,
+) -> ValidatedSignal:
     try:
         draft = SignalDraft.model_validate(raw)
     except ValidationError as exc:
         raise AISignalGroundingError(f"Invalid signal schema: {exc}") from exc
 
+    normalized_grounding_map = _normalize_grounding_map(grounding_map)
     levels = (draft.entry.price, draft.stop.price, draft.target.price)
+    source_ids = (
+        draft.entry.source_fact_id,
+        draft.stop.source_fact_id,
+        draft.target.source_fact_id,
+    )
 
     if draft.direction == "NEUTRAL":
         if any(level is not None for level in levels):
             raise AISignalGroundingError("NEUTRAL cannot contain numeric trade levels")
+        if any(source_id is not None for source_id in source_ids):
+            raise AISignalGroundingError("NEUTRAL cannot cite source facts for trade levels")
         draft.meta.risk_reward = None
         return draft
 
-    if any(level is None for level in levels):
-        raise AISignalGroundingError(
-            f"{draft.direction} requires numeric entry, stop, and target"
-        )
-
-    entry = draft.entry.price
-    stop = draft.stop.price
-    target = draft.target.price
-    assert entry is not None and stop is not None and target is not None
+    entry = _validate_grounded_level(
+        level_name="entry",
+        level=draft.entry,
+        grounding_map=normalized_grounding_map,
+    )
+    stop = _validate_grounded_level(
+        level_name="stop",
+        level=draft.stop,
+        grounding_map=normalized_grounding_map,
+    )
+    target = _validate_grounded_level(
+        level_name="target",
+        level=draft.target,
+        grounding_map=normalized_grounding_map,
+    )
 
     if draft.direction in _LONG_DIRECTIONS and not (stop < entry < target):
         raise AISignalGroundingError("LONG geometry requires stop < entry < target")
@@ -107,9 +168,9 @@ def safe_neutral_signal(reason: str) -> ValidatedSignal:
         direction="NEUTRAL",
         confidence=0,
         description=reason,
-        entry=SignalLevelDraft(price=None, note="No grounded level"),
-        stop=SignalLevelDraft(price=None, note="No grounded level"),
-        target=SignalLevelDraft(price=None, note="No grounded level"),
+        entry=SignalLevelDraft(price=None, source_fact_id=None, note="No grounded level"),
+        stop=SignalLevelDraft(price=None, source_fact_id=None, note="No grounded level"),
+        target=SignalLevelDraft(price=None, source_fact_id=None, note="No grounded level"),
         confirmations=[],
         cautions=[reason],
         meta=SignalMetaDraft(risk_reward=None),

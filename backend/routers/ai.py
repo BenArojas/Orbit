@@ -936,7 +936,7 @@ async def preview_analysis(
         )
         for timeframe in request.timeframes
     }
-    messages = await ai.prepare_analysis_messages(
+    messages, grounding_map = await ai._prepare_analysis_payload(
         symbol=request.symbol,
         timeframe_data=timeframe_data,
         indicators_display=request.indicators,
@@ -953,6 +953,7 @@ async def preview_analysis(
             messages=messages,
             fallback_enabled=allow_fallback,
             local_model=fallback_model,
+            grounding_map=grounding_map,
         )
     except AIAnalysisContextLimitError as exc:
         raise HTTPException(
@@ -1028,12 +1029,14 @@ async def compare_analysis(
             },
         )
     local_provider = ai.provider_registry.require("ollama")
+    grounding_map = preparation.get_grounding_map(snapshot.snapshot_id)
     cloud_provider = None
     try:
         local_result = await ai.execute_prepared_analysis(
             messages=snapshot.messages,
             model=local_model,
             provider=local_provider,
+            grounding_map=grounding_map,
         )
         local_receipt = await _record_completed_usage(
             usage_ledger=usage_ledger,
@@ -1053,6 +1056,7 @@ async def compare_analysis(
             model=snapshot.model.id,
             provider=cloud_provider,
             max_tokens=snapshot.cost.max_output_tokens,
+            grounding_map=grounding_map,
         )
         cloud_receipt = await _record_completed_usage(
             usage_ledger=usage_ledger,
@@ -1628,6 +1632,7 @@ async def analyze_stream(
                     snapshot=snapshot,
                     provider=cloud_provider,
                     fallback_provider=fallback_provider,
+                    grounding_map=preparation.get_grounding_map(snapshot.snapshot_id),
                 ):
                     if event.get("type") == "done":
                         provider_metadata = event.get("provider") or {}

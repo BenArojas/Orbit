@@ -8,7 +8,7 @@ from services.ai import parse_signal_from_response
 from services.ai_signal_validation import AISignalGroundingError, ValidatedSignal, validate_signal_draft
 from tests.fixtures.ai_prompt_eval_cases import PromptEvalCase
 
-_FACT_CITATION = re.compile(r"\[([a-z0-9_.]+)\]", re.IGNORECASE)
+_FACT_CITATION = re.compile(r"\[([A-Za-z0-9_.]+)\]")
 
 PROMPT_EVAL_WEIGHTS = MappingProxyType(
     {
@@ -41,8 +41,8 @@ class PromptEvalSummary:
     weighted_mean: float
     per_case_scores: dict[str, float]
     hard_gate_failures: int
-    mean_actual_cost_usd: float
-    mean_latency_ms: float
+    mean_actual_cost_usd: float | None
+    mean_latency_ms: float | None
 
 
 @dataclass(frozen=True)
@@ -54,7 +54,7 @@ class CandidateDecision:
 def _cited_fact_ids(*texts: str) -> set[str]:
     cited: set[str] = set()
     for text in texts:
-        cited.update(match.lower() for match in _FACT_CITATION.findall(text))
+        cited.update(_FACT_CITATION.findall(text))
     return cited
 
 
@@ -62,16 +62,31 @@ def grade_prompt_output(case: PromptEvalCase, output: str) -> PromptEvalResult:
     raw = parse_signal_from_response(output)
     if raw is None:
         return PromptEvalResult(case.case_id, False, 0, {}, ["invalid_json"])
+    if case.insufficient_for_levels and any(
+        (raw.get(level_name) or {}).get("price") is not None
+        for level_name in ("entry", "stop", "target")
+    ):
+        return PromptEvalResult(
+            case.case_id,
+            False,
+            0,
+            {},
+            ["numeric_level_in_insufficient_case"],
+        )
 
     try:
-        validated = validate_signal_draft(raw)
+        validated = validate_signal_draft(raw, grounding_map=case.grounding_map)
     except AISignalGroundingError as exc:
         message = str(exc).lower()
         if "neutral cannot contain numeric" in message:
             hard_failures = ["neutral_has_numeric_levels"]
         elif "geometry" in message:
             hard_failures = ["invalid_geometry"]
-        elif "invalid signal schema" in message or "requires numeric" in message:
+        elif (
+            "invalid signal schema" in message
+            or "requires numeric" in message
+            or "requires a numeric price and source_fact_id" in message
+        ):
             hard_failures = ["invalid_schema"]
         else:
             hard_failures = ["grounding_error"]
@@ -147,12 +162,32 @@ def compare_candidates(
             reasons.append("case_regression")
             break
 
-    if _regressed(candidate.mean_actual_cost_usd, baseline.mean_actual_cost_usd):
-        reasons.append("cost_regression")
-    if _regressed(candidate.mean_latency_ms, baseline.mean_latency_ms):
-        reasons.append("latency_regression")
+    if _telemetry_missing(baseline, candidate):
+        reasons.append("telemetry_missing")
+    else:
+        assert baseline.mean_actual_cost_usd is not None
+        assert baseline.mean_latency_ms is not None
+        assert candidate.mean_actual_cost_usd is not None
+        assert candidate.mean_latency_ms is not None
+        if _regressed(candidate.mean_actual_cost_usd, baseline.mean_actual_cost_usd):
+            reasons.append("cost_regression")
+        if _regressed(candidate.mean_latency_ms, baseline.mean_latency_ms):
+            reasons.append("latency_regression")
 
     return CandidateDecision(accepted=not reasons, reasons=reasons)
+
+
+def _telemetry_missing(
+    baseline: PromptEvalSummary,
+    candidate: PromptEvalSummary,
+) -> bool:
+    required = (
+        baseline.mean_actual_cost_usd,
+        baseline.mean_latency_ms,
+        candidate.mean_actual_cost_usd,
+        candidate.mean_latency_ms,
+    )
+    return any(value is None for value in required)
 
 
 def _regressed(candidate_value: float, baseline_value: float) -> bool:

@@ -15,11 +15,11 @@ def _last_val(ir: IndicatorResult) -> Optional[float]:
 
 
 def _make(tf: str, condition: str, text: str, polarity: str,
-          strength: int, priority: int, data: dict) -> PromptFact:
+          strength: int, priority: int, data: dict, price_values: tuple[float, ...] = ()) -> PromptFact:
     return PromptFact(
         id=f"{tf}.ema.{condition}", timeframe=tf, indicator="ema",
         text=text, polarity=polarity, strength=strength,
-        priority=priority, data=data,
+        priority=priority, data=data, price_values=price_values,
     )
 
 
@@ -79,6 +79,7 @@ def build_ema_facts(
                 ),
                 polarity="bullish", strength=85, priority=92,
                 data={"periods": per_period},
+                price_values=(values[9], values[21], values[50], values[200]),
             ))
         elif all(ordered_desc[i] < ordered_desc[i + 1] for i in range(3)):
             facts.append(_make(
@@ -89,6 +90,7 @@ def build_ema_facts(
                 ),
                 polarity="bearish", strength=85, priority=92,
                 data={"periods": per_period},
+                price_values=(values[9], values[21], values[50], values[200]),
             ))
         else:
             facts.append(_make(
@@ -100,6 +102,7 @@ def build_ema_facts(
                 ),
                 polarity="caution", strength=40, priority=75,
                 data={"periods": per_period},
+                price_values=(values[9], values[21], values[50], values[200]),
             ))
 
     # Price vs all EMAs
@@ -109,6 +112,7 @@ def build_ema_facts(
             text=f"Price ${last_close:.2f} is above every available EMA.",
             polarity="bullish", strength=70, priority=85,
             data={"periods": per_period},
+            price_values=(last_close,),
         ))
     elif all(last_close < v for v in values.values()):
         facts.append(_make(
@@ -116,6 +120,7 @@ def build_ema_facts(
             text=f"Price ${last_close:.2f} is below every available EMA.",
             polarity="bearish", strength=70, priority=85,
             data={"periods": per_period},
+            price_values=(last_close,),
         ))
 
     # Per-period near checks
@@ -126,6 +131,7 @@ def build_ema_facts(
                 text=f"Price ${last_close:.2f} is at the EMA-{period} (${v:.2f}).",
                 polarity="neutral", strength=55, priority=72,
                 data={"period": period, "value": v},
+                price_values=(last_close, v),
             ))
 
     # Cross detection between adjacent EMAs (golden/death cross signals)

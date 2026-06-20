@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 import uuid
 from collections import OrderedDict
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -53,6 +53,7 @@ class AIAnalysisPreparationService:
         self._ttl = ttl
         self._max_snapshots = max_snapshots
         self._snapshots: OrderedDict[str, PreparedAnalysisSnapshot] = OrderedDict()
+        self._grounding_maps: OrderedDict[str, dict] = OrderedDict()
 
     async def prepare(
         self,
@@ -63,6 +64,7 @@ class AIAnalysisPreparationService:
         messages: list[dict[str, str]],
         fallback_enabled: bool,
         local_model: str | None = None,
+        grounding_map: Mapping[str, object] | None = None,
     ) -> PreparedAnalysisSnapshot:
         now = self._clock()
         expires_at = now + self._ttl
@@ -124,8 +126,10 @@ class AIAnalysisPreparationService:
         )
         self._evict_expired(now)
         self._snapshots[snapshot_id] = snapshot
+        self._grounding_maps[snapshot_id] = dict(grounding_map or {})
         while len(self._snapshots) > self._max_snapshots:
-            self._snapshots.popitem(last=False)
+            oldest_snapshot_id, _snapshot = self._snapshots.popitem(last=False)
+            self._grounding_maps.pop(oldest_snapshot_id, None)
         return snapshot
 
     def get_snapshot(self, snapshot_id: str) -> PreparedAnalysisSnapshot:
@@ -134,13 +138,19 @@ class AIAnalysisPreparationService:
             raise AIAnalysisSnapshotNotFoundError(snapshot_id)
         if snapshot.expires_at <= self._clock():
             del self._snapshots[snapshot_id]
+            self._grounding_maps.pop(snapshot_id, None)
             raise AIAnalysisSnapshotExpiredError(snapshot_id)
         return snapshot
+
+    def get_grounding_map(self, snapshot_id: str) -> dict:
+        self.get_snapshot(snapshot_id)
+        return dict(self._grounding_maps.get(snapshot_id, {}))
 
     def _evict_expired(self, now: datetime) -> None:
         for snapshot_id, snapshot in list(self._snapshots.items()):
             if snapshot.expires_at <= now:
                 del self._snapshots[snapshot_id]
+                self._grounding_maps.pop(snapshot_id, None)
 
     @staticmethod
     def _default_token_estimate(messages: list[dict[str, str]]) -> int:

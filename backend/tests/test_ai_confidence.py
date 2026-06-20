@@ -101,6 +101,82 @@ class TestSignalToFrontendFormat:
         result = signal_to_frontend_format(signal)
         assert result["confidence"] == 50
 
+    def test_finalize_signal_normalizes_high_for_production_validation(self):
+        from services.ai import AiService
+
+        result = AiService._finalize_signal(
+            {
+                "direction": "LONG",
+                "description": "Fact-backed setup",
+                "confidence": "HIGH",
+                "entry": {
+                    "price": 100.0,
+                    "source_fact_id": "D.ema.price_near_21",
+                    "note": "entry",
+                },
+                "stop": {
+                    "price": 98.0,
+                    "source_fact_id": "D.bbands.outside_lower",
+                    "note": "stop",
+                },
+                "target": {
+                    "price": 104.0,
+                    "source_fact_id": "D.fibonacci.target_extension_1272",
+                    "note": "target",
+                },
+                "meta": {"risk_reward": None, "score": "6/10", "adx_trend": None, "volume_signal": None},
+                "confirmations": [],
+                "cautions": [],
+            },
+            grounding_map={
+                "D.ema.price_near_21": frozenset({100.0, 98.0}),
+                "D.bbands.outside_lower": frozenset({98.0}),
+                "D.fibonacci.target_extension_1272": frozenset({104.0}),
+            },
+        )
+
+        assert result is not None
+        assert result["direction"] == "LONG"
+        assert result["confidence"] == 75
+
+    def test_finalize_signal_fails_closed_for_fabricated_prices(self):
+        from services.ai import AiService
+
+        result = AiService._finalize_signal(
+            {
+                "direction": "LONG",
+                "description": "Fabricated setup",
+                "confidence": "HIGH",
+                "entry": {
+                    "price": 999.0,
+                    "source_fact_id": "D.ema.price_near_21",
+                    "note": "entry",
+                },
+                "stop": {
+                    "price": 998.0,
+                    "source_fact_id": "D.bbands.outside_lower",
+                    "note": "stop",
+                },
+                "target": {
+                    "price": 1001.0,
+                    "source_fact_id": "D.fibonacci.target_extension_1272",
+                    "note": "target",
+                },
+                "meta": {"risk_reward": None, "score": "6/10", "adx_trend": None, "volume_signal": None},
+                "confirmations": [],
+                "cautions": [],
+            },
+            grounding_map={
+                "D.ema.price_near_21": frozenset({100.0, 98.0}),
+                "D.bbands.outside_lower": frozenset({98.0}),
+                "D.fibonacci.target_extension_1272": frozenset({104.0}),
+            },
+        )
+
+        assert result is not None
+        assert result["direction"] == "NEUTRAL"
+        assert result["confidence"] == 0
+
 
 # ── _parse_signal ValidationError guard ──────────────────────
 

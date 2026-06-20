@@ -10,6 +10,8 @@
 
 **Status:** APPROVED FOR EXECUTION on 2026-06-20 and QUEUED after the UX lifecycle plan. `PROJECT_PLAN.md` tracks the dependency. Do not begin until the UX plan is complete and reviewed; then execute Slice 1 only.
 
+**Remediation update (2026-06-20):** The focused review-blocker slice is now verified on `feature/orbit-v2-cloud-hybrid-ai-spec`. Grounding is enforced against exact rendered fact IDs plus explicit price-bearing values, eval fixtures derive their IDs/maps from the production fact pipeline, production normalizes legacy confidence labels before strict validation, and candidate comparison now fails closed when required telemetry is unavailable. Live OpenRouter evaluation and prompt promotion remain pending.
+
 ---
 
 ## Global Constraints
