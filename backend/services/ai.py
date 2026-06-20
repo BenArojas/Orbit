@@ -60,8 +60,12 @@ MAX_CONTEXT_MESSAGES = 20
 # For a 2-person app this is generous — just prevents runaway memory growth.
 MAX_SESSIONS = 50
 UNVERIFIED_TRADE_PLAN_MESSAGE = (
-    "Orbit withheld the trade plan because it could not be verified."
+    "No actionable trade plan could be verified from the supplied facts."
 )
+_TRAILING_JSON_FENCE_RE = re.compile(
+    r"(?P<prefix>[\s\S]*)(?P<suffix>\n*```json\s*\n?[\s\S]*)$"
+)
+_DIRECTION_KEY_RE = re.compile(r'"\s*direction\s*"\s*:')
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -141,11 +145,31 @@ def strip_signal_json_from_response(text: str) -> str:
     signal. That block is useful for the backend, but noisy in the user-facing
     chat transcript.
     """
-    json_match = re.search(r"\n*```json\s*\n[\s\S]*$", text)
-    if not json_match:
+    fence_match = _TRAILING_JSON_FENCE_RE.search(text)
+    if not fence_match:
         return text
 
-    return text[:json_match.start()].rstrip()
+    prefix = fence_match.group("prefix")
+    suffix = fence_match.group("suffix")
+    fragment = re.sub(r"^\n*```json\s*\n?", "", suffix, count=1)
+    complete_match = re.match(r"(?P<body>[\s\S]*?)\n?\s*```\s*$", fragment)
+
+    if complete_match is not None:
+        body = complete_match.group("body").strip()
+        try:
+            decoded = json.loads(body)
+        except json.JSONDecodeError:
+            if _DIRECTION_KEY_RE.search(body):
+                return prefix.rstrip()
+            return text
+        if isinstance(decoded, dict) and "direction" in decoded:
+            return prefix.rstrip()
+        return text
+
+    if _DIRECTION_KEY_RE.search(fragment):
+        return prefix.rstrip()
+
+    return text
 
 
 def _coerce_confidence(value: int | str | None) -> int:
@@ -300,7 +324,7 @@ class ChatSession:
 @dataclass(frozen=True)
 class _FinalizedSignalResult:
     signal: dict
-    validated: bool
+    preserve_narrative: bool
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -735,26 +759,29 @@ class AiService:
         *,
         grounding_map: dict[str, frozenset[Decimal]] | None = None,
     ) -> _FinalizedSignalResult | None:
-        """Validate signal geometry and return frontend shape plus pass/fail."""
+        """Validate signal geometry and return frontend shape plus narrative rule."""
         if not raw_signal:
             return None
         cleaned = dict(raw_signal)
         cleaned.pop("reasoning_steps", None)
         cleaned["confidence"] = _coerce_confidence(cleaned.get("confidence"))
 
-        validated = True
         try:
             validated_signal = validate_signal_draft(cleaned, grounding_map=grounding_map)
         except AISignalGroundingError as exc:
             log.warning("Rejected ungrounded AI signal: %s", exc)
-            validated = False
             validated_signal = safe_neutral_signal(
                 UNVERIFIED_TRADE_PLAN_MESSAGE
             )
+        else:
+            if validated_signal.direction == "NEUTRAL":
+                validated_signal = safe_neutral_signal(
+                    UNVERIFIED_TRADE_PLAN_MESSAGE
+                )
 
         return _FinalizedSignalResult(
             signal=signal_to_frontend_format(validated_signal.model_dump(mode="python")),
-            validated=validated,
+            preserve_narrative=validated_signal.direction != "NEUTRAL",
         )
 
     @staticmethod
@@ -778,7 +805,7 @@ class AiService:
         return {
             "message": (
                 strip_signal_json_from_response(response_text)
-                if result.validated
+                if result.preserve_narrative
                 else UNVERIFIED_TRADE_PLAN_MESSAGE
             ),
             "signal": result.signal,

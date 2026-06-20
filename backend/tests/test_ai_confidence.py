@@ -20,6 +20,8 @@ from services.ai_analysis_preparation import AIAnalysisPreparationService
 from services.ai_cloud_adapters import AIProviderTextResult
 from services.ai_providers import AIProviderRegistry
 
+DETERMINISTIC_NEUTRAL = "No actionable trade plan could be verified from the supplied facts."
+
 
 GROUNDING_MAP = {
     "D.ema.price_near_21": frozenset({100.0}),
@@ -370,8 +372,9 @@ async def test_analyze_rejected_directional_output_returns_withheld_message_and_
         model="gemma4:26b",
     )
 
-    assert result["message"] == "Orbit withheld the trade plan because it could not be verified."
+    assert result["message"] == DETERMINISTIC_NEUTRAL
     assert result["signal"]["direction"] == "NEUTRAL"
+    assert result["signal"]["description"] == DETERMINISTIC_NEUTRAL
     assert [level["value"] for level in result["signal"]["levels"]] == ["—", "—", "—"]
     assert result["signal"]["meta"][0]["value"] == "—"
 
@@ -401,7 +404,31 @@ async def test_analyze_preserves_valid_grounded_directional_narrative_and_card()
 
 
 @pytest.mark.asyncio
-async def test_analyze_preserves_valid_model_neutral_narrative():
+async def test_analyze_replaces_contradictory_neutral_narrative_deterministically():
+    service = _service_for(
+        "Strong LONG: buy the breakout now.\n\n```json\n"
+        '{"direction":"NEUTRAL","confidence":34,"description":"Mixed evidence",'
+        '"entry":{"price":null,"source_fact_id":null,"note":"No grounded level"},'
+        '"stop":{"price":null,"source_fact_id":null,"note":"No grounded level"},'
+        '"target":{"price":null,"source_fact_id":null,"note":"No grounded level"},'
+        '"confirmations":["Trend unclear"],"cautions":["Sparse evidence"],"meta":{"risk_reward":null}}\n```'
+    )
+
+    result = await service.analyze(
+        symbol="AAPL",
+        timeframe_data={},
+        indicators_display=["EMA Stack"],
+        indicator_names=["ema"],
+        model="gemma4:26b",
+    )
+
+    assert result["message"] == DETERMINISTIC_NEUTRAL
+    assert result["signal"]["direction"] == "NEUTRAL"
+    assert result["signal"]["description"] == DETERMINISTIC_NEUTRAL
+
+
+@pytest.mark.asyncio
+async def test_analyze_replaces_ordinary_neutral_narrative_deterministically():
     service = _service_for(
         "Evidence is mixed and does not support an actionable setup.\n\n```json\n"
         '{"direction":"NEUTRAL","confidence":34,"description":"Mixed evidence",'
@@ -419,9 +446,39 @@ async def test_analyze_preserves_valid_model_neutral_narrative():
         model="gemma4:26b",
     )
 
-    assert result["message"] == "Evidence is mixed and does not support an actionable setup."
+    assert result["message"] == DETERMINISTIC_NEUTRAL
     assert result["signal"]["direction"] == "NEUTRAL"
-    assert result["signal"]["description"] == "Mixed evidence"
+    assert result["signal"]["description"] == DETERMINISTIC_NEUTRAL
+
+
+@pytest.mark.asyncio
+async def test_analyze_reformat_fallback_neutral_replaces_contradictory_narrative_deterministically():
+    provider = _QueuedProvider([
+        "Strong LONG: buy above resistance now.",
+        (
+            "```json\n"
+            '{"direction":"NEUTRAL","confidence":34,"description":"Mixed evidence",'
+            '"entry":{"price":null,"source_fact_id":null,"note":"No grounded level"},'
+            '"stop":{"price":null,"source_fact_id":null,"note":"No grounded level"},'
+            '"target":{"price":null,"source_fact_id":null,"note":"No grounded level"},'
+            '"confirmations":["Trend unclear"],"cautions":["Sparse evidence"],"meta":{"risk_reward":null}}\n```'
+        ),
+    ])
+    service = _PromptStubAiService(
+        provider_registry=AIProviderRegistry({"ollama": provider})
+    )
+
+    result = await service.analyze(
+        symbol="AAPL",
+        timeframe_data={},
+        indicators_display=["EMA Stack"],
+        indicator_names=["ema"],
+        model="gemma4:26b",
+    )
+
+    assert result["message"] == DETERMINISTIC_NEUTRAL
+    assert result["signal"]["direction"] == "NEUTRAL"
+    assert result["signal"]["description"] == DETERMINISTIC_NEUTRAL
 
 
 @pytest.mark.asyncio
@@ -444,7 +501,7 @@ async def test_analyze_stream_done_message_uses_authoritative_withheld_text():
     ]
 
     assert events[-1]["type"] == "done"
-    assert events[-1]["message"] == "Orbit withheld the trade plan because it could not be verified."
+    assert events[-1]["message"] == DETERMINISTIC_NEUTRAL
     assert events[-1]["signal"]["direction"] == "NEUTRAL"
 
 
@@ -487,7 +544,7 @@ async def test_analyze_prepared_stream_done_message_uses_authoritative_withheld_
     ]
 
     assert events[-1]["type"] == "done"
-    assert events[-1]["message"] == "Orbit withheld the trade plan because it could not be verified."
+    assert events[-1]["message"] == DETERMINISTIC_NEUTRAL
     assert events[-1]["signal"]["direction"] == "NEUTRAL"
 
 
@@ -527,7 +584,7 @@ async def test_follow_up_rejected_signal_update_returns_withheld_message_and_saf
         message="Are the levels still valid?",
     )
 
-    assert result["message"] == "Orbit withheld the trade plan because it could not be verified."
+    assert result["message"] == DETERMINISTIC_NEUTRAL
     assert result["signal"]["direction"] == "NEUTRAL"
     assert [level["value"] for level in result["signal"]["levels"]] == ["—", "—", "—"]
 
@@ -572,11 +629,33 @@ async def test_follow_up_stream_rejected_signal_update_emits_authoritative_done_
     ]
 
     assert events[-1]["type"] == "done"
-    assert events[-1]["message"] == "Orbit withheld the trade plan because it could not be verified."
+    assert events[-1]["message"] == DETERMINISTIC_NEUTRAL
     assert events[-1]["signal"]["direction"] == "NEUTRAL"
 
 
-def test_strip_signal_json_from_response_removes_incomplete_trailing_fenced_json():
+def test_strip_signal_json_from_response_preserves_unrelated_complete_trailing_json():
+    text = (
+        "Theme note.\n\n"
+        "```json\n"
+        '{"theme":"dark"}\n'
+        "```"
+    )
+
+    assert strip_signal_json_from_response(text) == text
+
+
+def test_strip_signal_json_from_response_removes_valid_trailing_signal_json():
+    text = (
+        "Support held into the close.\n\n"
+        "```json\n"
+        '{"direction":"LONG","confidence":70}\n'
+        "```"
+    )
+
+    assert strip_signal_json_from_response(text) == "Support held into the close."
+
+
+def test_strip_signal_json_from_response_removes_incomplete_newline_signal_json():
     text = (
         "Support held into the close.\n\n"
         "```json\n"
@@ -584,3 +663,15 @@ def test_strip_signal_json_from_response_removes_incomplete_trailing_fenced_json
     )
 
     assert strip_signal_json_from_response(text) == "Support held into the close."
+
+
+def test_strip_signal_json_from_response_removes_incomplete_same_line_signal_json():
+    text = 'Support held into the close.```json{"direction":"LONG","confidence":70'
+
+    assert strip_signal_json_from_response(text) == "Support held into the close."
+
+
+def test_strip_signal_json_from_response_preserves_incomplete_unrelated_json():
+    text = 'Support held into the close.```json{"theme":"dark"'
+
+    assert strip_signal_json_from_response(text) == text

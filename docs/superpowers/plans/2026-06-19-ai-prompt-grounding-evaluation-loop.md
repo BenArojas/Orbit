@@ -1256,6 +1256,7 @@ git commit -m "feat: add grounded ai prompt evaluation loop"
 - Dynamic per-user prompt variants.
 - Complete deterministic provenance for every possible derived technical-analysis price. The strict neutral gate, geometry checks, verified facts, and eval cases are the bounded first improvement.
 - Fixing chart-context modes that currently do not affect prompt facts; that requires its own visible product decision and plan.
+- Follow-up chat without parseable structured signal remains conversational and retains the previous validated card. Full grounding of arbitrary follow-up prose requires a separate product decision and is not part of this remediation.
 
 ## Acceptance Criteria
 
