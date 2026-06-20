@@ -62,9 +62,6 @@ MAX_SESSIONS = 50
 UNVERIFIED_TRADE_PLAN_MESSAGE = (
     "No actionable trade plan could be verified from the supplied facts."
 )
-_TRAILING_JSON_FENCE_RE = re.compile(
-    r"(?P<prefix>[\s\S]*)(?P<suffix>\n*```json\s*\n?[\s\S]*)$"
-)
 _DIRECTION_KEY_RE = re.compile(r'"\s*direction\s*"\s*:')
 
 
@@ -145,22 +142,27 @@ def strip_signal_json_from_response(text: str) -> str:
     signal. That block is useful for the backend, but noisy in the user-facing
     chat transcript.
     """
-    fence_match = _TRAILING_JSON_FENCE_RE.search(text)
-    if not fence_match:
+    fence_start = text.rfind("```json")
+    if fence_start == -1:
         return text
 
-    prefix = fence_match.group("prefix")
-    suffix = fence_match.group("suffix")
-    fragment = re.sub(r"^\n*```json\s*\n?", "", suffix, count=1)
-    complete_match = re.match(r"(?P<body>[\s\S]*?)\n?\s*```\s*$", fragment)
+    prefix = text[:fence_start]
+    suffix = text[fence_start:]
+    opening_match = re.match(r"```json\s*\n?", suffix)
+    if opening_match is None:
+        return text
 
-    if complete_match is not None:
-        body = complete_match.group("body").strip()
+    fragment = suffix[opening_match.end():]
+    closing_index = fragment.find("```")
+
+    if closing_index != -1:
+        body = fragment[:closing_index].strip()
+        trailing = fragment[closing_index + 3 :]
+        if trailing.strip():
+            return text
         try:
             decoded = json.loads(body)
         except json.JSONDecodeError:
-            if _DIRECTION_KEY_RE.search(body):
-                return prefix.rstrip()
             return text
         if isinstance(decoded, dict) and "direction" in decoded:
             return prefix.rstrip()

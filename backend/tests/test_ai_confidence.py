@@ -655,6 +655,32 @@ def test_strip_signal_json_from_response_removes_valid_trailing_signal_json():
     assert strip_signal_json_from_response(text) == "Support held into the close."
 
 
+def test_strip_signal_json_from_response_preserves_completed_signal_json_when_prose_follows():
+    text = (
+        "Support held into the close.\n\n"
+        "```json\n"
+        '{"direction":"LONG","confidence":70}\n'
+        "```\n\n"
+        "Follow-up prose stays visible."
+    )
+
+    assert strip_signal_json_from_response(text) == text
+
+
+def test_strip_signal_json_from_response_preserves_completed_signal_json_when_code_fence_follows():
+    text = (
+        "Support held into the close.\n\n"
+        "```json\n"
+        '{"direction":"LONG","confidence":70}\n'
+        "```\n\n"
+        "```python\n"
+        "print('keep this block')\n"
+        "```"
+    )
+
+    assert strip_signal_json_from_response(text) == text
+
+
 def test_strip_signal_json_from_response_removes_incomplete_newline_signal_json():
     text = (
         "Support held into the close.\n\n"
