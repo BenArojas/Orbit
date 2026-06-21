@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from models import CandleData, IndicatorResult, IndicatorValue
 from services.prompt_builder import (
+    SIGNAL_INLINE_JSON_INSTRUCTION,
     build_analysis_user_message,
     build_indicator_context,
     build_system_prompt,
@@ -156,3 +157,10 @@ class TestEmaFactPipeline:
         assert any(fid.startswith("D.ema.") for fid in fact_ids), (
             f"No D.ema.* fact found; got {fact_ids}"
         )
+
+
+class TestSignalInstructionGroundedCandidates:
+    def test_instruction_requires_grounded_price_candidates_as_source(self):
+        """SIGNAL_INLINE_JSON_INSTRUCTION must name 'Grounded price candidates'
+        as the only permitted price source, not generic Verified Facts text."""
+        assert "Grounded price candidates" in SIGNAL_INLINE_JSON_INSTRUCTION

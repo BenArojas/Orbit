@@ -192,3 +192,60 @@ def test_safe_neutral_signal_has_null_levels():
     assert validated.stop.price is None
     assert validated.target.price is None
     assert validated.meta.risk_reward is None
+
+
+def test_grounding_integration_accepts_valid_long_and_rejects_invented_price():
+    """Build a real PromptContextBundle, pick 3 grounded LONG candidates,
+    verify validate_signal_draft accepts them; change entry by one cent → rejection."""
+    from decimal import Decimal
+    from models import CandleData, IndicatorResult, IndicatorValue
+    from services.prompt_builder import build_full_prompt_context_bundle
+
+    candles = [
+        CandleData(time=1_700_000_000 + i * 86400, open=94, high=96, low=93, close=95.0, volume=1_000_000)
+        for i in range(25)
+    ]
+
+    def _ema(period: int, val: float) -> IndicatorResult:
+        return IndicatorResult(
+            name=f"ema_{period}", type="overlay",
+            values=[IndicatorValue(time=1_700_000_000 + i * 86400, value=val) for i in range(25)],
+            params={"period": period},
+        )
+
+    bundle = build_full_prompt_context_bundle(
+        symbol="INTG",
+        timeframe_data={"D": {
+            "candles": candles,
+            "indicators": [_ema(9, 110.0), _ema(21, 105.0), _ema(50, 100.0), _ema(200, 90.0)],
+            "fibs": [], "fibonacci": None,
+        }},
+        indicator_priority=[],
+        budget_tokens=4096,
+    )
+    gmap = bundle.grounding_map
+    # Confirm all three trade levels are in the grounding map
+    assert Decimal("95.00") in gmap.get("D.price.current_close", frozenset())
+    assert Decimal("90.00") in gmap.get("D.ema.levels_current", frozenset())
+    assert Decimal("100.00") in gmap.get("D.ema.levels_current", frozenset())
+
+    def _raw(entry, stop, target):
+        return {
+            "direction": "LONG",
+            "confidence": 60,
+            "description": "EMA bullish stack with price above EMA-200.",
+            "entry": {"price": entry, "source_fact_id": "D.price.current_close", "note": "current close"},
+            "stop": {"price": stop, "source_fact_id": "D.ema.levels_current", "note": "EMA-200"},
+            "target": {"price": target, "source_fact_id": "D.ema.levels_current", "note": "EMA-50"},
+            "confirmations": ["EMA stack bullish"],
+            "cautions": ["RSI not confirmed"],
+            "meta": {"risk_reward": None, "score": None, "adx_trend": None, "volume_signal": None},
+        }
+
+    # Geometry-valid LONG: stop=90 < entry=95 < target=100
+    validated = validate_signal_draft(_raw(95.0, 90.0, 100.0), grounding_map=gmap)
+    assert validated.direction == "LONG"
+
+    # Off by one cent on entry → must reject
+    with pytest.raises(AISignalGroundingError):
+        validate_signal_draft(_raw(95.01, 90.0, 100.0), grounding_map=gmap)

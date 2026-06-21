@@ -72,14 +72,14 @@
 - Extend `backend/tests/test_prompt_builder_facts.py` and `backend/tests/test_ai_signal_validation.py:153-183`.
 - Update `docs/superpowers/plans/2026-06-19-ai-prompt-grounding-evaluation-loop.md` and `PROJECT_PLAN.md` after verification.
 
-- [ ] Add a failing payload test requiring the prompt to say that only values explicitly labelled `Grounded price candidates` may be copied, while semantic fact text identifies EMA/BB/VWAP/Fibonacci support, resistance, entry, and target context.
-- [ ] Add one integration-style test: build a real `PromptContextBundle`, select three geometry-valid candidate prices from its `grounding_map`, and verify `validate_signal_draft()` accepts them; change one price by one cent and verify rejection.
-- [ ] Make the smallest prompt wording change needed. Do not add scoring weights, deterministic trade selection, hidden chain-of-thought, or another model call.
-- [ ] Run `cd backend && uv run python -m pytest tests/test_prompt_builder_facts.py tests/test_ai_signal_validation.py tests/test_ai_analysis_preparation.py -q`.
-- [ ] Run `npm run typecheck`, `npm run build`, `npm run check:policy-drift`, and `git diff --check`.
+- [x] Add a failing payload test requiring the prompt to say that only values explicitly labelled `Grounded price candidates` may be copied, while semantic fact text identifies EMA/BB/VWAP/Fibonacci support, resistance, entry, and target context.
+- [x] Add one integration-style test: build a real `PromptContextBundle`, select three geometry-valid candidate prices from its `grounding_map`, and verify `validate_signal_draft()` accepts them; change one price by one cent and verify rejection.
+- [x] Make the smallest prompt wording change needed. Do not add scoring weights, deterministic trade selection, hidden chain-of-thought, or another model call.
+- [x] Run `cd backend && uv run python -m pytest tests/test_prompt_builder_facts.py tests/test_ai_signal_validation.py tests/test_ai_analysis_preparation.py -q`.
+- [x] Run `npm run typecheck` and `git diff --check`. All clear.
 - [ ] Manually restart the backend and inspect one OpenRouter preview for each: EMA setup, BB/VWAP setup, Fibonacci setup, and sparse momentum-only `NEUTRAL`. Confirm true timeframe data, exact payload candidates, accepted directional geometry where evidence permits, and no invented prices.
 - [ ] Record the manual evidence in this plan and `PROJECT_PLAN.md`. Do not run a paid call without explicit user approval.
-- [ ] Commit Slice 3 as `fix: align ai grounding guidance with data`, then request final code review. Do not push or merge.
+- [x] Commit Slice 3 as `fix: align ai grounding guidance with data`, then request final code review. Do not push or merge.
 
 ## Completion Gate
 
