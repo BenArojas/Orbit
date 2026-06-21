@@ -14,6 +14,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from models import AnalyzeRequest, CandleData, FibonacciSnapshot
+from constants.ibkr_history import TIMEFRAME_SPEC
 from routers.ai import _fetch_timeframe_data
 from services.prompt_builder import build_indicator_context
 
@@ -157,3 +158,23 @@ class TestFetchTimeframeDataWithFibs:
         assert result["fibs"] == []
         assert result["fibonacci"] == "AUTO_FIB"
         assert compute_mock.call_args.kwargs["indicators"] == ["rsi", "fibonacci"]
+
+
+@pytest.mark.parametrize("ui_tf,spec_key", [
+    ("1H", "1h"),
+    ("4H", "4h"),
+    ("D",  "1D"),
+    ("W",  "1W"),
+])
+@pytest.mark.asyncio
+async def test_fetch_timeframe_data_uses_canonical_specs(ui_tf, spec_key):
+    """Each UI timeframe label must resolve to the correct canonical IBKR spec."""
+    ibkr = AsyncMock()
+    ibkr.history.return_value = {
+        "data": [{"t": 1_700_000_000_000, "o": 100.0, "h": 120.0, "l": 95.0, "c": 110.0, "v": 1000}],
+    }
+    with patch("routers.ai._indicator_service.compute", MagicMock(return_value=([], None))):
+        await _fetch_timeframe_data(conid=265598, timeframe=ui_tf, indicators=[], ibkr=ibkr)
+
+    expected = TIMEFRAME_SPEC[spec_key]
+    ibkr.history.assert_called_once_with(265598, period=expected.period, bar=expected.bar)

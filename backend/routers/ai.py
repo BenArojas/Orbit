@@ -105,6 +105,7 @@ from services.ai_settings import AISettingsService
 from services.ai_usage import AIUsageLedger
 from services.db import DatabaseService
 from services.ibkr import IBKRService
+from constants.ibkr_history import TIMEFRAME_SPEC
 from services.indicators import IndicatorService, get_active_fib_weights
 from services.ollama import OllamaLifecycle
 
@@ -570,13 +571,16 @@ async def _get_routing_policy(ai_settings: AISettingsService) -> dict:
     return await get_policy()
 
 
-# ── Timeframe → IBKR period mapping for AI analysis ────────
+# ── Timeframe → canonical IBKR spec key ────────────────────
+# Maps UI timeframe labels to TIMEFRAME_SPEC keys from ibkr_history.py.
+# Period and bar values are resolved at call time so they stay in sync
+# with the canonical definitions.
 
-AI_TIMEFRAME_MAP: dict[str, tuple[str, str]] = {
-    "1H": ("1d", "1min"),       # 1 day of 1-min bars → hourly context
-    "4H": ("5d", "5min"),       # 5 days of 5-min bars → 4H context
-    "D": ("3m", "1d"),          # 3 months of daily bars
-    "W": ("1y", "1w"),          # 1 year of weekly bars
+_AI_TIMEFRAME_KEY: dict[str, str] = {
+    "1H": "1h",
+    "4H": "4h",
+    "D":  "1D",
+    "W":  "1W",
 }
 
 # ── Frontend indicator name → backend indicator name(s) ────
@@ -640,7 +644,8 @@ async def _fetch_timeframe_data(
     still compute the other indicators from candles so the analysis keeps
     full chart context.
     """
-    ibkr_period, ibkr_bar = AI_TIMEFRAME_MAP.get(timeframe, ("3m", "1d"))
+    spec = TIMEFRAME_SPEC[_AI_TIMEFRAME_KEY.get(timeframe, "1D")]
+    ibkr_period, ibkr_bar = spec.period, spec.bar
 
     raw = await ibkr.history(conid, period=ibkr_period, bar=ibkr_bar)
     bars = raw.get("data", [])

@@ -66,9 +66,10 @@ def _build_for_tf(
             symbol=symbol, timeframe=timeframe, fib=fib_source, last_close=last_close,
         ))
 
-    if "ema" in by_name:
+    ema_indicators = [ind for name, inds in by_name.items() if name.startswith("ema_") for ind in inds]
+    if ema_indicators:
         facts.extend(build_ema_facts(
-            symbol=symbol, timeframe=timeframe, emas=by_name["ema"], last_close=last_close,
+            symbol=symbol, timeframe=timeframe, emas=ema_indicators, last_close=last_close,
         ))
 
     if "rsi" in by_name and by_name["rsi"]:

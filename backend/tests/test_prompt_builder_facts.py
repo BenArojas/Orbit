@@ -7,6 +7,7 @@ from services.prompt_builder import (
     build_indicator_context,
     build_system_prompt,
 )
+from services.prompt_facts import build_prompt_facts
 
 
 def _candles(closes: list[float]) -> list[CandleData]:
@@ -21,7 +22,7 @@ def _candles(closes: list[float]) -> list[CandleData]:
 
 def _ema(period: int, values: list[float]) -> IndicatorResult:
     return IndicatorResult(
-        name="ema", type="overlay",
+        name=f"ema_{period}", type="overlay",
         values=[
             IndicatorValue(time=1_700_000_000 + i * 86400, value=v)
             for i, v in enumerate(values)
@@ -134,3 +135,24 @@ class TestBuildSystemPrompt:
         assert "both the prose and JSON must be NEUTRAL with null levels" in out
         assert "one fact ID per bracket" in out
         assert "at most 350 words before the JSON block" in out
+
+
+class TestEmaFactPipeline:
+    def test_ema_nine_indicator_result_reaches_build_prompt_facts(self):
+        """IndicatorResult(name='ema_9') must produce a D.ema.* fact via build_prompt_facts."""
+        candles = _candles([100.0 + i for i in range(25)])
+        ema9 = IndicatorResult(
+            name="ema_9", type="overlay",
+            values=[IndicatorValue(time=1_700_000_000 + i * 86400, value=99.0 + i)
+                    for i in range(25)],
+            params={"period": 9},
+        )
+        blocks = build_prompt_facts(
+            symbol="TEST",
+            timeframe_data={"D": {"candles": candles, "indicators": [ema9], "fibs": [], "fibonacci": None}},
+            indicator_priority=[],
+        )
+        fact_ids = {f.id for block in blocks for f in block.facts}
+        assert any(fid.startswith("D.ema.") for fid in fact_ids), (
+            f"No D.ema.* fact found; got {fact_ids}"
+        )
