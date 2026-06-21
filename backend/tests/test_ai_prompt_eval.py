@@ -118,7 +118,8 @@ def test_advertised_fixtures_render_intended_evidence():
 
 def test_prompt_instruction_no_longer_forces_null_levels():
     assert "source_fact_id" in SIGNAL_INLINE_JSON_INSTRUCTION
-    assert "copy an exact numeric price already present in Verified Facts" in SIGNAL_INLINE_JSON_INSTRUCTION
+    assert "copy an exact numeric price from a " in SIGNAL_INLINE_JSON_INSTRUCTION
+    assert "'Grounded price candidates' label" in SIGNAL_INLINE_JSON_INSTRUCTION
     assert '"entry":  {"price": null' not in SIGNAL_INLINE_JSON_INSTRUCTION
 
 

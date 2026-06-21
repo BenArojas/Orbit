@@ -124,12 +124,19 @@ class TestRecentCross:
         assert found is False
         assert bars_ago == -1
 
-    def test_hourly_uses_60_underlying_bar_window(self):
-        # cross 50 bars ago should still be detected on 1H
-        a = [9] * 50 + [11] + [11] * 14    # cross at index 50, total 65 bars
-        b = [10] * 65
+    def test_hourly_uses_true_7_bar_window(self):
+        # 1H now uses true 1h bars: a cross within 7 bars is recent...
+        a = [9] * 8 + [11] + [11] * 5     # cross at index 8, 6 bars from the end
+        b = [10] * 14
         found, _ = recent_cross(a, b, timeframe="1H")
         assert found is True
+
+    def test_hourly_stale_cross_not_recent(self):
+        # ...but a cross older than the 7-bar window is no longer "recent".
+        a = [9] * 8 + [11] + [11] * 14    # cross at index 8, 14 bars from the end
+        b = [10] * 23
+        found, _ = recent_cross(a, b, timeframe="1H")
+        assert found is False
 
     def test_raises_on_mismatched_lengths(self):
         """C4: recent_cross must reject mismatched input lengths."""

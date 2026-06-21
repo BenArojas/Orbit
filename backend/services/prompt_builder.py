@@ -29,7 +29,7 @@ Signal extraction:
 import datetime
 import logging
 from dataclasses import dataclass
-from decimal import Decimal, ROUND_HALF_UP
+from decimal import Decimal
 from typing import Any, Optional
 
 from models import CandleData, IndicatorResult, FibonacciResult, FibonacciSnapshot
@@ -39,12 +39,11 @@ from services.indicators import (
     IndicatorService,
 )
 from services.prompt_facts import build_prompt_facts
+from services.prompt_facts._common import quantize_ground_price
 from services.prompt_facts.render import render_prompt_facts
 from services.prompt_facts.truncate import truncate_by_value
 
 log = logging.getLogger("parallax.prompt")
-
-_GROUNDING_CENT = Decimal("0.01")
 
 
 @dataclass(frozen=True)
@@ -54,17 +53,13 @@ class PromptContextBundle:
     grounding_map: dict[str, frozenset[Decimal]]
 
 
-def _quantize_ground_price(value: float) -> Decimal:
-    return Decimal(str(value)).quantize(_GROUNDING_CENT, rounding=ROUND_HALF_UP)
-
-
 def _build_grounding_map(blocks: list["PromptContextBlock"]) -> dict[str, frozenset[Decimal]]:
     grounding_map: dict[str, frozenset[Decimal]] = {}
     for block in blocks:
         for fact in block.facts:
             if not fact.price_values:
                 continue
-            grounding_map[fact.id] = frozenset(_quantize_ground_price(value) for value in fact.price_values)
+            grounding_map[fact.id] = frozenset(quantize_ground_price(value) for value in fact.price_values)
     return grounding_map
 
 

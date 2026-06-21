@@ -96,6 +96,8 @@ def _indicator_names_from_timeframe_data(timeframe_data: dict[str, dict]) -> tup
     for data in timeframe_data.values():
         for indicator in data.get("indicators", []):
             raw_name = str(getattr(indicator, "name", "")).lower()
+            if raw_name.startswith("ema_"):
+                raw_name = "ema"
             if raw_name:
                 names.add(raw_name)
         if data.get("fibs") or data.get("fibonacci") is not None:
@@ -214,10 +216,10 @@ def _conflicting_timeframes_data() -> dict[str, dict]:
             for i, close in enumerate(weekly_closes)
         ],
         "indicators": [
-            _indicator("ema", [_iv(close - 2.0, i) for i, close in enumerate(weekly_closes)], period=9),
-            _indicator("ema", [_iv(close - 6.0, i) for i, close in enumerate(weekly_closes)], period=21),
-            _indicator("ema", [_iv(close - 14.0, i) for i, close in enumerate(weekly_closes)], period=50),
-            _indicator("ema", [_iv(close - 40.0, i) for i, close in enumerate(weekly_closes)], period=200),
+            _indicator("ema_9", [_iv(close - 2.0, i) for i, close in enumerate(weekly_closes)], period=9),
+            _indicator("ema_21", [_iv(close - 6.0, i) for i, close in enumerate(weekly_closes)], period=21),
+            _indicator("ema_50", [_iv(close - 14.0, i) for i, close in enumerate(weekly_closes)], period=50),
+            _indicator("ema_200", [_iv(close - 40.0, i) for i, close in enumerate(weekly_closes)], period=200),
         ],
         "fibs": [],
         "fibonacci": None,
@@ -235,10 +237,10 @@ def _conflicting_timeframes_data() -> dict[str, dict]:
             for i, close in enumerate(daily_closes)
         ],
         "indicators": [
-            _indicator("ema", [_iv(close + 2.0, i) for i, close in enumerate(daily_closes)], period=9),
-            _indicator("ema", [_iv(close + 6.0, i) for i, close in enumerate(daily_closes)], period=21),
-            _indicator("ema", [_iv(close + 14.0, i) for i, close in enumerate(daily_closes)], period=50),
-            _indicator("ema", [_iv(close + 40.0, i) for i, close in enumerate(daily_closes)], period=200),
+            _indicator("ema_9", [_iv(close + 2.0, i) for i, close in enumerate(daily_closes)], period=9),
+            _indicator("ema_21", [_iv(close + 6.0, i) for i, close in enumerate(daily_closes)], period=21),
+            _indicator("ema_50", [_iv(close + 14.0, i) for i, close in enumerate(daily_closes)], period=50),
+            _indicator("ema_200", [_iv(close + 40.0, i) for i, close in enumerate(daily_closes)], period=200),
         ],
         "fibs": [],
         "fibonacci": None,
@@ -264,10 +266,10 @@ def _missing_adx_volume_data() -> dict[str, dict]:
         for i, close in enumerate(closes)
     ]
     indicators = [
-        _indicator("ema", [_iv(close + 2.0, i) for i, close in enumerate(closes)], period=9),
-        _indicator("ema", [_iv(close, i) for i, close in enumerate(closes)], period=21),
-        _indicator("ema", [_iv(close - 10.0, i) for i, close in enumerate(closes)], period=50),
-        _indicator("ema", [_iv(close - 28.0, i) for i, close in enumerate(closes)], period=200),
+        _indicator("ema_9", [_iv(close + 2.0, i) for i, close in enumerate(closes)], period=9),
+        _indicator("ema_21", [_iv(close, i) for i, close in enumerate(closes)], period=21),
+        _indicator("ema_50", [_iv(close - 10.0, i) for i, close in enumerate(closes)], period=50),
+        _indicator("ema_200", [_iv(close - 28.0, i) for i, close in enumerate(closes)], period=200),
         _indicator(
             "rsi",
             [
