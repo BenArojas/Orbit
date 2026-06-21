@@ -717,16 +717,21 @@ class AiService:
             "Inline JSON missing for %s — requesting one reformat attempt",
             symbol,
         )
-        session.add_user(
+        reformat_instruction = (
             "Your previous response did not include the required JSON block. "
-            "Please reply with ONLY a fenced ```json ... ``` block containing "
-            "the signal (direction, confidence, description, entry, stop, "
-            "target, confirmations, cautions, meta). No other text."
+            "Reply with ONLY a fenced ```json ... ``` block containing the signal "
+            "(direction, confidence, description, entry, stop, target, confirmations, "
+            "cautions, meta). No other text."
         )
+        retry_messages = [
+            *session.get_messages(),
+            {"role": "assistant", "content": narrative},
+            {"role": "user", "content": reformat_instruction},
+        ]
         try:
             retry = await asyncio.wait_for(
                 self._chat_with_provider(
-                    session.get_messages(), model=model,
+                    retry_messages, model=model,
                     provider_name=provider_name, provider=provider,
                 ),
                 timeout=_REFORMAT_TIMEOUT,

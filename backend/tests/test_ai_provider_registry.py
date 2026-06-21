@@ -13,12 +13,10 @@ INLINE_JSON_NARRATIVE = (
     "AAPL is holding above the 21 EMA.\n\n"
     "```json\n"
     "{\n"
-    '  "direction": "LONG", "confidence": 72, "description": "Trend continuation",\n'
-    '  "entry": {"price": 180.0, "note": "pullback hold"},\n'
-    '  "stop": {"price": 175.0, "note": "below structure"},\n'
-    '  "target": {"price": 192.0, "note": "prior high"},\n'
+    '  "direction": "NEUTRAL", "confidence": 50, "description": "Trend continuation",\n'
+    '  "entry": {}, "stop": {}, "target": {},\n'
     '  "confirmations": ["EMA support"], "cautions": [],\n'
-    '  "meta": {"risk_reward": "1:2.4", "score": "7/10", "adx_trend": "Firm", "volume_signal": "Normal"}\n'
+    '  "meta": {"score": "7/10", "adx_trend": "Firm", "volume_signal": "Normal"}\n'
     "}\n"
     "```"
 )
@@ -169,8 +167,8 @@ async def test_ai_service_analyze_routes_through_provider_registry():
     )
 
     assert result["session_id"]
-    assert result["signal"]["direction"] == "LONG"
-    assert result["message"] == "AAPL is holding above the 21 EMA."
+    assert result["signal"]["direction"] == "NEUTRAL"
+    assert result["message"] == "No actionable trade plan could be verified from the supplied facts."
     assert provider.calls == [
         {
             "kind": "chat",
@@ -223,7 +221,7 @@ async def test_ai_service_analyze_stream_routes_through_provider_registry():
 
     assert [event["type"] for event in events].count("token") == 2
     assert events[-1]["type"] == "done"
-    assert events[-1]["signal"]["direction"] == "LONG"
+    assert events[-1]["signal"]["direction"] == "NEUTRAL"
     assert provider.calls[0]["kind"] == "stream"
 
 
@@ -268,7 +266,7 @@ async def test_ai_service_analyze_can_route_read_only_analysis_to_openrouter():
         provider_name="openrouter",
     )
 
-    assert result["signal"]["direction"] == "LONG"
+    assert result["signal"]["direction"] == "NEUTRAL"
     assert result["provider"] == {
         "provider_name": "openrouter",
         "kind": "cloud",
@@ -345,7 +343,7 @@ async def test_ai_service_analyze_falls_back_to_ollama_when_cloud_provider_fails
         allow_fallback=True,
     )
 
-    assert result["signal"]["direction"] == "LONG"
+    assert result["signal"]["direction"] == "NEUTRAL"
     assert result["provider"] == {
         "provider_name": "ollama",
         "kind": "local",
@@ -415,7 +413,7 @@ async def test_ai_service_analyze_stream_uses_chat_metadata_for_non_streaming_pr
 
     assert events[0] == {"type": "token", "content": INLINE_JSON_NARRATIVE}
     assert events[-1]["type"] == "done"
-    assert events[-1]["message"] == "AAPL is holding above the 21 EMA."
+    assert events[-1]["message"] == "No actionable trade plan could be verified from the supplied facts."
     assert events[-1]["provider"] == {
         "provider_name": "openai",
         "kind": "cloud",
@@ -463,7 +461,7 @@ async def test_cloud_analysis_reformat_uses_the_same_request_provider():
         provider=cloud,
     )
 
-    assert result["signal"]["direction"] == "LONG"
+    assert result["signal"]["direction"] == "NEUTRAL"
     assert len(cloud.calls) == 2
     assert ollama.calls is None
 
