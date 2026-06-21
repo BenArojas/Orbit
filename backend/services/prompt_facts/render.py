@@ -14,8 +14,11 @@ def _tf_sort_key(tf: str) -> int:
 
 
 def _fact_line(f: PromptFact) -> str:
-    # "  [D.ema.stack_bullish] EMA stack bullish."
-    return f"  [{f.id}] {f.text}"
+    line = f"  [{f.id}] {f.text}"
+    if f.price_values:
+        candidates = ", ".join(f"${v:.2f}" for v in f.price_values)
+        line += f" | Grounded price candidates: {candidates}"
+    return line
 
 
 def render_prompt_facts(blocks: list[PromptContextBlock]) -> str:

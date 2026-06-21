@@ -37,6 +37,15 @@ def build_bbands_facts(
     candle_closes = [c.close for c in candles] if candles else []
     facts: list[PromptFact] = []
 
+    # All band levels — always emitted so lower/mid/upper are groundable
+    facts.append(_make(
+        timeframe, "levels_current",
+        f"BB lower ${lower:.2f}, middle ${mid:.2f}, upper ${upper:.2f}.",
+        polarity="neutral", strength=30, priority=50,
+        data={"lower": lower, "mid": mid, "upper": upper},
+        price_values=(lower, mid, upper),
+    ))
+
     # Squeeze — band-width percentile rank
     widths = [
         iv.upper - iv.lower

@@ -13,7 +13,7 @@ def _candles(closes: list[float]) -> list[CandleData]:
 
 def _ema(period: int, values: list[float]) -> IndicatorResult:
     return IndicatorResult(
-        name="ema", type="overlay",
+        name=f"ema_{period}", type="overlay",
         values=[IndicatorValue(time=1_700_000_000 + i * 86400, value=v) for i, v in enumerate(values)],
         params={"period": period},
     )

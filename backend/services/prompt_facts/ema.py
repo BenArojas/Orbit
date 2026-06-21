@@ -60,6 +60,15 @@ def build_ema_facts(
         for p in sorted(values.keys())
     ]
 
+    # All available EMA levels — always emitted so every value is groundable
+    facts.append(_make(
+        timeframe, "levels_current",
+        text=", ".join(f"EMA-{p} ${values[p]:.2f}" for p in sorted(values.keys())),
+        polarity="neutral", strength=30, priority=50,
+        data={"periods": per_period},
+        price_values=tuple(values[p] for p in sorted(values.keys())),
+    ))
+
     # Stack classification
     if not required.issubset(have):
         facts.append(_make(

@@ -71,3 +71,20 @@ class TestGuards:
         ir = IndicatorResult(name="bbands", type="overlay", values=[], params={})
         assert build_bbands_facts(symbol="TEST", timeframe="D", bbands=ir,
                                   last_close=100.0, candles=[]) == []
+
+
+class TestLevelsCurrent:
+    def test_levels_current_always_emitted_with_lower_mid_upper(self):
+        ir = _bb([(100, 105, 95)] * 5)
+        facts = build_bbands_facts(symbol="TEST", timeframe="D", bbands=ir,
+                                   last_close=100.0, candles=_candles_from_closes([100.0]))
+        lc = next((f for f in facts if f.id == "D.bbands.levels_current"), None)
+        assert lc is not None, "D.bbands.levels_current must always be emitted"
+        assert set(lc.price_values) == {95.0, 100.0, 105.0}
+
+    def test_levels_current_emitted_even_when_inside_band(self):
+        ir = _bb([(100, 110, 90)] * 5)
+        facts = build_bbands_facts(symbol="TEST", timeframe="D", bbands=ir,
+                                   last_close=100.0, candles=_candles_from_closes([100.0]))
+        ids = {f.id for f in facts}
+        assert "D.bbands.levels_current" in ids

@@ -63,6 +63,25 @@ class TestRenderer:
     def test_empty_blocks_renders_nothing(self):
         assert render_prompt_facts([]) == ""
 
+    def test_fact_with_price_values_appends_grounded_candidates(self):
+        f = PromptFact(
+            id="D.ema.stack_bullish", timeframe="D", indicator="ema",
+            text="EMA stack bullish.", polarity="bullish",
+            strength=85, priority=92, data={},
+            price_values=(110.0, 105.0, 100.0, 90.0),
+        )
+        block = PromptContextBlock(timeframe="D", tf_weight=3, facts=[f], last_close=112.0)
+        out = render_prompt_facts([block])
+        assert "Grounded price candidates:" in out
+        assert "$110.00" in out
+        assert "$90.00" in out
+
+    def test_fact_without_price_values_has_no_grounded_candidates(self):
+        f = _fact("D.rsi.above_50_rising", "RSI above 50.")
+        block = PromptContextBlock(timeframe="D", tf_weight=3, facts=[f], last_close=100.0)
+        out = render_prompt_facts([block])
+        assert "Grounded price candidates" not in out
+
     def test_empty_facts_block_renders_header_only(self):
         """C13: a block with no facts still shows the header but no section labels.
 
