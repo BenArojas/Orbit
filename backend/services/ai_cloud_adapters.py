@@ -106,11 +106,8 @@ class OpenRouterProvider:
         data = await self._post_chat(
             messages=messages, model=model, stream=False, max_tokens=max_tokens,
         )
-        content = (
-            data.get("choices", [{}])[0]
-            .get("message", {})
-            .get("content", "")
-        )
+        choice = data.get("choices", [{}])[0]
+        content = choice.get("message", {}).get("content", "")
         return AIProviderTextResult(
             content=content,
             metadata=self._metadata(
@@ -119,6 +116,7 @@ class OpenRouterProvider:
                 resolved_model=data.get("model"),
                 provider_request_id=data.get("id"),
                 duration_ms=int((time.monotonic() - started_at) * 1000),
+                finish_reason=choice.get("finish_reason"),
             ),
             provider_request_id=data.get("id"),
         )
@@ -135,6 +133,7 @@ class OpenRouterProvider:
             messages=messages, model=model, stream=True, max_tokens=max_tokens,
         )
         try:
+            finish_reason: str | None = None
             async with self._http.stream(
                 "POST",
                 "/api/v1/chat/completions",
@@ -153,6 +152,9 @@ class OpenRouterProvider:
                     except json.JSONDecodeError:
                         continue
                     choices = data.get("choices") or [{}]
+                    chunk_finish = choices[0].get("finish_reason")
+                    if chunk_finish:
+                        finish_reason = chunk_finish
                     content = (
                         choices[0]
                         .get("delta", {})
@@ -169,6 +171,7 @@ class OpenRouterProvider:
                                 resolved_model=data.get("model"),
                                 provider_request_id=data.get("id"),
                                 duration_ms=int((time.monotonic() - started_at) * 1000),
+                                finish_reason=finish_reason,
                             ).model_dump(),
                         }
         except httpx.TimeoutException as exc:
@@ -303,6 +306,7 @@ class OpenRouterProvider:
         resolved_model: str | None = None,
         provider_request_id: str | None = None,
         duration_ms: int | None = None,
+        finish_reason: str | None = None,
     ) -> AIProviderMetadata:
         cost = None
         if usage is not None and usage.get("cost") is not None:
@@ -329,6 +333,7 @@ class OpenRouterProvider:
             ),
             cached_tokens=prompt_details.get("cached_tokens"),
             duration_ms=duration_ms,
+            finish_reason=finish_reason,
         )
 
 
