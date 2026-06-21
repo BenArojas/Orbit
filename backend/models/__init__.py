@@ -1092,6 +1092,7 @@ class AIProviderMetadata(BaseModel):
     reasoning_tokens: Optional[int] = Field(default=None, exclude_if=lambda value: value is None)
     cached_tokens: Optional[int] = Field(default=None, exclude_if=lambda value: value is None)
     duration_ms: Optional[int] = Field(default=None, exclude_if=lambda value: value is None)
+    finish_reason: Optional[str] = Field(default=None, exclude_if=lambda value: value is None)
 
 
 class AIProvidersResponse(BaseModel):

@@ -655,6 +655,7 @@ export interface AIProviderMetadata {
     reasoning_tokens?: number;
     cached_tokens?: number;
     duration_ms?: number;
+    finish_reason?: string;
 }
 
 export interface AIRunAttempt {

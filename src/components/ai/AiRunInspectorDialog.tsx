@@ -18,6 +18,7 @@ import type {
   AIRunReceipt,
 } from "@/modules/parallax/api";
 import type { InspectorPhase } from "@/hooks/useAiRunInspector";
+import { useAiStore } from "@/store";
 
 interface Props {
   open: boolean;
@@ -56,6 +57,7 @@ export default function AiRunInspectorDialog({
 }: Props) {
   const payload = preview ? JSON.stringify(preview.request_body, null, 2) : null;
   const money = (value: string) => `$${Number(value).toFixed(4)}`;
+  const finishReason = useAiStore((s) => s.lastProviderMetadata?.finish_reason ?? null);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -98,7 +100,17 @@ export default function AiRunInspectorDialog({
                   <Disclosure title="Kept local" items={preview.disclosure.kept_local} />
                 </div>
               </>
-            ) : receipt ? <ReceiptSummary receipt={receipt} /> : null}
+            ) : receipt ? (
+              <>
+                <ReceiptSummary receipt={receipt} />
+                {finishReason && (
+                  <dl className="mt-3 grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 text-xs">
+                    <dt className="text-muted-foreground">Finish reason</dt>
+                    <dd>{finishReason}</dd>
+                  </dl>
+                )}
+              </>
+            ) : null}
           </TabsContent>
           <TabsContent value="payload" className="relative min-h-0 min-w-0 max-w-full overflow-y-auto">
             {payload ? (

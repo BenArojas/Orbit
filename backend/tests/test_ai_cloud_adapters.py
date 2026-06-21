@@ -501,6 +501,47 @@ async def test_openrouter_provider_normalizes_stream_chunks_and_usage_cost():
 
 
 @pytest.mark.asyncio
+async def test_openrouter_stream_finish_reason_arrives_before_usage_chunk():
+    """finish_reason on an early chunk must be present in the metadata event
+    even when the usage chunk arrives later with no finish_reason."""
+    from services.ai_cloud_adapters import OpenRouterProvider
+
+    async def handler(_request: httpx.Request) -> httpx.Response:
+        lines = [
+            # Early content chunk carries finish_reason
+            "data: " + json.dumps({
+                "choices": [{"delta": {"content": "Done."}, "finish_reason": "length"}],
+            }),
+            # Final usage chunk — no finish_reason on this chunk
+            "data: " + json.dumps({
+                "id": "gen-fr-test",
+                "model": "anthropic/claude-sonnet-4",
+                "choices": [],
+                "usage": {"prompt_tokens": 8, "completion_tokens": 3, "cost": 0.001},
+            }),
+            "data: [DONE]",
+            "",
+        ]
+        return httpx.Response(200, content="\n".join(lines))
+
+    client = httpx.AsyncClient(
+        base_url="https://openrouter.ai",
+        transport=httpx.MockTransport(handler),
+    )
+    provider = OpenRouterProvider(api_key="sk-test", http_client=client)
+    events = [
+        event async for event in provider.chat_stream_with_metadata(
+            messages=[{"role": "user", "content": "Analyze"}],
+            model="openrouter/auto",
+        )
+    ]
+    await client.aclose()
+
+    metadata = next(e["metadata"] for e in events if e.get("type") == "metadata")
+    assert metadata["finish_reason"] == "length"
+
+
+@pytest.mark.asyncio
 async def test_openrouter_provider_maps_provider_errors_to_typed_exceptions():
     from services.ai_cloud_adapters import (
         AIProviderRateLimitError,
