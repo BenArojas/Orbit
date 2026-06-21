@@ -1333,7 +1333,7 @@ SIGNAL_JSON_SCHEMA: dict = {
             "properties": {
                 "price": {"type": ["number", "null"]},
                 "source_fact_id": {"type": ["string", "null"]},
-                "note": {"type": "string"},
+                "note": {"type": ["string", "null"]},
             },
             "required": ["price", "source_fact_id", "note"],
         },
@@ -1342,7 +1342,7 @@ SIGNAL_JSON_SCHEMA: dict = {
             "properties": {
                 "price": {"type": ["number", "null"]},
                 "source_fact_id": {"type": ["string", "null"]},
-                "note": {"type": "string"},
+                "note": {"type": ["string", "null"]},
             },
             "required": ["price", "source_fact_id", "note"],
         },
@@ -1351,7 +1351,7 @@ SIGNAL_JSON_SCHEMA: dict = {
             "properties": {
                 "price": {"type": ["number", "null"]},
                 "source_fact_id": {"type": ["string", "null"]},
-                "note": {"type": "string"},
+                "note": {"type": ["string", "null"]},
             },
             "required": ["price", "source_fact_id", "note"],
         },
@@ -1368,7 +1368,6 @@ SIGNAL_JSON_SCHEMA: dict = {
         "meta": {
             "type": "object",
             "properties": {
-                "risk_reward": {"type": ["string", "null"], "description": "e.g. 2.5:1"},
                 "score": {"type": "string", "description": "e.g. 7/10"},
                 "adx_trend": {"type": "string", "description": "e.g. Strong (28.5)"},
                 "volume_signal": {"type": "string", "description": "e.g. Above avg"},

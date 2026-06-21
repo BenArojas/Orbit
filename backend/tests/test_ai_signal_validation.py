@@ -194,6 +194,33 @@ def test_safe_neutral_signal_has_null_levels():
     assert validated.meta.risk_reward is None
 
 
+def test_null_note_on_grounded_level_is_accepted():
+    raw = _neutral_with_levels()
+    raw["direction"] = "LONG"
+    raw["entry"] = {"price": 27.0, "source_fact_id": "D.ema.price_near_21", "note": None}
+    raw["stop"] = {"price": 25.5, "source_fact_id": "D.bbands.outside_lower", "note": "stop"}
+    raw["target"] = {"price": 31.5, "source_fact_id": "D.fibonacci.target_extension_1272", "note": "target"}
+
+    validated = validate_signal_draft(raw, grounding_map=GROUNDING_MAP)
+
+    assert validated.direction == "LONG"
+    assert validated.entry.price == Decimal("27.0")
+    assert validated.entry.note is None
+
+
+def test_numeric_model_risk_reward_is_ignored():
+    raw = _neutral_with_levels()
+    raw["direction"] = "LONG"
+    raw["entry"] = {"price": 27.0, "source_fact_id": "D.ema.price_near_21", "note": "entry"}
+    raw["stop"] = {"price": 25.5, "source_fact_id": "D.bbands.outside_lower", "note": "stop"}
+    raw["target"] = {"price": 31.5, "source_fact_id": "D.fibonacci.target_extension_1272", "note": "target"}
+    raw["meta"]["risk_reward"] = 1.3  # float — must be discarded, not cause a type error
+
+    validated = validate_signal_draft(raw, grounding_map=GROUNDING_MAP)
+
+    assert validated.meta.risk_reward == "3:1"  # server-computed, not "1.3"
+
+
 def test_grounding_integration_accepts_valid_long_and_rejects_invented_price():
     """Build a real PromptContextBundle, pick 3 grounded LONG candidates,
     verify validate_signal_draft accepts them; change entry by one cent → rejection."""

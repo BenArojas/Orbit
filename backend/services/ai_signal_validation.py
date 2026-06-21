@@ -4,7 +4,7 @@ from collections.abc import Mapping, Set as AbstractSet
 from decimal import Decimal
 from typing import Literal
 
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, Field, ValidationError, field_validator
 
 Direction = Literal["STRONG LONG", "LONG", "NEUTRAL", "SHORT", "STRONG SHORT"]
 GroundingMap = Mapping[str, AbstractSet[Decimal | float | int | str]]
@@ -21,7 +21,7 @@ class AISignalGroundingError(Exception):
 class SignalLevelDraft(BaseModel):
     price: Decimal | None = None
     source_fact_id: str | None = None
-    note: str
+    note: str | None = None
 
 
 class SignalMetaDraft(BaseModel):
@@ -29,6 +29,11 @@ class SignalMetaDraft(BaseModel):
     score: str | None = None
     adx_trend: str | None = None
     volume_signal: str | None = None
+
+    @field_validator("risk_reward", mode="before")
+    @classmethod
+    def _ignore_model_risk_reward(cls, _v: object) -> None:
+        return None  # server recomputes R:R from validated prices
 
 
 class SignalDraft(BaseModel):
