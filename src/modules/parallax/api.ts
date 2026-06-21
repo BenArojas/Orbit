@@ -596,10 +596,16 @@ export interface SignalData {
     checks: SignalCheck[];
 }
 
+export type AnalysisStatus = "directional" | "neutral" | "rejected";
+
 export interface AnalyzeResponse {
     session_id: string;
     signal: SignalData | null;
+    status: AnalysisStatus;
+    narrative: string | null;
+    warning: string | null;
     message: string;
+    rejected_output?: string | null;
 }
 
 export interface ChatResponse {

@@ -22,6 +22,7 @@ export function useAiRunInspector(
 ) {
   const queryClient = useQueryClient();
   const [preview, setPreview] = useState<AIAnalysisPreview | null>(null);
+  const [rejectedOutput, setRejectedOutput] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
   const [isPreviewing, setIsPreviewing] = useState(false);
   const [error, setError] = useState<Error | null>(null);
@@ -104,6 +105,11 @@ export function useAiRunInspector(
     setOpen(true);
   }, [receipt]);
 
+  const openRejected = useCallback((text: string) => {
+    setRejectedOutput(text);
+    setOpen(true);
+  }, []);
+
   const compare = useCallback(async () => {
     if (!preview || !localReady) return;
     setComparisonResult(await comparisonMutation.mutateAsync(preview.snapshot_id));
@@ -111,6 +117,7 @@ export function useAiRunInspector(
 
   return {
     preview,
+    rejectedOutput,
     receipt,
     comparison: comparisonResult,
     phase,
@@ -124,6 +131,7 @@ export function useAiRunInspector(
     review,
     send,
     openLastRun,
+    openRejected,
     compare,
   };
 }

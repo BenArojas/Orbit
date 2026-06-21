@@ -1279,13 +1279,20 @@ class AnalyzeResponse(BaseModel):
     """
     Response from POST /ai/analyze — the AI's trading signal and analysis.
 
-    signal: The structured data for the Action Signal card (null if parsing failed)
-    message: The full AI response text (always present)
-    session_id: ID for follow-up questions in this conversation
+    status:    "directional" | "neutral" | "rejected"
+    narrative: Model free-text (signal JSON stripped); null for rejected
+    warning:   Safety line shown once for neutral/rejected; null for directional
+    message:   Kept for backward compat — equals narrative (directional) or
+               warning (neutral/rejected)
+    signal:    Structured Action Signal card data; null if parsing failed
     """
     session_id: str
     signal: Optional[SignalData] = None
+    status: Literal["directional", "neutral", "rejected"]
+    narrative: Optional[str] = None
+    warning: Optional[str] = None
     message: str
+    rejected_output: Optional[str] = None
     provider: Optional[AIProviderMetadata] = None
 
 

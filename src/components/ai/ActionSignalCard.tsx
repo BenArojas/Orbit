@@ -58,9 +58,13 @@ function directionGlow(dir: SignalDirection): string {
 
 interface ActionSignalCardProps {
   signal: SignalData | null;
+  status?: "directional" | "neutral" | "rejected" | null;
+  warning?: string | null;
+  narrative?: string | null;
+  onViewRejected?: () => void;
 }
 
-export default function ActionSignalCard({ signal }: ActionSignalCardProps) {
+export default function ActionSignalCard({ signal, status, warning, narrative, onViewRejected }: ActionSignalCardProps) {
   /* Empty state — shown before any analysis has run */
   if (!signal) {
     return (
@@ -179,6 +183,40 @@ export default function ActionSignalCard({ signal }: ActionSignalCardProps) {
           </div>
         ))}
       </div>
+
+      {/* Safety warning — shown once for neutral/rejected */}
+      {warning && (status === "neutral" || status === "rejected") && (
+        <div
+          data-testid="signal-warning"
+          className="rounded-md border border-[var(--clr-orange,#ff9f1c)] bg-[rgba(255,159,28,0.06)] px-2 py-1.5 text-[10px] leading-relaxed text-[var(--clr-orange,#ff9f1c)]"
+        >
+          ⚠ {warning}
+        </div>
+      )}
+
+      {/* Model commentary — shown for neutral only, labelled "not verified" */}
+      {narrative && status === "neutral" && (
+        <div className="rounded-md border border-[var(--border)] bg-[var(--bg-0)] px-2 py-1.5">
+          <div className="mb-1 text-[8px] font-bold uppercase tracking-wider text-[var(--text-3)]">
+            Model commentary — not verified
+          </div>
+          <div className="text-[10px] leading-relaxed text-[var(--text-2)] whitespace-pre-wrap">
+            {narrative}
+          </div>
+        </div>
+      )}
+
+      {/* View raw rejected output — shown for rejected only */}
+      {status === "rejected" && onViewRejected && (
+        <button
+          type="button"
+          data-testid="view-rejected-output"
+          onClick={onViewRejected}
+          className="w-full rounded-md border border-[var(--border)] bg-[var(--bg-0)] px-2 py-1.5 text-[10px] text-[var(--text-3)] hover:text-[var(--text-2)] text-left"
+        >
+          View unverified model output →
+        </button>
+      )}
     </div>
   );
 }

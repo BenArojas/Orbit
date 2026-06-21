@@ -1394,18 +1394,20 @@ async def analyze(
     )
     status = ollama.status()
     if provider_name == "ollama" and not status["ready"]:
+        _msg = (
+            f"AI is not ready. Current state: {status['state']}. "
+            f"Please complete the AI setup first."
+        )
         return AnalyzeResponse(
-            session_id="",
-            signal=None,
-            message=f"AI is not ready. Current state: {status['state']}. "
-                    f"Please complete the AI setup first.",
+            session_id="", signal=None, status="rejected",
+            narrative=None, warning=_msg, message=_msg, rejected_output=None,
         )
 
     if provider_name == "ollama" and not model:
+        _msg = "No model selected. Please choose a model in the AI panel."
         return AnalyzeResponse(
-            session_id="",
-            signal=None,
-            message="No model selected. Please choose a model in the AI panel.",
+            session_id="", signal=None, status="rejected",
+            narrative=None, warning=_msg, message=_msg, rejected_output=None,
         )
     policy = {"routing_mode": "local_only"}
     estimated_cost = None
@@ -1478,13 +1480,14 @@ async def analyze(
             "Analysis timed out for %s at stage '%s' (%.0fs) — returning graceful error",
             request.symbol, exc.stage, exc.timeout_s,
         )
+        _msg = (
+            f"Analysis timed out while {exc.stage.replace('_', ' ')} for {request.symbol} "
+            f"(>{exc.timeout_s:.0f}s). Try a faster model or a shorter timeframe selection."
+        )
         return AnalyzeResponse(
             session_id=request.session_id or "",
-            signal=None,
-            message=(
-                f"Analysis timed out while {exc.stage.replace('_', ' ')} for {request.symbol} "
-                f"(>{exc.timeout_s:.0f}s). Try a faster model or a shorter timeframe selection."
-            ),
+            signal=None, status="rejected",
+            narrative=None, warning=_msg, message=_msg, rejected_output=None,
         )
     except (
         AIProviderAuthError,
@@ -1528,7 +1531,11 @@ async def analyze(
     return AnalyzeResponse(
         session_id=result["session_id"],
         signal=signal,
+        status=result["status"],
+        narrative=result["narrative"],
+        warning=result["warning"],
         message=result["message"],
+        rejected_output=result["rejected_output"],
         provider=provider_metadata,
     )
 

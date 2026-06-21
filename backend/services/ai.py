@@ -28,7 +28,7 @@ from collections import OrderedDict
 from dataclasses import dataclass
 from decimal import Decimal
 from time import monotonic
-from typing import TYPE_CHECKING, AsyncIterator, Optional
+from typing import TYPE_CHECKING, AsyncIterator, Literal, Optional
 
 if TYPE_CHECKING:
     from services.ai_analysis_preparation import PreparedAnalysisSnapshot
@@ -269,6 +269,21 @@ def signal_to_frontend_format(signal: dict) -> dict:
     }
 
 
+def _rejected_card() -> dict:
+    """Safe-neutral card for a rejected signal.
+
+    The warning lives only in the `warning` field, so the card body carries
+    no warning text — prevents triple-render of UNVERIFIED_TRADE_PLAN_MESSAGE
+    across description, cautions, and the warning banner.
+    """
+    card = signal_to_frontend_format(
+        safe_neutral_signal(UNVERIFIED_TRADE_PLAN_MESSAGE).model_dump(mode="python")
+    )
+    card["description"] = ""
+    card["checks"] = []
+    return card
+
+
 # ═══════════════════════════════════════════════════════════════
 #  Chat Context Manager
 # ═══════════════════════════════════════════════════════════════
@@ -326,7 +341,8 @@ class ChatSession:
 @dataclass(frozen=True)
 class _FinalizedSignalResult:
     signal: dict
-    preserve_narrative: bool
+    status: Literal["directional", "neutral", "rejected"]
+    warning: str | None
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -772,18 +788,26 @@ class AiService:
             validated_signal = validate_signal_draft(cleaned, grounding_map=grounding_map)
         except AISignalGroundingError as exc:
             log.warning("Rejected ungrounded AI signal: %s", exc)
-            validated_signal = safe_neutral_signal(
-                UNVERIFIED_TRADE_PLAN_MESSAGE
+            return _FinalizedSignalResult(
+                signal=_rejected_card(),
+                status="rejected",
+                warning=UNVERIFIED_TRADE_PLAN_MESSAGE,
             )
-        else:
-            if validated_signal.direction == "NEUTRAL":
-                validated_signal = safe_neutral_signal(
-                    UNVERIFIED_TRADE_PLAN_MESSAGE
-                )
+
+        if validated_signal.direction == "NEUTRAL":
+            # Keep the model's own description and confidence — do NOT replace
+            # with safe_neutral_signal. The trading-safety contract is met:
+            # null levels, no numeric entry/stop/target. Only status differs.
+            return _FinalizedSignalResult(
+                signal=signal_to_frontend_format(validated_signal.model_dump(mode="python")),
+                status="neutral",
+                warning=UNVERIFIED_TRADE_PLAN_MESSAGE,
+            )
 
         return _FinalizedSignalResult(
             signal=signal_to_frontend_format(validated_signal.model_dump(mode="python")),
-            preserve_narrative=validated_signal.direction != "NEUTRAL",
+            status="directional",
+            warning=None,
         )
 
     @staticmethod
@@ -799,17 +823,29 @@ class AiService:
         )
         if result is None:
             return {
+                "status": "rejected",
+                "narrative": None,
+                "warning": UNVERIFIED_TRADE_PLAN_MESSAGE,
                 "message": UNVERIFIED_TRADE_PLAN_MESSAGE,
-                "signal": signal_to_frontend_format(
-                    safe_neutral_signal(UNVERIFIED_TRADE_PLAN_MESSAGE).model_dump(mode="python")
-                ),
+                "rejected_output": response_text,
+                "signal": _rejected_card(),
             }
+
+        narrative = (
+            strip_signal_json_from_response(response_text)
+            if result.status != "rejected"
+            else None
+        )
+        # Chat history: directional gets the narrative; neutral/rejected get
+        # the warning so the commentary appears in the signal card, not the
+        # chat bubble, and the warning line appears exactly once.
+        message_for_session = narrative if result.status == "directional" else UNVERIFIED_TRADE_PLAN_MESSAGE
         return {
-            "message": (
-                strip_signal_json_from_response(response_text)
-                if result.preserve_narrative
-                else UNVERIFIED_TRADE_PLAN_MESSAGE
-            ),
+            "status": result.status,
+            "narrative": narrative,
+            "warning": result.warning,
+            "message": message_for_session,
+            "rejected_output": response_text if result.status == "rejected" else None,
             "signal": result.signal,
         }
 
@@ -928,7 +964,11 @@ class AiService:
         return {
             "session_id": session.session_id,
             "signal": finalized["signal"],
+            "status": finalized["status"],
+            "narrative": finalized["narrative"],
+            "warning": finalized["warning"],
             "message": finalized["message"],
+            "rejected_output": finalized["rejected_output"],
             "provider": provider_result.metadata.model_dump(),
         }
 
@@ -1069,7 +1109,11 @@ class AiService:
             "type": "done",
             "session_id": session.session_id,
             "signal": finalized["signal"],
+            "status": finalized["status"],
+            "narrative": finalized["narrative"],
+            "warning": finalized["warning"],
             "message": finalized["message"],
+            "rejected_output": finalized["rejected_output"],
             "provider": provider_metadata,
         }
 
@@ -1157,8 +1201,12 @@ class AiService:
         yield {
             "type": "done",
             "session_id": session.session_id,
-            "signal": session.signal,
+            "signal": finalized["signal"],
+            "status": finalized["status"],
+            "narrative": finalized["narrative"],
+            "warning": finalized["warning"],
             "message": finalized["message"],
+            "rejected_output": finalized["rejected_output"],
             "provider": provider_metadata,
         }
 

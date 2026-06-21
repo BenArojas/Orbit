@@ -1447,7 +1447,11 @@ def test_analyze_returns_cloud_provider_metadata_for_enabled_openrouter():
             return {
                 "session_id": "session-1",
                 "signal": None,
+                "status": "neutral",
+                "narrative": "Cloud narrative.",
+                "warning": None,
                 "message": "Cloud narrative.",
+                "rejected_output": None,
                 "provider": {
                     "provider_name": "openrouter",
                     "kind": "cloud",
@@ -1586,7 +1590,11 @@ def test_analyze_keychain_failure_falls_back_to_ollama_with_truthful_usage():
             return {
                 "session_id": "fallback-session",
                 "signal": None,
+                "status": "neutral",
+                "narrative": "Local fallback.",
+                "warning": None,
                 "message": "Local fallback.",
+                "rejected_output": None,
                 "provider": {"provider_name": "ollama", "kind": "local", "model": "gemma4:26b",
                              "estimated_cost": None, "actual_cost": None, "fallback_used": False},
             }

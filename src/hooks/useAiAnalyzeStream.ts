@@ -28,6 +28,7 @@ import type {
   AIProviderMetadata,
   AIProviderName,
   AIRunReceipt,
+  AnalysisStatus,
   AiContextMode,
   FibonacciSnapshot,
 } from "@/modules/parallax/api";
@@ -68,7 +69,11 @@ interface SseDoneEvent {
   type: "done";
   session_id: string;
   signal: unknown; // typed as SignalData on the consuming side
+  status: AnalysisStatus;
+  narrative: string | null;
+  warning: string | null;
   message: string;
+  rejected_output?: string | null;
   provider?: AIProviderMetadata;
   receipt?: AIRunReceipt;
 }
@@ -136,6 +141,7 @@ export function useAiAnalyzeStream() {
     setSessionId,
     addMessage,
     setSignal,
+    setAnalysisOutcome,
     setAnalyzing,
     setStreaming,
     setStreamingContent,
@@ -199,7 +205,11 @@ export function useAiAnalyzeStream() {
 
         let finalSessionId = "session_id" in req ? req.session_id ?? "" : "";
         let finalSignal: unknown = null;
+        let finalStatus: AnalysisStatus = "rejected";
+        let finalNarrative: string | null = null;
+        let finalWarning: string | null = null;
         let finalMessage = "";
+        let finalRejectedOutput: string | null = null;
         let finalProviderMetadata: AIProviderMetadata | null = null;
         let finalReceipt: AIRunReceipt | null = null;
         let finalError: string | null = null;
@@ -223,7 +233,11 @@ export function useAiAnalyzeStream() {
             } else if (ev.type === "done") {
               finalSessionId = ev.session_id;
               finalSignal = ev.signal;
+              finalStatus = ev.status;
+              finalNarrative = ev.narrative;
+              finalWarning = ev.warning;
               finalMessage = ev.message;
+              finalRejectedOutput = ev.rejected_output ?? null;
               finalProviderMetadata = ev.provider ?? null;
               finalReceipt = ev.receipt ?? null;
               sawDone = true;
@@ -240,7 +254,11 @@ export function useAiAnalyzeStream() {
         } else if (trailing?.type === "done") {
           finalSessionId = trailing.session_id;
           finalSignal = trailing.signal;
+          finalStatus = trailing.status;
+          finalNarrative = trailing.narrative;
+          finalWarning = trailing.warning;
           finalMessage = trailing.message;
+          finalRejectedOutput = trailing.rejected_output ?? null;
           finalProviderMetadata = trailing.provider ?? null;
           finalReceipt = trailing.receipt ?? null;
           sawDone = true;
@@ -272,6 +290,7 @@ export function useAiAnalyzeStream() {
           });
           // SignalData typing lives in components/ai — store accepts unknown shape
           setSignal(finalSignal as never);
+          setAnalysisOutcome(finalStatus, finalWarning, finalNarrative, finalRejectedOutput);
           setLastProviderMetadata(finalProviderMetadata);
           setLastRunReceipt(finalReceipt);
           lifecycle?.onCompleted?.(finalReceipt);
@@ -322,7 +341,7 @@ export function useAiAnalyzeStream() {
     [
       isAnalyzing, clearChat, setAnalyzing, setStreaming, setStreamingContent,
       appendStreamingContent, addMessage, setSessionId, setSignal,
-      setLastProviderMetadata, pushResponseTime,
+      setAnalysisOutcome, setLastProviderMetadata, pushResponseTime,
       setLastRunReceipt,
     ],
   );

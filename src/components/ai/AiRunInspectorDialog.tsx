@@ -22,6 +22,7 @@ import type { InspectorPhase } from "@/hooks/useAiRunInspector";
 interface Props {
   open: boolean;
   preview: AIAnalysisPreview | null;
+  rejectedOutput?: string | null;
   receipt?: AIRunReceipt | null;
   comparison?: AIComparisonResponse | null;
   localReady?: boolean;
@@ -30,7 +31,7 @@ interface Props {
   compareError?: Error | null;
   error?: Error | null;
   phase?: InspectorPhase;
-  initialTab?: "summary" | "receipt";
+  initialTab?: "summary" | "payload" | "receipt" | "unverified";
   onOpenChange: (open: boolean) => void;
   onConfirm: (snapshotId: string) => void;
   onCompare?: () => void;
@@ -39,6 +40,7 @@ interface Props {
 export default function AiRunInspectorDialog({
   open,
   preview,
+  rejectedOutput = null,
   receipt = null,
   comparison = null,
   localReady = false,
@@ -78,6 +80,7 @@ export default function AiRunInspectorDialog({
             <TabsTrigger value="payload">Payload</TabsTrigger>
             <TabsTrigger value="receipt">Receipt</TabsTrigger>
             <TabsTrigger value="compare">Compare</TabsTrigger>
+            {rejectedOutput && <TabsTrigger value="unverified">Unverified</TabsTrigger>}
           </TabsList>
           <TabsContent value="summary" className="min-h-0 min-w-0 max-w-full overflow-y-auto">
             {preview ? (
@@ -131,6 +134,30 @@ export default function AiRunInspectorDialog({
               </p>
             )}
           </TabsContent>
+          {rejectedOutput && (
+            <TabsContent value="unverified" className="relative min-h-0 min-w-0 max-w-full overflow-y-auto">
+              <p className="mb-2 text-xs text-muted-foreground">
+                Raw model output — not verified. Grounding checks failed.
+              </p>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-sm"
+                title="Copy output"
+                aria-label="Copy unverified output"
+                className="absolute right-2 top-2"
+                onClick={() => void navigator.clipboard?.writeText(rejectedOutput)}
+              >
+                <Copy />
+              </Button>
+              <pre
+                data-testid="ai-rejected-output"
+                className="max-h-[55vh] max-w-full whitespace-pre-wrap break-words rounded-md bg-muted p-3 pr-10 text-[11px] leading-relaxed"
+              >
+                {rejectedOutput}
+              </pre>
+            </TabsContent>
+          )}
           <TabsContent value="compare" className="min-h-0 min-w-0 max-w-full overflow-y-auto">
             <p className="mb-3 text-xs text-muted-foreground">
               Same prepared market facts and prompt.

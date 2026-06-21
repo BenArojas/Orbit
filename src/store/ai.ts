@@ -16,6 +16,7 @@
 
 import { create } from "zustand";
 import type { SignalData } from "@/components/ai";
+import type { AnalysisStatus } from "@/modules/parallax/api";
 import type {
   AIProviderMetadata,
   AIRunReceipt,
@@ -83,6 +84,10 @@ interface AiState {
   sessionId: string | null;
   messages: ChatMessage[];
   signal: SignalData | null;
+  analysisStatus: AnalysisStatus | null;
+  analysisWarning: string | null;
+  analysisNarrative: string | null;
+  analysisRejectedOutput: string | null;
 
   /* ── Loading states ── */
   isAnalyzing: boolean;
@@ -108,6 +113,7 @@ interface AiState {
   setSessionId: (id: string) => void;
   addMessage: (msg: ChatMessage) => void;
   setSignal: (signal: SignalData | null) => void;
+  setAnalysisOutcome: (status: AnalysisStatus, warning: string | null, narrative: string | null, rejectedOutput: string | null) => void;
   clearChat: () => void;
 
   /* ── Actions: Loading ── */
@@ -144,6 +150,10 @@ export const useAiStore = create<AiState>()((set) => ({
   sessionId: null,
   messages: [],
   signal: null,
+  analysisStatus: null,
+  analysisWarning: null,
+  analysisNarrative: null,
+  analysisRejectedOutput: null,
 
   // Loading
   isAnalyzing: false,
@@ -206,11 +216,18 @@ export const useAiStore = create<AiState>()((set) => ({
 
   setSignal: (signal) => set({ signal }),
 
+  setAnalysisOutcome: (status, warning, narrative, rejectedOutput) =>
+    set({ analysisStatus: status, analysisWarning: warning, analysisNarrative: narrative, analysisRejectedOutput: rejectedOutput }),
+
   clearChat: () =>
     set({
       sessionId: null,
       messages: [],
       signal: null,
+      analysisStatus: null,
+      analysisWarning: null,
+      analysisNarrative: null,
+      analysisRejectedOutput: null,
       streamingContent: "",
       lastProviderMetadata: null,
       lastRunReceipt: null,

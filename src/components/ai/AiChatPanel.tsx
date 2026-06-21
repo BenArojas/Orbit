@@ -174,6 +174,10 @@ export default function AiChatPanel({ activeConid, activeSymbol, fibonacci, char
     sessionId,
     messages,
     signal,
+    analysisStatus,
+    analysisWarning,
+    analysisNarrative,
+    analysisRejectedOutput,
     isAnalyzing,
     lastProviderMetadata,
     providers = [],
@@ -444,7 +448,17 @@ export default function AiChatPanel({ activeConid, activeSymbol, fibonacci, char
                     {inspector.error.message}
                   </div>
                 )}
-                <ActionSignalCard signal={signal} />
+                <ActionSignalCard
+                  signal={signal}
+                  status={analysisStatus}
+                  warning={analysisWarning}
+                  narrative={analysisNarrative}
+                  onViewRejected={
+                    analysisRejectedOutput
+                      ? () => inspector.openRejected(analysisRejectedOutput)
+                      : undefined
+                  }
+                />
               </div>
 
               {/* Initial prompt when no messages */}
@@ -557,10 +571,11 @@ export default function AiChatPanel({ activeConid, activeSymbol, fibonacci, char
           </div>
         </div>
       )}
-      {inspector.preview && (
+      {(inspector.preview || inspector.rejectedOutput) && (
         <AiRunInspectorDialog
           open={inspector.open}
           preview={inspector.preview}
+          rejectedOutput={inspector.rejectedOutput}
           receipt={inspector.receipt}
           comparison={inspector.comparison}
           localReady={isReady}
@@ -573,10 +588,12 @@ export default function AiChatPanel({ activeConid, activeSymbol, fibonacci, char
           phase={inspector.phase}
           error={inspector.error}
           initialTab={
-            inspector.receipt
-            && (inspector.phase === "completed" || inspector.phase === "failed")
-              ? "receipt"
-              : "summary"
+            inspector.rejectedOutput && !inspector.preview
+              ? "unverified"
+              : inspector.receipt
+                && (inspector.phase === "completed" || inspector.phase === "failed")
+                ? "receipt"
+                : "summary"
           }
           compareError={inspector.compareError}
           onOpenChange={inspector.setOpen}

@@ -374,7 +374,7 @@ async def test_analyze_rejected_directional_output_returns_withheld_message_and_
 
     assert result["message"] == DETERMINISTIC_NEUTRAL
     assert result["signal"]["direction"] == "NEUTRAL"
-    assert result["signal"]["description"] == DETERMINISTIC_NEUTRAL
+    assert result["signal"]["description"] == ""
     assert [level["value"] for level in result["signal"]["levels"]] == ["—", "—", "—"]
     assert result["signal"]["meta"][0]["value"] == "—"
 
@@ -401,84 +401,6 @@ async def test_analyze_preserves_valid_grounded_directional_narrative_and_card()
     assert result["message"] == "Bullish continuation backed by [D.ema.price_near_21]."
     assert result["signal"]["direction"] == "LONG"
     assert [level["value"] for level in result["signal"]["levels"]] == ["$100.00", "$98.00", "$104.00"]
-
-
-@pytest.mark.asyncio
-async def test_analyze_replaces_contradictory_neutral_narrative_deterministically():
-    service = _service_for(
-        "Strong LONG: buy the breakout now.\n\n```json\n"
-        '{"direction":"NEUTRAL","confidence":34,"description":"Mixed evidence",'
-        '"entry":{"price":null,"source_fact_id":null,"note":"No grounded level"},'
-        '"stop":{"price":null,"source_fact_id":null,"note":"No grounded level"},'
-        '"target":{"price":null,"source_fact_id":null,"note":"No grounded level"},'
-        '"confirmations":["Trend unclear"],"cautions":["Sparse evidence"],"meta":{"risk_reward":null}}\n```'
-    )
-
-    result = await service.analyze(
-        symbol="AAPL",
-        timeframe_data={},
-        indicators_display=["EMA Stack"],
-        indicator_names=["ema"],
-        model="gemma4:26b",
-    )
-
-    assert result["message"] == DETERMINISTIC_NEUTRAL
-    assert result["signal"]["direction"] == "NEUTRAL"
-    assert result["signal"]["description"] == DETERMINISTIC_NEUTRAL
-
-
-@pytest.mark.asyncio
-async def test_analyze_replaces_ordinary_neutral_narrative_deterministically():
-    service = _service_for(
-        "Evidence is mixed and does not support an actionable setup.\n\n```json\n"
-        '{"direction":"NEUTRAL","confidence":34,"description":"Mixed evidence",'
-        '"entry":{"price":null,"source_fact_id":null,"note":"No grounded level"},'
-        '"stop":{"price":null,"source_fact_id":null,"note":"No grounded level"},'
-        '"target":{"price":null,"source_fact_id":null,"note":"No grounded level"},'
-        '"confirmations":["Trend unclear"],"cautions":["Sparse evidence"],"meta":{"risk_reward":null}}\n```'
-    )
-
-    result = await service.analyze(
-        symbol="AAPL",
-        timeframe_data={},
-        indicators_display=["EMA Stack"],
-        indicator_names=["ema"],
-        model="gemma4:26b",
-    )
-
-    assert result["message"] == DETERMINISTIC_NEUTRAL
-    assert result["signal"]["direction"] == "NEUTRAL"
-    assert result["signal"]["description"] == DETERMINISTIC_NEUTRAL
-
-
-@pytest.mark.asyncio
-async def test_analyze_reformat_fallback_neutral_replaces_contradictory_narrative_deterministically():
-    provider = _QueuedProvider([
-        "Strong LONG: buy above resistance now.",
-        (
-            "```json\n"
-            '{"direction":"NEUTRAL","confidence":34,"description":"Mixed evidence",'
-            '"entry":{"price":null,"source_fact_id":null,"note":"No grounded level"},'
-            '"stop":{"price":null,"source_fact_id":null,"note":"No grounded level"},'
-            '"target":{"price":null,"source_fact_id":null,"note":"No grounded level"},'
-            '"confirmations":["Trend unclear"],"cautions":["Sparse evidence"],"meta":{"risk_reward":null}}\n```'
-        ),
-    ])
-    service = _PromptStubAiService(
-        provider_registry=AIProviderRegistry({"ollama": provider})
-    )
-
-    result = await service.analyze(
-        symbol="AAPL",
-        timeframe_data={},
-        indicators_display=["EMA Stack"],
-        indicator_names=["ema"],
-        model="gemma4:26b",
-    )
-
-    assert result["message"] == DETERMINISTIC_NEUTRAL
-    assert result["signal"]["direction"] == "NEUTRAL"
-    assert result["signal"]["description"] == DETERMINISTIC_NEUTRAL
 
 
 @pytest.mark.asyncio
