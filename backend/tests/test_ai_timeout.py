@@ -128,15 +128,22 @@ class TestAiServiceOneShot:
         assert result["signal"]["direction"] == "NEUTRAL"
         # NEUTRAL direction → policy message; original narrative preserved in result["narrative"]
         assert result["message"] == "No actionable trade plan could be verified from the supplied facts."
-        # B2: reformat context must include the original narrative as an assistant turn
-        # followed by a user instruction — session must NOT be mutated
+        # B2 + N1: reformat context must include the original narrative as an assistant
+        # turn that appears BEFORE the reformat user instruction — session NOT mutated
         reformat_msgs = chat_mock.call_args_list[1].args[0]
-        assistant_contents = [m["content"] for m in reformat_msgs if m["role"] == "assistant"]
-        user_contents = [m["content"] for m in reformat_msgs if m["role"] == "user"]
-        assert any("No JSON in this narrative." in c for c in assistant_contents), \
-            "original narrative must appear as assistant message in reformat context"
-        assert any("json" in c.lower() for c in user_contents), \
-            "reformat instruction must appear as user message"
+        narrative_idx = next(
+            (i for i, m in enumerate(reformat_msgs)
+             if m["role"] == "assistant" and "No JSON in this narrative." in m["content"]),
+            None,
+        )
+        reformat_idx = next(
+            (i for i, m in enumerate(reformat_msgs)
+             if m["role"] == "user" and "did not include the required JSON block" in m["content"]),
+            None,
+        )
+        assert narrative_idx is not None, "original narrative must appear as assistant message"
+        assert reformat_idx is not None, "reformat instruction must appear as user message"
+        assert narrative_idx < reformat_idx, "assistant narrative must precede the reformat instruction"
 
     @pytest.mark.asyncio
     async def test_reformat_timeout_returns_null_signal(self):

@@ -94,7 +94,6 @@ export default function AiRunInspectorDialog({
                   <dt className="text-muted-foreground">Maximum</dt><dd>{money(preview.cost.maximum_cost_usd)}</dd>
                   <dt className="text-muted-foreground">Fallback</dt><dd>{preview.fallback_enabled ? "Local Ollama" : "Disabled"}</dd>
                   <dt className="text-muted-foreground">Expires</dt><dd>{new Date(preview.expires_at).toLocaleTimeString()}</dd>
-                  {finishReason && <><dt className="text-muted-foreground">Finish reason</dt><dd>{finishReason}</dd></>}
                 </dl>
                 <div className="mt-4 grid gap-4 sm:grid-cols-2">
                   <Disclosure title="Sent to cloud" items={preview.disclosure.sent_to_cloud} />

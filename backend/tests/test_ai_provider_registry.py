@@ -3,6 +3,8 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
+from decimal import Decimal
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -20,6 +22,27 @@ INLINE_JSON_NARRATIVE = (
     "}\n"
     "```"
 )
+
+# Grounded LONG fixture: each level has a source_fact_id backed by _GROUNDED_LONG_MAP.
+# stop(177) < entry(182) < target(192) satisfies LONG geometry.
+_GROUNDED_LONG_NARRATIVE = (
+    "AAPL broke out above resistance.\n\n"
+    "```json\n"
+    "{\n"
+    '  "direction": "LONG", "confidence": 72, "description": "Breakout continuation",\n'
+    '  "entry":  {"price": 182.00, "source_fact_id": "close_0", "note": "breakout bar"},\n'
+    '  "stop":   {"price": 177.00, "source_fact_id": "ema_21_0", "note": "EMA support"},\n'
+    '  "target": {"price": 192.00, "source_fact_id": "swing_high_0", "note": "prior high"},\n'
+    '  "confirmations": ["Volume breakout"], "cautions": [],\n'
+    '  "meta": {}\n'
+    "}\n"
+    "```"
+)
+_GROUNDED_LONG_MAP = {
+    "close_0":      frozenset([Decimal("182.00")]),
+    "ema_21_0":     frozenset([Decimal("177.00")]),
+    "swing_high_0": frozenset([Decimal("192.00")]),
+}
 
 
 @dataclass
@@ -492,3 +515,34 @@ async def test_cloud_analysis_follow_up_continues_with_session_provider():
     assert len(cloud.calls) == 2
     assert cloud.calls[-1]["model"] == "openrouter/auto"
     assert ollama.calls is None
+
+
+@pytest.mark.asyncio
+async def test_ai_service_analyze_routes_grounded_long():
+    """A properly-grounded LONG signal passes grounding validation and routes as LONG.
+
+    S2: restores directional coverage that was lost when the NEUTRAL fixture
+    cleanup removed all LONG assertions (those fixtures lacked source_fact_id).
+    Uses a patched _prepare_analysis_payload to inject the matching grounding map.
+    """
+    from services.ai_providers import AIProviderRegistry
+
+    class GroundedFakeProvider(FakeProvider):
+        async def chat(self, *, messages, model, think=None):  # type: ignore[override]
+            return _GROUNDED_LONG_NARRATIVE
+
+    svc = AiService(provider_registry=AIProviderRegistry({"ollama": GroundedFakeProvider()}))
+
+    with patch.object(svc, "_prepare_analysis_payload", AsyncMock(return_value=(
+        [{"role": "system", "content": "s"}, {"role": "user", "content": "u"}],
+        _GROUNDED_LONG_MAP,
+    ))):
+        result = await svc.analyze(
+            symbol="AAPL",
+            timeframe_data={"D": {"candles": [], "indicators": [], "fibonacci": None}},
+            indicators_display=["RSI"],
+            indicator_names=["rsi"],
+            model="gemma4:26b",
+        )
+
+    assert result["signal"]["direction"] == "LONG"
