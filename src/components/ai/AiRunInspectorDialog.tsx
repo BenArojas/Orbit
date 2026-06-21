@@ -116,7 +116,7 @@ export default function AiRunInspectorDialog({
                 </Button>
                 <pre
                   data-testid="ai-run-payload"
-                  className="max-h-[55vh] max-w-full whitespace-pre-wrap break-words rounded-md bg-muted p-3 pr-10 text-[11px] leading-relaxed"
+                  className="max-h-[55vh] max-w-full overflow-auto whitespace-pre-wrap break-words rounded-md bg-muted p-3 pr-10 text-[11px] leading-relaxed"
                 >
                   {payload}
                 </pre>
@@ -152,7 +152,7 @@ export default function AiRunInspectorDialog({
               </Button>
               <pre
                 data-testid="ai-rejected-output"
-                className="max-h-[55vh] max-w-full whitespace-pre-wrap break-words rounded-md bg-muted p-3 pr-10 text-[11px] leading-relaxed"
+                className="max-h-[55vh] max-w-full overflow-auto whitespace-pre-wrap break-words rounded-md bg-muted p-3 pr-10 text-[11px] leading-relaxed"
               >
                 {rejectedOutput}
               </pre>

@@ -34,13 +34,13 @@ export default function AiModelSelector({
   const currentModel = models.find((m) => m.name === selectedModel);
 
   return (
-    <div className="relative">
+    <div className="relative min-w-0 flex-1">
       {/* Trigger button */}
       <button
         type="button"
         disabled={disabled}
         onClick={() => setIsOpen(!isOpen)}
-        className="flex items-center gap-1.5 rounded-md border border-[var(--border)] bg-[var(--bg-0)] px-2 py-1 text-[10px] transition-all hover:border-[var(--clr-cyan)] disabled:cursor-not-allowed disabled:opacity-50"
+        className="flex w-full min-w-0 items-center gap-1.5 rounded-md border border-[var(--border)] bg-[var(--bg-0)] px-2 py-1 text-[10px] transition-all hover:border-[var(--clr-cyan)] disabled:cursor-not-allowed disabled:opacity-50"
       >
         <div className="h-1.5 w-1.5 rounded-full bg-[var(--clr-green)] shadow-[0_0_6px_var(--clr-green)]" />
         <span className="font-medium text-[var(--text-2)] max-w-[120px] truncate">
@@ -54,7 +54,7 @@ export default function AiModelSelector({
 
       {/* Dropdown */}
       {isOpen && (
-        <div className="absolute right-0 top-full z-50 mt-1 min-w-[220px] rounded-md border border-[var(--border)] bg-[var(--bg-1)] shadow-lg shadow-black/40">
+        <div className="absolute inset-x-0 top-full z-50 mt-1 min-w-0 rounded-md border border-[var(--border)] bg-[var(--bg-1)] shadow-lg shadow-black/40">
           {/* Model list */}
           <div className="max-h-[200px] overflow-y-auto py-1">
             {models.length === 0 ? (
