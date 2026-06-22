@@ -72,11 +72,13 @@ export function useAiRunInspector(
       },
       onCompleted: async (nextReceipt) => {
         if (nextReceipt) {
+          setPreview(null);
           setTerminalReceipt(nextReceipt);
           setPhase("completed");
           return;
         }
         if (!acceptedForRequest) {
+          setPreview(null);
           setPhase("completed");
           return;
         }
@@ -84,12 +86,14 @@ export function useAiRunInspector(
           queryKey: ["ai-runs", 10],
           queryFn: () => parallaxApi.aiRuns(10),
         });
+        setPreview(null);
         setTerminalReceipt(
           receipts.find((candidate) => candidate.run_id === acceptedForRequest) ?? null,
         );
         setPhase("completed");
       },
       onRejected: (cause, nextReceipt) => {
+        setPreview(null);
         setError(cause);
         setTerminalReceipt(nextReceipt);
         setPhase("failed");

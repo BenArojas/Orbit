@@ -17,6 +17,7 @@ const aiStoreState = {
   appendStreamingContent: vi.fn(),
   clearChat: vi.fn(),
   pushResponseTime: vi.fn(),
+  setAnalysisOutcome: vi.fn(),
   setLastProviderMetadata: vi.fn(),
   setLastRunReceipt: vi.fn(),
 };

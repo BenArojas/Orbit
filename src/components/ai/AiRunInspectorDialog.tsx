@@ -103,6 +103,7 @@ export default function AiRunInspectorDialog({
             ) : receipt ? (
               <>
                 <ReceiptSummary receipt={receipt} />
+                {/* ponytail: finish_reason is live-only, not persisted per run — old runs opened via openLastRun won't show it */}
                 {finishReason && (
                   <dl className="mt-3 grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 text-xs">
                     <dt className="text-muted-foreground">Finish reason</dt>
