@@ -21,6 +21,14 @@ original rationale behind a shipped v1 feature.
 | MoonMarket transactions | `2026-05-26-moonmarket-transactions.md` | `2026-05-26-moonmarket-transactions-design.md` |
 | Today page / watchlists / triggers | `2026-05-20-today-page-watchlists-triggers-plan.md` | `2026-05-20-watchlists-triggers-design.md`, `2026-05-20-watchlists-triggers-recommendations.md` |
 | Inflect basis backfill / recovery | `inflect-basis-backfill-general-plan.md`, `2026-06-02-inflect-basis-recovery-implementation-plan.md` | — |
+| **Cloud + Hybrid AI (v2, shipped to dev)** — parent mission, slices 1–8 | `2026-06-15-orbit-v2-cloud-hybrid-ai.md` | `2026-06-05-orbit-v2-cloud-hybrid-ai-design.md` *(kept active — v2 still builds on it)* |
+| AI Run Inspector + OpenRouter review | `2026-06-17-ai-run-inspector-openrouter-review.md` | — |
+| AI Run Inspector UX lifecycle remediation | `2026-06-19-ai-run-inspector-ux-lifecycle-remediation.md` | — |
+| AI provider controls simplification | `2026-06-18-ai-provider-controls-simplification.md` | `2026-06-18-ai-provider-controls-simplification-design.md` |
+| Budget-first AI workflow | `2026-06-20-budget-first-ai-workflow.md` | `2026-06-20-budget-first-ai-workflow-design.md` |
+| AI analysis data + grounding pipeline | `2026-06-21-ai-analysis-data-grounding-pipeline.md` | — |
+| AI neutral-vs-rejected signal handling | — | `2026-06-21-ai-neutral-vs-rejected-handling-design.md` |
+| AI streaming reliability (finish_reason + reformat context) | `2026-06-21-ai-streaming-reliability-finish-reason-reformat.md` | — |
 
 ## What was kept active (not archived)
 
@@ -32,6 +40,8 @@ Left in `docs/superpowers/` because v2 builds directly on them:
 - **OrderTicket** (the real-money order path the v2 trade-manager extends): the `2026-05-26-orbit-orderticket*` and `2026-06-03-orderticket-trailing-rr-cash*` docs
 - **Inflect** journal (the next module to build): `2026-06-01-inflect-journal-*`
 - `docs/ibkr-pacing.md` — IBKR rate/pacing limits, needed for v2 automation
+- **Cloud + Hybrid AI** master design: `specs/2026-06-05-orbit-v2-cloud-hybrid-ai-design.md` — the parent mission shipped, but v2 still builds on this design.
+- **AI prompt grounding + evaluation loop:** `plans/2026-06-19-ai-prompt-grounding-evaluation-loop.md` — validator/grader/runner shipped, but live OpenRouter evaluation and prompt promotion never ran. This is the remaining semantic-reasoning track (prompt quality), kept active.
 
 ## What was deleted (recoverable via git history)
 

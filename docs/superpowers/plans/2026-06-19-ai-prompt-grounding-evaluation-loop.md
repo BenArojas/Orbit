@@ -8,7 +8,7 @@
 
 **Tech Stack:** Python 3.12, Pydantic v2, pytest, existing prompt-fact pipeline and OpenRouter adapter; React 19/TypeScript for nullable level rendering; no prompt-optimization dependency.
 
-**Status:** APPROVED FOR EXECUTION on 2026-06-20 and QUEUED after the UX lifecycle plan. `PROJECT_PLAN.md` tracks the dependency. Do not begin until the UX plan is complete and reviewed; then execute Slice 1 only.
+**Status:** PARTIALLY SHIPPED. The deterministic validator, graders, and HITL runner (Slices 1–2 and the runner boundary) are merged to `dev` as part of the Cloud + Hybrid AI mission. **Remaining open: the live OpenRouter evaluation and prompt promotion (Slice 3) never ran** — this is the active semantic-reasoning track. The prerequisite UX lifecycle remediation is complete and archived under `docs/archive/`.
 
 **Remediation update (2026-06-20):** The focused review-blocker slice is now verified on `feature/orbit-v2-cloud-hybrid-ai-spec`. Grounding is enforced against exact rendered fact IDs plus explicit price-bearing values, eval fixtures derive their IDs/maps from the production fact pipeline, production normalizes legacy confidence labels before strict validation, and candidate comparison now fails closed when required telemetry is unavailable. Live OpenRouter evaluation and prompt promotion remain pending.
 
@@ -16,7 +16,7 @@
 
 ## Global Constraints
 
-- Do not execute until `2026-06-19-ai-run-inspector-ux-lifecycle-remediation.md` is complete and reviewed.
+- Prerequisite satisfied: the UX lifecycle remediation shipped (archived under `docs/archive/`); Slices 1–2 and the runner are merged. Resume at Slice 3 (live evaluation).
 - `NEUTRAL` or insufficient verified evidence returns no numeric entry, stop, target, or R:R.
 - A model response never becomes authoritative merely because its JSON parses.
 - Deterministic graders own factual, schema, geometry, and arithmetic checks.
