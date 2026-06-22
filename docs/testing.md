@@ -52,6 +52,6 @@ low-risk one-off bug may use manual verification.
 | Stored-data integrity | `backend/tests/test_db_concurrent_writes.py` |
 | Sidecar/external failure | `backend/tests/test_gateway.py`, `src/lib/sidecarClient.test.ts` |
 | Module entry/main flows | tests beside `src/orbit/` and each `src/modules/<module>/` surface |
-| Cloud secrets/privacy | Add one public-boundary test when the approved cloud path reaches `dev` |
+| Cloud secrets/privacy | `backend/tests/test_ai_keystore.py`, `backend/tests/test_ai_provider_routes.py` |
 
 These are discovery pointers, not commands to read or run every listed file.

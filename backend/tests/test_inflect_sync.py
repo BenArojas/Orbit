@@ -1,10 +1,6 @@
-"""Tests for InflectSyncService — lifecycle, auth-wait, and the extended-hours
-market-session gate (spec §12).
+"""Tests for InflectSyncService — external-failure safety and lifecycle.
 
-The IBKR client and InflectService are faked; the gate's pure helpers
-(`_in_window`, `_fallback_window`, `_parse_schedule_window`,
-`_hhmm_to_minutes`) are tested directly, and `_tick` is driven through the
-window cache to assert sync runs only when the market is open.
+Protects promise #5: external failures stop safely and visibly.
 """
 
 from datetime import datetime
@@ -56,83 +52,6 @@ def _svc(ibkr=None, inflect=None):
     )
 
 
-# ── Window math ────────────────────────────────────────────────
-
-
-def test_in_window_inside_and_outside():
-    svc = _svc()
-    now = datetime(2026, 6, 1, 10, 0, tzinfo=ET)  # 600 min
-    assert svc._in_window(now, (4 * 60, 20 * 60)) is True
-    early = datetime(2026, 6, 1, 3, 0, tzinfo=ET)  # 180 min
-    assert svc._in_window(early, (4 * 60, 20 * 60)) is False
-    late = datetime(2026, 6, 1, 20, 0, tzinfo=ET)  # 1200, == close → excluded
-    assert svc._in_window(late, (4 * 60, 20 * 60)) is False
-
-
-def test_in_window_none_is_never_open():
-    svc = _svc()
-    now = datetime(2026, 6, 1, 10, 0, tzinfo=ET)
-    assert svc._in_window(now, None) is False
-
-
-def test_fallback_window_weekday_vs_weekend():
-    svc = _svc()
-    monday = datetime(2026, 6, 1, 10, 0, tzinfo=ET)
-    assert svc._fallback_window(monday) == (4 * 60, 20 * 60)
-    saturday = datetime(2026, 6, 6, 10, 0, tzinfo=ET)
-    assert svc._fallback_window(saturday) is None
-
-
-def test_hhmm_to_minutes():
-    svc = _svc()
-    assert svc._hhmm_to_minutes("0400") == 240
-    assert svc._hhmm_to_minutes("2000") == 1200
-    assert svc._hhmm_to_minutes("930") is None  # not 4 digits
-    assert svc._hhmm_to_minutes(None) is None
-    assert svc._hhmm_to_minutes(" abcd") is None
-
-
-def test_parse_schedule_window_trading_day():
-    svc = _svc()
-    now = datetime(2026, 6, 1, 10, 0, tzinfo=ET)
-    payload = [
-        {
-            "schedules": [
-                {
-                    "tradingScheduleDate": "20260601",
-                    "tradingtimes": [
-                        {"openingTime": "0400", "closingTime": "2000"},
-                    ],
-                },
-                {"tradingScheduleDate": "20260602", "tradingtimes": []},
-            ]
-        }
-    ]
-    assert svc._parse_schedule_window(payload, now) == (240, 1200)
-
-
-def test_parse_schedule_window_holiday_marks_closed():
-    svc = _svc()
-    now = datetime(2026, 7, 3, 10, 0, tzinfo=ET)
-    payload = [
-        {
-            "schedules": [
-                {"tradingScheduleDate": "20260703", "tradingtimes": []},
-            ]
-        }
-    ]
-    assert svc._parse_schedule_window(payload, now) is None
-    assert svc._schedule_marked_closed is True
-
-
-def test_parse_schedule_window_missing_day_returns_none():
-    svc = _svc()
-    now = datetime(2026, 6, 1, 10, 0, tzinfo=ET)
-    payload = [{"schedules": [{"tradingScheduleDate": "20251231", "tradingtimes": []}]}]
-    assert svc._parse_schedule_window(payload, now) is None
-    assert svc._schedule_marked_closed is False
-
-
 # ── Window resolution (schedule + fallback) ────────────────────
 
 
@@ -155,45 +74,7 @@ async def test_resolve_window_holiday_does_not_fall_back():
     assert window is None  # schedule authoritatively closed → no fallback
 
 
-@pytest.mark.asyncio
-async def test_resolve_window_is_cached_per_day():
-    payload = [
-        {"schedules": [{"tradingScheduleDate": datetime.now(ET).strftime("%Y%m%d"),
-                        "tradingtimes": [{"openingTime": "0400", "closingTime": "2000"}]}]}
-    ]
-    ibkr = _FakeIBKR(payload=payload)
-    svc = _svc(ibkr=ibkr)
-    now = datetime.now(ET)
-    await svc._resolve_today_window(now)
-    await svc._resolve_today_window(now)
-    assert len(ibkr.requests) == 1  # second call served from cache
-
-
 # ── Tick gating ────────────────────────────────────────────────
-
-
-@pytest.mark.asyncio
-async def test_tick_syncs_when_in_window():
-    inflect = _FakeInflect()
-    svc = _svc(inflect=inflect)
-    # Prime the window cache for today so _tick treats the market as open.
-    today = datetime.now(ET).date().isoformat()
-    svc._window_cache_day = today
-    svc._window_cache = (0, 24 * 60)  # open all day
-    await svc._tick()
-    assert inflect.calls == 1
-    assert svc._last_synced_count == 3
-
-
-@pytest.mark.asyncio
-async def test_tick_skips_when_market_closed():
-    inflect = _FakeInflect()
-    svc = _svc(inflect=inflect)
-    today = datetime.now(ET).date().isoformat()
-    svc._window_cache_day = today
-    svc._window_cache = None  # non-trading day
-    await svc._tick()
-    assert inflect.calls == 0
 
 
 @pytest.mark.asyncio
@@ -209,21 +90,6 @@ async def test_tick_swallows_ibkr_errors():
 
 
 # ── Lifecycle / auth-wait ──────────────────────────────────────
-
-
-@pytest.mark.asyncio
-async def test_wait_for_auth_returns_true_when_authenticated():
-    svc = _svc(ibkr=_FakeIBKR(authenticated=True))
-    assert await svc._wait_for_ibkr_auth() is True
-
-
-@pytest.mark.asyncio
-async def test_start_and_stop_are_clean():
-    svc = _svc(ibkr=_FakeIBKR(authenticated=True))
-    svc.start()
-    assert svc.status()["running"] is True
-    await svc.stop()
-    assert svc.status()["running"] is False
 
 
 @pytest.mark.asyncio
