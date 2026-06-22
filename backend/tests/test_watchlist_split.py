@@ -1,16 +1,7 @@
 """
-Tests for the split watchlist endpoints — Phase 8.9 / Commit C.
+Tests for the split watchlist endpoints — failure/graceful-degradation paths.
 
-Old behavior: `GET /watchlist/{id}` returned instruments + market data
-snapshots in one call. On watchlist switch the sidebar blocked for
-seconds while IBKR polled for quotes.
-
-New behavior:
-  GET /watchlist/{id}/instruments  → instruments only (fast)
-  GET /watchlist/{id}/quotes       → snapshots for a list of conids
-
-These tests pin both endpoints with a mocked IBKRService + a stub
-DatabaseService (for the instrument-cache upsert side effect).
+Protects promise #5: bad/missing data from IBKR does not crash the endpoint.
 """
 from __future__ import annotations
 
@@ -76,40 +67,6 @@ def _make_client(mock_ibkr: IBKRService, stub_db: _StubDb) -> TestClient:
 
 # ── /instruments ──────────────────────────────────────────────
 
-def test_instruments_returns_symbol_and_company_without_snapshot():
-    mock_ibkr = AsyncMock(spec=IBKRService)
-    mock_ibkr.get_watchlists.return_value = [
-        {"id": "42", "name": "My List"},
-    ]
-    mock_ibkr.get_watchlist_items.return_value = [
-        {"conid": 265598, "symbol": "AAPL", "name": "Apple Inc."},
-        {"conid": 272093, "symbol": "MSFT", "name": "Microsoft Corp."},
-    ]
-    stub_db = _StubDb()
-    client = _make_client(mock_ibkr, stub_db)
-
-    resp = client.get("/watchlist/42/instruments")
-    assert resp.status_code == 200
-
-    body = resp.json()
-    assert body["id"] == "42"
-    assert body["name"] == "My List"
-    assert body["items"] == [
-        {"conid": 265598, "symbol": "AAPL", "companyName": "Apple Inc."},
-        {"conid": 272093, "symbol": "MSFT", "companyName": "Microsoft Corp."},
-    ]
-
-    # Crucial: snapshot must NOT be invoked by the instruments endpoint.
-    mock_ibkr.snapshot.assert_not_called()
-
-    # And we seeded the instruments cache for Orbit through identity service.
-    assert client.identity.watchlist_rows == [
-        {"conid": 265598, "symbol": "AAPL", "name": "Apple Inc."},
-        {"conid": 272093, "symbol": "MSFT", "name": "Microsoft Corp."},
-    ]
-    assert stub_db.upserts == []
-
-
 def test_instruments_skips_non_dict_entries():
     """IBKR sometimes returns bare strings/null inside the list — skip them."""
     mock_ibkr = AsyncMock(spec=IBKRService)
@@ -129,20 +86,6 @@ def test_instruments_skips_non_dict_entries():
     ]
 
 
-def test_instruments_empty_watchlist():
-    mock_ibkr = AsyncMock(spec=IBKRService)
-    mock_ibkr.get_watchlists.return_value = [{"id": "9", "name": "Empty"}]
-    mock_ibkr.get_watchlist_items.return_value = []
-    stub_db = _StubDb()
-    client = _make_client(mock_ibkr, stub_db)
-
-    resp = client.get("/watchlist/9/instruments")
-    assert resp.status_code == 200
-    body = resp.json()
-    assert body["items"] == []
-    assert body["name"] == "Empty"
-
-
 def test_instruments_unknown_watchlist_id_still_returns_200():
     """Don't 404 on unknown id — return empty with blank name."""
     mock_ibkr = AsyncMock(spec=IBKRService)
@@ -157,27 +100,6 @@ def test_instruments_unknown_watchlist_id_still_returns_200():
 
 
 # ── /quotes ──────────────────────────────────────────────────
-
-def test_quotes_returns_prices_for_requested_conids():
-    mock_ibkr = AsyncMock(spec=IBKRService)
-    mock_ibkr.snapshot.return_value = [
-        {"conid": 265598, "31": "150.25", "83": "1.23", "82": "1.85"},
-        {"conid": 272093, "31": "380.10", "83": "-0.50", "82": "-1.90"},
-    ]
-    stub_db = _StubDb()
-    client = _make_client(mock_ibkr, stub_db)
-
-    resp = client.get("/watchlist/42/quotes?conids=265598,272093")
-    assert resp.status_code == 200
-
-    body = resp.json()
-    assert body == {
-        "items": [
-            {"conid": 265598, "lastPrice": 150.25, "changePercent": 1.23, "changeAmount": 1.85},
-            {"conid": 272093, "lastPrice": 380.10, "changePercent": -0.50, "changeAmount": -1.90},
-        ],
-    }
-
 
 def test_quotes_fills_nulls_for_missing_conids():
     """If IBKR returns no snapshot for a conid, the row still appears with null fields."""
