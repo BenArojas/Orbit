@@ -2,7 +2,7 @@
  * AiChatPanel — The full AI panel for the Analysis page right sidebar.
  *
  * Composes everything:
- *   - Header with model selector (when ready)
+ *   - Header with the latest-run provider badge
  *   - AiConfigPanel (timeframe/indicator selection + Run Analysis)
  *   - ActionSignalCard (signal result after analysis)
  *   - Chat message list (scrollable, with streaming support)
@@ -11,7 +11,7 @@
  *
  * State flow:
  *   1. On mount, useAiStatus polls GET /ai/status
- *   2. If not ready → show AiSetupGuide instead of chat
+ *   2. If Ollama is not ready → show AiSetupGuide and any available cloud controls
  *   3. If ready → show config + signal + chat
  *   4. "Run Analysis" → POST /ai/analyze → signal + first message appear
  *   5. Follow-up messages → stream via useAiStream
@@ -25,13 +25,19 @@ import { useChartStore, type IndicatorId } from "@/store/chart";
 import { useAiStatus } from "@/hooks/useAiStatus";
 import { useAiStream } from "@/hooks/useAiStream";
 import { useAiAnalyzeStream } from "@/hooks/useAiAnalyzeStream";
+import { useAiRunInspector } from "@/hooks/useAiRunInspector";
 import AiConfigPanel, { type AiTimeframe, type AiIndicator } from "./AiConfigPanel";
 import ActionSignalCard from "./ActionSignalCard";
 import AiSetupGuide from "./AiSetupGuide";
-import AiModelSelector from "./AiModelSelector";
-import ResponseTimeBadge from "./ResponseTimeBadge";
+import AiProviderBadge from "./AiProviderBadge";
+import AiAnalysisTargetControls from "./AiAnalysisTargetControls";
+import AiRunInspectorDialog from "./AiRunInspectorDialog";
 import FibStackPanel from "./fib/FibStackPanel";
-import type { AiContextMode,FibonacciResult } from "@/modules/parallax/api";
+import type {
+  AIProviderName,
+  AiContextMode,
+  FibonacciResult,
+} from "@/modules/parallax/api";
 
 /* ── Types ── */
 
@@ -168,7 +174,17 @@ export default function AiChatPanel({ activeConid, activeSymbol, fibonacci, char
     sessionId,
     messages,
     signal,
+    analysisStatus,
+    analysisWarning,
+    analysisNarrative,
+    analysisRejectedOutput,
     isAnalyzing,
+    lastProviderMetadata,
+    providers = [],
+    activeProvider = "ollama",
+    routingMode = "local_only",
+    analysisProvider,
+    analysisModel,
   } = useAiStore();
 
   // The fib panel must appear whenever ANY fib is on the chart — the
@@ -184,10 +200,11 @@ export default function AiChatPanel({ activeConid, activeSymbol, fibonacci, char
   const {
     ollamaState,
     selectedModel,
-    availableModels,
     ollamaError,
     isReady,
-    selectModel,
+    openRouterModels = [],
+    isLoadingOpenRouterModels = false,
+    openRouterModelsError = null,
     refresh,
     isRefreshing,
   } = useAiStatus();
@@ -197,7 +214,64 @@ export default function AiChatPanel({ activeConid, activeSymbol, fibonacci, char
   // Streaming analyze — replaces the old useMutation flow. Tokens flow into
   // the same `streamingContent` that the chat-stream hook already drives,
   // so the StreamingBubble keeps working without changes.
-  const { startAnalyze, cancelAnalyze } = useAiAnalyzeStream();
+  const { startAnalyze, startPreparedAnalyze, cancelAnalyze } = useAiAnalyzeStream();
+  const inspector = useAiRunInspector(startPreparedAnalyze, isReady);
+
+  const requestedProvider = analysisProvider
+    ?? (routingMode === "local_only" ? "ollama" : activeProvider);
+  const selectedCloudProvider = providers?.find(
+    (provider) => provider.provider_name === requestedProvider && provider.kind === "cloud",
+  );
+  const emptyLoadedOpenRouterCatalog =
+    requestedProvider === "openrouter"
+    && !isLoadingOpenRouterModels
+    && !openRouterModelsError
+    && openRouterModels.length === 0;
+  const selectedCloudModel = emptyLoadedOpenRouterCatalog
+    ? null
+    : (analysisModel ?? selectedCloudProvider?.selected_model ?? null);
+  const hasValidCloudRoute =
+    routingMode !== "local_only" &&
+    requestedProvider === "openrouter" &&
+    Boolean(
+      selectedCloudProvider?.enabled
+      && selectedCloudProvider.has_key
+      && selectedCloudModel,
+    );
+  const aiAvailable = isReady || hasValidCloudRoute;
+  const canSelectOpenRouter = providers.some(
+    (provider) =>
+      provider.provider_name === "openrouter"
+      && provider.enabled
+      && provider.has_key,
+  );
+
+  const resolveAnalysisRoute = useCallback((): {
+    providerName: AIProviderName;
+    model: string | null;
+  } => {
+    const requestedProvider = analysisProvider
+      ?? (routingMode === "local_only" ? "ollama" : activeProvider);
+    if (requestedProvider === "ollama") {
+      return { providerName: "ollama", model: selectedModel ?? null };
+    }
+
+    const provider = providers.find(
+      (candidate) => candidate.provider_name === requestedProvider,
+    );
+    if (!provider || provider.provider_name !== "openrouter" || !provider.enabled || !provider.has_key) {
+      return { providerName: requestedProvider, model: null };
+    }
+
+    return {
+      providerName: provider.provider_name,
+      model: analysisModel ?? provider.selected_model ?? null,
+    };
+  }, [activeProvider, analysisModel, analysisProvider, providers, routingMode, selectedModel]);
+  const analysisRoute = resolveAnalysisRoute();
+  const analysisRunDisabled = analysisRoute.providerName === "ollama"
+    ? !isReady
+    : !hasValidCloudRoute || !analysisRoute.model;
 
   // Auto-scroll to bottom when messages change. Direct scrollTop assignment
   // on the container ref — guaranteed to only scroll within this element,
@@ -217,23 +291,41 @@ export default function AiChatPanel({ activeConid, activeSymbol, fibonacci, char
       contextMode: AiContextMode;
       contextBars: number;
     }) => {
-      if (!isReady || !activeConid || !activeSymbol) return;
+      if (!aiAvailable || !activeConid || !activeSymbol) return;
+      const route = resolveAnalysisRoute();
+      if (route.providerName !== "ollama" && !route.model) return;
+      const request = {
+        conid: activeConid,
+        symbol: activeSymbol,
+        timeframes: config.timeframes,
+        indicators: config.indicators,
+        session_id: sessionId ?? undefined,
+        context_mode: config.contextMode,
+        context_bars: config.contextBars,
+        provider_name: route.providerName,
+        model: route.model,
+        task_type: "analysis" as const,
+      };
+      if (route.providerName === "openrouter") {
+        void inspector.review(request);
+        return;
+      }
       // Streams narrative tokens into streamingContent, then commits the
       // final message + signal + session_id once the SSE `done` event lands.
       void startAnalyze(
-        {
-          conid: activeConid,
-          symbol: activeSymbol,
-          timeframes: config.timeframes,
-          indicators: config.indicators,
-          session_id: sessionId ?? undefined,
-          context_mode: config.contextMode,
-          context_bars: config.contextBars,
-        },
-        selectedModel ?? null,
+        request,
+        route.model,
       );
     },
-    [isReady, activeConid, activeSymbol, sessionId, selectedModel, startAnalyze],
+    [
+      aiAvailable,
+      activeConid,
+      activeSymbol,
+      sessionId,
+      resolveAnalysisRoute,
+      startAnalyze,
+      inspector,
+    ],
   );
 
   /** Abort an in-flight analysis — closes the SSE stream and resets the spinner. */
@@ -257,25 +349,26 @@ export default function AiChatPanel({ activeConid, activeSymbol, fibonacci, char
 
   // ── Determine what to show ──
 
-  const showSetupGuide =
+  const showSetupGuide = !hasValidCloudRoute && (
     ollamaState === "not_installed" ||
     ollamaState === "no_models" ||
     ollamaState === "error" ||
     ollamaState === "starting" ||
-    ollamaState === "installed";
+    ollamaState === "installed"
+  );
 
-  const showChat = isReady || ollamaState === "running";
+  const showChat = aiAvailable || ollamaState === "running";
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden bg-[var(--bg-1)]">
       {/* ── Header ── */}
-      <div className="flex shrink-0 items-center justify-between border-b border-[var(--border)] px-4 py-2">
-        <div className="flex items-center gap-1.5 text-xs font-semibold">
+      <div className="shrink-0 border-b border-[var(--border)] px-4 py-2">
+        <div className="flex min-w-0 items-center gap-1.5 whitespace-nowrap text-xs font-semibold">
           <div
             className="h-2 w-2 rounded-full"
             style={{
-              background: isReady ? "var(--clr-green)" : "var(--clr-orange)",
-              boxShadow: isReady
+              background: aiAvailable ? "var(--clr-green)" : "var(--clr-orange)",
+              boxShadow: aiAvailable
                 ? "0 0 10px var(--clr-green)"
                 : "0 0 6px var(--clr-orange)",
             }}
@@ -283,20 +376,35 @@ export default function AiChatPanel({ activeConid, activeSymbol, fibonacci, char
           AI Analysis
         </div>
 
-        {/* Model selector + rolling response-time badge */}
-        {showChat && availableModels.length > 0 && (
-          <div className="flex items-center gap-1.5">
-            <ResponseTimeBadge selectedModel={selectedModel} />
-            <AiModelSelector
-              models={availableModels}
-              selectedModel={selectedModel}
-              onSelect={selectModel}
-              onRefresh={refresh}
-              isRefreshing={isRefreshing}
-            />
+        {showChat && lastProviderMetadata && (
+          <div
+            data-testid="ai-run-metadata-row"
+            className="mt-1 flex min-w-0 items-center gap-1.5"
+          >
+            <div className="min-w-0 flex-1">
+              <AiProviderBadge
+                providerName={lastProviderMetadata.provider_name}
+                model={lastProviderMetadata.model}
+                kind={lastProviderMetadata.kind}
+                fallbackUsed={lastProviderMetadata.fallback_used}
+                estimatedCost={lastProviderMetadata.estimated_cost}
+                actualCost={lastProviderMetadata.actual_cost}
+              />
+            </div>
+            {inspector.receipt && (
+              <button
+                type="button"
+                className="shrink-0 text-[9px] text-[var(--clr-cyan)] hover:underline"
+                onClick={inspector.openLastRun}
+              >
+                View last run
+              </button>
+            )}
           </div>
         )}
       </div>
+
+      {showSetupGuide && canSelectOpenRouter && <AiAnalysisTargetControls />}
 
       {/* ── Setup guide (when not ready) ── */}
       {showSetupGuide && (
@@ -322,12 +430,35 @@ export default function AiChatPanel({ activeConid, activeSymbol, fibonacci, char
                   Fib details appear. Plan reference: decision 7 in
                   docs/fibonacci-improvements-plan.md. */}
               <div className="-mx-3 -mt-3 mb-0">
+                <AiAnalysisTargetControls />
                 <AiConfigPanel
                   onRunAnalysis={handleRunAnalysis}
                   chartIndicators={chartIndicators}
-                  isAnalyzing={isAnalyzing}
+                  isAnalyzing={isAnalyzing || inspector.isPreviewing}
+                  isRunDisabled={analysisRunDisabled}
+                  runLabel={analysisRoute.providerName === "openrouter"
+                    ? "Review Cloud Run"
+                    : "Run Analysis"}
                 />
-                <ActionSignalCard signal={signal} />
+                {inspector.error && (
+                  <div
+                    role="alert"
+                    className="border-b border-[var(--border)] px-4 py-2 text-[10px] text-[var(--clr-red)]"
+                  >
+                    {inspector.error.message}
+                  </div>
+                )}
+                <ActionSignalCard
+                  signal={signal}
+                  status={analysisStatus}
+                  warning={analysisWarning}
+                  narrative={analysisNarrative}
+                  onViewRejected={
+                    analysisRejectedOutput
+                      ? () => inspector.openRejected(analysisRejectedOutput)
+                      : undefined
+                  }
+                />
               </div>
 
               {/* Initial prompt when no messages */}
@@ -439,6 +570,36 @@ export default function AiChatPanel({ activeConid, activeSymbol, fibonacci, char
             )}
           </div>
         </div>
+      )}
+      {(inspector.preview || inspector.rejectedOutput) && (
+        <AiRunInspectorDialog
+          open={inspector.open}
+          preview={inspector.preview}
+          rejectedOutput={inspector.rejectedOutput}
+          receipt={inspector.receipt}
+          comparison={inspector.comparison}
+          localReady={isReady}
+          isComparing={inspector.isComparing}
+          runActive={
+            isAnalyzing
+            || inspector.phase === "submitting"
+            || inspector.phase === "running"
+          }
+          phase={inspector.phase}
+          error={inspector.error}
+          initialTab={
+            inspector.rejectedOutput && !inspector.preview
+              ? "unverified"
+              : inspector.receipt
+                && (inspector.phase === "completed" || inspector.phase === "failed")
+                ? "receipt"
+                : "summary"
+          }
+          compareError={inspector.compareError}
+          onOpenChange={inspector.setOpen}
+          onConfirm={inspector.send}
+          onCompare={inspector.compare}
+        />
       )}
     </div>
   );

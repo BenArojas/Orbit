@@ -36,6 +36,41 @@ export function useAiStream() {
 
   const abortRef = useRef<AbortController | null>(null);
 
+  function handlePayload(
+    payload: string,
+    append: (chunk: string) => void,
+  ): {
+    done?: boolean;
+    finalMessage?: string;
+    finalSignal?: unknown;
+    error?: string;
+    rawChunk?: string;
+  } {
+    if (payload === "[DONE]") return { done: true };
+    try {
+      const event = JSON.parse(payload) as {
+        type?: string;
+        content?: string;
+        message?: string;
+        signal?: unknown;
+      };
+      if (event.type === "token" && typeof event.content === "string") {
+        append(event.content);
+        return { rawChunk: event.content };
+      }
+      if (event.type === "done") {
+        return { done: true, finalMessage: event.message ?? "", finalSignal: event.signal };
+      }
+      if (event.type === "error") {
+        return { done: true, error: event.message ?? "Stream request failed" };
+      }
+    } catch {
+      append(payload);
+      return { rawChunk: payload };
+    }
+    return {};
+  }
+
   /**
    * Send a follow-up chat message and stream the response.
    * The session must already exist (created by the analyze call).
@@ -77,6 +112,8 @@ export function useAiStream() {
         const reader = resp.body.getReader();
         const decoder = new TextDecoder();
         let fullResponse = "";
+        let finalMessage: string | null = null;
+        let finalSignal: unknown = undefined;
         let buffer = ""; // Buffer for partial lines split across chunks
 
         while (true) {
@@ -93,20 +130,33 @@ export function useAiStream() {
 
           for (const line of lines) {
             if (line.startsWith("data: ")) {
-              const token = line.slice(6);
-              if (token === "[DONE]") break;
-              fullResponse += token;
-              appendStreamingContent(token);
+              const handled = handlePayload(line.slice(6), appendStreamingContent);
+              if (handled.error) {
+                throw new Error(handled.error);
+              }
+              if (handled.rawChunk) {
+                fullResponse += handled.rawChunk;
+              }
+              if (handled.finalMessage !== undefined) {
+                finalMessage = handled.finalMessage;
+                finalSignal = handled.finalSignal;
+              }
             }
           }
         }
 
         // Process any remaining buffered content
         if (buffer.startsWith("data: ")) {
-          const token = buffer.slice(6);
-          if (token !== "[DONE]") {
-            fullResponse += token;
-            appendStreamingContent(token);
+          const handled = handlePayload(buffer.slice(6), appendStreamingContent);
+          if (handled.error) {
+            throw new Error(handled.error);
+          }
+          if (handled.rawChunk) {
+            fullResponse += handled.rawChunk;
+          }
+          if (handled.finalMessage !== undefined) {
+            finalMessage = handled.finalMessage;
+            finalSignal = handled.finalSignal;
           }
         }
 
@@ -114,9 +164,12 @@ export function useAiStream() {
         addMessage({
           id: msgId(),
           role: "assistant",
-          content: fullResponse,
+          content: finalMessage ?? fullResponse,
           timestamp: Date.now(),
         });
+        if (finalSignal != null) {
+          setSignal(finalSignal as never);
+        }
       } catch (err) {
         if ((err as Error).name === "AbortError") {
           // User cancelled — still save what we got

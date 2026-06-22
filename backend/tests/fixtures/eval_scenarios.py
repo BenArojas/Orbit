@@ -81,10 +81,10 @@ def tsm_extension() -> dict:
     # Volume facts are built from candles directly (build_volume_facts),
     # not from a passed IndicatorResult — no need to include here.
     indicators = [
-        _indicator("ema", ema9_vals, period=9),
-        _indicator("ema", ema21_vals, period=21),
-        _indicator("ema", ema50_vals, period=50),
-        _indicator("ema", ema200_vals, period=200),
+        _indicator("ema_9", ema9_vals, period=9),
+        _indicator("ema_21", ema21_vals, period=21),
+        _indicator("ema_50", ema50_vals, period=50),
+        _indicator("ema_200", ema200_vals, period=200),
         _indicator("rsi", rsi_vals, period=14),
     ]
 
@@ -148,8 +148,8 @@ def aapl_in_swing() -> dict:
     )
 
     indicators = [
-        _indicator("ema", ema9_vals, period=9),
-        _indicator("ema", ema21_vals, period=21),
+        _indicator("ema_9", ema9_vals, period=9),
+        _indicator("ema_21", ema21_vals, period=21),
         _indicator("rsi", rsi_vals, period=14),
     ]
 
@@ -203,10 +203,10 @@ def nvda_ema_stack() -> dict:
     ]
 
     indicators = [
-        _indicator("ema", ema9_vals, period=9),
-        _indicator("ema", ema21_vals, period=21),
-        _indicator("ema", ema50_vals, period=50),
-        _indicator("ema", ema200_vals, period=200),
+        _indicator("ema_9", ema9_vals, period=9),
+        _indicator("ema_21", ema21_vals, period=21),
+        _indicator("ema_50", ema50_vals, period=50),
+        _indicator("ema_200", ema200_vals, period=200),
         _indicator("rsi", rsi_vals, period=14),
     ]
 

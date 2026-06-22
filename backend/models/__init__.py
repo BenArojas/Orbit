@@ -21,6 +21,9 @@ Note: Watchlists are managed in IBKR — no local models needed.
 
 from __future__ import annotations
 
+from datetime import datetime
+from decimal import Decimal
+
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from typing import Any, Literal, Optional
 
@@ -997,6 +1000,15 @@ class WatchlistMembershipResponse(BaseModel):
 # ═══════════════════════════════════════════════════════════════
 
 
+AIProviderName = Literal["ollama", "openai", "anthropic", "gemini", "grok", "openrouter"]
+AIProviderKind = Literal["local", "cloud"]
+AIRoutingMode = Literal[
+    "local_only",
+    "cloud_manual",
+    "cloud_with_local_fallback",
+]
+
+
 class AnalyzeRequest(BaseModel):
     """
     Request to run an AI technical analysis on a stock.
@@ -1043,6 +1055,147 @@ class AnalyzeRequest(BaseModel):
             "server-side auto-detection for AI prompting."
         ),
     )
+    provider_name: AIProviderName = "ollama"
+    model: Optional[str] = None
+    task_type: Literal["analysis", "execution_sensitive"] = "analysis"
+
+
+class AIAnalysisSnapshotRunRequest(BaseModel):
+    snapshot_id: str = Field(min_length=1)
+
+
+class AIProviderStatus(BaseModel):
+    """Current status for one AI provider exposed to the frontend."""
+    provider_name: AIProviderName
+    display_name: str
+    kind: AIProviderKind
+    enabled: bool
+    ready: bool
+    selected_model: Optional[str] = None
+    has_key: bool = False
+    error: Optional[str] = None
+
+
+class AIProviderMetadata(BaseModel):
+    """Provider metadata attached to completed AI analysis events."""
+    provider_name: AIProviderName
+    kind: AIProviderKind
+    model: Optional[str] = None
+    estimated_cost: Optional[float] = None
+    actual_cost: Optional[float] = None
+    fallback_used: bool = False
+    requested_model: Optional[str] = Field(default=None, exclude_if=lambda value: value is None)
+    resolved_model: Optional[str] = Field(default=None, exclude_if=lambda value: value is None)
+    provider_request_id: Optional[str] = Field(default=None, exclude_if=lambda value: value is None)
+    input_tokens: Optional[int] = Field(default=None, exclude_if=lambda value: value is None)
+    output_tokens: Optional[int] = Field(default=None, exclude_if=lambda value: value is None)
+    reasoning_tokens: Optional[int] = Field(default=None, exclude_if=lambda value: value is None)
+    cached_tokens: Optional[int] = Field(default=None, exclude_if=lambda value: value is None)
+    duration_ms: Optional[int] = Field(default=None, exclude_if=lambda value: value is None)
+    finish_reason: Optional[str] = Field(default=None, exclude_if=lambda value: value is None)
+
+
+class AIProvidersResponse(BaseModel):
+    """Local-only provider state for Slice 2."""
+    providers: list[AIProviderStatus]
+    active_provider: AIProviderName
+    routing_mode: AIRoutingMode
+    cloud_enabled: bool
+
+
+class AIModelOption(BaseModel):
+    """One validated fixed OpenRouter text model available to the user."""
+    id: str
+    name: str
+    context_length: int
+    max_completion_tokens: int
+    prompt_price_per_token: str
+    completion_price_per_token: str
+    request_price: str
+
+
+class AIProviderModelsResponse(BaseModel):
+    """Authenticated OpenRouter catalog plus the persisted default model."""
+    provider_name: Literal["openrouter"]
+    models: list[AIModelOption]
+    selected_model: Optional[str] = None
+    fetched_at: datetime
+
+
+class AIProviderModelUpdateRequest(BaseModel):
+    """Persist a validated provider model selection."""
+    model: str = Field(min_length=1)
+
+
+class AIDataDisclosure(BaseModel):
+    sent_to_cloud: list[str]
+    kept_local: list[str]
+    exact_payload_available_until: datetime
+
+
+class AICostQuote(BaseModel):
+    currency: Literal["USD"] = "USD"
+    estimated_input_tokens: int
+    expected_output_tokens: int
+    max_output_tokens: int
+    estimated_cost_usd: Decimal
+    maximum_cost_usd: Decimal
+
+
+class AIAnalysisPreviewResponse(BaseModel):
+    snapshot_id: str
+    expires_at: datetime
+    provider_name: Literal["openrouter"]
+    model: AIModelOption
+    request_body: dict[str, Any]
+    disclosure: AIDataDisclosure
+    cost: AICostQuote
+    fallback_enabled: bool
+
+
+class AIProviderKeySaveRequest(BaseModel):
+    """Request body for saving a cloud provider API key to OS keychain."""
+    api_key: str = Field(min_length=1)
+
+
+class AIRoutingPolicyResponse(BaseModel):
+    """Non-secret AI routing settings."""
+    active_provider: AIProviderName = "ollama"
+    routing_mode: AIRoutingMode = "local_only"
+    local_fallback_enabled: bool = True
+
+
+class AIRoutingPolicyUpdate(AIRoutingPolicyResponse):
+    """Update body for non-secret AI routing settings."""
+
+
+class AIRunAttempt(BaseModel):
+    provider_name: AIProviderName
+    requested_model: Optional[str] = None
+    resolved_model: Optional[str] = None
+    status: Literal["success", "failed", "fallback_success", "blocked"]
+    provider_request_id: Optional[str] = None
+    input_tokens: Optional[int] = None
+    output_tokens: Optional[int] = None
+    reasoning_tokens: Optional[int] = None
+    cached_tokens: Optional[int] = None
+    estimated_cost_usd: Optional[Decimal] = None
+    actual_cost_usd: Optional[Decimal] = None
+    duration_ms: int = 0
+    error_code: Optional[str] = None
+
+
+class AIRunReceipt(BaseModel):
+    run_id: str
+    requested_provider: AIProviderName
+    requested_model: Optional[str] = None
+    executed_provider: Optional[AIProviderName] = None
+    resolved_model: Optional[str] = None
+    fallback_used: bool
+    fallback_reason: Optional[str] = None
+    status: Literal["success", "failed", "fallback_success", "blocked"]
+    attempts: list[AIRunAttempt]
+    created_at: datetime
 
 
 class ChatMessage(BaseModel):
@@ -1099,17 +1252,49 @@ class SignalData(BaseModel):
     checks: list[SignalCheck]                            # Confirmations + cautions
 
 
+class AIQualityChecks(BaseModel):
+    response_completed: bool
+    signal_parsed: bool
+    entry_present: bool
+    stop_present: bool
+    target_present: bool
+    checks_count: int
+    narrative_characters: int
+
+
+class AIComparisonSide(BaseModel):
+    receipt: AIRunReceipt
+    message: str
+    signal: Optional[SignalData] = None
+    quality: AIQualityChecks
+
+
+class AIComparisonResponse(BaseModel):
+    snapshot_id: str
+    same_input: Literal[True] = True
+    local: AIComparisonSide
+    cloud: AIComparisonSide
+
+
 class AnalyzeResponse(BaseModel):
     """
     Response from POST /ai/analyze — the AI's trading signal and analysis.
 
-    signal: The structured data for the Action Signal card (null if parsing failed)
-    message: The full AI response text (always present)
-    session_id: ID for follow-up questions in this conversation
+    status:    "directional" | "neutral" | "rejected"
+    narrative: Model free-text (signal JSON stripped); null for rejected
+    warning:   Safety line shown once for neutral/rejected; null for directional
+    message:   Kept for backward compat — equals narrative (directional) or
+               warning (neutral/rejected)
+    signal:    Structured Action Signal card data; null if parsing failed
     """
     session_id: str
     signal: Optional[SignalData] = None
+    status: Literal["directional", "neutral", "rejected"]
+    narrative: Optional[str] = None
+    warning: Optional[str] = None
     message: str
+    rejected_output: Optional[str] = None
+    provider: Optional[AIProviderMetadata] = None
 
 
 class ChatResponse(BaseModel):

@@ -24,7 +24,14 @@ import { useCallback, useRef } from "react";
 import { useAiStore } from "@/store";
 import { useChartStore } from "@/store/chart";
 import { API_BASE } from "@/config/endpoints";
-import type { AiContextMode, FibonacciSnapshot } from "@/modules/parallax/api";
+import type {
+  AIProviderMetadata,
+  AIProviderName,
+  AIRunReceipt,
+  AnalysisStatus,
+  AiContextMode,
+  FibonacciSnapshot,
+} from "@/modules/parallax/api";
 
 /* ── Types ── */
 
@@ -38,6 +45,19 @@ export interface AnalyzeStreamRequest {
   indicator_priority?: string[];
   context_mode?: AiContextMode;
   context_bars?: number;
+  provider_name?: AIProviderName;
+  model?: string | null;
+  task_type?: "analysis" | "execution_sensitive";
+}
+
+interface PreparedAnalyzeStreamRequest {
+  snapshot_id: string;
+}
+
+export interface PreparedAnalyzeLifecycle {
+  onAccepted?: (runId: string | null) => void;
+  onCompleted?: (receipt: AIRunReceipt | null) => void;
+  onRejected?: (error: Error, receipt: AIRunReceipt | null) => void;
 }
 
 interface SseTokenEvent {
@@ -49,10 +69,24 @@ interface SseDoneEvent {
   type: "done";
   session_id: string;
   signal: unknown; // typed as SignalData on the consuming side
+  status: AnalysisStatus;
+  narrative: string | null;
+  warning: string | null;
   message: string;
+  rejected_output?: string | null;
+  provider?: AIProviderMetadata;
+  receipt?: AIRunReceipt;
 }
 
-type SseEvent = SseTokenEvent | SseDoneEvent;
+interface SseErrorEvent {
+  type: "error";
+  error: string;
+  message: string;
+  provider_name: AIProviderName;
+  receipt: AIRunReceipt;
+}
+
+type SseEvent = SseTokenEvent | SseDoneEvent | SseErrorEvent;
 
 /* ── Helpers ── */
 
@@ -91,7 +125,7 @@ function parseEventLine(line: string): SseEvent | null {
   if (!payload) return null;
   try {
     const obj = JSON.parse(payload) as SseEvent;
-    if (obj && (obj.type === "token" || obj.type === "done")) return obj;
+    if (obj && (obj.type === "token" || obj.type === "done" || obj.type === "error")) return obj;
     return null;
   } catch {
     return null;
@@ -107,18 +141,25 @@ export function useAiAnalyzeStream() {
     setSessionId,
     addMessage,
     setSignal,
+    setAnalysisOutcome,
     setAnalyzing,
     setStreaming,
     setStreamingContent,
     appendStreamingContent,
     clearChat,
     pushResponseTime,
+    setLastProviderMetadata,
+    setLastRunReceipt,
   } = useAiStore();
 
   const abortRef = useRef<AbortController | null>(null);
 
   const startAnalyze = useCallback(
-    async (req: AnalyzeStreamRequest, model: string | null) => {
+    async (
+      req: AnalyzeStreamRequest | PreparedAnalyzeStreamRequest,
+      model: string | null,
+      lifecycle?: PreparedAnalyzeLifecycle,
+    ) => {
       if (isAnalyzing) return;
 
       // Reset chat — analyze always starts a fresh signal/conversation
@@ -132,10 +173,9 @@ export function useAiAnalyzeStream() {
       const startedAt = performance.now();
 
       try {
-        const payload = {
-          ...req,
-          fibs: buildFibSnapshots(),
-        };
+        const payload = "snapshot_id" in req
+          ? req
+          : { ...req, fibs: buildFibSnapshots() };
 
         const resp = await fetch(`${API_BASE}/ai/analyze/stream`, {
           method: "POST",
@@ -144,17 +184,35 @@ export function useAiAnalyzeStream() {
           signal: controller.signal,
         });
 
-        if (!resp.ok || !resp.body) {
+        if (!resp.ok) {
+          let message = `Stream request failed: ${resp.status}`;
+          try {
+            const payload = await resp.json() as { detail?: { message?: string } };
+            message = payload.detail?.message ?? message;
+          } catch {
+            // Keep the status fallback when the response is not JSON.
+          }
+          throw new Error(message);
+        }
+        if (!resp.body) {
           throw new Error(`Stream request failed: ${resp.status}`);
         }
+        lifecycle?.onAccepted?.(resp.headers?.get("X-Orbit-AI-Run-ID") ?? null);
 
         const reader = resp.body.getReader();
         const decoder = new TextDecoder();
         let buffer = ""; // partial-line carry-over
 
-        let finalSessionId = req.session_id ?? "";
+        let finalSessionId = "session_id" in req ? req.session_id ?? "" : "";
         let finalSignal: unknown = null;
+        let finalStatus: AnalysisStatus = "rejected";
+        let finalNarrative: string | null = null;
+        let finalWarning: string | null = null;
         let finalMessage = "";
+        let finalRejectedOutput: string | null = null;
+        let finalProviderMetadata: AIProviderMetadata | null = null;
+        let finalReceipt: AIRunReceipt | null = null;
+        let finalError: string | null = null;
         let sawDone = false;
 
         // SSE loop — read chunks, split on lines, parse `data: …` frames
@@ -175,8 +233,17 @@ export function useAiAnalyzeStream() {
             } else if (ev.type === "done") {
               finalSessionId = ev.session_id;
               finalSignal = ev.signal;
+              finalStatus = ev.status;
+              finalNarrative = ev.narrative;
+              finalWarning = ev.warning;
               finalMessage = ev.message;
+              finalRejectedOutput = ev.rejected_output ?? null;
+              finalProviderMetadata = ev.provider ?? null;
+              finalReceipt = ev.receipt ?? null;
               sawDone = true;
+            } else if (ev.type === "error") {
+              finalError = ev.message;
+              finalReceipt = ev.receipt;
             }
           }
         }
@@ -187,13 +254,31 @@ export function useAiAnalyzeStream() {
         } else if (trailing?.type === "done") {
           finalSessionId = trailing.session_id;
           finalSignal = trailing.signal;
+          finalStatus = trailing.status;
+          finalNarrative = trailing.narrative;
+          finalWarning = trailing.warning;
           finalMessage = trailing.message;
+          finalRejectedOutput = trailing.rejected_output ?? null;
+          finalProviderMetadata = trailing.provider ?? null;
+          finalReceipt = trailing.receipt ?? null;
           sawDone = true;
+        } else if (trailing?.type === "error") {
+          finalError = trailing.message;
+          finalReceipt = trailing.receipt;
         }
 
         // Commit final state
         if (finalSessionId) setSessionId(finalSessionId);
-        if (sawDone) {
+        if (finalError) {
+          addMessage({
+            id: msgId(),
+            role: "assistant",
+            content: `[Analysis failed: ${finalError}]`,
+            timestamp: Date.now(),
+          });
+          setLastRunReceipt(finalReceipt);
+          lifecycle?.onRejected?.(new Error(finalError), finalReceipt);
+        } else if (sawDone) {
           // Use the authoritative `message` field (the full narrative) — the
           // streamingContent buffer should match, but `message` is what the
           // backend actually parsed the signal from.
@@ -205,6 +290,10 @@ export function useAiAnalyzeStream() {
           });
           // SignalData typing lives in components/ai — store accepts unknown shape
           setSignal(finalSignal as never);
+          setAnalysisOutcome(finalStatus, finalWarning, finalNarrative, finalRejectedOutput);
+          setLastProviderMetadata(finalProviderMetadata);
+          setLastRunReceipt(finalReceipt);
+          lifecycle?.onCompleted?.(finalReceipt);
           pushResponseTime({
             durationMs: performance.now() - startedAt,
             model,
@@ -240,6 +329,7 @@ export function useAiAnalyzeStream() {
             content: `[Analysis failed: ${(err as Error).message}]`,
             timestamp: Date.now(),
           });
+          lifecycle?.onRejected?.(err as Error, null);
         }
       } finally {
         setAnalyzing(false);
@@ -251,8 +341,15 @@ export function useAiAnalyzeStream() {
     [
       isAnalyzing, clearChat, setAnalyzing, setStreaming, setStreamingContent,
       appendStreamingContent, addMessage, setSessionId, setSignal,
-      pushResponseTime,
+      setAnalysisOutcome, setLastProviderMetadata, pushResponseTime,
+      setLastRunReceipt,
     ],
+  );
+
+  const startPreparedAnalyze = useCallback(
+    (snapshotId: string, model: string, lifecycle?: PreparedAnalyzeLifecycle) =>
+      startAnalyze({ snapshot_id: snapshotId }, model, lifecycle),
+    [startAnalyze],
   );
 
   const cancelAnalyze = useCallback(() => {
@@ -261,6 +358,7 @@ export function useAiAnalyzeStream() {
 
   return {
     startAnalyze,
+    startPreparedAnalyze,
     cancelAnalyze,
     isAnalyzing,
     streamingContent,

@@ -55,3 +55,17 @@ class TestVwap:
         ir = IndicatorResult(name="vwap", type="overlay", values=[], params={})
         assert build_vwap_facts(symbol="TEST", timeframe="D", vwap=ir,
                                 last_close=100.0) == []
+
+
+class TestPriceValues:
+    def test_price_above_carries_close_and_vwap_in_price_values(self):
+        facts = build_vwap_facts(symbol="TEST", timeframe="D", vwap=_vwap([99, 99, 100.0]),
+                                 last_close=101.0)
+        f = next(x for x in facts if x.id == "D.vwap.price_above")
+        assert set(f.price_values) == {101.0, 100.0}
+
+    def test_price_below_carries_close_and_vwap_in_price_values(self):
+        facts = build_vwap_facts(symbol="TEST", timeframe="D", vwap=_vwap([100, 100, 100.0]),
+                                 last_close=98.0)
+        f = next(x for x in facts if x.id == "D.vwap.price_below")
+        assert set(f.price_values) == {98.0, 100.0}

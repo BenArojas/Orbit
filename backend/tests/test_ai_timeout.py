@@ -47,13 +47,10 @@ _INLINE_JSON_NARRATIVE = (
     "AAPL is showing strong momentum with RSI at 65 and price above EMA-50.\n\n"
     "```json\n"
     "{\n"
-    '  "direction": "LONG", "confidence": 70, "description": "Trend continuation",\n'
-    '  "entry":  {"price": 180.0, "note": "above resistance"},\n'
-    '  "stop":   {"price": 175.0, "note": "below EMA-50"},\n'
-    '  "target": {"price": 195.0, "note": "next swing high"},\n'
+    '  "direction": "NEUTRAL", "confidence": 50, "description": "Trend continuation",\n'
+    '  "entry": {}, "stop": {}, "target": {},\n'
     '  "confirmations": ["RSI bullish"], "cautions": [],\n'
-    '  "meta": {"risk_reward": "1:3", "score": "8/10",\n'
-    '           "adx_trend": "Strong", "volume_signal": "Above avg"}\n'
+    '  "meta": {"score": "8/10", "adx_trend": "Strong", "volume_signal": "Above avg"}\n'
     "}\n"
     "```"
 )
@@ -104,11 +101,9 @@ class TestAiServiceOneShot:
 
         assert chat_mock.await_count == 1, "Should be exactly ONE Ollama call"
         assert result["signal"] is not None
-        assert result["signal"]["direction"] == "LONG"
-        # The service strips the trailing ```json``` fence before returning the
-        # message; only the narrative text should remain.
-        assert result["message"] == "AAPL is showing strong momentum with RSI at 65 and price above EMA-50."
-        assert "```json" not in result["message"]
+        assert result["signal"]["direction"] == "NEUTRAL"
+        # NEUTRAL direction → message is the policy string, not the raw narrative
+        assert result["message"] == "No actionable trade plan could be verified from the supplied facts."
 
     @pytest.mark.asyncio
     async def test_missing_json_triggers_one_reformat(self):
@@ -130,9 +125,25 @@ class TestAiServiceOneShot:
 
         assert chat_mock.await_count == 2, "narrative + reformat = 2 calls"
         assert result["signal"] is not None
-        assert result["signal"]["direction"] == "LONG"
-        # The originally-streamed narrative is what the user sees, not the reformat
-        assert result["message"] == "No JSON in this narrative."
+        assert result["signal"]["direction"] == "NEUTRAL"
+        # NEUTRAL direction → policy message; original narrative preserved in result["narrative"]
+        assert result["message"] == "No actionable trade plan could be verified from the supplied facts."
+        # B2 + N1: reformat context must include the original narrative as an assistant
+        # turn that appears BEFORE the reformat user instruction — session NOT mutated
+        reformat_msgs = chat_mock.call_args_list[1].args[0]
+        narrative_idx = next(
+            (i for i, m in enumerate(reformat_msgs)
+             if m["role"] == "assistant" and "No JSON in this narrative." in m["content"]),
+            None,
+        )
+        reformat_idx = next(
+            (i for i, m in enumerate(reformat_msgs)
+             if m["role"] == "user" and "did not include the required JSON block" in m["content"]),
+            None,
+        )
+        assert narrative_idx is not None, "original narrative must appear as assistant message"
+        assert reformat_idx is not None, "reformat instruction must appear as user message"
+        assert narrative_idx < reformat_idx, "assistant narrative must precede the reformat instruction"
 
     @pytest.mark.asyncio
     async def test_reformat_timeout_returns_null_signal(self):
@@ -160,8 +171,10 @@ class TestAiServiceOneShot:
                 model="gemma4:4b",
             )
 
-        assert result["signal"] is None
-        assert result["message"] == "Narrative without JSON."
+        # No parseable JSON + reformat timeout → rejected card (not None); narrative preserved
+        assert result["signal"] is not None
+        assert result["signal"]["direction"] == "NEUTRAL"
+        assert result["message"] == "No actionable trade plan could be verified from the supplied facts."
 
     @pytest.mark.asyncio
     async def test_reformat_failure_returns_null_signal(self):
@@ -181,7 +194,9 @@ class TestAiServiceOneShot:
             )
 
         assert chat_mock.await_count == 2
-        assert result["signal"] is None
+        # No JSON after reformat → rejected card (not None)
+        assert result["signal"] is not None
+        assert result["signal"]["direction"] == "NEUTRAL"
 
 
 # ── Streaming variant ─────────────────────────────────────────
@@ -215,7 +230,7 @@ class TestAiServiceStreaming:
         assert len(token_events) == 4
         assert len(done_events) == 1
         assert done_events[0]["signal"] is not None
-        assert done_events[0]["signal"]["direction"] == "LONG"
+        assert done_events[0]["signal"]["direction"] == "NEUTRAL"
 
 
 # ── Router-level graceful handling ────────────────────────────

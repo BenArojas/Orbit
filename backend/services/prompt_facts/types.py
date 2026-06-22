@@ -24,6 +24,7 @@ class PromptFact(BaseModel):
     strength: int     # 0-100
     priority: int     # static per fact type; modulated at sort time
     data: dict        # raw values that backed the decision
+    price_values: tuple[float, ...] = ()  # explicitly allowed displayed prices
 
 
 class PromptContextBlock(BaseModel):

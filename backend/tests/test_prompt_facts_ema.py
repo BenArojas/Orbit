@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from models import IndicatorResult, IndicatorValue
+from models import CandleData, IndicatorResult, IndicatorValue
 from services.prompt_facts.ema import build_ema_facts
 
 
@@ -95,3 +95,38 @@ class TestGuards:
         ], params={"period": 9})
         assert build_ema_facts(symbol="TEST", timeframe="D", emas=[ir],
                                last_close=100.0, atr=1.0) == []
+
+
+class TestLevelsCurrent:
+    def test_full_stack_emits_levels_current_with_all_four_prices(self):
+        emas = [_ema(9, 110), _ema(21, 105), _ema(50, 100), _ema(200, 90)]
+        facts = build_ema_facts(symbol="TEST", timeframe="D", emas=emas,
+                                last_close=112.0, atr=1.0)
+        lc = next((f for f in facts if f.id == "D.ema.levels_current"), None)
+        assert lc is not None, "D.ema.levels_current fact must be emitted"
+        assert set(lc.price_values) == {110.0, 105.0, 100.0, 90.0}
+
+    def test_incomplete_stack_still_emits_levels_current(self):
+        emas = [_ema(9, 110), _ema(21, 100)]
+        facts = build_ema_facts(symbol="TEST", timeframe="D", emas=emas,
+                                last_close=108.0, atr=1.0)
+        lc = next((f for f in facts if f.id == "D.ema.levels_current"), None)
+        assert lc is not None, "D.ema.levels_current must be emitted for incomplete stack"
+        assert set(lc.price_values) == {110.0, 100.0}
+
+
+class TestCurrentCloseFact:
+    def test_current_close_fact_emitted_by_dispatcher(self):
+        """_build_for_tf must always emit a {TF}.price.current_close fact."""
+        from services.prompt_facts import build_prompt_facts
+
+        candles = [CandleData(time=1_700_000_000, open=99, high=115, low=98, close=112.0, volume=1000)]
+        blocks = build_prompt_facts(
+            symbol="TEST",
+            timeframe_data={"D": {"candles": candles, "indicators": [], "fibs": [], "fibonacci": None}},
+            indicator_priority=[],
+        )
+        fact_ids = {f.id for block in blocks for f in block.facts}
+        assert "D.price.current_close" in fact_ids
+        close_fact = next(f for block in blocks for f in block.facts if f.id == "D.price.current_close")
+        assert close_fact.price_values == (112.0,)

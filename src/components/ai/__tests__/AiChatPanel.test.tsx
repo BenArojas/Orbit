@@ -4,14 +4,14 @@
  * Covers:
  *   - Cancel button is not shown when isAnalyzing is false
  *   - 'Analyzing <symbol>…' shown when isAnalyzing is true
- *   - ResponseTimeBadge wired in the header (renders nothing until samples,
- *     so we just assert the panel doesn't crash with the new hook in place)
+ *   - Analysis controls remain available when the persisted local route is down
  */
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { createElement, type ReactElement } from "react";
+import type { AIProviderStatus } from "@/modules/parallax/api";
 
 // jsdom doesn't implement scrollIntoView — the panel calls it on every
 // messages/streamingContent change. Stub once for the file.
@@ -32,18 +32,71 @@ function renderAiChat(element: ReactElement) {
 // ── Mocks ─────────────────────────────────────────────────────
 
 const mockAnalyzing = { current: false };
+const mockOllamaReady = { current: true };
 const mockStartAnalyze = vi.fn();
 const mockCancelAnalyze = vi.fn();
+const mockReviewCloudRun = vi.fn();
+const mockOpenLastRun = vi.fn();
+const mockInspectorError = { current: null as Error | null };
+const mockInspectorPhase = { current: "review" as "review" | "submitting" | "running" | "completed" | "failed" };
+const mockInspectorReceipt = { current: null as Record<string, unknown> | null };
+const mockInspectorPreview = { current: null as Record<string, unknown> | null };
+const mockOpenRouterCatalog = {
+  models: [] as Array<{ id: string; name: string }>,
+  isLoading: false,
+  error: null as string | null,
+};
+const mockAiStore = {
+  activeProvider: "ollama",
+  routingMode: "local_only",
+  analysisProvider: null as "ollama" | "openrouter" | null,
+  analysisModel: null as string | null,
+  analysisFallbackEnabled: null as boolean | null,
+  lastProviderMetadata: null as {
+    provider_name: "ollama" | "openrouter";
+    model: string | null;
+    kind: "local" | "cloud";
+    fallback_used: boolean;
+    estimated_cost: number | null;
+    actual_cost: number | null;
+  } | null,
+  providers: [
+    {
+      provider_name: "ollama",
+      display_name: "Ollama",
+      kind: "local",
+      enabled: true,
+      ready: true,
+      selected_model: "gemma4:4b",
+      has_key: false,
+      error: null,
+    },
+  ] as AIProviderStatus[],
+};
+
+afterEach(() => {
+  mockOllamaReady.current = true;
+});
 
 vi.mock("@/store", () => ({
   useAiStore: Object.assign(
-    () => ({
-      sessionId: null,
-      messages: [],
-      signal: null,
-      isAnalyzing: mockAnalyzing.current,
-      responseTimes: [],
-    }),
+    (selector?: (state: Record<string, unknown>) => unknown) => {
+      const state = {
+        sessionId: null,
+        messages: [],
+        signal: null,
+        isAnalyzing: mockAnalyzing.current,
+        responseTimes: [],
+        activeProvider: mockAiStore.activeProvider,
+        routingMode: mockAiStore.routingMode,
+        providers: mockAiStore.providers,
+        analysisProvider: mockAiStore.analysisProvider,
+        analysisModel: mockAiStore.analysisModel,
+        analysisFallbackEnabled: mockAiStore.analysisFallbackEnabled,
+        lastProviderMetadata: mockAiStore.lastProviderMetadata,
+      };
+      return selector ? selector(state) : state;
+    },
     {
       // Allow useAiStore.getState() lookups in the hook (not used here, but
       // keeps the import shape compatible with the real export).
@@ -54,15 +107,31 @@ vi.mock("@/store", () => ({
 
 vi.mock("@/hooks/useAiStatus", () => ({
   useAiStatus: () => ({
-    ollamaState: "ready",
+    ollamaState: mockOllamaReady.current ? "ready" : "not_installed",
     selectedModel: "gemma4:4b",
-    availableModels: [],
+    availableModels: [{
+      name: "gemma4:4b",
+      size_bytes: 4_000_000_000,
+      size_gb: 4,
+      family: "gemma4",
+      parameter_size: "4B",
+      quantization: "Q4_K_M",
+      modified_at: "2026-06-18T00:00:00Z",
+    }],
     ollamaError: null,
-    isReady: true,
+    isReady: mockOllamaReady.current,
+    openRouterModels: mockOpenRouterCatalog.models,
+    openRouterSelectedModel: null,
+    isLoadingOpenRouterModels: mockOpenRouterCatalog.isLoading,
+    openRouterModelsError: mockOpenRouterCatalog.error,
     selectModel: vi.fn(),
     refresh: vi.fn(),
     isRefreshing: false,
   }),
+}));
+
+vi.mock("../ResponseTimeBadge", () => ({
+  default: () => null,
 }));
 
 vi.mock("@/hooks/useAiStream", () => ({
@@ -77,9 +146,25 @@ vi.mock("@/hooks/useAiStream", () => ({
 vi.mock("@/hooks/useAiAnalyzeStream", () => ({
   useAiAnalyzeStream: () => ({
     startAnalyze: mockStartAnalyze,
+    startPreparedAnalyze: vi.fn(),
     cancelAnalyze: mockCancelAnalyze,
     isAnalyzing: mockAnalyzing.current,
     streamingContent: "",
+  }),
+}));
+
+vi.mock("@/hooks/useAiRunInspector", () => ({
+  useAiRunInspector: () => ({
+    preview: mockInspectorPreview.current,
+    open: Boolean(mockInspectorPreview.current),
+    setOpen: vi.fn(),
+    isPreviewing: false,
+    error: mockInspectorError.current,
+    phase: mockInspectorPhase.current,
+    receipt: mockInspectorReceipt.current,
+    review: mockReviewCloudRun,
+    send: vi.fn(),
+    openLastRun: mockOpenLastRun,
   }),
 }));
 
@@ -124,6 +209,35 @@ describe("AiChatPanel — fib section gating", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockAnalyzing.current = false;
+    mockOllamaReady.current = true;
+    mockAiStore.activeProvider = "ollama";
+    mockAiStore.routingMode = "local_only";
+    mockAiStore.analysisProvider = null;
+    mockAiStore.analysisModel = null;
+    mockAiStore.analysisFallbackEnabled = null;
+    mockAiStore.lastProviderMetadata = null;
+    mockOpenRouterCatalog.models = [
+      { id: "anthropic/claude-sonnet-4", name: "Claude Sonnet 4" },
+      { id: "google/gemini-2.5-pro", name: "Gemini 2.5 Pro" },
+    ];
+    mockOpenRouterCatalog.isLoading = false;
+    mockOpenRouterCatalog.error = null;
+    mockInspectorError.current = null;
+    mockInspectorPhase.current = "review";
+    mockInspectorReceipt.current = null;
+    mockInspectorPreview.current = null;
+    mockAiStore.providers = [
+      {
+        provider_name: "ollama",
+        display_name: "Ollama",
+        kind: "local",
+        enabled: true,
+        ready: true,
+        selected_model: "gemma4:4b",
+        has_key: false,
+        error: null,
+      },
+    ];
   });
 
   it("shows the fib panel for a drawn fib even when there is no auto fib (pill off)", async () => {
@@ -175,6 +289,290 @@ describe("AiChatPanel — fib section gating", () => {
     expect(screen.getByTestId("fib-locked-visibility-1")).toBeTruthy();
 
     useChartStore.setState({ activeFibs: [] });
+  });
+});
+
+describe("AiChatPanel — provider routing", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockAnalyzing.current = false;
+    mockAiStore.activeProvider = "openrouter";
+    mockAiStore.routingMode = "cloud_manual";
+    mockAiStore.analysisProvider = null;
+    mockAiStore.analysisModel = null;
+    mockAiStore.analysisFallbackEnabled = null;
+    mockAiStore.lastProviderMetadata = null;
+    mockInspectorPhase.current = "review";
+    mockInspectorReceipt.current = null;
+    mockInspectorPreview.current = null;
+    mockAiStore.providers = [
+      {
+        provider_name: "ollama",
+        display_name: "Ollama",
+        kind: "local",
+        enabled: true,
+        ready: true,
+        selected_model: "gemma4:4b",
+        has_key: false,
+        error: null,
+      },
+      {
+        provider_name: "openrouter",
+        display_name: "OpenRouter",
+        kind: "cloud",
+        enabled: true,
+        ready: false,
+        selected_model: "anthropic/claude-sonnet-4",
+        has_key: true,
+        error: null,
+      },
+    ];
+  });
+
+  it("keeps the title on one line and provider metadata on a bounded second row", async () => {
+    const model = "z-ai/glm-5.2-very-long-provider-variant";
+    mockAiStore.lastProviderMetadata = {
+      provider_name: "openrouter",
+      model,
+      kind: "cloud",
+      fallback_used: true,
+      estimated_cost: 0.02,
+      actual_cost: null,
+    };
+    const { default: AiChatPanel } = await import("../AiChatPanel");
+
+    renderAiChat(createElement(AiChatPanel, {
+      activeConid: 265598,
+      activeSymbol: "AAPL",
+      fibonacci: null,
+    }));
+
+    expect(screen.getAllByText("AI Analysis")[0])
+      .toHaveClass("whitespace-nowrap");
+    expect(screen.getByTestId("ai-run-metadata-row"))
+      .toHaveClass("min-w-0");
+    expect(screen.getByTitle(model)).toBeInTheDocument();
+  });
+
+  it("reopens the latest run receipt from provider metadata", async () => {
+    mockAiStore.lastProviderMetadata = {
+      provider_name: "openrouter",
+      model: "anthropic/claude-sonnet-4",
+      kind: "cloud",
+      fallback_used: false,
+      estimated_cost: 0.02,
+      actual_cost: 0.01,
+    };
+    mockInspectorReceipt.current = { run_id: "run-123", status: "success" };
+    const { default: AiChatPanel } = await import("../AiChatPanel");
+
+    renderAiChat(createElement(AiChatPanel, {
+      activeConid: 265598,
+      activeSymbol: "AAPL",
+      fibonacci: null,
+    }));
+
+    fireEvent.click(screen.getByRole("button", { name: "View last run" }));
+    expect(mockOpenLastRun).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps pre-acceptance failures on Summary when no receipt exists", async () => {
+    mockInspectorPhase.current = "failed";
+    mockInspectorError.current = new Error(
+      "The selected OpenRouter model changed after preview.",
+    );
+    mockInspectorPreview.current = {
+      snapshot_id: "snapshot-123", expires_at: "2026-06-19T12:10:00Z",
+      provider_name: "openrouter",
+      model: {
+        id: "anthropic/claude-sonnet-4", name: "Claude Sonnet 4",
+        context_length: 200000, max_completion_tokens: 4096,
+        prompt_price_per_token: "0.000003",
+        completion_price_per_token: "0.000015", request_price: "0",
+      },
+      request_body: {},
+      disclosure: {
+        sent_to_cloud: [], kept_local: [],
+        exact_payload_available_until: "2026-06-19T12:10:00Z",
+      },
+      cost: {
+        currency: "USD", estimated_input_tokens: 1, expected_output_tokens: 1,
+        max_output_tokens: 1, estimated_cost_usd: "0.001",
+        maximum_cost_usd: "0.002",
+      },
+      fallback_enabled: false,
+    };
+    const { default: AiChatPanel } = await import("../AiChatPanel");
+
+    renderAiChat(createElement(AiChatPanel, {
+      activeConid: 265598, activeSymbol: "AAPL", fibonacci: null,
+    }));
+
+    expect(screen.getByRole("tab", { name: "Summary" }))
+      .toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("alert"))
+      .toHaveTextContent("The selected OpenRouter model changed after preview.");
+  });
+
+  it("does not render an editable Ollama model trigger in the header", async () => {
+    mockAiStore.activeProvider = "ollama";
+    mockAiStore.routingMode = "local_only";
+    const { default: AiChatPanel } = await import("../AiChatPanel");
+
+    renderAiChat(
+      createElement(AiChatPanel, {
+        activeConid: 265598,
+        activeSymbol: "AAPL",
+        fibonacci: null,
+      }),
+    );
+
+    const header = screen.getAllByText("AI Analysis")[0].parentElement;
+    expect(header).not.toBeNull();
+    expect(within(header as HTMLElement).queryByRole("button", { name: /gemma4:4b/i }))
+      .not.toBeInTheDocument();
+  });
+
+  it("renders Analysis provider controls when Ollama is unavailable and routing is local only", async () => {
+    mockOllamaReady.current = false;
+    mockAiStore.activeProvider = "ollama";
+    mockAiStore.routingMode = "local_only";
+    const { default: AiChatPanel } = await import("../AiChatPanel");
+
+    renderAiChat(
+      createElement(AiChatPanel, {
+        activeConid: 265598,
+        activeSymbol: "AAPL",
+        fibonacci: null,
+      }),
+    );
+
+    expect(screen.getByRole("button", { name: /openrouter/i })).toBeEnabled();
+  });
+
+  it("previews the derived cloud route without starting inference", async () => {
+    const { default: AiChatPanel } = await import("../AiChatPanel");
+
+    renderAiChat(
+      createElement(AiChatPanel, {
+        activeConid: 265598,
+        activeSymbol: "AAPL",
+        fibonacci: null,
+      }),
+    );
+
+    fireEvent.click(screen.getByText("RSI"));
+    fireEvent.click(screen.getByRole("button", { name: /review cloud run/i }));
+
+    await waitFor(() => {
+      expect(mockReviewCloudRun).toHaveBeenCalledTimes(1);
+    });
+    expect(mockStartAnalyze).not.toHaveBeenCalled();
+    const [request] = mockReviewCloudRun.mock.calls[0];
+    expect(request.provider_name).toBe("openrouter");
+    expect(request.model).toBe("anthropic/claude-sonnet-4");
+    expect(request.task_type).toBe("analysis");
+  });
+
+  it("uses the exact per-run OpenRouter model selected in Analysis", async () => {
+    mockAiStore.analysisProvider = "openrouter";
+    mockAiStore.analysisModel = "google/gemini-2.5-pro";
+    const { default: AiChatPanel } = await import("../AiChatPanel");
+
+    renderAiChat(
+      createElement(AiChatPanel, {
+        activeConid: 265598,
+        activeSymbol: "AAPL",
+        fibonacci: null,
+      }),
+    );
+
+    fireEvent.click(screen.getByText("RSI"));
+    fireEvent.click(screen.getByRole("button", { name: /review cloud run/i }));
+
+    await waitFor(() => expect(mockReviewCloudRun).toHaveBeenCalledTimes(1));
+    const [request] = mockReviewCloudRun.mock.calls[0];
+    expect(request.provider_name).toBe("openrouter");
+    expect(request.model).toBe("google/gemini-2.5-pro");
+    expect(request.model).not.toBe("gemma4:4b");
+  });
+
+  it("disables analysis when OpenRouter has no validated model", async () => {
+    mockAiStore.analysisProvider = "openrouter";
+    mockAiStore.analysisModel = null;
+    mockAiStore.providers = mockAiStore.providers.map((provider) =>
+      provider.provider_name === "openrouter"
+        ? { ...provider, selected_model: null }
+        : provider,
+    );
+    const { default: AiChatPanel } = await import("../AiChatPanel");
+
+    renderAiChat(
+      createElement(AiChatPanel, {
+        activeConid: 265598,
+        activeSymbol: "AAPL",
+        fibonacci: null,
+      }),
+    );
+
+    fireEvent.click(screen.getByText("RSI"));
+
+    expect(screen.getByRole("button", { name: /review cloud run/i }))
+      .toBeDisabled();
+  });
+
+  it("disables cloud review when an empty loaded catalog leaves only stale OpenRouter selections", async () => {
+    mockAiStore.analysisProvider = "openrouter";
+    mockAiStore.analysisModel = "google/gemini-2.5-pro";
+    mockOpenRouterCatalog.models = [];
+    const { default: AiChatPanel } = await import("../AiChatPanel");
+
+    renderAiChat(
+      createElement(AiChatPanel, {
+        activeConid: 265598,
+        activeSymbol: "AAPL",
+        fibonacci: null,
+      }),
+    );
+
+    fireEvent.click(screen.getByText("RSI"));
+
+    expect(screen.getByRole("button", { name: /review cloud run/i }))
+      .toBeDisabled();
+  });
+
+  it("starts cloud analysis when Ollama is unavailable", async () => {
+    mockOllamaReady.current = false;
+    mockAiStore.analysisProvider = "openrouter";
+    mockOpenRouterCatalog.models = [
+      { id: "anthropic/claude-sonnet-4", name: "Claude Sonnet 4" },
+    ];
+    const { default: AiChatPanel } = await import("../AiChatPanel");
+
+    renderAiChat(createElement(AiChatPanel, {
+      activeConid: 265598,
+      activeSymbol: "AAPL",
+      fibonacci: null,
+    }));
+
+    fireEvent.click(screen.getByText("RSI"));
+    fireEvent.click(screen.getByRole("button", { name: /review cloud run/i }));
+
+    await waitFor(() => expect(mockReviewCloudRun).toHaveBeenCalledTimes(1));
+    expect(mockReviewCloudRun.mock.calls[0][0].provider_name).toBe("openrouter");
+  });
+
+  it("shows a cloud preview failure", async () => {
+    mockInspectorError.current = new Error("Selected model exceeds the cost cap");
+    const { default: AiChatPanel } = await import("../AiChatPanel");
+
+    renderAiChat(createElement(AiChatPanel, {
+      activeConid: 265598,
+      activeSymbol: "AAPL",
+      fibonacci: null,
+    }));
+
+    expect(screen.getByText("Selected model exceeds the cost cap")).toBeTruthy();
   });
 });
 

@@ -14,6 +14,10 @@ from services.ibkr import IBKRService
 from services.screener import ScreenerService
 from services.sectors import SectorService
 from services.ai import AiService
+from services.ai_analysis_preparation import AIAnalysisPreparationService
+from services.ai_keystore import AIKeyStore
+from services.ai_settings import AISettingsService
+from services.ai_usage import AIUsageLedger
 from services.gateway import GatewayLifecycle
 from services.instrument_identity import InstrumentIdentityService
 from services.ollama import OllamaLifecycle
@@ -45,6 +49,29 @@ def get_sectors(request: Request) -> SectorService:
 def get_ai(request: Request) -> AiService:
     """Get the AI service singleton stashed on app.state during lifespan."""
     return request.app.state.ai
+
+
+def get_ai_analysis_preparation(request: Request) -> AIAnalysisPreparationService:
+    return request.app.state.ai_analysis_preparation
+
+
+def get_ai_settings(db: DatabaseService = Depends(get_db)) -> AISettingsService:
+    """Get the AI settings service for the active database dependency."""
+    return AISettingsService(db)
+
+
+def get_ai_usage_ledger(db: DatabaseService = Depends(get_db)) -> AIUsageLedger:
+    """Get the local AI usage/cost ledger for the active database dependency."""
+    return AIUsageLedger(db)
+
+
+def get_ai_keystore(request: Request) -> AIKeyStore:
+    """Get the OS-keychain backed AI key store."""
+    key_store = getattr(request.app.state, "ai_keystore", None)
+    if key_store is None:
+        key_store = AIKeyStore()
+        request.app.state.ai_keystore = key_store
+    return key_store
 
 
 def get_ollama(request: Request) -> OllamaLifecycle:

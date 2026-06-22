@@ -74,6 +74,16 @@ describe("sidecarRequest", () => {
     await expect(sidecarRequest("GET", "/broken")).rejects.toBeInstanceOf(ApiError);
   });
 
+  it("uses FastAPI detail.message as the ApiError message", async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(new Response(JSON.stringify({
+      detail: { error: "ai_keychain_unavailable", message: "OS keychain is unavailable." },
+    }), { status: 503, headers: { "Content-Type": "application/json" } }));
+
+    await expect(sidecarRequest("GET", "/ai/providers")).rejects.toMatchObject({
+      message: "OS keychain is unavailable.",
+    });
+  });
+
   it("passes AbortError through without converting it", async () => {
     const abort = new DOMException("The operation was aborted.", "AbortError");
     vi.mocked(fetch).mockRejectedValue(abort);

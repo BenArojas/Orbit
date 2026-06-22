@@ -40,7 +40,7 @@ These are locked in. Don't revisit unless something breaks.
 | Instrument scope | Any instrument IBKR supports | Focus is US equities/ETFs, but don't restrict — if IBKR has data, show it |
 | Desktop framework | Tauri v2 | Local-only, lightweight, cross-platform |
 | Charts | TradingView Lightweight Charts v5 | Familiar, open source, high quality |
-| AI model | Gemma 4 26B (user picks from installed) | Fully local, 4 tier options by hardware |
+| AI model | Local Ollama by default; fixed OpenRouter models after explicit cloud opt-in | Analysis owns the selected provider/model; direct-provider parity is deferred |
 | AI input | Structured JSON (pre-computed signals) | Not raw OHLCV — cleaner, more reliable |
 | AI scope | Full chat + signal card | Signal card on first response, then follow-up chat |
 | Ollama lifecycle | Detect-only, never auto-install | Guide user, don't decide for them |
@@ -61,17 +61,21 @@ These are locked in. Don't revisit unless something breaks.
 These notes are intentionally tracked in the project plan because they affect the next Orbit/MoonMarket implementation passes.
 
 - **Fibonacci swing selection fix:** IN PROGRESS on `fix/fibonacci-swing-selection`. Reworks `IndicatorService._score_swing` primary-fib selection: removes `INSIDE_TOLERANCE` for strict wick-based status, makes `stretched_penalty` reward any active internal level (0.382/0.5/GP, importance-weighted), and rebalances weights toward recency. No contract change. Design: `docs/superpowers/specs/2026-06-20-fibonacci-swing-selection-design.md`.
-- **Budget-first AI workflow:** DONE on `feature/budget-first-ai-workflow`. Scoped architecture/testing docs are canonical, Claude imports/symlinks shared guidance, four duplicated domain skills are removed, and critical-promises testing replaces mandatory TDD. Verified with JavaScript syntax, policy-drift, structure, and diff checks; no runtime application behavior changed. Design: `docs/superpowers/specs/2026-06-20-budget-first-ai-workflow-design.md`; plan: `docs/superpowers/plans/2026-06-20-budget-first-ai-workflow.md`.
+- **Budget-first AI workflow:** DONE on `feature/budget-first-ai-workflow`. Scoped architecture/testing docs are canonical, Claude imports/symlinks shared guidance, four duplicated domain skills are removed, and critical-promises testing replaces mandatory TDD. Verified with JavaScript syntax, policy-drift, structure, and diff checks; no runtime application behavior changed. Design and plan archived under `docs/archive/` (`2026-06-20-budget-first-ai-workflow-design.md`, `2026-06-20-budget-first-ai-workflow.md`).
+- **Cloud + Hybrid AI:** SHIPPED to `dev` from `feature/orbit-v2-cloud-hybrid-ai-spec` (parent mission slices 1–8, including the manual OpenRouter smoke/review gate). Delivered: validated OpenRouter model selection, cloud payload preview, inspectable run receipts, provider controls owned by Analysis, fact-grounded signals with fail-closed validation, the AI Run Inspector + UX lifecycle, the data/grounding pipeline (true 1h/4h candle semantics, EMA fact grouping, sufficient history, explicit groundable price candidates), neutral-vs-rejected signal handling, and streaming reliability (`finish_reason` capture + reformat retry that preserves the original narrative). Local Ollama stays the default, cloud is explicit opt-in, keys stay in the OS keychain, and SQLite stores only opaque `api_key_ref` values. Master design (kept active): `docs/superpowers/specs/2026-06-05-orbit-v2-cloud-hybrid-ai-design.md`. Shipped plans/specs archived under `docs/archive/` (see its README index).
+- **AI semantic-reasoning quality (remaining forward track):** the prompt-grounding evaluation loop is code-complete (deterministic validator, graders, HITL runner) but its **live OpenRouter evaluation and prompt promotion never ran** — this is the open track for improving semantic reasoning (e.g. "below" ≠ "broke below", prefer NEUTRAL when the only target is structurally remote, non-equity instrument handling). Run candidates one variable at a time through the existing harness; do not hand-tune the prompt by vibes. Also pending: use the newly captured `finish_reason` distribution from real runs to decide whether the cloud `max_output_tokens` cost cap needs raising (do not raise it speculatively). Plan (kept active): `docs/superpowers/plans/2026-06-19-ai-prompt-grounding-evaluation-loop.md`.
 - **Plan #6: MoonMarket Options Chain** ships single-leg option orders first. Selecting a call/put contract opens the shared OrderTicket as `OPTION`, but option brackets are disabled in the UI and rejected server-side if an option order payload tries to submit a multi-order group.
 - **OrderTicket enhancement pass:** trailing stops (`TRAIL`/`TRAILLMT`), outside-RTH, plain-English labels, risk/reward readout, cash sizing, and percent-of-buying-power sizing are merged to local `dev`.
 - **Deferred but required follow-up:** option bracket orders belong in a later MoonMarket trading-depth pass after single-leg option orders are validated against the IBKR paper account. Revisit this before any options trading polish or "bracket parity" work.
-- **Parallax v1 done gate:** no v2 feature is required before calling Parallax v1 done. The remaining gate is live/manual E2E validation plus a short polish pass listed under "Parallax v1 Sign-off Checklist".
+- **Parallax v1 status:** Parallax v1 has shipped. v2 work should not reopen shipped v1 scope unless a regression is found.
 - **Compare-mode color customization:** still belongs in v1 polish because the hardcoded white stock line is not visible enough in light mode.
 - **v2 strategic direction:** the major v2 themes are (1) a TWS-gated execution assistant, (2) optional cloud LLM + hybrid local/frontier inference, and (3) the fib learning/confluence roadmap. These do not change the local-first default.
 
-## Parallax v1 Sign-off Checklist (2026-06-01)
+## Parallax v1 Shipped Checklist (2026-06-01)
 
-Parallax should be considered **code-complete**, but not fully signed off, until these checks are done:
+Parallax v1 has shipped. This checklist is retained as historical release
+context and as a manual regression checklist when touching shipped Parallax
+flows.
 
 | Area | Status | Required before v1 done |
 |---|---|---|
@@ -314,9 +318,9 @@ Manual order-placement smoke test:
 
 ---
 
-### Phase 8: End-to-End Testing
+### Phase 8: End-to-End Testing — HISTORICAL V1 CHECKLIST
 
-> Goal: Verified correct behaviour across all critical flows with a live IBKR connection.
+> Goal: Verified correct behaviour across all critical flows with a live IBKR connection. Retained as historical v1 release context and a future regression checklist.
 
 | # | Task | Owner | Status | Notes |
 |---|---|---|---|---|
@@ -573,7 +577,7 @@ The Compare button on the Analysis toolbar replaces the chart area with a stack 
 
 ---
 
-### Future (v2 — Not In Scope Now)
+### Orbit v2 Roadmap
 
 These are deliberately outside the v1 release gate. v1 remains local-first and
 paper/live-safety guarded. v2 can add optional cloud and TWS-mode capabilities,
@@ -590,15 +594,21 @@ but only behind explicit settings and connection gates.
    - Must have its own safety design: live-account guardrails, max order size,
      max daily loss, manual arming, kill switch, audit log, and replayable order
      intent history.
+   - Not autonomous trading: AI, scanners, and triggers cannot place, arm,
+     modify, or cancel orders. Every order must be created by, or execute
+     within, a user-reviewed and user-armed plan.
 
 2. **Cloud LLM provider support**
-   - Optional providers: Anthropic, OpenAI, and any later frontier model provider
-     that fits the same interface.
-   - Local Ollama remains the default and fallback.
+   - The current cloud analysis surface uses authenticated fixed OpenRouter
+     models. Direct OpenAI, Anthropic, Gemini, and Grok controls are deferred.
+   - Local Ollama remains the default. It is used as fallback only when the user
+     enables the explicit `cloud_with_local_fallback` routing mode.
    - API keys live only in the OS keychain and are never logged. SQLite may
      store only an opaque `api_key_ref`; there is no encrypted SQLite fallback.
-   - Add per-provider token budgets, streaming parity, rate-limit handling,
-     usage/cost logging, and optional monthly cost caps.
+   - Analysis owns persistent provider, model, and fallback selection. Settings
+     owns provider status and API-key save/remove only.
+   - Orbit records metadata-only usage and cost receipts. Provider accounts own
+     budgets and caps; Orbit does not enforce an aggregate monthly cap.
 
 3. **Hybrid agentic inference**
    - Split work between local and cloud models instead of treating provider choice
@@ -717,4 +727,4 @@ Parallax/MoonMarket journal hooks (`docs/architecture/modules.md`).
 | Q8 | ~~Can Ollama be bundled into Tauri?~~ | 4.12 | RESOLVED: detect-only, never auto-install. Guide user instead |
 | Q9 | ~~TWS API or IBKR Client Portal Web API for v1 market data/order ticket?~~ | ALL | RESOLVED: v1 stays with Client Portal Web API. TWS is not the v1 data path. |
 | Q10 | What should the TWS-gated execution assistant support first? | v2 execution assistant | OPEN — likely paper-mode tiered scale-out assistance first, then advanced order types, then a separate live-account safety review. |
-| Q11 | How should hybrid local/cloud inference route tasks? | v2 AI | OPEN — define task classes, privacy/cost thresholds, provider fallback, and when frontier models are allowed to override local analysis. |
+| Q11 | How should hybrid local/cloud inference route tasks? | v2 AI | PARTLY RESOLVED: the current modes are `local_only`, `cloud_manual`, and `cloud_with_local_fallback`; automatic task-class routing remains deferred. |

@@ -1,6 +1,8 @@
 """ATR prompt fact builder."""
 from __future__ import annotations
 
+from decimal import Decimal, ROUND_HALF_UP
+
 from models import IndicatorResult
 from services.prompt_facts._common import is_rising_n, is_falling_n
 from services.prompt_facts.types import PromptFact
@@ -16,6 +18,7 @@ def _make(tf: str, condition: str, text: str, *, polarity: str, strength: int, p
 
 
 def build_atr_facts(*, symbol: str, timeframe: str, atr: IndicatorResult, last_close: float) -> list[PromptFact]:
+    del symbol
     if not atr.values:
         return []
 
@@ -23,12 +26,18 @@ def build_atr_facts(*, symbol: str, timeframe: str, atr: IndicatorResult, last_c
     if last_atr is None or last_atr <= 0:
         return []
 
+    displayed_atr = Decimal(str(last_atr)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    if displayed_atr <= 0:
+        return []
+
     facts: list[PromptFact] = []
 
     atr_pct = last_atr / last_close * 100 if last_close else 0.0
     facts.append(_make(
         timeframe, "stop_distances",
-        f"ATR {last_atr:.2f} ({atr_pct:.1f}% of price). Suggested stops: 1.5x=${last_atr*1.5:.2f}, 2x=${last_atr*2.0:.2f}.",
+        f"ATR {last_atr:.2f} ({atr_pct:.1f}% of price). "
+        f"1.5x ATR distance = {last_atr*1.5:.2f} points. "
+        f"2.0x ATR distance = {last_atr*2.0:.2f} points.",
         polarity="neutral", strength=50, priority=60,
         data={"atr": last_atr, "atr_pct": atr_pct, "stop_1_5x": last_atr * 1.5, "stop_2_0x": last_atr * 2.0},
     ))

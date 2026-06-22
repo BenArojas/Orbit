@@ -549,6 +549,9 @@ export interface AnalyzeRequest {
     context_bars?: number;
     /** Active fibs currently rendered on the chart. */
     fibs?: FibonacciSnapshot[];
+    provider_name?: AIProviderName;
+    model?: string | null;
+    task_type?: "analysis" | "execution_sensitive";
 }
 
 export interface FibonacciSnapshot {
@@ -571,7 +574,7 @@ export interface ChatRequest {
 
 export interface SignalLevel {
     label: string;
-    value: string;
+    value: string; // "$123.45" or "—" when no grounded level exists
     sub: string;
     color?: "green" | "red";
 }
@@ -583,7 +586,7 @@ export interface SignalCheck {
 
 export interface SignalMeta {
     label: string;
-    value: string;
+    value: string; // e.g. "2:1" or "—" when not applicable
 }
 
 export interface SignalData {
@@ -595,10 +598,16 @@ export interface SignalData {
     checks: SignalCheck[];
 }
 
+export type AnalysisStatus = "directional" | "neutral" | "rejected";
+
 export interface AnalyzeResponse {
     session_id: string;
     signal: SignalData | null;
+    status: AnalysisStatus;
+    narrative: string | null;
+    warning: string | null;
     message: string;
+    rejected_output?: string | null;
 }
 
 export interface ChatResponse {
@@ -606,6 +615,173 @@ export interface ChatResponse {
     signal: SignalData | null;
     message: string;
 }
+
+export type AIProviderName =
+    | "ollama"
+    | "openai"
+    | "anthropic"
+    | "gemini"
+    | "grok"
+    | "openrouter";
+
+export type AIProviderKind = "local" | "cloud";
+
+export type AIRoutingMode =
+    | "local_only"
+    | "cloud_manual"
+    | "cloud_with_local_fallback";
+
+export interface AIProviderStatus {
+    provider_name: AIProviderName;
+    display_name: string;
+    kind: AIProviderKind;
+    enabled: boolean;
+    ready: boolean;
+    selected_model: string | null;
+    has_key: boolean;
+    error: string | null;
+}
+
+export interface AIProviderMetadata {
+    provider_name: AIProviderName;
+    kind: AIProviderKind;
+    model: string | null;
+    estimated_cost: number | null;
+    actual_cost: number | null;
+    fallback_used: boolean;
+    requested_model?: string;
+    resolved_model?: string;
+    provider_request_id?: string;
+    input_tokens?: number;
+    output_tokens?: number;
+    reasoning_tokens?: number;
+    cached_tokens?: number;
+    duration_ms?: number;
+    finish_reason?: string;
+}
+
+export interface AIRunAttempt {
+    provider_name: AIProviderName;
+    requested_model: string | null;
+    resolved_model: string | null;
+    status: "success" | "failed" | "fallback_success" | "blocked";
+    provider_request_id: string | null;
+    input_tokens: number | null;
+    output_tokens: number | null;
+    reasoning_tokens: number | null;
+    cached_tokens: number | null;
+    estimated_cost_usd: string | null;
+    actual_cost_usd: string | null;
+    duration_ms: number;
+    error_code: string | null;
+}
+
+export interface AIRunReceipt {
+    run_id: string;
+    requested_provider: AIProviderName;
+    requested_model: string | null;
+    executed_provider: AIProviderName | null;
+    resolved_model: string | null;
+    fallback_used: boolean;
+    fallback_reason: string | null;
+    status: "success" | "failed" | "fallback_success" | "blocked";
+    attempts: AIRunAttempt[];
+    created_at: string;
+}
+
+export interface AIQualityChecks {
+    response_completed: boolean;
+    signal_parsed: boolean;
+    entry_present: boolean;
+    stop_present: boolean;
+    target_present: boolean;
+    checks_count: number;
+    narrative_characters: number;
+}
+
+export interface AIComparisonSide {
+    receipt: AIRunReceipt;
+    message: string;
+    signal: SignalData | null;
+    quality: AIQualityChecks;
+}
+
+export interface AIComparisonResponse {
+    snapshot_id: string;
+    same_input: true;
+    local: AIComparisonSide;
+    cloud: AIComparisonSide;
+}
+
+export interface AIProvidersResponse {
+    providers: AIProviderStatus[];
+    active_provider: AIProviderName;
+    routing_mode: AIRoutingMode;
+    cloud_enabled: boolean;
+}
+
+export interface AIModelOption {
+    id: string;
+    name: string;
+    context_length: number;
+    max_completion_tokens: number;
+    prompt_price_per_token: string;
+    completion_price_per_token: string;
+    request_price: string;
+}
+
+export interface AIProviderModelsResponse {
+    provider_name: "openrouter";
+    models: AIModelOption[];
+    selected_model: string | null;
+    fetched_at: string;
+}
+
+export interface AIAnalysisPreview {
+    snapshot_id: string;
+    expires_at: string;
+    provider_name: "openrouter";
+    model: AIModelOption;
+    request_body: Record<string, unknown>;
+    disclosure: {
+        sent_to_cloud: string[];
+        kept_local: string[];
+        exact_payload_available_until: string;
+    };
+    cost: {
+        currency: "USD";
+        estimated_input_tokens: number;
+        expected_output_tokens: number;
+        max_output_tokens: number;
+        estimated_cost_usd: string;
+        maximum_cost_usd: string;
+    };
+    fallback_enabled: boolean;
+}
+
+export interface AIProviderModelUpdateRequest {
+    model: string;
+}
+
+export interface AIProviderKeySaveRequest {
+    api_key: string;
+}
+
+export interface AIRoutingPolicyResponse {
+  active_provider: AIProviderName;
+  routing_mode: AIRoutingMode;
+  local_fallback_enabled: boolean;
+}
+
+export type AIRoutingPolicyUpdate = AIRoutingPolicyResponse;
+
+export const AI_PROVIDERS_QUERY_KEY = ["ai", "providers"] as const;
+export const AI_OPENROUTER_MODELS_QUERY_KEY = [
+    "ai",
+    "providers",
+    "openrouter",
+    "models",
+] as const;
 
 export interface AiStatusResponse {
     state:
@@ -1011,6 +1187,38 @@ export const parallaxApi = {
         sidecarRequest<void>("DELETE", `/watchlist-config/${encodeURIComponent(name)}`),
 
     // AI Analysis (Phase 4)
+    aiProviders: () =>
+        sidecarRequest<AIProvidersResponse>("GET", "/ai/providers"),
+
+    aiOpenRouterModels: () =>
+        sidecarRequest<AIProviderModelsResponse>("GET", "/ai/providers/openrouter/models"),
+
+    aiSelectOpenRouterModel: (req: AIProviderModelUpdateRequest) =>
+        sidecarRequest<AIProviderModelsResponse>("PUT", "/ai/providers/openrouter/model", req),
+
+    aiAnalysisPreview: (req: AnalyzeRequest) =>
+        sidecarRequest<AIAnalysisPreview>("POST", "/ai/analysis/preview", req),
+
+    aiAnalysisCompare: (snapshotId: string) =>
+        sidecarRequest<AIComparisonResponse>(
+            "POST", "/ai/analysis/compare", { snapshot_id: snapshotId },
+        ),
+
+    aiRoutingPolicy: () =>
+        sidecarRequest<AIRoutingPolicyResponse>("GET", "/ai/routing-policy"),
+
+    aiRuns: (limit = 50) =>
+        sidecarRequest<AIRunReceipt[]>("GET", `/ai/runs?limit=${limit}`),
+
+    aiUpdateRoutingPolicy: (req: AIRoutingPolicyUpdate) =>
+        sidecarRequest<AIRoutingPolicyResponse>("PUT", "/ai/routing-policy", req),
+
+    aiSaveProviderKey: (providerName: AIProviderName, req: AIProviderKeySaveRequest) =>
+        sidecarRequest<AIProviderStatus>("POST", `/ai/providers/${providerName}/key`, req),
+
+    aiDeleteProviderKey: (providerName: AIProviderName) =>
+        sidecarRequest<AIProviderStatus>("DELETE", `/ai/providers/${providerName}/key`),
+
     aiStatus: () =>
         sidecarRequest<AiStatusResponse>("GET", "/ai/status"),
 

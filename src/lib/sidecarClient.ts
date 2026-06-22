@@ -20,7 +20,15 @@ export class ApiError extends Error {
     public status: number,
     public body: Record<string, unknown>,
   ) {
-    super(body.message as string || `API error ${status}`);
+    const detail = body.detail;
+    const detailMessage = detail && typeof detail === "object" && !Array.isArray(detail)
+      ? (detail as Record<string, unknown>).message
+      : undefined;
+    super(
+      (typeof body.message === "string" && body.message) ||
+      (typeof detailMessage === "string" && detailMessage) ||
+      `API error ${status}`,
+    );
     this.name = "ApiError";
   }
 }
