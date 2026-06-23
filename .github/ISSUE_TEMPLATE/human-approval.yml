@@ -1,15 +1,77 @@
 name: Human Approval
-about: Request explicit approval before high-risk agent work continues.
+about: Request explicit approval before high-risk or blocked agent work continues.
 title: "[Approval]: "
 labels:
   - human:needs-approval
 body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this when work is blocked until Ben decides. Always fill **Came from** and **Return to / next status** so the item can resume correctly after approval.
+  - type: input
+    id: blocked-item
+    attributes:
+      label: Blocked issue or PR
+      description: Link the issue or PR that is blocked by this approval.
+      placeholder: "Example: #123 or https://github.com/BenArojas/Orbit/pull/123"
+    validations:
+      required: true
+  - type: dropdown
+    id: approval-type
+    attributes:
+      label: Approval type
+      description: Why is human approval needed?
+      options:
+        - Final merge / finish
+        - Planning scope decision
+        - Coding unblocker
+        - Review decision
+        - Architecture / API decision
+        - Data model / migration decision
+        - Trading-safety / broker-behavior decision
+        - Secrets / deployment / infrastructure decision
+        - Other
+    validations:
+      required: true
+  - type: dropdown
+    id: came-from
+    attributes:
+      label: Came from
+      description: Which board status did this item come from before Human Approval?
+      options:
+        - Needs Planning
+        - Ready for Coding
+        - In Progress
+        - PR Open
+        - In Review
+        - Changes Requested
+        - Backlog
+        - Other / unknown
+    validations:
+      required: true
+  - type: dropdown
+    id: return-to
+    attributes:
+      label: Return to / next status
+      description: Where should this item go after approval?
+      options:
+        - Needs Planning
+        - Ready for Coding
+        - In Progress
+        - PR Open
+        - In Review
+        - Changes Requested
+        - Done
+        - Backlog
+        - Other / decide after approval
+    validations:
+      required: true
   - type: textarea
     id: decision
     attributes:
       label: Decision needed
       description: What exactly needs human approval?
-      placeholder: "Example: Approve database migration for portfolio snapshots."
+      placeholder: "Example: Should the agent create a new endpoint or change the existing portfolio response shape?"
     validations:
       required: true
   - type: textarea
@@ -34,6 +96,17 @@ body:
       description: What does the agent recommend, and why?
     validations:
       required: false
+  - type: textarea
+    id: resume-instructions
+    attributes:
+      label: Resume instructions after approval
+      description: What should the next agent do after Ben approves?
+      placeholder: |
+        Example: Return to In Progress and ask the coder agent to implement Option A only.
+        Example: Return to Changes Requested and ask the coder agent to fix the review comments only.
+        Example: Move to Done after Ben merges the PR.
+    validations:
+      required: true
   - type: checkboxes
     id: approval
     attributes:
@@ -42,4 +115,6 @@ body:
         - label: Approved to continue.
           required: false
         - label: Not approved; revise plan.
+          required: false
+        - label: Approved to merge / finish.
           required: false
