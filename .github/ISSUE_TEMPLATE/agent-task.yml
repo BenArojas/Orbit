@@ -1,0 +1,78 @@
+name: Agent Task
+about: Create a small executable task for a coding agent.
+title: "[Task]: "
+labels:
+  - agent:ready-for-coding
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Keep this small enough for one focused PR. The coder agent should use this issue as the source of truth.
+  - type: textarea
+    id: task
+    attributes:
+      label: Task
+      description: What exactly should change?
+      placeholder: "Example: Add backend endpoint for portfolio summary."
+    validations:
+      required: true
+  - type: textarea
+    id: relevant-files
+    attributes:
+      label: Relevant files
+      description: List likely files or folders. Keep it narrow.
+      placeholder: |
+        - backend/routes/portfolio.py
+        - backend/services/portfolio_service.py
+    validations:
+      required: false
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: Concrete checklist the PR must satisfy.
+      placeholder: |
+        - [ ] Endpoint returns total value, cash, daily change, and holdings count
+        - [ ] Existing endpoints still work
+        - [ ] Typecheck passes
+    validations:
+      required: true
+  - type: textarea
+    id: non-goals
+    attributes:
+      label: Non-goals
+      description: What must the coder avoid changing?
+      placeholder: |
+        - Do not change frontend
+        - Do not change database schema
+    validations:
+      required: false
+  - type: textarea
+    id: tests
+    attributes:
+      label: Test command or validation
+      description: Which tests/checks should run? Say why if none.
+      placeholder: |
+        npm run typecheck
+        npm run build
+    validations:
+      required: false
+  - type: dropdown
+    id: risk
+    attributes:
+      label: Risk level
+      options:
+        - risk:low
+        - risk:medium
+        - risk:high
+    validations:
+      required: true
+  - type: checkboxes
+    id: approval
+    attributes:
+      label: Human approval
+      options:
+        - label: This issue is approved for a coder agent.
+          required: false
+        - label: This issue requires human approval before coding.
+          required: false
