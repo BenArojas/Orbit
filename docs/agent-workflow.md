@@ -8,22 +8,87 @@ This repo uses GitHub as the shared state machine for planning, coding, review, 
 - Sub-issues hold executable tasks.
 - Pull requests hold implementation.
 - PR comments hold review and fix loops.
+- GitHub Projects shows the board.
 - Human approval controls merge and high-risk work.
 
 This keeps agent context small and reduces token waste because each agent reads the artifact it needs instead of long chat history.
 
-## Recommended statuses
+## Board statuses
 
-Use GitHub Projects columns or labels with this flow:
+Use these GitHub Projects columns:
 
-1. `agent:needs-planning`
-2. `agent:ready-for-coding`
-3. `agent:in-progress`
-4. `agent:needs-review`
-5. `agent:changes-requested`
-6. `human:needs-approval`
-7. `human:approved`
-8. Done / closed
+1. `Backlog`
+2. `Needs Planning`
+3. `Ready for Coding`
+4. `In Progress`
+5. `PR Open`
+6. `In Review`
+7. `Changes Requested`
+8. `Human Approval`
+9. `Done`
+
+## Board meaning
+
+- `Backlog`: idea exists, but nobody should work on it yet.
+- `Needs Planning`: worth doing, but too big or vague. Planner may split it into small Agent Task issues.
+- `Ready for Coding`: small, approved, clear task. Coder may pick it up.
+- `In Progress`: a human or agent is actively working on it.
+- `PR Open`: code exists in a PR.
+- `In Review`: Claude, Codex, or a human is reviewing the PR.
+- `Changes Requested`: review found issues. A coder/fixer may address only requested changes.
+- `Human Approval`: work is blocked until the human approves, rejects, merges, or gives direction.
+- `Done`: merged, closed, or intentionally completed.
+
+## Scheduler priority
+
+When an autonomous or semi-autonomous agent scans the board, it must process work in this order:
+
+1. `Human Approval`: never continue automatically. Summarize the decision needed and stop.
+2. `Changes Requested`: fix existing PRs before starting new work.
+3. `In Review`: review open PRs that are waiting for AI review.
+4. `PR Open`: route open PRs into review if they are ready.
+5. `In Progress`: check only for stuck/stale work; do not start a second agent on the same item.
+6. `Ready for Coding`: start at most one approved coding task per run.
+7. `Needs Planning`: plan at most one parent issue per run.
+8. `Backlog`: do nothing unless explicitly promoted.
+9. `Done`: do nothing.
+
+This policy keeps work-in-progress low and prevents agents from creating many unfinished branches or PRs.
+
+## Concurrency limits
+
+Default limits:
+
+- Planner: at most 1 parent plan per scheduled run.
+- Coder: at most 1 coding task per scheduled run.
+- Reviewer: can review multiple PRs, but prefer 1-2 per run to control cost.
+- Fixer: prioritize existing `Changes Requested` PRs before new coding.
+
+Do not allow multiple agents to work on the same issue or PR at once.
+
+## What happens when an agent gets stuck
+
+If an agent is uncertain, blocked, or needs approval, it must:
+
+1. Stop changing code.
+2. Leave a concise comment with:
+   - What it tried.
+   - Why it is blocked.
+   - The exact decision needed from the human.
+   - The recommended option, if there is one.
+3. Move or label the item as `Human Approval` / `human:needs-approval`.
+4. Wait for the human.
+
+The agent must not guess on high-risk decisions.
+
+Human approval is required for:
+
+- Merging any PR.
+- Issues labeled `risk:high`.
+- Database schema or migration changes.
+- Authentication, permissions, secrets, deployment, payments, broker execution, or cloud-AI policy changes.
+- Large refactors that touch unrelated areas.
+- Any change that affects trading-safety boundaries.
 
 ## Parent plan flow
 
