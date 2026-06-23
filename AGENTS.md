@@ -79,6 +79,30 @@ When scanning a board, agents must process work in this order:
 
 This keeps work-in-progress low and prevents agents from opening many unfinished branches or PRs.
 
+### Human Approval routing
+
+`Human Approval` is a pause state, not a final state.
+
+Every item moved to `Human Approval` must include:
+
+- Blocked issue or PR.
+- Approval type.
+- Came from status.
+- Return to / next status.
+- Exact decision needed.
+- Resume instructions after approval.
+
+After a human answers, route by `Return to / next status`:
+
+- `Done`: human merges, closes, or finishes the item. No agent continues automatically.
+- `In Progress`: resume the same coding task with the approved option only.
+- `Changes Requested`: send the PR back to coder/fixer before any fresh coding.
+- `In Review`: resume review.
+- `Needs Planning`: resume planner.
+- `Ready for Coding`: task is now approved and can be picked by coder.
+
+If approval came from review and returns to `Changes Requested`, it has priority over new `Ready for Coding` tasks.
+
 ### Stuck or blocked agents
 
 If an agent is uncertain, blocked, or needs approval, it must stop changing code and leave a concise comment with:
@@ -87,6 +111,8 @@ If an agent is uncertain, blocked, or needs approval, it must stop changing code
 - Why it is blocked.
 - The exact decision needed from the human.
 - The recommended option, if there is one.
+- Came from status.
+- Return to / next status.
 
 Then move or label the item as `Human Approval` / `human:needs-approval` and wait for the human.
 
