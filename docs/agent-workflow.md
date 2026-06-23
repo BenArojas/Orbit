@@ -55,6 +55,33 @@ When an autonomous or semi-autonomous agent scans the board, it must process wor
 
 This policy keeps work-in-progress low and prevents agents from creating many unfinished branches or PRs.
 
+## Human Approval routing
+
+`Human Approval` is not a single final state. It is a pause state with routing metadata.
+
+Every approval item must include:
+
+- `Blocked issue or PR`: the artifact that is waiting.
+- `Approval type`: why a human decision is needed.
+- `Came from`: the board status before it entered `Human Approval`.
+- `Return to / next status`: where it should go after approval.
+- `Decision needed`: the exact question for the human.
+- `Resume instructions`: what the next agent should do after approval.
+
+Common routes:
+
+| Scenario | Came from | Return to / next status | Priority after approval |
+| --- | --- | --- | --- |
+| Final merge approval | `PR Open` or `In Review` | `Done` | Human merges/closes; no agent continues |
+| Coder blocked mid-implementation | `In Progress` | `In Progress` | Resume same coding task after decision |
+| Reviewer found a risky decision | `In Review` | `Changes Requested` | Send back to coder/fixer before new work |
+| Planner needs scope decision | `Needs Planning` | `Needs Planning` or `Ready for Coding` | Planner resumes or generated task becomes codable |
+| Architecture/API/schema decision | Any active status | Usually the original status | Resume only with the approved option |
+
+After a human answers, the next action is determined by `Return to / next status`, not by the original location alone.
+
+If `Return to / next status` is `Changes Requested`, it outranks all new `Ready for Coding` work.
+
 ## Concurrency limits
 
 Default limits:
@@ -76,6 +103,8 @@ If an agent is uncertain, blocked, or needs approval, it must:
    - Why it is blocked.
    - The exact decision needed from the human.
    - The recommended option, if there is one.
+   - Came from status.
+   - Return to / next status.
 3. Move or label the item as `Human Approval` / `human:needs-approval`.
 4. Wait for the human.
 
