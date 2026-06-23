@@ -1,0 +1,66 @@
+name: Parent Plan
+about: Create a high-level phase or feature that a planner agent can split into smaller tasks.
+title: "[Plan]: "
+labels:
+  - agent:needs-planning
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this for a larger feature, refactor, or phase. The planner agent should turn this into small executable issues before coding starts.
+  - type: textarea
+    id: goal
+    attributes:
+      label: Goal
+      description: What should be true when this parent plan is done?
+      placeholder: "Example: Improve dashboard performance without changing the visual design."
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: Context
+      description: Why are we doing this? Link prior discussions, docs, or screenshots when useful.
+    validations:
+      required: true
+  - type: textarea
+    id: success
+    attributes:
+      label: Success criteria
+      description: What outcomes should the planner optimize for?
+      placeholder: |
+        - Dashboard loads faster
+        - No visual regressions
+        - Existing tests still pass
+    validations:
+      required: true
+  - type: textarea
+    id: constraints
+    attributes:
+      label: Constraints and non-goals
+      description: What should not be changed?
+      placeholder: |
+        - Do not change database schema
+        - Do not redesign UI
+        - Do not touch broker execution code
+    validations:
+      required: false
+  - type: dropdown
+    id: risk
+    attributes:
+      label: Risk level
+      options:
+        - risk:low
+        - risk:medium
+        - risk:high
+    validations:
+      required: true
+  - type: checkboxes
+    id: approval
+    attributes:
+      label: Human approval
+      options:
+        - label: I approve a planner agent to break this into sub-issues only.
+          required: true
+        - label: I approve coder agents to start immediately after sub-issues are created.
+          required: false
