@@ -1,0 +1,45 @@
+name: Human Approval
+about: Request explicit approval before high-risk agent work continues.
+title: "[Approval]: "
+labels:
+  - human:needs-approval
+body:
+  - type: textarea
+    id: decision
+    attributes:
+      label: Decision needed
+      description: What exactly needs human approval?
+      placeholder: "Example: Approve database migration for portfolio snapshots."
+    validations:
+      required: true
+  - type: textarea
+    id: options
+    attributes:
+      label: Options considered
+      description: List the reasonable choices and tradeoffs.
+      placeholder: |
+        Option A:
+        - Pros:
+        - Cons:
+
+        Option B:
+        - Pros:
+        - Cons:
+    validations:
+      required: true
+  - type: textarea
+    id: recommendation
+    attributes:
+      label: Agent recommendation
+      description: What does the agent recommend, and why?
+    validations:
+      required: false
+  - type: checkboxes
+    id: approval
+    attributes:
+      label: Human decision
+      options:
+        - label: Approved to continue.
+          required: false
+        - label: Not approved; revise plan.
+          required: false
