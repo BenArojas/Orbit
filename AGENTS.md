@@ -36,7 +36,21 @@ Polars with a pandas-ta bridge, SQLite, IBKR Client Portal, and Ollama.
 
 ## GitHub Issue-Driven Agent Workflow
 
-Use GitHub Issues, labels, and Pull Requests as the handoff protocol between the human, planner agent, coder agent, and reviewer agent.
+Use GitHub Issues, GitHub Projects, labels, and Pull Requests as the handoff protocol between the human, planner agent, coder agent, and reviewer agent.
+
+### Board statuses
+
+Use these GitHub Projects columns:
+
+- `Backlog`
+- `Needs Planning`
+- `Ready for Coding`
+- `In Progress`
+- `PR Open`
+- `In Review`
+- `Changes Requested`
+- `Human Approval`
+- `Done`
 
 ### State machine
 
@@ -49,9 +63,36 @@ Use GitHub Issues, labels, and Pull Requests as the handoff protocol between the
 7. Coder fixes requested changes if needed.
 8. Human approves and merges.
 
+### Scheduler priority
+
+When scanning a board, agents must process work in this order:
+
+1. `Human Approval`: never continue automatically. Summarize the decision needed and stop.
+2. `Changes Requested`: fix existing PRs before starting new work.
+3. `In Review`: review open PRs that are waiting for AI review.
+4. `PR Open`: route open PRs into review if they are ready.
+5. `In Progress`: check only for stuck/stale work; do not start a second agent on the same item.
+6. `Ready for Coding`: start at most one approved coding task per run.
+7. `Needs Planning`: plan at most one parent issue per run.
+8. `Backlog`: do nothing unless explicitly promoted.
+9. `Done`: do nothing.
+
+This keeps work-in-progress low and prevents agents from opening many unfinished branches or PRs.
+
+### Stuck or blocked agents
+
+If an agent is uncertain, blocked, or needs approval, it must stop changing code and leave a concise comment with:
+
+- What it tried.
+- Why it is blocked.
+- The exact decision needed from the human.
+- The recommended option, if there is one.
+
+Then move or label the item as `Human Approval` / `human:needs-approval` and wait for the human.
+
 ### Status labels
 
-Use these labels as the canonical workflow states:
+Use these labels as the canonical workflow signals:
 
 - `agent:needs-planning`
 - `agent:ready-for-coding`
