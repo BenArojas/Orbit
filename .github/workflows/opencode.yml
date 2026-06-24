@@ -8,10 +8,139 @@ permissions:
   pull-requests: write
   issues: write
   id-token: write
+  projects: write
+
+env:
+  PROJECT_ID: "PVT_kwHOCdGZYc4Bbcft"
+  STATUS_FIELD_ID: "PVTSSF_lAHOCdGZYc4BbcftzhWM-EQ"
+  # Status option IDs
+  OPT_BACKLOG: "f75ad846"
+  OPT_NEEDS_PLANNING: "61e4505c"
+  OPT_READY_FOR_CODING: "47fc9ee4"
+  OPT_IN_PROGRESS: "8a244bab"
+  OPT_PR_OPEN: "778733cb"
+  OPT_IN_REVIEW: "df73e18b"
+  OPT_CHANGES_REQUESTED: "182692a0"
+  OPT_HUMAN_APPROVAL: "4bff2a14"
+  OPT_DONE: "98236657"
 
 jobs:
   # ─────────────────────────────────────────────────────────────────────
-  # Coder job — fires when /oc is commented on an ISSUE (not a PR)
+  # Planner job — fires when /oc is commented on an issue with
+  # agent:needs-planning label
+  # Flow: Needs Planning → (agent creates sub-issues) → Ready for Coding
+  # ─────────────────────────────────────────────────────────────────────
+  planner:
+    if: |
+      (contains(github.event.comment.body, '/oc') || contains(github.event.comment.body, '/opencode')) &&
+      github.event.issue.pull_request == null
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check if issue needs planning
+        id: check
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const issue_number = context.payload.issue.number;
+            const { data: labels } = await github.rest.issues.listLabelsOnIssue({ owner, repo, issue_number });
+            const needsPlanning = labels.some(l => l.name === "agent:needs-planning");
+            core.setOutput("needs_planning", needsPlanning ? "true" : "false");
+            if (needsPlanning) {
+              console.log("Issue has agent:needs-planning label — running planner job");
+            } else {
+              console.log("Issue does not have agent:needs-planning label — skipping planner job");
+            }
+
+      - uses: actions/checkout@v4
+        if: steps.check.outputs.needs_planning == 'true'
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - uses: anomalyco/opencode/github@latest
+        if: steps.check.outputs.needs_planning == 'true'
+        env:
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          model: openrouter/z-ai/glm-5.2
+          use_github_token: true
+          prompt: |
+            You are the Orbit planner agent. Read this parent issue and break it down into small executable sub-issues.
+
+            Steps:
+            1. Read the parent issue body and all comments carefully.
+            2. Read AGENTS.md for workflow rules, constraints, and non-goals.
+            3. Break the goal into 1-5 small tasks, each small enough for one focused PR.
+            4. For each task, create a GitHub issue using:
+               gh issue create --title "[Task]: <short title>" --label "agent:ready-for-coding" --label "risk:low" --body "<body>"
+            5. The issue body MUST include these sections:
+               - Task: What exactly should change
+               - Relevant files: List likely files (keep it narrow)
+               - Acceptance criteria: Concrete checklist
+               - Non-goals: What to avoid
+               - Test command: Which tests to run
+               - Risk level: risk:low (or higher if justified)
+               - Parent issue: "Part of #N"
+            6. After creating each sub-issue, link it to this parent issue:
+               gh issue edit <sub-issue-number> --add-assignee ""  # just to confirm it exists
+            7. Do NOT create branches, push code, or open PRs. You are planning only.
+            8. Do NOT create or switch git branches. Do NOT run git push or git remote commands.
+            9. Keep each task tiny and safe. Prefer smaller tasks over larger ones.
+          
+      - name: Move parent to ready for coding
+        if: steps.check.outputs.needs_planning == 'true' && success()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const issue_number = context.payload.issue.number;
+
+            // Update labels: remove agent:needs-planning, add agent:ready-for-coding
+            try { await github.rest.issues.removeLabel({ owner, repo, issue_number, name: "agent:needs-planning" }); } catch (e) {}
+            const { data: labels } = await github.rest.issues.listLabelsOnIssue({ owner, repo, issue_number });
+            if (!labels.some(l => l.name === "agent:ready-for-coding")) {
+              await github.rest.issues.addLabels({ owner, repo, issue_number, labels: ["agent:ready-for-coding"] });
+            }
+
+            // Directly update project board via GraphQL
+            const PROJECT_ID = process.env.PROJECT_ID;
+            const STATUS_FIELD_ID = process.env.STATUS_FIELD_ID;
+            const OPT_READY_FOR_CODING = process.env.OPT_READY_FOR_CODING;
+
+            // Find project item ID
+            const itemQuery = `query {
+              user(login: "${owner}") {
+                projectV2(number: 1) {
+                  items(first: 100) {
+                    nodes { id content { ... on Issue { number } } }
+                  }
+                }
+              }
+            }`;
+
+            const itemResult = await github.graphql(itemQuery);
+            const item = itemResult.user.projectV2.items.nodes.find(n => n.content?.number === issue_number);
+
+            if (item) {
+              const updateMutation = `mutation($project: ID!, $item: ID!, $field: ID!, $value: String!) {
+                updateProjectV2ItemFieldValue(input: {
+                  projectId: $project, itemId: $item, fieldId: $field,
+                  value: { singleSelectOptionId: $value }
+                }) { projectV2Item { id } }
+              }`;
+              await github.graphql(updateMutation, {
+                project: PROJECT_ID, item: item.id, field: STATUS_FIELD_ID, value: OPT_READY_FOR_CODING
+              });
+              console.log(`Moved issue #${issue_number} to Ready For Coding`);
+            } else {
+              console.log(`Issue #${issue_number} not found in project`);
+            }
+
+  # ─────────────────────────────────────────────────────────────────────
+  # Coder job — fires when /oc is commented on an ISSUE without
+  # agent:needs-planning label
   # Flow: Ready for Coding / Changes Requested → In Progress → Pr Open
   # ─────────────────────────────────────────────────────────────────────
   coder:
@@ -20,18 +149,30 @@ jobs:
       github.event.issue.pull_request == null
     runs-on: ubuntu-latest
     steps:
-      - name: Mark issue in progress
+      - name: Check if issue needs planning (skip coder if so)
+        id: check
         uses: actions/github-script@v7
         with:
           script: |
             const { owner, repo } = context.repo;
             const issue_number = context.payload.issue.number;
             const { data: labels } = await github.rest.issues.listLabelsOnIssue({ owner, repo, issue_number });
+            const needsPlanning = labels.some(l => l.name === "agent:needs-planning");
+            core.setOutput("needs_planning", needsPlanning ? "true" : "false");
+
+      - name: Mark issue in progress + move board
+        if: steps.check.outputs.needs_planning == 'false'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const issue_number = context.payload.issue.number;
+
+            // Update labels
+            const { data: labels } = await github.rest.issues.listLabelsOnIssue({ owner, repo, issue_number });
             const has = (name) => labels.some(l => l.name === name);
             const remove = async (name) => {
-              if (has(name)) {
-                try { await github.rest.issues.removeLabel({ owner, repo, issue_number, name }); } catch (e) {}
-              }
+              if (has(name)) { try { await github.rest.issues.removeLabel({ owner, repo, issue_number, name }); } catch (e) {} }
             };
             await remove("agent:ready-for-coding");
             await remove("agent:changes-requested");
@@ -39,21 +180,64 @@ jobs:
               await github.rest.issues.addLabels({ owner, repo, issue_number, labels: ["agent:in-progress"] });
             }
 
+            // Directly update project board via GraphQL
+            const itemQuery = `query {
+              user(login: "${owner}") {
+                projectV2(number: 1) {
+                  items(first: 100) { nodes { id content { ... on Issue { number } } } }
+                }
+              }
+            }`;
+            const itemResult = await github.graphql(itemQuery);
+            const item = itemResult.user.projectV2.items.nodes.find(n => n.content?.number === issue_number);
+            if (item) {
+              const updateMutation = `mutation($project: ID!, $item: ID!, $field: ID!, $value: String!) {
+                updateProjectV2ItemFieldValue(input: {
+                  projectId: $project, itemId: $item, fieldId: $field,
+                  value: { singleSelectOptionId: $value }
+                }) { projectV2Item { id } }
+              }`;
+              await github.graphql(updateMutation, {
+                project: process.env.PROJECT_ID, item: item.id,
+                field: process.env.STATUS_FIELD_ID, value: process.env.OPT_IN_PROGRESS
+              });
+              console.log(`Moved issue #${issue_number} to In Progress`);
+            }
+
       - uses: actions/checkout@v4
+        if: steps.check.outputs.needs_planning == 'false'
         with:
           fetch-depth: 1
           persist-credentials: false
 
       - uses: anomalyco/opencode/github@latest
+        if: steps.check.outputs.needs_planning == 'false'
         env:
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           model: openrouter/z-ai/glm-5.2
           use_github_token: true
+          prompt: |
+            Implement this issue. Follow AGENTS.md for project rules.
 
-      - name: Mark issue PR open
-        if: success()
+            CRITICAL GIT RULES:
+            - Do NOT create or switch git branches. The infrastructure creates a branch automatically.
+            - Do NOT run git push, git remote, or any git remote commands.
+            - Do NOT create pull requests or use gh pr create.
+            - Just implement the changes, stage them with git add, and commit with git commit.
+            - The opencode infrastructure handles branch creation, push, and PR creation automatically.
+
+            Workflow:
+            1. Read the issue body and acceptance criteria.
+            2. Read AGENTS.md for project rules and constraints.
+            3. Implement the smallest change that satisfies the issue.
+            4. Run the test command from the issue if specified.
+            5. git add and git commit your changes.
+            6. Stop. The infrastructure will push and open a PR.
+
+      - name: Mark issue PR open + move board
+        if: steps.check.outputs.needs_planning == 'false' && success()
         uses: actions/github-script@v7
         with:
           script: |
@@ -72,23 +256,17 @@ jobs:
             for (const pr of prs) {
               const body = pr.body || "";
               const match = body.match(/closes\s+#(\d+)/i);
-              if (match && parseInt(match[1]) === issue_number) {
-                linkedPr = pr;
-                break;
-              }
+              if (match && parseInt(match[1]) === issue_number) { linkedPr = pr; break; }
             }
 
-            // If no linked PR found, try to find the most recent open PR from the opencode branch
+            // Fallback: find most recent opencode PR
             if (!linkedPr) {
               for (const pr of prs) {
-                if (pr.head.ref.startsWith("opencode/") || pr.head.ref.startsWith("agent/")) {
-                  linkedPr = pr;
-                  break;
-                }
+                if (pr.head.ref.startsWith("opencode/") || pr.head.ref.startsWith("agent/")) { linkedPr = pr; break; }
               }
             }
 
-            // Ensure the PR body contains "Closes #N" so other automations can find it
+            // Ensure PR body contains "Closes #N"
             if (linkedPr) {
               const body = linkedPr.body || "";
               const closesPattern = new RegExp(`closes\\s+#${issue_number}`, "i");
@@ -105,6 +283,30 @@ jobs:
               await github.rest.issues.addLabels({ owner, repo, issue_number, labels: ["agent:pr-open"] });
             }
 
+            // Directly update project board via GraphQL
+            const itemQuery = `query {
+              user(login: "${owner}") {
+                projectV2(number: 1) {
+                  items(first: 100) { nodes { id content { ... on Issue { number } } } }
+                }
+              }
+            }`;
+            const itemResult = await github.graphql(itemQuery);
+            const item = itemResult.user.projectV2.items.nodes.find(n => n.content?.number === issue_number);
+            if (item) {
+              const updateMutation = `mutation($project: ID!, $item: ID!, $field: ID!, $value: String!) {
+                updateProjectV2ItemFieldValue(input: {
+                  projectId: $project, itemId: $item, fieldId: $field,
+                  value: { singleSelectOptionId: $value }
+                }) { projectV2Item { id } }
+              }`;
+              await github.graphql(updateMutation, {
+                project: process.env.PROJECT_ID, item: item.id,
+                field: process.env.STATUS_FIELD_ID, value: process.env.OPT_PR_OPEN
+              });
+              console.log(`Moved issue #${issue_number} to Pr Open`);
+            }
+
   # ─────────────────────────────────────────────────────────────────────
   # Reviewer job — fires when /oc is commented on a PR
   # Flow: Pr Open → In Review → (Changes Requested | Human Approval)
@@ -115,29 +317,52 @@ jobs:
       github.event.issue.pull_request != null
     runs-on: ubuntu-latest
     steps:
-      - name: Extract linked issue and mark in review
+      - name: Extract linked issue and mark in review + move board
+        id: extract
         uses: actions/github-script@v7
         with:
           script: |
             const { owner, repo } = context.repo;
             const pr_number = context.payload.issue.number;
 
-            // Get the PR to find the linked issue
+            // Get PR to find linked issue
             const { data: pr } = await github.rest.pulls.get({ owner, repo, pull_number: pr_number });
             const body = pr.body || "";
             const match = body.match(/closes\s+#(\d+)/i);
             const issue_number = match ? parseInt(match[1]) : null;
+            core.setOutput("issue_number", issue_number || "");
 
             if (issue_number) {
-              // Remove agent:pr-open, add agent:needs-review
+              // Update labels
               try { await github.rest.issues.removeLabel({ owner, repo, issue_number, name: "agent:pr-open" }); } catch (e) {}
               const { data: labels } = await github.rest.issues.listLabelsOnIssue({ owner, repo, issue_number });
               if (!labels.some(l => l.name === "agent:needs-review")) {
                 await github.rest.issues.addLabels({ owner, repo, issue_number, labels: ["agent:needs-review"] });
               }
-              console.log(`Issue #${issue_number} moved to In Review for PR #${pr_number}`);
-            } else {
-              console.log("No linked issue found in PR body; skipping label swap.");
+
+              // Directly update project board via GraphQL
+              const itemQuery = `query {
+                user(login: "${owner}") {
+                  projectV2(number: 1) {
+                    items(first: 100) { nodes { id content { ... on Issue { number } } } }
+                  }
+                }
+              }`;
+              const itemResult = await github.graphql(itemQuery);
+              const item = itemResult.user.projectV2.items.nodes.find(n => n.content?.number === issue_number);
+              if (item) {
+                const updateMutation = `mutation($project: ID!, $item: ID!, $field: ID!, $value: String!) {
+                  updateProjectV2ItemFieldValue(input: {
+                    projectId: $project, itemId: $item, fieldId: $field,
+                    value: { singleSelectOptionId: $value }
+                  }) { projectV2Item { id } }
+                }`;
+                await github.graphql(updateMutation, {
+                  project: process.env.PROJECT_ID, item: item.id,
+                  field: process.env.STATUS_FIELD_ID, value: process.env.OPT_IN_REVIEW
+                });
+                console.log(`Moved issue #${issue_number} to In Review`);
+              }
             }
 
       - uses: actions/checkout@v4
@@ -155,7 +380,12 @@ jobs:
           prompt: |
             Review this pull request as the Orbit review agent.
 
-            Steps:
+            CRITICAL GIT RULES:
+            - Do NOT create or switch git branches.
+            - Do NOT run git push or git remote commands.
+            - Do NOT create pull requests.
+
+            Review steps:
             1. Read AGENTS.md and the linked issue (from "Closes #N" in the PR body).
             2. Review the PR diff for:
                - Correctness against the linked issue's acceptance criteria
@@ -166,7 +396,7 @@ jobs:
                - Maintainability problems that will cause near-term issues
             3. Do NOT make low-value style comments unless they block readability or project consistency.
             4. After reviewing, submit a formal PR review using the gh CLI:
-               - If the PR is acceptable: run `gh pr review <PR_NUMBER> --approve --body "<summary>"`
-               - If changes are needed: run `gh pr review <PR_NUMBER> --request-changes --body "<list of issues>"`
-            5. You MUST submit a formal review via `gh pr review`. Do not just leave a comment.
+               - If the PR is acceptable: gh pr review <PR_NUMBER> --approve --body "<summary>"
+               - If changes are needed: gh pr review <PR_NUMBER> --request-changes --body "<list of issues>"
+            5. You MUST submit a formal review via gh pr review. Do not just leave a comment.
             6. Use GITHUB_TOKEN for authentication (it's already in the environment).
