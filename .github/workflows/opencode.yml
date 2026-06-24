@@ -12,6 +12,17 @@ jobs:
     if: contains(github.event.comment.body, '/oc') || contains(github.event.comment.body, '/opencode')
     runs-on: ubuntu-latest
     steps:
+      - name: Mark issue in progress
+        if: github.event.issue.pull_request == null
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.issues.addLabels({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.payload.issue.number,
+              labels: ["agent:in-progress"]
+            });
       - uses: actions/checkout@v4
         with:
           fetch-depth: 1
@@ -23,3 +34,33 @@ jobs:
         with:
           model: openrouter/z-ai/glm-5.2
           use_github_token: true
+      - name: Mark issue ready for review
+        if: github.event.issue.pull_request == null && success()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { data: labels } = await github.rest.issues.listLabelsOnIssue({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.payload.issue.number,
+            });
+            const has = (name) => labels.some(l => l.name === name);
+            const remove = async (name) => {
+              if (has(name)) {
+                await github.rest.issues.removeLabel({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: context.payload.issue.number,
+                  name,
+                });
+              }
+            };
+            await remove("agent:in-progress");
+            if (!has("agent:needs-review")) {
+              await github.rest.issues.addLabels({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.payload.issue.number,
+                labels: ["agent:needs-review"],
+              });
+            }
