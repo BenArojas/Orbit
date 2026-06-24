@@ -51,6 +51,7 @@ jobs:
                 agent:needs-planning)      TARGET_STATUS="$NEEDS_PLANNING" ;;
                 agent:ready-for-coding)    TARGET_STATUS="$READY_FOR_CODING" ;;
                 agent:in-progress)         TARGET_STATUS="$IN_PROGRESS" ;;
+                agent:pr-open)             TARGET_STATUS="$PR_OPEN" ;;
                 agent:needs-review)        TARGET_STATUS="$IN_REVIEW" ;;
                 agent:changes-requested)   TARGET_STATUS="$CHANGES_REQUESTED" ;;
                 human:needs-approval)      TARGET_STATUS="$HUMAN_APPROVAL" ;;
