@@ -1,0 +1,156 @@
+name: Project Board Automation
+
+on:
+  issues:
+    types: [labeled, closed, reopened]
+  pull_request:
+    types: [opened, closed]
+  pull_request_review:
+    types: [submitted]
+
+permissions:
+  issues: read
+  pull-requests: read
+  contents: read
+  projects: write
+
+jobs:
+  sync-status:
+    runs-on: ubuntu-latest
+    env:
+      PROJECT_ID: "PVT_kwHOCdGZYc4Bbcft"
+      STATUS_FIELD_ID: "PVTSSF_lAHOCdGZYc4BbcftzhWM-EQ"
+    steps:
+      - name: Sync issue/PR status to project board
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          # ── Status option IDs ──────────────────────────────────────
+          BACKLOG="f75ad846"
+          NEEDS_PLANNING="61e4505c"
+          READY_FOR_CODING="47fc9ee4"
+          IN_PROGRESS="8a244bab"
+          PR_OPEN="778733cb"
+          IN_REVIEW="df73e18b"
+          CHANGES_REQUESTED="182692a0"
+          HUMAN_APPROVAL="4bff2a14"
+          DONE="98236657"
+
+          # ── Determine issue number and target status ───────────────
+          ISSUE_NUMBER=""
+          TARGET_STATUS=""
+
+          if [ "${{ github.event_name }}" = "issues" ]; then
+            ISSUE_NUMBER="${{ github.event.issue.number }}"
+
+            if [ "${{ github.event.action }}" = "labeled" ]; then
+              LABEL="${{ github.event.label.name }}"
+              case "$LABEL" in
+                agent:needs-planning)      TARGET_STATUS="$NEEDS_PLANNING" ;;
+                agent:ready-for-coding)    TARGET_STATUS="$READY_FOR_CODING" ;;
+                agent:in-progress)         TARGET_STATUS="$IN_PROGRESS" ;;
+                agent:needs-review)        TARGET_STATUS="$IN_REVIEW" ;;
+                agent:changes-requested)   TARGET_STATUS="$CHANGES_REQUESTED" ;;
+                human:needs-approval)      TARGET_STATUS="$HUMAN_APPROVAL" ;;
+                *) echo "Label '$LABEL' has no status mapping; skipping." ; exit 0 ;;
+              esac
+            elif [ "${{ github.event.action }}" = "closed" ]; then
+              TARGET_STATUS="$DONE"
+            elif [ "${{ github.event.action }}" = "reopened" ]; then
+              TARGET_STATUS="$BACKLOG"
+            fi
+
+          elif [ "${{ github.event_name }}" = "pull_request" ]; then
+            PR_ACTION="${{ github.event.action }}"
+            PR_BODY="${{ github.event.pull_request.body }}"
+            PR_MERGED="${{ github.event.pull_request.merged }}"
+
+            # Extract "Closes #N" from PR body
+            ISSUE_NUMBER=$(echo "$PR_BODY" | grep -oiE 'closes #([0-9]+)' | grep -oE '[0-9]+' | head -1 || true)
+
+            if [ -z "$ISSUE_NUMBER" ]; then
+              echo "No linked issue found in PR body; skipping."
+              exit 0
+            fi
+
+            if [ "$PR_ACTION" = "opened" ]; then
+              TARGET_STATUS="$PR_OPEN"
+            elif [ "$PR_ACTION" = "closed" ] && [ "$PR_MERGED" = "true" ]; then
+              TARGET_STATUS="$DONE"
+            fi
+
+          elif [ "${{ github.event_name }}" = "pull_request_review" ]; then
+            REVIEW_STATE="${{ github.event.review.state }}"
+            PR_BODY="${{ github.event.pull_request.body }}"
+
+            ISSUE_NUMBER=$(echo "$PR_BODY" | grep -oiE 'closes #([0-9]+)' | grep -oE '[0-9]+' | head -1 || true)
+
+            if [ -z "$ISSUE_NUMBER" ]; then
+              echo "No linked issue found in PR body; skipping."
+              exit 0
+            fi
+
+            case "$REVIEW_STATE" in
+              changes_requested) TARGET_STATUS="$CHANGES_REQUESTED" ;;
+              approved)          TARGET_STATUS="$HUMAN_APPROVAL" ;;
+              *) echo "Review state '$REVIEW_STATE' has no status mapping; skipping." ; exit 0 ;;
+            esac
+          fi
+
+          if [ -z "$ISSUE_NUMBER" ] || [ -z "$TARGET_STATUS" ]; then
+            echo "No issue number or target status determined; skipping."
+            exit 0
+          fi
+
+          echo "Issue #$ISSUE_NUMBER → Status option $TARGET_STATUS"
+
+          # ── Find the project item ID for this issue ────────────────
+          ITEM_QUERY='
+          query($org: String!, $num: Int!) {
+            user(login: $org) {
+              projectV2(number: 1) {
+                items(first: 100) {
+                  nodes {
+                    id
+                    content {
+                      ... on Issue { number }
+                    }
+                  }
+                }
+              }
+            }
+          }'
+
+          ITEM_ID=$(gh api graphql -f query="$ITEM_QUERY" -f org="BenArojas" \
+            --jq ".data.user.projectV2.items.nodes[] | select(.content.number == $ISSUE_NUMBER) | .id" 2>/dev/null || true)
+
+          if [ -z "$ITEM_ID" ]; then
+            echo "Issue #$ISSUE_NUMBER is not in the project; skipping."
+            exit 0
+          fi
+
+          echo "Found project item: $ITEM_ID"
+
+          # ── Update the Status field ────────────────────────────────
+          UPDATE_MUTATION='
+          mutation($project: ID!, $item: ID!, $field: ID!, $value: String!) {
+            updateProjectV2ItemFieldValue(input: {
+              projectId: $project
+              itemId: $item
+              fieldId: $field
+              value: { singleSelectOptionId: $value }
+            }) {
+              projectV2Item { id }
+            }
+          }'
+
+          gh api graphql \
+            -f query="$UPDATE_MUTATION" \
+            -f project="$PROJECT_ID" \
+            -f item="$ITEM_ID" \
+            -f field="$STATUS_FIELD_ID" \
+            -f value="$TARGET_STATUS"
+
+          echo "✓ Updated issue #$ISSUE_NUMBER to status option $TARGET_STATUS"
