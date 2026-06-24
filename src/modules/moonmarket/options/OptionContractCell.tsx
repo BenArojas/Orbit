@@ -1,4 +1,4 @@
-import type { MoonMarketOptionContract } from "@/lib/api";
+import type { MoonMarketOptionContract } from "@/modules/moonmarket/api";
 
 function formatNumber(value: number | null | undefined, digits = 2): string {
   return typeof value === "number" && Number.isFinite(value) ? value.toFixed(digits) : "--";

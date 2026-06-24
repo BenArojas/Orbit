@@ -1,6 +1,6 @@
 import { CheckCircle2, Clock, DatabaseZap, History, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import type { InflectBackfillQueueStatus, InflectBackfillStatusItem } from "@/lib/api";
+import type { InflectBackfillQueueStatus, InflectBackfillStatusItem } from "@/modules/inflect/api";
 
 const STATUS_COPY: Record<
   InflectBackfillQueueStatus,

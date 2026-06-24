@@ -1,3 +1,5 @@
+import type { OrderTrackerState } from "./orderLifecycle";
+
 type OrderResultProps = {
   previewResult: unknown;
   actionResult: unknown;
@@ -5,20 +7,6 @@ type OrderResultProps = {
   orderTracker: OrderTrackerState | null;
   onConfirm: (confirmed: boolean) => void;
   confirming: boolean;
-};
-
-export type OrderTrackerState = {
-  orderId: string;
-  orderType: string;
-  status: "filled" | "partial" | "pending" | "submitted";
-  liveStatus?: string | null;
-  quantity?: number | null;
-  filledQuantity?: number | null;
-  averagePrice?: number | null;
-  currentPrice?: number | null;
-  limitPrice?: number | null;
-  distancePercent?: number | null;
-  remainingQuantity?: number | null;
 };
 
 type PreviewPayload = {

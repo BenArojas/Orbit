@@ -57,15 +57,17 @@ PIVOT_WINDOW = 5
 # Maximum candidate swings to score + return
 MAX_CANDIDATES = 6
 
-# "Currently inside the swing" tolerance band, as a fraction of the
-# swing's price range. A swing remains "active" while price stays within
-# [swing_low - INSIDE_TOLERANCE*range, swing_high + INSIDE_TOLERANCE*range]
-# AND has not closed past either expanded boundary at any point after the
-# swing completed. A small tolerance prevents a single wick poke past the
-# 0 or 1.0 line from invalidating the swing.
-#
-# Locked in plan decision 1A (docs/fibonacci-improvements-plan.md).
-INSIDE_TOLERANCE = 0.15
+# Level-aware stretched_penalty constants.
+# Status uses strict wick-based classification (no tolerance buffer).
+LEVEL_IMPORTANCE: dict[float, float] = {
+    0.382: 0.50,
+    0.5:   0.85,
+    0.618: 1.00,
+    0.65:  1.00,
+    0.716: 1.00,
+}
+LEVEL_TOLERANCE = 0.02   # within 2% of range → full proximity
+LEVEL_DECAY = 0.18       # decay to ~0 at midpoint of the widest internal gap
 
 # Scoring weights — DEFAULTS.
 #
@@ -77,16 +79,16 @@ INSIDE_TOLERANCE = 0.15
 #   - the DB is unreachable
 #
 # Future v2 learning algorithm will adjust these per-conid in a
-# separate table (parallax-v2-roadmap).
+# separate table (see `PROJECT_PLAN.md`).
 #
 # These must sum to 1.0. `_validate_and_normalize_weights` in
 # routers/fibonacci.py enforces that for user submissions.
 DEFAULT_FIB_WEIGHTS: dict[str, float] = {
     "swing_clarity":       0.25,
-    "multi_touch":         0.25,
-    "rejection_intensity": 0.20,
+    "recency":             0.35,
+    "multi_touch":         0.10,
+    "rejection_intensity": 0.15,
     "stretched_penalty":   0.15,
-    "recency":             0.15,
 }
 
 # Back-compat alias for code paths that haven't been migrated yet.
@@ -665,8 +667,7 @@ class IndicatorService:
     # self-contained — it does NOT read EMAs, watchlists, or any other
     # indicator. Cross-indicator confluence (fib level sitting on an
     # EMA, watchlist-aware framing, etc.) happens at the LLM prompt
-    # layer in services/ai.py — see parallax-v2-roadmap skill for the
-    # architectural boundary.
+    # layer in services/ai.py — see `PROJECT_PLAN.md` for the deferred scope.
     #
     # The algorithm:
     #   1. Find fractal pivot highs and lows (±PIVOT_WINDOW bars)
@@ -847,8 +848,7 @@ class IndicatorService:
                 source="auto",
                 no_active_fib=True,
                 no_active_fib_reason=(
-                    "No swing has price currently inside its range "
-                    f"(±{INSIDE_TOLERANCE * 100:.0f}% tolerance)."
+                    "No swing has price currently inside its wick range."
                 ),
             )
 
@@ -1024,13 +1024,19 @@ class IndicatorService:
                 rel = move / price_range if price_range > 0 else 0.0
                 rejection_intensity = max(rejection_intensity, min(1.0, rel * 4.0))
 
-        # --- stretched_penalty: how far is current price from the
-        #     golden pocket, relative to the swing range? Close = 1.0,
-        #     far = 0.0.
-        gp_center = (gp_low + gp_high) / 2.0
-        dist = abs(current_price - gp_center)
-        rel_dist = dist / price_range if price_range > 0 else 1.0
-        stretched_penalty = max(0.0, 1.0 - rel_dist)  # cap at 0
+        # --- stretched_penalty: proximity to the nearest active internal
+        #     fib level, weighted by importance. 0.0/1.0 anchors are
+        #     intentionally excluded — proximity to a swing edge is not an
+        #     entry signal (status handles invalidation).
+        anchor = swing_high if direction == "up" else swing_low
+        sign = 1 if direction == "up" else -1
+        stretched_penalty = 0.0
+        for _r, _imp in LEVEL_IMPORTANCE.items():
+            lp = anchor - sign * price_range * _r
+            _rel_dist = abs(current_price - lp) / price_range if price_range > 0 else 1.0
+            prox = 1.0 if _rel_dist <= LEVEL_TOLERANCE \
+                else max(0.0, 1.0 - (_rel_dist - LEVEL_TOLERANCE) / LEVEL_DECAY)
+            stretched_penalty = max(stretched_penalty, prox * _imp)
 
         # --- recency: most recent swing → 1.0, oldest → 0.0 ---
         total_bars = len(df)
@@ -1046,45 +1052,37 @@ class IndicatorService:
         score = round(composite * 100.0, 1)
 
         # --- status: is this swing still tradeable? ---
-        # See INSIDE_TOLERANCE comment. We classify a swing by how price
-        # has behaved relative to the expanded boundaries since the swing
-        # completed. Tolerance lets a wick poke past 0 or 1.0 without
-        # killing the swing — only a decisive *close* past the expanded
-        # bound flips status off "active".
-        expanded_low = swing_low - price_range * INSIDE_TOLERANCE
-        expanded_high = swing_high + price_range * INSIDE_TOLERANCE
-
+        # Strict wick-based classification — no tolerance buffer, no closes.
+        # played_out takes precedence over broken.
         status: str = "active"
-        # Examine post-swing closes (after the later pivot). If any close
-        # is decisively past a boundary, the swing is either played out
-        # (price tagged target) or broken (price invalidated).
         if len(post) > 0:
-            post_closes = post["close"].to_numpy()
+            post_highs = post["high"].to_numpy()
+            post_lows = post["low"].to_numpy()
             if direction == "up":
-                # Up-swing: 1.0 sits at swing_low (drawn from high→low for
-                # retracement) but for entry framing here the "target"
-                # side is above swing_high. A close past expanded_high =
-                # played out; close past expanded_low = broken.
-                if (post_closes > expanded_high).any():
+                if (post_highs > swing_high).any():
                     status = "played_out"
-                elif (post_closes < expanded_low).any():
+                elif (post_lows < swing_low).any():
                     status = "broken"
             else:
-                # Down-swing: target side is below swing_low.
-                if (post_closes < expanded_low).any():
+                if (post_lows < swing_low).any():
                     status = "played_out"
-                elif (post_closes > expanded_high).any():
+                elif (post_highs > swing_high).any():
                     status = "broken"
 
-        # Additionally check current price: if it sits outside the
-        # expanded band right now (even without a prior post-swing close
-        # past the band), demote status. This catches edge cases where
-        # `post` is empty or short.
+        # Current-bar fallback when post is empty/short.
         if status == "active":
-            if current_price > expanded_high:
-                status = "played_out" if direction == "up" else "broken"
-            elif current_price < expanded_low:
-                status = "broken" if direction == "up" else "played_out"
+            last_high = df["high"].iloc[-1]
+            last_low = df["low"].iloc[-1]
+            if direction == "up":
+                if last_high > swing_high:
+                    status = "played_out"
+                elif last_low < swing_low:
+                    status = "broken"
+            else:
+                if last_low < swing_low:
+                    status = "played_out"
+                elif last_high > swing_high:
+                    status = "broken"
 
         return FibonacciCandidate(
             swing_high=round(swing_high, 4),

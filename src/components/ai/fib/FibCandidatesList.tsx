@@ -15,7 +15,7 @@
 import type {
   FibonacciCandidate,
   FibonacciCandidateStatus,
-} from "@/lib/api";
+} from "@/modules/parallax/api";
 
 interface FibCandidatesListProps {
   candidates: FibonacciCandidate[];

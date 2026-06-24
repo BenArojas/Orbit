@@ -9,7 +9,8 @@ Round-trip trades are derived on demand — never persisted in v1. The only
 durable Inflect-owned row is the `JournalEntry` (table `journal_entries`),
 keyed by a stable `trade_id` so annotations survive re-derivation.
 
-conid is the Orbit-wide instrument key throughout, per parallax-hub.
+conid is the Orbit-wide instrument key throughout; see
+`docs/architecture/modules.md`.
 """
 
 from __future__ import annotations

@@ -10,7 +10,7 @@ import type {
   MoonMarketTrade,
   MoonMarketTradeSummary,
   MoonMarketTradesResponse,
-} from "@/lib/api";
+} from "@/modules/moonmarket/api";
 
 export type {
   MoonMarketAccount,

@@ -9,6 +9,7 @@ import { queryClient } from "@/lib/query";
 import { GatewayProvider } from "@/context/GatewayContext";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Toaster } from "@/components/ui/Toaster";
+import { OrbitAccountProvider } from "@/orbit/accountContext";
 import { OrderTicket } from "@/orbit/OrderTicket";
 import { useSettingsStore } from "@/store";
 
@@ -27,10 +28,12 @@ export function OrbitProviders({ children }: { children: ReactNode }) {
     <QueryClientProvider client={queryClient}>
       <GatewayProvider>
         <TooltipProvider>
-          <OrbitSettingsEffects />
-          {children}
-          <OrderTicket />
-          <Toaster />
+          <OrbitAccountProvider>
+            <OrbitSettingsEffects />
+            {children}
+            <OrderTicket />
+            <Toaster />
+          </OrbitAccountProvider>
         </TooltipProvider>
       </GatewayProvider>
     </QueryClientProvider>

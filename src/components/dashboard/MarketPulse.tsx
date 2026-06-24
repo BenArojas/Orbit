@@ -21,10 +21,13 @@
 import { useMemo } from "react";
 import { useQuery, useQueries } from "@tanstack/react-query";
 import {
-  api,
   type QuoteResponse,
+} from "@/modules/parallax/api";
+
+import {
+  parallaxApi,
   type ConidResponse,
-} from "@/lib/api";
+} from "@/modules/parallax/api";
 import { useNavigationStore, usePulseConfigStore } from "@/store";
 import { useIbkrReady } from "@/context/GatewayContext";
 import { useIbkrReadyTier } from "@/hooks/useIbkrReadyTier";
@@ -151,7 +154,7 @@ export default function MarketPulse() {
     queries: items.map((item) => ({
       queryKey: ["conid", item.resolve, item.sec_type ?? ""] as const,
       queryFn: ({ signal }: { signal?: AbortSignal }): Promise<ConidResponse> =>
-        api.resolveConid(item.resolve, item.sec_type, signal),
+        parallaxApi.resolveConid(item.resolve, item.sec_type, signal),
       staleTime: Infinity,
       enabled: gate,
     })),
@@ -182,7 +185,7 @@ export default function MarketPulse() {
   // live ticks from useLiveQuotes take over for ongoing updates.
   const { data: quotesData } = useQuery({
     queryKey: ["quotes-bundled", sortedConidsKey],
-    queryFn: ({ signal }) => api.quotesBundled(knownConids, signal),
+    queryFn: ({ signal }) => parallaxApi.quotesBundled(knownConids, signal),
     enabled: gate && allResolved,
     staleTime: 60_000,
     refetchInterval: false,

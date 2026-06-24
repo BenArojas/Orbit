@@ -1,11 +1,11 @@
 import { useQuery } from "@tanstack/react-query";
-import { api } from "@/lib/api";
+import { moonmarketApi } from "@/modules/moonmarket/api";
 
 export function useOptionExpirations(underlyingConid: number | null, symbol: string | null) {
   return useQuery({
     queryKey: ["moonmarket", "options", "expirations", underlyingConid, symbol],
     enabled: Boolean(underlyingConid && symbol),
-    queryFn: ({ signal }) => api.moonmarketOptionExpirations(underlyingConid as number, symbol as string, signal),
+    queryFn: ({ signal }) => moonmarketApi.moonmarketOptionExpirations(underlyingConid as number, symbol as string, signal),
   });
 }
 
@@ -13,7 +13,7 @@ export function useOptionChain(underlyingConid: number | null, expiration: strin
   return useQuery({
     queryKey: ["moonmarket", "options", "chain", underlyingConid, expiration],
     enabled: Boolean(underlyingConid && expiration),
-    queryFn: ({ signal }) => api.moonmarketOptionChain(underlyingConid as number, expiration as string, signal),
+    queryFn: ({ signal }) => moonmarketApi.moonmarketOptionChain(underlyingConid as number, expiration as string, signal),
   });
 }
 
@@ -26,7 +26,7 @@ export function useOptionStrike(
   return useQuery({
     queryKey: ["moonmarket", "options", "contract", underlyingConid, expiration, strike],
     enabled: Boolean(underlyingConid && expiration && strike && enabled),
-    queryFn: ({ signal }) => api.moonmarketOptionContract(underlyingConid, expiration, strike, signal),
+    queryFn: ({ signal }) => moonmarketApi.moonmarketOptionContract(underlyingConid, expiration, strike, signal),
   });
 }
 
@@ -42,6 +42,6 @@ export function useOptionWindow(
     queryKey: ["moonmarket", "options", "window", underlyingConid, expiration, sortedStrikes],
     enabled: Boolean(underlyingConid && expiration && sortedStrikes.length),
     queryFn: ({ signal }) =>
-      api.moonmarketOptionWindow(underlyingConid as number, expiration as string, sortedStrikes, signal),
+      moonmarketApi.moonmarketOptionWindow(underlyingConid as number, expiration as string, sortedStrikes, signal),
   });
 }

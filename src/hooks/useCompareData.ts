@@ -20,7 +20,7 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import { useQuery, keepPreviousData } from "@tanstack/react-query";
 
-import { api, type CandleData, type IndicatorComputeResponse } from "@/lib/api";
+import { parallaxApi, type CandleData, type IndicatorComputeResponse } from "@/modules/parallax/api";
 import { useIbkrReady } from "@/context/GatewayContext";
 import { useWebSocket, type WsMessage } from "./useWebSocket";
 import type { Timeframe } from "@/store/chart";
@@ -73,7 +73,7 @@ export function useCompareData(
   const stockQuery = useQuery<IndicatorComputeResponse>({
     queryKey: ["candles", stockConid, timeframe, historyPeriod],
     queryFn: ({ signal }) =>
-      api.computeIndicators({
+      parallaxApi.computeIndicators({
         conid: stockConid!,
         timeframe,
         indicators: [],
@@ -88,7 +88,7 @@ export function useCompareData(
   const refQuery = useQuery<IndicatorComputeResponse>({
     queryKey: ["candles", refConid, timeframe, historyPeriod],
     queryFn: ({ signal }) =>
-      api.computeIndicators({
+      parallaxApi.computeIndicators({
         conid: refConid!,
         timeframe,
         indicators: [],

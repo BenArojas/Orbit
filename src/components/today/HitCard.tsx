@@ -6,7 +6,7 @@
  * mutation hooks from Task 7).
  */
 
-import type { TriggerHit } from "@/lib/api";
+import type { TriggerHit } from "@/modules/parallax/api";
 import { Button } from "@/components/ui/button";
 import {
   dominantFamily,

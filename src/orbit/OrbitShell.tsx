@@ -9,15 +9,13 @@
  */
 import { createBrowserRouter, type RouteObject } from "react-router-dom";
 import { OrbitLauncher } from "./OrbitLauncher";
-import { ParallaxModule } from "@/modules/parallax/ParallaxModule";
-import { MoonMarketModule } from "@/modules/moonmarket/MoonMarketModule";
-import { InflectModule } from "@/modules/inflect/InflectModule";
+import { OrbitModuleEntry } from "./moduleEntry";
 
 export const orbitRoutes: RouteObject[] = [
   { path: "/", element: <OrbitLauncher /> },
-  { path: "/parallax/*", element: <ParallaxModule /> },
-  { path: "/moonmarket/*", element: <MoonMarketModule /> },
-  { path: "/inflect/*", element: <InflectModule /> },
+  { path: "/parallax/*", element: <OrbitModuleEntry moduleId="parallax" /> },
+  { path: "/moonmarket/*", element: <OrbitModuleEntry moduleId="moonmarket" /> },
+  { path: "/inflect/*", element: <OrbitModuleEntry moduleId="inflect" /> },
 ];
 
 export const orbitRouter = createBrowserRouter(orbitRoutes);

@@ -1,7 +1,5 @@
 import { useEffect } from "react";
-import { useQuery } from "@tanstack/react-query";
-import { api } from "@/lib/api";
-import { useAccountStore } from "@/orbit/OrderTicket/useAccountStore";
+import { useOrbitAccountContext } from "@/orbit/accountContext";
 import { useInflectStore } from "@/store/inflect";
 import { useInflectSync } from "@/hooks/useInflectSync";
 import { InflectLayout } from "./InflectLayout";
@@ -14,46 +12,30 @@ export function InflectModule() {
   const page = useInflectStore((state) => state.page);
   const setPage = useInflectStore((state) => state.setPage);
 
-  const selectedAccountId = useAccountStore((state) => state.selectedAccountId);
-  const setAccounts = useAccountStore((state) => state.setAccounts);
-  const setSelectedAccountId = useAccountStore((state) => state.setSelectedAccountId);
-
-  const accountsQuery = useQuery({
-    queryKey: ["moonmarket", "accounts"],
-    queryFn: ({ signal }) => api.moonmarketAccounts(signal),
-  });
-
-  useEffect(() => {
-    if (accountsQuery.data) {
-      setAccounts(accountsQuery.data.accounts, accountsQuery.data.selected_account_id);
-    }
-  }, [accountsQuery.data, setAccounts]);
-
-  const accountId = selectedAccountId;
-  const accounts = accountsQuery.data?.accounts ?? [];
-  const accountError = accountsQuery.error;
+  const {
+    selectedAccountId: accountId,
+    isLoading: accountsLoading,
+    error: accountError,
+  } = useOrbitAccountContext();
 
   const sync = useInflectSync(accountId ?? undefined);
 
   useEffect(() => {
-    if (!accountId || accountsQuery.isLoading || accountError || autoSyncedAccounts.has(accountId)) {
+    if (!accountId || accountsLoading || accountError || autoSyncedAccounts.has(accountId)) {
       return;
     }
     autoSyncedAccounts.add(accountId);
     sync.mutate(undefined);
-  }, [accountError, accountId, accountsQuery.isLoading, sync]);
+  }, [accountError, accountId, accountsLoading, sync]);
 
   return (
     <InflectLayout
       activePage={page}
       onPageChange={setPage}
-      accounts={accounts}
-      accountId={accountId}
-      onAccountChange={setSelectedAccountId}
       onSync={() => sync.mutate(undefined)}
       syncing={sync.isPending}
     >
-      {accountsQuery.isLoading ? (
+      {accountsLoading ? (
         <div
           role="status"
           aria-label="Loading Inflect"

@@ -1,4 +1,4 @@
-import type { MoonMarketOrderSide } from "@/lib/api";
+import type { MoonMarketOrderSide } from "@/modules/moonmarket/api";
 
 export interface RiskReward {
   risk: number;

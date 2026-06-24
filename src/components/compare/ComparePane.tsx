@@ -4,7 +4,7 @@ import { toast } from "sonner";
 
 import PaneToolbar from "./PaneToolbar";
 import CompareChart from "./CompareChart";
-import { api } from "@/lib/api";
+import { parallaxApi } from "@/modules/parallax/api";
 import { useChartStore } from "@/store/chart";
 import { useCompareStore, type ComparePane as ComparePaneType } from "@/store/compare";
 import { useCompareData } from "@/hooks/useCompareData";
@@ -33,7 +33,7 @@ export default function ComparePane({ pane }: ComparePaneProps) {
   // panes can be resolving different symbols at the same time without
   // stepping on each other).
   const resolveMutation = useMutation({
-    mutationFn: (sym: string) => api.resolveConid(sym),
+    mutationFn: (sym: string) => parallaxApi.resolveConid(sym),
     onSuccess: (result) => {
       setPaneReference(pane.id, result.symbol, result.conid);
     },

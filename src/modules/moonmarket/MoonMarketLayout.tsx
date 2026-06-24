@@ -3,8 +3,8 @@ import { useNavigate } from "react-router-dom";
 import { BriefcaseBusiness, ClipboardList, ListTree, PieChart } from "lucide-react";
 import { BackToOrbitButton } from "@/components/ui/BackToOrbitButton";
 import { ThemeToggle } from "@/components/ui/ThemeToggle";
+import { useOrbitAccountContext } from "@/orbit/accountContext";
 import { cn } from "@/lib/utils";
-import type { MoonMarketAccount } from "./types";
 
 type MoonMarketPage = "portfolio" | "transactions" | "options";
 
@@ -16,18 +16,13 @@ const NAV_ITEMS: { page: MoonMarketPage; label: string; path: string; icon: type
 
 export function MoonMarketLayout({
   activePage,
-  accounts,
-  accountId,
-  onAccountChange,
   children,
 }: {
   activePage: MoonMarketPage;
-  accounts: MoonMarketAccount[];
-  accountId: string | null;
-  onAccountChange: (accountId: string) => void;
   children: ReactNode;
 }) {
   const navigate = useNavigate();
+  const { accounts, selectedAccountId, setSelectedAccountId } = useOrbitAccountContext();
   const subtitle =
     activePage === "transactions"
       ? "Transactions ledger"
@@ -71,8 +66,8 @@ export function MoonMarketLayout({
           <ThemeToggle />
           <select
             aria-label="Account"
-            value={accountId ?? ""}
-            onChange={(event) => onAccountChange(event.target.value)}
+            value={selectedAccountId ?? ""}
+            onChange={(event) => setSelectedAccountId(event.target.value)}
             disabled={!accounts.length}
             className="h-8 min-w-36 rounded-md border border-border bg-[var(--bg-2)] px-2 text-[11px] text-[var(--text-2)] outline-none disabled:opacity-50"
           >

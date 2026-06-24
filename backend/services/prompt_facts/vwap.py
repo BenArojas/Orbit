@@ -9,11 +9,12 @@ from services.prompt_facts.types import PromptFact
 
 
 def _make(tf: str, condition: str, text: str, polarity: str,
-          strength: int, priority: int, data: dict) -> PromptFact:
+          strength: int, priority: int, data: dict,
+          price_values: tuple[float, ...] = ()) -> PromptFact:
     return PromptFact(
         id=f"{tf}.vwap.{condition}", timeframe=tf, indicator="vwap",
         text=text, polarity=polarity, strength=strength,
-        priority=priority, data=data,
+        priority=priority, data=data, price_values=price_values,
     )
 
 
@@ -43,6 +44,7 @@ def build_vwap_facts(
             f"Price ${last_close:.2f} above VWAP ${vwap_val:.2f}.",
             polarity="bullish", strength=55, priority=78,
             data={"vwap": vwap_val, "close": last_close},
+            price_values=(last_close, vwap_val),
         ))
     elif last_close < vwap_val:
         facts.append(_make(
@@ -50,6 +52,7 @@ def build_vwap_facts(
             f"Price ${last_close:.2f} below VWAP ${vwap_val:.2f}.",
             polarity="bearish", strength=55, priority=78,
             data={"vwap": vwap_val, "close": last_close},
+            price_values=(last_close, vwap_val),
         ))
 
     # Recent reclaim/loss — cross between candle closes and VWAP series.

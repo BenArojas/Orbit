@@ -17,13 +17,14 @@ main                    ← production-ready, always stable
 
 ## Rules
 
-1. Never push directly to `main` or `dev`. All changes go through PRs from feature branches.
+1. Never push directly to `main`. `main` changes go through PRs.
 2. One feature branch per task. Branch from `dev`.
-3. Pull `dev` into your feature branch before opening a PR.
-4. PRs require review from the other person before merging (exception: trivial fixes with a comment).
-5. Squash merge feature branches into `dev`.
-6. Fast-forward merge `dev` into `main` when a milestone is stable.
-7. Delete feature branches after merge.
+3. When the user says "merge into dev", direct local merge and push to `dev` is an approved solo workflow.
+4. Before merging to `dev`, finish verification and run the dev merge completion workflow.
+5. Use PRs for `dev` when collaboration/review is requested or the change is high-risk.
+6. Fast-forward merge feature branches into `dev` when possible; otherwise ask before creating a merge commit or squash.
+7. Fast-forward merge `dev` into `main` when a milestone is stable, then open the PR path for `main`.
+8. Delete feature branches after merge.
 
 ## Branch Naming
 
@@ -54,11 +55,12 @@ git checkout dev && git pull origin dev
 git checkout -b feature/your-task-name
 # work, commit often
 git add <files> && git commit -m "feat: description"
-# before PR — rebase onto latest dev
+# before merge to dev — rebase onto latest dev
 git checkout dev && git pull origin dev
 git checkout feature/your-task-name && git rebase dev
-git push origin feature/your-task-name
-# open PR: feature/* → dev, get review, squash merge, delete branch
+# after user approves "merge into dev"
+git checkout dev && git merge --ff-only feature/your-task-name
+git push origin dev
 ```
 
 ## When to Merge dev → main

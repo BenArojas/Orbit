@@ -19,22 +19,24 @@ Prompt strategy:
 """
 
 import asyncio
+import inspect
 import json
 import logging
 import re
 import uuid
 from collections import OrderedDict
-from typing import TYPE_CHECKING, AsyncIterator, Optional
+from dataclasses import dataclass
+from decimal import Decimal
+from time import monotonic
+from typing import TYPE_CHECKING, AsyncIterator, Literal, Optional
 
 if TYPE_CHECKING:
+    from services.ai_analysis_preparation import PreparedAnalysisSnapshot
     from services.ollama_context import OllamaContextService
-
-import httpx
 
 from exceptions import AIAnalysisTimeoutError
 
-from config import OLLAMA_HOST
-from models import CandleData
+from models import AIProviderMetadata
 
 # ── Per-stage analysis timeouts (seconds) ────────────────────
 # Defined at module level so tests can patch them without touching internals.
@@ -57,6 +59,10 @@ MAX_CONTEXT_MESSAGES = 20
 # Once this is exceeded, the oldest session is evicted (LRU).
 # For a 2-person app this is generous — just prevents runaway memory growth.
 MAX_SESSIONS = 50
+UNVERIFIED_TRADE_PLAN_MESSAGE = (
+    "No actionable trade plan could be verified from the supplied facts."
+)
+_DIRECTION_KEY_RE = re.compile(r'"\s*direction\s*"\s*:')
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -66,13 +72,27 @@ MAX_SESSIONS = 50
 from services.prompt_builder import (
     build_indicator_context,        # noqa: F401 — re-export for backwards compat
     build_multi_timeframe_context,  # noqa: F401
-    build_full_prompt_context,
+    build_full_prompt_context_bundle,
     build_analysis_user_message,
     build_system_prompt,
     get_budget_for_model,
-    truncate_context,
     SIGNAL_EXTRACTION_PROMPT,       # noqa: F401 — kept for legacy callers/tests
     SIGNAL_JSON_SCHEMA,             # noqa: F401 — kept for legacy callers/tests
+)
+from services.ai_providers import AIProviderRegistry, OllamaLLMProvider  # noqa: E402
+from services.ai_cloud_adapters import (  # noqa: E402
+    AIProviderAuthError,
+    AIProviderModelUnavailableError,
+    AIProviderNetworkError,
+    AIProviderRequestError,
+    AIProviderRateLimitError,
+    AIProviderTimeoutError,
+    AIProviderTextResult,
+)
+from services.ai_signal_validation import (  # noqa: E402
+    AISignalGroundingError,
+    safe_neutral_signal,
+    validate_signal_draft,
 )
 
 
@@ -114,22 +134,44 @@ def parse_signal_from_response(text: str) -> Optional[dict]:
 
 def strip_signal_json_from_response(text: str) -> str:
     """
-    Remove the trailing fenced ```json``` signal block from a model response.
+    Remove the trailing fenced ```json``` signal block or fragment from a
+    model response.
 
     The analysis prompt intentionally asks the model to append machine-readable
     JSON as the very last thing in the message so we can parse a structured
     signal. That block is useful for the backend, but noisy in the user-facing
     chat transcript.
     """
-    json_match = re.search(r"\n*```json\s*\n.*?\n\s*```\s*$", text, re.DOTALL)
-    if not json_match:
+    fence_start = text.rfind("```json")
+    if fence_start == -1:
         return text
 
-    candidate = json_match.group(0)
-    if parse_signal_from_response(candidate) is None:
+    prefix = text[:fence_start]
+    suffix = text[fence_start:]
+    opening_match = re.match(r"```json\s*\n?", suffix)
+    if opening_match is None:
         return text
 
-    return text[:json_match.start()].rstrip()
+    fragment = suffix[opening_match.end():]
+    closing_index = fragment.find("```")
+
+    if closing_index != -1:
+        body = fragment[:closing_index].strip()
+        trailing = fragment[closing_index + 3 :]
+        if trailing.strip():
+            return text
+        try:
+            decoded = json.loads(body)
+        except json.JSONDecodeError:
+            return text
+        if isinstance(decoded, dict) and "direction" in decoded:
+            return prefix.rstrip()
+        return text
+
+    if _DIRECTION_KEY_RE.search(fragment):
+        return prefix.rstrip()
+
+    return text
 
 
 def _coerce_confidence(value: int | str | None) -> int:
@@ -170,6 +212,27 @@ def signal_to_frontend_format(signal: dict) -> dict:
     target = signal.get("target", {})
     meta = signal.get("meta", {})
 
+    def _format_price(value: object) -> str:
+        if isinstance(value, Decimal):
+            return f"${value:.2f}"
+        if isinstance(value, (int, float)):
+            return f"${value:.2f}"
+        if value is None:
+            return "—"
+        return str(value)
+
+    def _format_level_sub(value: object, note: object) -> str:
+        if value is None:
+            return "No grounded level"
+        if isinstance(note, str) and note:
+            return note
+        return ""
+
+    def _format_meta_value(value: object) -> str:
+        if value is None:
+            return "—"
+        return str(value)
+
     return {
         "direction": signal.get("direction", "NEUTRAL"),
         "description": signal.get("description", ""),
@@ -177,33 +240,48 @@ def signal_to_frontend_format(signal: dict) -> dict:
         "levels": [
             {
                 "label": "Entry",
-                "value": f"${entry.get('price', 0):.2f}" if isinstance(entry.get('price'), (int, float)) else str(entry.get('price', 'N/A')),
-                "sub": entry.get("note", ""),
+                "value": _format_price(entry.get("price")),
+                "sub": _format_level_sub(entry.get("price"), entry.get("note")),
             },
             {
                 "label": "Stop",
-                "value": f"${stop.get('price', 0):.2f}" if isinstance(stop.get('price'), (int, float)) else str(stop.get('price', 'N/A')),
-                "sub": stop.get("note", ""),
+                "value": _format_price(stop.get("price")),
+                "sub": _format_level_sub(stop.get("price"), stop.get("note")),
                 "color": "red",
             },
             {
                 "label": "Target",
-                "value": f"${target.get('price', 0):.2f}" if isinstance(target.get('price'), (int, float)) else str(target.get('price', 'N/A')),
-                "sub": target.get("note", ""),
+                "value": _format_price(target.get("price")),
+                "sub": _format_level_sub(target.get("price"), target.get("note")),
                 "color": "green",
             },
         ],
         "meta": [
-            {"label": "R:R", "value": meta.get("risk_reward", "N/A")},
-            {"label": "Score", "value": meta.get("score", "N/A")},
-            {"label": "ADX", "value": meta.get("adx_trend", "N/A")},
-            {"label": "Vol", "value": meta.get("volume_signal", "N/A")},
+            {"label": "R:R", "value": _format_meta_value(meta.get("risk_reward"))},
+            {"label": "Score", "value": _format_meta_value(meta.get("score", "N/A"))},
+            {"label": "ADX", "value": _format_meta_value(meta.get("adx_trend", "N/A"))},
+            {"label": "Vol", "value": _format_meta_value(meta.get("volume_signal", "N/A"))},
         ],
         "checks": [
             *[{"text": c, "type": "confirm"} for c in signal.get("confirmations", [])],
             *[{"text": c, "type": "caution"} for c in signal.get("cautions", [])],
         ],
     }
+
+
+def _rejected_card() -> dict:
+    """Safe-neutral card for a rejected signal.
+
+    The warning lives only in the `warning` field, so the card body carries
+    no warning text — prevents triple-render of UNVERIFIED_TRADE_PLAN_MESSAGE
+    across description, cautions, and the warning banner.
+    """
+    card = signal_to_frontend_format(
+        safe_neutral_signal(UNVERIFIED_TRADE_PLAN_MESSAGE).model_dump(mode="python")
+    )
+    card["description"] = ""
+    card["checks"] = []
+    return card
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -223,6 +301,10 @@ class ChatSession:
         self.messages: list[dict[str, str]] = []
         self.symbol: str = ""
         self.signal: Optional[dict] = None
+        self.provider_name: str = "ollama"
+        self.model: str = ""
+        self.fallback_model: Optional[str] = None
+        self.grounding_map: dict[str, frozenset[Decimal]] = {}
 
     def add_system(self, content: str) -> None:
         """Add a system message (indicator context, etc.)."""
@@ -253,6 +335,14 @@ class ChatSession:
         """Clear conversation history."""
         self.messages.clear()
         self.signal = None
+        self.grounding_map = {}
+
+
+@dataclass(frozen=True)
+class _FinalizedSignalResult:
+    signal: dict
+    status: Literal["directional", "neutral", "rejected"]
+    warning: str | None
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -269,17 +359,22 @@ class AiService:
     """
 
     def __init__(
-        self, context_service: "OllamaContextService | None" = None
+        self,
+        context_service: "OllamaContextService | None" = None,
+        provider_registry: AIProviderRegistry | None = None,
     ) -> None:
         # Model is not hardcoded — it comes from the user's selection
         # stored in SQLite settings and set via OllamaLifecycle.selected_model.
         # The router passes the current model name into analyze()/follow_up().
         self._context_service = context_service
+        self._provider_registry = provider_registry or AIProviderRegistry({
+            "ollama": OllamaLLMProvider(),
+        })
         self.sessions: OrderedDict[str, ChatSession] = OrderedDict()
-        self._http = httpx.AsyncClient(
-            base_url=OLLAMA_HOST,
-            timeout=httpx.Timeout(120.0, connect=10.0),
-        )
+
+    @property
+    def provider_registry(self) -> AIProviderRegistry:
+        return self._provider_registry
 
     # ── Session management ──────────────────────────────────────
 
@@ -317,6 +412,7 @@ class AiService:
         model: str,
         *,
         think: Optional[bool] = None,
+        provider_name: str = "ollama",
     ) -> str:
         """
         Send a chat request to Ollama and return the full response.
@@ -329,30 +425,95 @@ class AiService:
             True = force on (default for Analysis chat where reasoning is
             valued).
         """
-        payload: dict = {
-            "model": model,
-            "messages": messages,
-            "stream": False,
-            "keep_alive": "20m",
-            "options": {
-                "temperature": 0.3,     # Low temp for more consistent analysis
-                "num_predict": _ANALYSIS_NUM_PREDICT,
-            },
-        }
-        if think is not None:
-            payload["think"] = think
+        provider = self._provider_registry.require(provider_name)
+        return await provider.chat(messages=messages, model=model, think=think)
 
-        try:
-            resp = await self._http.post("/api/chat", json=payload)
-            resp.raise_for_status()
-            data = resp.json()
-            return data.get("message", {}).get("content", "")
-        except httpx.ConnectError:
-            raise ConnectionError("Cannot connect to Ollama server")
-        except httpx.TimeoutException:
-            raise TimeoutError("Ollama request timed out (>120s)")
-        except httpx.HTTPStatusError as e:
-            raise RuntimeError(f"Ollama returned error: {e.response.status_code}")
+    async def _chat_analysis_with_metadata(
+        self,
+        *,
+        messages: list[dict[str, str]],
+        model: str,
+        provider_name: str,
+        provider: object | None = None,
+    ) -> AIProviderTextResult:
+        resolved_provider = provider or self._provider_registry.require(provider_name)
+        chat_with_metadata = getattr(resolved_provider, "chat_with_metadata", None)
+        if chat_with_metadata is not None:
+            return await chat_with_metadata(messages=messages, model=model)
+
+        if provider is None:
+            content = await self.chat(
+                messages, model=model, think=None, provider_name=provider_name,
+            )
+        else:
+            content = await resolved_provider.chat(messages=messages, model=model, think=None)
+        return AIProviderTextResult(
+            content=content,
+            metadata=AIProviderMetadata(
+                provider_name="ollama",
+                kind="local",
+                model=model,
+                estimated_cost=None,
+                actual_cost=None,
+                fallback_used=False,
+            ),
+            provider_request_id=None,
+        )
+
+    @staticmethod
+    def _fallback_metadata(model: str) -> AIProviderMetadata:
+        return AIProviderMetadata(
+            provider_name="ollama",
+            kind="local",
+            model=model,
+            estimated_cost=None,
+            actual_cost=None,
+            fallback_used=True,
+        )
+
+    async def _stream_analysis_with_metadata(
+        self,
+        *,
+        messages: list[dict[str, str]],
+        model: str,
+        provider_name: str,
+        provider: object | None = None,
+    ) -> AsyncIterator[dict]:
+        resolved_provider = provider or self._provider_registry.require(provider_name)
+        stream_with_metadata = getattr(resolved_provider, "chat_stream_with_metadata", None)
+        if stream_with_metadata is not None and inspect.isasyncgenfunction(stream_with_metadata):
+            async for event in stream_with_metadata(messages=messages, model=model):
+                yield event
+            return
+
+        chat_with_metadata = getattr(resolved_provider, "chat_with_metadata", None)
+        if chat_with_metadata is not None:
+            result = await chat_with_metadata(messages=messages, model=model)
+            yield {"type": "token", "content": result.content}
+            yield {"type": "metadata", "metadata": result.metadata.model_dump()}
+            return
+
+        if provider is None:
+            token_stream = self.chat_stream(
+                messages, model=model, think=None, provider_name=provider_name,
+            )
+        else:
+            token_stream = resolved_provider.chat_stream(
+                messages=messages, model=model, think=None,
+            )
+        async for token in token_stream:
+            yield {"type": "token", "content": token}
+        yield {
+            "type": "metadata",
+            "metadata": AIProviderMetadata(
+                provider_name="ollama",
+                kind="local",
+                model=model,
+                estimated_cost=None,
+                actual_cost=None,
+                fallback_used=False,
+            ).model_dump(),
+        }
 
     async def chat_structured(
         self,
@@ -376,35 +537,13 @@ class AiService:
         json_schema: JSON Schema dict passed to Ollama's `format` parameter.
         think: see chat() — None = use Ollama default, True/False forces it.
         """
-        payload: dict = {
-            "model": model,
-            "messages": messages,
-            "stream": False,
-            "format": json_schema,
-            "keep_alive": "20m",
-            "options": {
-                "temperature": 0.2,     # Even lower temp for structured output
-                "num_predict": _ANALYSIS_NUM_PREDICT,
-            },
-        }
-        if think is not None:
-            payload["think"] = think
-
-        try:
-            resp = await self._http.post("/api/chat", json=payload)
-            resp.raise_for_status()
-            data = resp.json()
-            content = data.get("message", {}).get("content", "")
-            return json.loads(content)
-        except httpx.ConnectError:
-            raise ConnectionError("Cannot connect to Ollama server")
-        except httpx.TimeoutException:
-            raise TimeoutError("Ollama request timed out (>120s)")
-        except httpx.HTTPStatusError as e:
-            raise RuntimeError(f"Ollama returned error: {e.response.status_code}")
-        except json.JSONDecodeError as e:
-            log.warning("Structured output returned invalid JSON: %s", e)
-            raise ValueError(f"Model returned invalid JSON despite schema: {e}")
+        provider = self._provider_registry.require("ollama")
+        return await provider.chat_structured(
+            messages=messages,
+            model=model,
+            json_schema=json_schema,
+            think=think,
+        )
 
     async def chat_stream(
         self,
@@ -412,6 +551,7 @@ class AiService:
         model: str,
         *,
         think: Optional[bool] = None,
+        provider_name: str = "ollama",
     ) -> AsyncIterator[str]:
         """
         Send a chat request to Ollama and yield tokens as they arrive.
@@ -420,47 +560,13 @@ class AiService:
         model: the Ollama model name to use (from user's selection).
         think: see chat() — None = use Ollama default, True/False forces it.
         """
-        payload: dict = {
-            "model": model,
-            "messages": messages,
-            "stream": True,
-            "keep_alive": "20m",
-            "options": {
-                "temperature": 0.3,
-                "num_predict": _ANALYSIS_NUM_PREDICT,
-            },
-        }
-        if think is not None:
-            payload["think"] = think
-
-        try:
-            async with self._http.stream(
-                "POST",
-                "/api/chat",
-                json=payload,
-                timeout=httpx.Timeout(
-                    connect=_OLLAMA_CONNECT_TIMEOUT,
-                    read=_OLLAMA_READ_TIMEOUT,
-                    write=_OLLAMA_READ_TIMEOUT,
-                    pool=_OLLAMA_READ_TIMEOUT,
-                ),
-            ) as response:
-                async for line in response.aiter_lines():
-                    if not line.strip():
-                        continue
-                    try:
-                        data = json.loads(line)
-                        content = data.get("message", {}).get("content", "")
-                        if content:
-                            yield content
-                        if data.get("done", False):
-                            return
-                    except json.JSONDecodeError:
-                        continue
-        except httpx.ConnectError:
-            yield "\n\n[Error: Cannot connect to Ollama server]"
-        except httpx.TimeoutException:
-            yield "\n\n[Error: Request timed out]"
+        provider = self._provider_registry.require(provider_name)
+        async for token in provider.chat_stream(
+            messages=messages,
+            model=model,
+            think=think,
+        ):
+            yield token
 
     # ── Warmup ──────────────────────────────────────────────────
 
@@ -473,19 +579,8 @@ class AiService:
         is fast.  The keep_alive=20m means the model stays loaded for 20
         minutes of inactivity, so calling this once per page visit is enough.
         """
-        payload = {
-            "model": model,
-            "messages": [{"role": "user", "content": "hi"}],
-            "stream": False,
-            "keep_alive": "20m",
-            "options": {"num_predict": 1},
-        }
-        try:
-            resp = await self._http.post("/api/chat", json=payload, timeout=30.0)
-            resp.raise_for_status()
-        except (httpx.ConnectError, httpx.TimeoutException, httpx.HTTPStatusError) as e:
-            # Warmup failure is non-fatal — log and continue
-            log.debug("Warmup request failed (non-fatal): %s", e)
+        provider = self._provider_registry.require("ollama")
+        await provider.warmup(model=model)
 
     # ── Analysis ────────────────────────────────────────────────
 
@@ -514,43 +609,86 @@ class AiService:
         indicator_names: resolved backend names (e.g. ["ema", "rsi"]) — used
             by the fact builders and system prompt.
         """
+        messages, grounding_map = await self._prepare_analysis_payload(
+            symbol=symbol,
+            timeframe_data=timeframe_data,
+            indicators_display=indicators_display,
+            indicator_names=indicator_names,
+            model=model,
+            watchlist=watchlist,
+            indicator_priority=indicator_priority,
+        )
         session = self.get_or_create_session(session_id)
         session.symbol = symbol
         session.clear()
+        session.messages = [dict(message) for message in messages]
+        session.grounding_map = grounding_map
+        return session
 
+    async def prepare_analysis_messages(
+        self,
+        *,
+        symbol: str,
+        timeframe_data: dict[str, dict],
+        indicators_display: list[str],
+        indicator_names: list[str],
+        model: str,
+        watchlist: Optional[str] = None,
+        indicator_priority: Optional[list[str]] = None,
+    ) -> list[dict[str, str]]:
+        messages, _grounding_map = await self._prepare_analysis_payload(
+            symbol=symbol,
+            timeframe_data=timeframe_data,
+            indicators_display=indicators_display,
+            indicator_names=indicator_names,
+            model=model,
+            watchlist=watchlist,
+            indicator_priority=indicator_priority,
+        )
+        return messages
+
+    async def _prepare_analysis_payload(
+        self,
+        *,
+        symbol: str,
+        timeframe_data: dict[str, dict],
+        indicators_display: list[str],
+        indicator_names: list[str],
+        model: str,
+        watchlist: Optional[str] = None,
+        indicator_priority: Optional[list[str]] = None,
+    ) -> tuple[list[dict[str, str]], dict[str, frozenset[Decimal]]]:
         if self._context_service is not None:
             budget = await self._context_service.get_budget_for_model(model)
         else:
             budget = get_budget_for_model(model)
 
-        context = build_full_prompt_context(
+        bundle = build_full_prompt_context_bundle(
             symbol=symbol,
             timeframe_data=timeframe_data,
             indicator_priority=indicator_priority or [],
             budget_tokens=budget,
         )
-
         system_prompt = build_system_prompt(
             indicators_display=indicators_display,
             indicator_names=indicator_names,
             watchlist=watchlist,
             indicator_priority=indicator_priority,
         )
-
-        # The analysis user message now ends with SIGNAL_INLINE_JSON_INSTRUCTION,
-        # asking the model to emit a fenced ```json``` block as the LAST thing
-        # in its response. We parse that block locally — no second Ollama call.
         user_message = build_analysis_user_message(
             symbol=symbol,
-            context=context,
+            context=bundle.context,
             timeframes=list(timeframe_data.keys()),
             indicators_requested=indicators_display,
             indicator_priority=indicator_priority,
         )
-
-        session.add_system(system_prompt)
-        session.add_user(user_message)
-        return session
+        return (
+            [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_message},
+            ],
+            bundle.grounding_map,
+        )
 
     # ── Internal: parse + (one) reformat fallback ─────────────────────
 
@@ -560,6 +698,8 @@ class AiService:
         narrative: str,
         model: str,
         symbol: str,
+        provider_name: str = "ollama",
+        provider: object | None = None,
     ) -> Optional[dict]:
         """
         Parse the trailing ```json``` block from the narrative.
@@ -577,15 +717,23 @@ class AiService:
             "Inline JSON missing for %s — requesting one reformat attempt",
             symbol,
         )
-        session.add_user(
+        reformat_instruction = (
             "Your previous response did not include the required JSON block. "
-            "Please reply with ONLY a fenced ```json ... ``` block containing "
-            "the signal (direction, confidence, description, entry, stop, "
-            "target, confirmations, cautions, meta). No other text."
+            "Reply with ONLY a fenced ```json ... ``` block containing the signal "
+            "(direction, confidence, description, entry, stop, target, confirmations, "
+            "cautions, meta). No other text."
         )
+        retry_messages = [
+            *session.get_messages(),
+            {"role": "assistant", "content": narrative},
+            {"role": "user", "content": reformat_instruction},
+        ]
         try:
             retry = await asyncio.wait_for(
-                self.chat(session.get_messages(), model=model),
+                self._chat_with_provider(
+                    retry_messages, model=model,
+                    provider_name=provider_name, provider=provider,
+                ),
                 timeout=_REFORMAT_TIMEOUT,
             )
         except asyncio.TimeoutError:
@@ -598,16 +746,113 @@ class AiService:
             return parse_signal_from_response(retry)
         return None
 
+    async def _chat_with_provider(
+        self,
+        messages: list[dict[str, str]],
+        *,
+        model: str,
+        provider_name: str,
+        provider: object | None,
+    ) -> str:
+        if provider is None:
+            return await self.chat(messages, model=model, provider_name=provider_name)
+        chat_with_metadata = getattr(provider, "chat_with_metadata", None)
+        if chat_with_metadata is not None:
+            result = await chat_with_metadata(messages=messages, model=model)
+            return result.content
+        return await provider.chat(messages=messages, model=model, think=None)
+
     # ── Internal: post-process raw signal into frontend shape ─────────
 
     @staticmethod
-    def _finalize_signal(raw_signal: Optional[dict]) -> Optional[dict]:
-        """Strip reasoning_steps + convert to frontend ActionSignalCard shape."""
+    def _finalize_signal(
+        raw_signal: Optional[dict],
+        *,
+        grounding_map: dict[str, frozenset[Decimal]] | None = None,
+    ) -> Optional[dict]:
+        result = AiService._finalize_signal_result(
+            raw_signal,
+            grounding_map=grounding_map,
+        )
+        return result.signal if result else None
+
+    @staticmethod
+    def _finalize_signal_result(
+        raw_signal: Optional[dict],
+        *,
+        grounding_map: dict[str, frozenset[Decimal]] | None = None,
+    ) -> _FinalizedSignalResult | None:
+        """Validate signal geometry and return frontend shape plus narrative rule."""
         if not raw_signal:
             return None
-        if "reasoning_steps" in raw_signal:
-            del raw_signal["reasoning_steps"]
-        return signal_to_frontend_format(raw_signal)
+        cleaned = dict(raw_signal)
+        cleaned.pop("reasoning_steps", None)
+        cleaned["confidence"] = _coerce_confidence(cleaned.get("confidence"))
+
+        try:
+            validated_signal = validate_signal_draft(cleaned, grounding_map=grounding_map)
+        except AISignalGroundingError as exc:
+            log.warning("Rejected ungrounded AI signal: %s", exc)
+            return _FinalizedSignalResult(
+                signal=_rejected_card(),
+                status="rejected",
+                warning=UNVERIFIED_TRADE_PLAN_MESSAGE,
+            )
+
+        if validated_signal.direction == "NEUTRAL":
+            # Keep the model's own description and confidence — do NOT replace
+            # with safe_neutral_signal. The trading-safety contract is met:
+            # null levels, no numeric entry/stop/target. Only status differs.
+            return _FinalizedSignalResult(
+                signal=signal_to_frontend_format(validated_signal.model_dump(mode="python")),
+                status="neutral",
+                warning=UNVERIFIED_TRADE_PLAN_MESSAGE,
+            )
+
+        return _FinalizedSignalResult(
+            signal=signal_to_frontend_format(validated_signal.model_dump(mode="python")),
+            status="directional",
+            warning=None,
+        )
+
+    @staticmethod
+    def _finalize_analysis_response(
+        response_text: str,
+        raw_signal: Optional[dict],
+        *,
+        grounding_map: dict[str, frozenset[Decimal]] | None = None,
+    ) -> dict[str, dict | str]:
+        result = AiService._finalize_signal_result(
+            raw_signal,
+            grounding_map=grounding_map,
+        )
+        if result is None:
+            return {
+                "status": "rejected",
+                "narrative": None,
+                "warning": UNVERIFIED_TRADE_PLAN_MESSAGE,
+                "message": UNVERIFIED_TRADE_PLAN_MESSAGE,
+                "rejected_output": response_text,
+                "signal": _rejected_card(),
+            }
+
+        narrative = (
+            strip_signal_json_from_response(response_text)
+            if result.status != "rejected"
+            else None
+        )
+        # Chat history: directional gets the narrative; neutral/rejected get
+        # the warning so the commentary appears in the signal card, not the
+        # chat bubble, and the warning line appears exactly once.
+        message_for_session = narrative if result.status == "directional" else UNVERIFIED_TRADE_PLAN_MESSAGE
+        return {
+            "status": result.status,
+            "narrative": narrative,
+            "warning": result.warning,
+            "message": message_for_session,
+            "rejected_output": response_text if result.status == "rejected" else None,
+            "signal": result.signal,
+        }
 
     # ── Public: full (non-streaming) analyze ──────────────────────────
 
@@ -623,6 +868,10 @@ class AiService:
         indicator_priority: Optional[list[str]] = None,
         context_mode: str = "none",
         context_bars: int = 10,
+        provider_name: str = "ollama",
+        fallback_model: Optional[str] = None,
+        allow_fallback: bool = False,
+        provider: object | None = None,
         # Legacy alias — prefer indicators_display + indicator_names
         indicators_requested: Optional[list[str]] = None,
     ) -> dict:
@@ -660,25 +909,72 @@ class AiService:
             session_id, watchlist, indicator_priority,
             context_mode, context_bars,
         )
+        session.provider_name = provider_name
+        session.model = model
+        session.fallback_model = fallback_model
 
+        provider_result: AIProviderTextResult
         try:
-            response_text = await asyncio.wait_for(
-                self.chat(session.get_messages(), model=model),
+            provider_result = await asyncio.wait_for(
+                self._chat_analysis_with_metadata(
+                    messages=session.get_messages(),
+                    model=model,
+                    provider_name=provider_name,
+                    provider=provider,
+                ),
                 timeout=_NARRATIVE_TIMEOUT,
             )
         except asyncio.TimeoutError:
             raise AIAnalysisTimeoutError("narrative", _NARRATIVE_TIMEOUT)
-        clean_response_text = strip_signal_json_from_response(response_text)
-        session.add_assistant(clean_response_text)
+        except (
+            AIProviderAuthError,
+            AIProviderModelUnavailableError,
+            AIProviderNetworkError,
+            AIProviderRequestError,
+            AIProviderRateLimitError,
+            AIProviderTimeoutError,
+        ):
+            if not allow_fallback or not fallback_model:
+                raise
+            fallback_content = await asyncio.wait_for(
+                self.chat(
+                    session.get_messages(),
+                    model=fallback_model,
+                    provider_name="ollama",
+                ),
+                timeout=_NARRATIVE_TIMEOUT,
+            )
+            provider_result = AIProviderTextResult(
+                content=fallback_content,
+                metadata=self._fallback_metadata(fallback_model),
+                provider_request_id=None,
+            )
+            session.provider_name = "ollama"
+            session.model = fallback_model
 
-        raw_signal = await self._extract_signal(session, response_text, model, symbol)
-        frontend_signal = self._finalize_signal(raw_signal)
-        session.signal = frontend_signal
+        response_text = provider_result.content
+        raw_signal = await self._extract_signal(
+            session, response_text, session.model, symbol,
+            provider_name=session.provider_name,
+            provider=provider if session.provider_name == provider_name else None,
+        )
+        finalized = self._finalize_analysis_response(
+            response_text,
+            raw_signal,
+            grounding_map=session.grounding_map,
+        )
+        session.add_assistant(finalized["message"])
+        session.signal = finalized["signal"]
 
         return {
             "session_id": session.session_id,
-            "signal": frontend_signal,
-            "message": clean_response_text,
+            "signal": finalized["signal"],
+            "status": finalized["status"],
+            "narrative": finalized["narrative"],
+            "warning": finalized["warning"],
+            "message": finalized["message"],
+            "rejected_output": finalized["rejected_output"],
+            "provider": provider_result.metadata.model_dump(),
         }
 
     # ── Public: streaming analyze ─────────────────────────────────────
@@ -695,6 +991,10 @@ class AiService:
         indicator_priority: Optional[list[str]] = None,
         context_mode: str = "none",
         context_bars: int = 10,
+        provider_name: str = "ollama",
+        fallback_model: Optional[str] = None,
+        allow_fallback: bool = False,
+        provider: object | None = None,
         # Legacy alias — prefer indicators_display + indicator_names
         indicators_requested: Optional[list[str]] = None,
     ) -> AsyncIterator[dict]:
@@ -725,38 +1025,250 @@ class AiService:
             session_id, watchlist, indicator_priority,
             context_mode, context_bars,
         )
+        session.provider_name = provider_name
+        session.model = model
+        session.fallback_model = fallback_model
 
         accumulated: list[str] = []
+        provider_metadata: dict | None = None
         try:
-            async for token in self.chat_stream(session.get_messages(), model=model):
-                accumulated.append(token)
-                yield {"type": "token", "content": token}
-        except (ConnectionError, TimeoutError, RuntimeError) as e:
+            async for event in self._stream_analysis_with_metadata(
+                messages=session.get_messages(),
+                model=model,
+                provider_name=provider_name,
+                provider=provider,
+            ):
+                if event.get("type") == "token":
+                    token = event["content"]
+                    accumulated.append(token)
+                    yield {"type": "token", "content": token}
+                elif event.get("type") == "metadata":
+                    provider_metadata = event["metadata"]
+        except (
+            ConnectionError,
+            TimeoutError,
+            RuntimeError,
+            AIProviderAuthError,
+            AIProviderModelUnavailableError,
+            AIProviderNetworkError,
+            AIProviderRequestError,
+            AIProviderRateLimitError,
+            AIProviderTimeoutError,
+        ) as e:
+            if (
+                provider_name != "ollama"
+                and isinstance(
+                    e,
+                    (
+                        AIProviderAuthError,
+                        AIProviderModelUnavailableError,
+                        AIProviderNetworkError,
+                        AIProviderRequestError,
+                        AIProviderRateLimitError,
+                        AIProviderTimeoutError,
+                    ),
+                )
+                and (not allow_fallback or not fallback_model)
+            ):
+                raise
+            if allow_fallback and fallback_model and provider_name != "ollama":
+                provider_metadata = self._fallback_metadata(fallback_model).model_dump()
+                session.provider_name = "ollama"
+                session.model = fallback_model
+                async for token in self.chat_stream(
+                    session.get_messages(),
+                    model=fallback_model,
+                    provider_name="ollama",
+                ):
+                    accumulated.append(token)
+                    yield {"type": "token", "content": token}
+            else:
+                provider_metadata = AIProviderMetadata(
+                    provider_name="ollama" if provider_name == "ollama" else provider_name,
+                    kind="local" if provider_name == "ollama" else "cloud",
+                    model=model,
+                    estimated_cost=None,
+                    actual_cost=None,
+                    fallback_used=False,
+                ).model_dump()
             # chat_stream itself yields error tokens on httpx failures, but
             # any unexpected error here is surfaced as a final done event so
             # the client can render something meaningful.
             log.warning("Stream error mid-analysis for %s: %s", symbol, e)
 
         full_text = "".join(accumulated)
-        clean_full_text = strip_signal_json_from_response(full_text)
-        session.add_assistant(clean_full_text)
-
-        raw_signal = await self._extract_signal(session, full_text, model, symbol)
-        frontend_signal = self._finalize_signal(raw_signal)
-        session.signal = frontend_signal
+        raw_signal = await self._extract_signal(
+            session, full_text, session.model, symbol,
+            provider_name=session.provider_name,
+            provider=provider if session.provider_name == provider_name else None,
+        )
+        finalized = self._finalize_analysis_response(
+            full_text,
+            raw_signal,
+            grounding_map=session.grounding_map,
+        )
+        session.add_assistant(finalized["message"])
+        session.signal = finalized["signal"]
 
         yield {
             "type": "done",
             "session_id": session.session_id,
-            "signal": frontend_signal,
-            "message": clean_full_text,
+            "signal": finalized["signal"],
+            "status": finalized["status"],
+            "narrative": finalized["narrative"],
+            "warning": finalized["warning"],
+            "message": finalized["message"],
+            "rejected_output": finalized["rejected_output"],
+            "provider": provider_metadata,
         }
+
+    async def analyze_prepared_stream(
+        self,
+        *,
+        snapshot: "PreparedAnalysisSnapshot",
+        provider: object | None,
+        fallback_provider: object | None,
+        grounding_map: dict[str, frozenset[Decimal]] | None = None,
+    ) -> AsyncIterator[dict]:
+        session = self.get_or_create_session(snapshot.request.session_id)
+        session.symbol = snapshot.request.symbol
+        session.messages = [dict(message) for message in snapshot.messages]
+        session.provider_name = snapshot.provider_name
+        session.model = snapshot.model.id
+        session.grounding_map = grounding_map or {}
+
+        accumulated: list[str] = []
+        provider_metadata: dict | None = None
+        if provider is None:
+            if not snapshot.fallback_enabled or fallback_provider is None:
+                raise AIProviderNetworkError("Cloud provider is unavailable")
+            fallback_model = snapshot.local_model or ""
+            provider_metadata = self._fallback_metadata(fallback_model).model_dump()
+            session.provider_name = "ollama"
+            session.model = fallback_model
+            async for token in fallback_provider.chat_stream(
+                messages=snapshot.messages,
+                model=fallback_model,
+                think=None,
+            ):
+                accumulated.append(token)
+                yield {"type": "token", "content": token}
+        else:
+            try:
+                async for event in provider.chat_stream_with_metadata(
+                    messages=snapshot.messages,
+                    model=snapshot.model.id,
+                    max_tokens=snapshot.cost.max_output_tokens,
+                ):
+                    if event.get("type") == "token":
+                        accumulated.append(event["content"])
+                        yield event
+                    elif event.get("type") == "metadata":
+                        provider_metadata = event["metadata"]
+            except (
+                AIProviderAuthError,
+                AIProviderModelUnavailableError,
+                AIProviderNetworkError,
+                AIProviderRequestError,
+                AIProviderRateLimitError,
+                AIProviderTimeoutError,
+            ):
+                if not snapshot.fallback_enabled or fallback_provider is None:
+                    raise
+                fallback_model = snapshot.local_model or ""
+                provider_metadata = self._fallback_metadata(fallback_model).model_dump()
+                session.provider_name = "ollama"
+                session.model = fallback_model
+                async for token in fallback_provider.chat_stream(
+                    messages=snapshot.messages,
+                    model=fallback_model,
+                    think=None,
+                ):
+                    accumulated.append(token)
+                    yield {"type": "token", "content": token}
+
+        full_text = "".join(accumulated)
+        raw_signal = await self._extract_signal(
+            session,
+            full_text,
+            session.model,
+            snapshot.request.symbol,
+            provider_name=session.provider_name,
+            provider=provider if session.provider_name == snapshot.provider_name else fallback_provider,
+        )
+        finalized = self._finalize_analysis_response(
+            full_text,
+            raw_signal,
+            grounding_map=session.grounding_map,
+        )
+        session.add_assistant(finalized["message"])
+        session.signal = finalized["signal"]
+        yield {
+            "type": "done",
+            "session_id": session.session_id,
+            "signal": finalized["signal"],
+            "status": finalized["status"],
+            "narrative": finalized["narrative"],
+            "warning": finalized["warning"],
+            "message": finalized["message"],
+            "rejected_output": finalized["rejected_output"],
+            "provider": provider_metadata,
+        }
+
+    async def execute_prepared_analysis(
+        self,
+        *,
+        messages: list[dict[str, str]],
+        model: str,
+        provider: object,
+        max_tokens: int | None = None,
+        grounding_map: dict[str, frozenset[Decimal]] | None = None,
+    ) -> dict:
+        """Execute prepared messages once without creating a chat session."""
+        started = monotonic()
+        chunks: list[str] = []
+        metadata: dict | None = None
+        stream_with_metadata = getattr(provider, "chat_stream_with_metadata", None)
+        if stream_with_metadata is not None:
+            kwargs = {"messages": messages, "model": model}
+            if max_tokens is not None:
+                kwargs["max_tokens"] = max_tokens
+            async for event in stream_with_metadata(**kwargs):
+                if event.get("type") == "token":
+                    chunks.append(event["content"])
+                elif event.get("type") == "metadata":
+                    metadata = event["metadata"]
+        else:
+            async for token in provider.chat_stream(
+                messages=messages, model=model, think=None,
+            ):
+                chunks.append(token)
+
+        full_text = "".join(chunks)
+        raw_signal = parse_signal_from_response(full_text)
+        metadata = metadata or AIProviderMetadata(
+            provider_name="ollama",
+            kind="local",
+            model=model,
+            requested_model=model,
+            resolved_model=model,
+            duration_ms=round((monotonic() - started) * 1000),
+        ).model_dump()
+        if metadata.get("duration_ms") is None:
+            metadata["duration_ms"] = round((monotonic() - started) * 1000)
+        finalized = self._finalize_analysis_response(
+            full_text,
+            raw_signal,
+            grounding_map=grounding_map,
+        )
+        return {"message": finalized["message"], "signal": finalized["signal"], "provider": metadata}
 
     async def follow_up(
         self,
         session_id: str,
         message: str,
-        model: str,
+        model: Optional[str] = None,
+        provider: object | None = None,
     ) -> dict:
         """
         Send a follow-up message in an existing analysis session.
@@ -772,14 +1284,27 @@ class AiService:
             raise ValueError(f"Session {session_id} not found")
 
         session.add_user(message)
-        response_text = await self.chat(session.get_messages(), model=model)
-        clean_response_text = strip_signal_json_from_response(response_text)
-        session.add_assistant(clean_response_text)
+        response_text = await self._chat_with_provider(
+            session.get_messages(),
+            model=model or session.model,
+            provider_name=session.provider_name,
+            provider=provider,
+        )
 
         # Check if the response contains an updated signal
         raw_signal = parse_signal_from_response(response_text)
         if raw_signal:
-            session.signal = signal_to_frontend_format(raw_signal)
+            finalized = self._finalize_analysis_response(
+                response_text,
+                raw_signal,
+                grounding_map=session.grounding_map,
+            )
+            session.add_assistant(finalized["message"])
+            session.signal = finalized["signal"]
+            clean_response_text = finalized["message"]
+        else:
+            clean_response_text = strip_signal_json_from_response(response_text)
+            session.add_assistant(clean_response_text)
 
         return {
             "session_id": session.session_id,
@@ -791,36 +1316,61 @@ class AiService:
         self,
         session_id: str,
         message: str,
-        model: str,
-    ) -> AsyncIterator[str]:
+        model: Optional[str] = None,
+        provider: object | None = None,
+    ) -> AsyncIterator[dict]:
         """
         Streaming version of follow_up — yields tokens as they arrive.
         After the stream completes, the full response is added to the session.
         """
         session = self.sessions.get(session_id)
         if not session:
-            yield "[Error: Session not found]"
+            yield {"type": "error", "message": "[Error: Session not found]"}
             return
 
         session.add_user(message)
 
         full_response = ""
-        async for token in self.chat_stream(session.get_messages(), model=model):
-            full_response += token
-            yield token
-
-        clean_full_response = strip_signal_json_from_response(full_response)
-        session.add_assistant(clean_full_response)
+        async for event in self._stream_analysis_with_metadata(
+            messages=session.get_messages(),
+            model=model or session.model,
+            provider_name=session.provider_name,
+            provider=provider,
+        ):
+            if event.get("type") == "token":
+                token = event["content"]
+                full_response += token
+                yield {"type": "token", "content": token}
 
         # Check for signal update
         raw_signal = parse_signal_from_response(full_response)
         if raw_signal:
-            session.signal = signal_to_frontend_format(raw_signal)
+            finalized = self._finalize_analysis_response(
+                full_response,
+                raw_signal,
+                grounding_map=session.grounding_map,
+            )
+            session.add_assistant(finalized["message"])
+            session.signal = finalized["signal"]
+            final_message = finalized["message"]
+        else:
+            final_message = strip_signal_json_from_response(full_response)
+            session.add_assistant(final_message)
+
+        yield {
+            "type": "done",
+            "session_id": session.session_id,
+            "signal": session.signal,
+            "message": final_message,
+        }
 
     # ── Cleanup ─────────────────────────────────────────────────
 
     async def shutdown(self) -> None:
         """Clean shutdown — close HTTP client."""
-        await self._http.aclose()
+        provider = self._provider_registry.require("ollama")
+        close_provider = getattr(provider, "aclose", None)
+        if close_provider is not None:
+            await close_provider()
         self.sessions.clear()
         log.info("AI service shut down")

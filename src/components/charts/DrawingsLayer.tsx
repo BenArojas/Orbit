@@ -46,7 +46,7 @@ import type {
   DrawingStylePayload,
   DrawingKind,
   CandleData,
-} from "@/lib/api";
+} from "@/modules/parallax/api";
 import { useDrawingsStore } from "@/store/drawings";
 import {
   useDrawings,

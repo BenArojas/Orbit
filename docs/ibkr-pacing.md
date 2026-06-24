@@ -105,8 +105,7 @@ errors in the `ensure_accounts` log lines.
 
 ## Cold-start call order
 
-See the full protocol in `.claude/skills/parallax-backend/SKILL.md` under
-**"Cold-start Protocol"**. Short version:
+This document is the canonical human-readable cold-start protocol:
 
 ```
 auth_status → ensure_accounts → _ensure_secdef (non-STK only)

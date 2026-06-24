@@ -13,7 +13,7 @@
 import { useState } from "react";
 import { ChevronRight } from "lucide-react";
 import type { IndicatorId } from "@/store/chart";
-import type { FibonacciResult } from "@/lib/api";
+import type { FibonacciResult } from "@/modules/parallax/api";
 import AiChatPanel from "./AiChatPanel";
 import WatchlistTab from "./WatchlistTab";
 import TriggersTab from "./TriggersTab";

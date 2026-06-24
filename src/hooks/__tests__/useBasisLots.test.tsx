@@ -2,8 +2,8 @@ import { describe, expect, it, vi } from "vitest";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
-vi.mock("@/lib/api", () => ({
-  api: {
+vi.mock("@/modules/inflect/api", () => ({
+  inflectApi: {
     inflectBasisLots: vi.fn().mockResolvedValue([]),
     inflectBasisAudit: vi.fn().mockResolvedValue({ account_id: "DU1", conid: 265598, items: [] }),
     inflectCreateBasisLot: vi.fn().mockResolvedValue({
@@ -24,7 +24,7 @@ vi.mock("@/lib/api", () => ({
 
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
-import { api } from "@/lib/api";
+import { inflectApi } from "@/modules/inflect/api";
 import {
   useBasisAudit,
   useBasisLots,
@@ -51,11 +51,11 @@ describe("useBasisLots", () => {
     await waitFor(() => expect(lots.result.current.isSuccess).toBe(true));
     await waitFor(() => expect(audit.result.current.isSuccess).toBe(true));
 
-    expect(api.inflectBasisLots).toHaveBeenCalledWith(
+    expect(inflectApi.inflectBasisLots).toHaveBeenCalledWith(
       { accountId: "DU1", conid: 265598 },
       expect.anything(),
     );
-    expect(api.inflectBasisAudit).toHaveBeenCalledWith(
+    expect(inflectApi.inflectBasisAudit).toHaveBeenCalledWith(
       { accountId: "DU1", conid: 265598 },
       expect.anything(),
     );
@@ -92,9 +92,9 @@ describe("useBasisLots", () => {
       await deleteLot.result.current.mutateAsync({ lotId: 1, conid: 265598 });
     });
 
-    expect(api.inflectCreateBasisLot).toHaveBeenCalledWith("DU1", expect.objectContaining({ conid: 265598 }));
-    expect(api.inflectUpdateBasisLot).toHaveBeenCalledWith(1, "DU1", expect.objectContaining({ side: "SHORT" }));
-    expect(api.inflectDeleteBasisLot).toHaveBeenCalledWith(1, "DU1");
+    expect(inflectApi.inflectCreateBasisLot).toHaveBeenCalledWith("DU1", expect.objectContaining({ conid: 265598 }));
+    expect(inflectApi.inflectUpdateBasisLot).toHaveBeenCalledWith(1, "DU1", expect.objectContaining({ side: "SHORT" }));
+    expect(inflectApi.inflectDeleteBasisLot).toHaveBeenCalledWith(1, "DU1");
     expect(spy).toHaveBeenCalledWith({ queryKey: ["inflect", "basis-lots", "DU1", 265598] });
     expect(spy).toHaveBeenCalledWith({ queryKey: ["inflect", "basis-audit", "DU1", 265598] });
     expect(spy).toHaveBeenCalledWith({ queryKey: ["inflect", "backfill-status"] });

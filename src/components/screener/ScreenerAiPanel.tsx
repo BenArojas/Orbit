@@ -25,7 +25,7 @@ import {
   CheckCircle2,
   ChevronRight,
 } from "lucide-react";
-import { api, type AiFilterSuggestion } from "@/lib/api";
+import { parallaxApi, type AiFilterSuggestion } from "@/modules/parallax/api";
 import { useScreenerStore, type ActiveFilter } from "@/store/screener";
 import { useAiStatus } from "@/hooks/useAiStatus";
 
@@ -182,7 +182,7 @@ export default function ScreenerAiPanel({ isOpen }: ScreenerAiPanelProps) {
   const aiMutation = useMutation({
     mutationFn: (q: string) => {
       if (!selectedModel) throw new Error("No model selected");
-      return api.screenerAiFilters({
+      return parallaxApi.screenerAiFilters({
         query: q,
         model: selectedModel,
         preset_context: selectedPreset?.display_name,

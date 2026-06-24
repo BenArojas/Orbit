@@ -12,7 +12,7 @@
  */
 
 import { create } from "zustand";
-import { api, type PulseItem } from "@/lib/api";
+import { parallaxApi, type PulseItem } from "@/modules/parallax/api";
 import { queryClient } from "@/lib/query";
 
 /**
@@ -91,7 +91,7 @@ export const usePulseConfigStore = create<PulseConfigState>()((set, get) => ({
 
   load: async () => {
     try {
-      const { items } = await api.getPulseConfig();
+      const { items } = await parallaxApi.getPulseConfig();
       // Guard: if the backend returns an empty list for some reason, fall
       // back to defaults so the bar isn't blank on first boot.
       set({
@@ -112,7 +112,7 @@ export const usePulseConfigStore = create<PulseConfigState>()((set, get) => ({
     // Optimistic update so the bar rerenders immediately.
     set({ items, isSaving: true, error: null });
     try {
-      const { items: saved } = await api.setPulseConfig(items);
+      const { items: saved } = await parallaxApi.setPulseConfig(items);
       set({ items: saved, isSaving: false });
       // Drop cached conid/quote/candle entries — the new list may have
       // different `resolve` strings whose previous resolution is now stale.
@@ -131,7 +131,7 @@ export const usePulseConfigStore = create<PulseConfigState>()((set, get) => ({
   reset: async () => {
     set({ isSaving: true, error: null });
     try {
-      const { items } = await api.resetPulseConfig();
+      const { items } = await parallaxApi.resetPulseConfig();
       set({ items, isSaving: false });
       // Same rationale as save() — flush cached resolver/quote entries
       // so the restored defaults actually rehydrate from the server.

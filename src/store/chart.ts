@@ -11,7 +11,7 @@
 
 import { create } from "zustand";
 
-import type { FibonacciCandidate, FibonacciResult } from "@/lib/api";
+import type { FibonacciCandidate, FibonacciResult } from "@/modules/parallax/api";
 import { useDrawingsStore } from "@/store/drawings";
 
 export type Timeframe = "1m" | "5m" | "15m" | "1h" | "4h" | "1D" | "1W" | "1M";

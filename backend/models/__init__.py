@@ -21,6 +21,9 @@ Note: Watchlists are managed in IBKR — no local models needed.
 
 from __future__ import annotations
 
+from datetime import datetime
+from decimal import Decimal
+
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from typing import Any, Literal, Optional
 
@@ -148,6 +151,48 @@ class MoonMarketAccountsResponse(BaseModel):
     """Response from GET /moonmarket/accounts."""
     accounts: list[MoonMarketAccount]
     selected_account_id: Optional[str] = None
+
+
+TradingSafetyAction = Literal["place", "reply", "cancel", "modify"]
+TradingSafetyMode = Literal["paper_allowed", "live_confirmation_required", "rejected"]
+
+
+class TradingSafetyConfirmation(BaseModel):
+    """Confirmation copy for an order action safety decision."""
+    required: bool
+    title: Optional[str] = None
+    message: Optional[str] = None
+    confirm_label: Optional[str] = None
+
+
+class TradingSafetyDecision(BaseModel):
+    """Trading Safety policy decision for one account action."""
+    account_id: str
+    action: TradingSafetyAction
+    allowed: bool
+    mode: TradingSafetyMode
+    confirmation: TradingSafetyConfirmation
+
+    @model_validator(mode="after")
+    def _mode_and_confirmation_align(self) -> "TradingSafetyDecision":
+        if self.mode == "rejected":
+            if self.allowed:
+                raise ValueError("rejected decisions must not be allowed")
+        elif self.mode == "live_confirmation_required":
+            if not self.allowed:
+                raise ValueError("live_confirmation_required decisions must be allowed")
+            if not self.confirmation.required:
+                raise ValueError("live_confirmation_required decisions need confirmation.required")
+            if not self.confirmation.message or not self.confirmation.confirm_label:
+                raise ValueError(
+                    "live_confirmation_required decisions need confirmation message and confirm_label"
+                )
+        elif self.mode == "paper_allowed":
+            if not self.allowed:
+                raise ValueError("paper_allowed decisions must be allowed")
+            if self.confirmation.required:
+                raise ValueError("paper_allowed decisions must not require confirmation")
+        return self
 
 
 class MoonMarketAccountFunds(BaseModel):
@@ -669,14 +714,14 @@ class FibonacciCandidate(BaseModel):
     can see what else was in play).
 
     `status` indicates whether the swing is currently tradeable:
-      - "active"     — current price is still inside the swing range
-                       (with INSIDE_TOLERANCE band). Eligible to become
-                       the primary fib.
-      - "played_out" — price has decisively moved beyond the 1.0
-                       boundary (target side). Useful historical context,
-                       not an entry candidate.
-      - "broken"     — price has decisively moved beyond the 0 boundary
-                       (invalidation side). The swing is invalidated.
+      - "active"     — current price is still inside the swing's wick
+                       range. Eligible to become the primary fib.
+      - "played_out" — a post-swing wick has crossed the target boundary
+                       (above swing_high for up, below swing_low for down).
+                       Useful historical context, not an entry candidate.
+      - "broken"     — a post-swing wick has crossed the invalidation
+                       boundary (below swing_low for up, above swing_high
+                       for down). The swing is invalidated.
     """
     swing_high: float
     swing_low: float
@@ -726,12 +771,12 @@ class FibonacciResult(BaseModel):
     reasoning: str                  # Human-readable explanation for the LLM
     source: str = "auto"            # "auto", "manual", or "locked"
 
-    # When no candidate is currently inside any detected swing (with
-    # INSIDE_TOLERANCE band), `no_active_fib` is True. In that state the
-    # swing/levels fields carry placeholder values (typically copied from
-    # the highest-scored historical candidate) and MUST NOT be rendered as
-    # an authoritative fib on the chart. The Candidates panel still gets
-    # populated so the user can pick a historical swing to study.
+    # When no candidate is currently inside the swing's wick range,
+    # `no_active_fib` is True. In that state the swing/levels fields carry
+    # placeholder values (typically copied from the highest-scored historical
+    # candidate) and MUST NOT be rendered as an authoritative fib on the
+    # chart. The Candidates panel still gets populated so the user can pick
+    # a historical swing to study.
     no_active_fib: bool = False
     no_active_fib_reason: Optional[str] = None
 
@@ -782,7 +827,7 @@ class IndicatorComputeResponse(BaseModel):
 # for their style. Weights are stored in the existing `settings` table
 # under key="fib_weights" as a JSON blob — no new table is needed.
 #
-# A future v2 learning algorithm (parallax-v2-roadmap) will adjust
+# A future v2 learning algorithm (`PROJECT_PLAN.md`) will adjust
 # these weights automatically based on subsequent price action. Until
 # then they are purely user-controlled.
 
@@ -955,6 +1000,15 @@ class WatchlistMembershipResponse(BaseModel):
 # ═══════════════════════════════════════════════════════════════
 
 
+AIProviderName = Literal["ollama", "openai", "anthropic", "gemini", "grok", "openrouter"]
+AIProviderKind = Literal["local", "cloud"]
+AIRoutingMode = Literal[
+    "local_only",
+    "cloud_manual",
+    "cloud_with_local_fallback",
+]
+
+
 class AnalyzeRequest(BaseModel):
     """
     Request to run an AI technical analysis on a stock.
@@ -1001,6 +1055,147 @@ class AnalyzeRequest(BaseModel):
             "server-side auto-detection for AI prompting."
         ),
     )
+    provider_name: AIProviderName = "ollama"
+    model: Optional[str] = None
+    task_type: Literal["analysis", "execution_sensitive"] = "analysis"
+
+
+class AIAnalysisSnapshotRunRequest(BaseModel):
+    snapshot_id: str = Field(min_length=1)
+
+
+class AIProviderStatus(BaseModel):
+    """Current status for one AI provider exposed to the frontend."""
+    provider_name: AIProviderName
+    display_name: str
+    kind: AIProviderKind
+    enabled: bool
+    ready: bool
+    selected_model: Optional[str] = None
+    has_key: bool = False
+    error: Optional[str] = None
+
+
+class AIProviderMetadata(BaseModel):
+    """Provider metadata attached to completed AI analysis events."""
+    provider_name: AIProviderName
+    kind: AIProviderKind
+    model: Optional[str] = None
+    estimated_cost: Optional[float] = None
+    actual_cost: Optional[float] = None
+    fallback_used: bool = False
+    requested_model: Optional[str] = Field(default=None, exclude_if=lambda value: value is None)
+    resolved_model: Optional[str] = Field(default=None, exclude_if=lambda value: value is None)
+    provider_request_id: Optional[str] = Field(default=None, exclude_if=lambda value: value is None)
+    input_tokens: Optional[int] = Field(default=None, exclude_if=lambda value: value is None)
+    output_tokens: Optional[int] = Field(default=None, exclude_if=lambda value: value is None)
+    reasoning_tokens: Optional[int] = Field(default=None, exclude_if=lambda value: value is None)
+    cached_tokens: Optional[int] = Field(default=None, exclude_if=lambda value: value is None)
+    duration_ms: Optional[int] = Field(default=None, exclude_if=lambda value: value is None)
+    finish_reason: Optional[str] = Field(default=None, exclude_if=lambda value: value is None)
+
+
+class AIProvidersResponse(BaseModel):
+    """Local-only provider state for Slice 2."""
+    providers: list[AIProviderStatus]
+    active_provider: AIProviderName
+    routing_mode: AIRoutingMode
+    cloud_enabled: bool
+
+
+class AIModelOption(BaseModel):
+    """One validated fixed OpenRouter text model available to the user."""
+    id: str
+    name: str
+    context_length: int
+    max_completion_tokens: int
+    prompt_price_per_token: str
+    completion_price_per_token: str
+    request_price: str
+
+
+class AIProviderModelsResponse(BaseModel):
+    """Authenticated OpenRouter catalog plus the persisted default model."""
+    provider_name: Literal["openrouter"]
+    models: list[AIModelOption]
+    selected_model: Optional[str] = None
+    fetched_at: datetime
+
+
+class AIProviderModelUpdateRequest(BaseModel):
+    """Persist a validated provider model selection."""
+    model: str = Field(min_length=1)
+
+
+class AIDataDisclosure(BaseModel):
+    sent_to_cloud: list[str]
+    kept_local: list[str]
+    exact_payload_available_until: datetime
+
+
+class AICostQuote(BaseModel):
+    currency: Literal["USD"] = "USD"
+    estimated_input_tokens: int
+    expected_output_tokens: int
+    max_output_tokens: int
+    estimated_cost_usd: Decimal
+    maximum_cost_usd: Decimal
+
+
+class AIAnalysisPreviewResponse(BaseModel):
+    snapshot_id: str
+    expires_at: datetime
+    provider_name: Literal["openrouter"]
+    model: AIModelOption
+    request_body: dict[str, Any]
+    disclosure: AIDataDisclosure
+    cost: AICostQuote
+    fallback_enabled: bool
+
+
+class AIProviderKeySaveRequest(BaseModel):
+    """Request body for saving a cloud provider API key to OS keychain."""
+    api_key: str = Field(min_length=1)
+
+
+class AIRoutingPolicyResponse(BaseModel):
+    """Non-secret AI routing settings."""
+    active_provider: AIProviderName = "ollama"
+    routing_mode: AIRoutingMode = "local_only"
+    local_fallback_enabled: bool = True
+
+
+class AIRoutingPolicyUpdate(AIRoutingPolicyResponse):
+    """Update body for non-secret AI routing settings."""
+
+
+class AIRunAttempt(BaseModel):
+    provider_name: AIProviderName
+    requested_model: Optional[str] = None
+    resolved_model: Optional[str] = None
+    status: Literal["success", "failed", "fallback_success", "blocked"]
+    provider_request_id: Optional[str] = None
+    input_tokens: Optional[int] = None
+    output_tokens: Optional[int] = None
+    reasoning_tokens: Optional[int] = None
+    cached_tokens: Optional[int] = None
+    estimated_cost_usd: Optional[Decimal] = None
+    actual_cost_usd: Optional[Decimal] = None
+    duration_ms: int = 0
+    error_code: Optional[str] = None
+
+
+class AIRunReceipt(BaseModel):
+    run_id: str
+    requested_provider: AIProviderName
+    requested_model: Optional[str] = None
+    executed_provider: Optional[AIProviderName] = None
+    resolved_model: Optional[str] = None
+    fallback_used: bool
+    fallback_reason: Optional[str] = None
+    status: Literal["success", "failed", "fallback_success", "blocked"]
+    attempts: list[AIRunAttempt]
+    created_at: datetime
 
 
 class ChatMessage(BaseModel):
@@ -1057,17 +1252,49 @@ class SignalData(BaseModel):
     checks: list[SignalCheck]                            # Confirmations + cautions
 
 
+class AIQualityChecks(BaseModel):
+    response_completed: bool
+    signal_parsed: bool
+    entry_present: bool
+    stop_present: bool
+    target_present: bool
+    checks_count: int
+    narrative_characters: int
+
+
+class AIComparisonSide(BaseModel):
+    receipt: AIRunReceipt
+    message: str
+    signal: Optional[SignalData] = None
+    quality: AIQualityChecks
+
+
+class AIComparisonResponse(BaseModel):
+    snapshot_id: str
+    same_input: Literal[True] = True
+    local: AIComparisonSide
+    cloud: AIComparisonSide
+
+
 class AnalyzeResponse(BaseModel):
     """
     Response from POST /ai/analyze — the AI's trading signal and analysis.
 
-    signal: The structured data for the Action Signal card (null if parsing failed)
-    message: The full AI response text (always present)
-    session_id: ID for follow-up questions in this conversation
+    status:    "directional" | "neutral" | "rejected"
+    narrative: Model free-text (signal JSON stripped); null for rejected
+    warning:   Safety line shown once for neutral/rejected; null for directional
+    message:   Kept for backward compat — equals narrative (directional) or
+               warning (neutral/rejected)
+    signal:    Structured Action Signal card data; null if parsing failed
     """
     session_id: str
     signal: Optional[SignalData] = None
+    status: Literal["directional", "neutral", "rejected"]
+    narrative: Optional[str] = None
+    warning: Optional[str] = None
     message: str
+    rejected_output: Optional[str] = None
+    provider: Optional[AIProviderMetadata] = None
 
 
 class ChatResponse(BaseModel):

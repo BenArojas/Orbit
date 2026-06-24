@@ -15,7 +15,7 @@
  */
 
 import { useQuery } from "@tanstack/react-query";
-import { api, type RecommendedModel } from "@/lib/api";
+import { parallaxApi, type RecommendedModel } from "@/modules/parallax/api";
 import type { OllamaState } from "@/store";
 
 /* ── Types ── */
@@ -75,7 +75,7 @@ export default function AiSetupGuide({
 }: AiSetupGuideProps) {
   const guideQuery = useQuery({
     queryKey: ["ai", "setup-guide"],
-    queryFn: () => api.aiSetupGuide(),
+    queryFn: () => parallaxApi.aiSetupGuide(),
     enabled: ollamaState === "not_installed" || ollamaState === "no_models",
     staleTime: 60_000,
   });

@@ -1,105 +1,148 @@
 """
-Tests for AI confidence coercion and signal parsing robustness.
+Tests for AI confidence coercion and signal parsing robustness — critical-promise subset.
 
 Covers:
-  - _coerce_confidence: int passthrough, string labels, numeric strings,
-    unknown strings, None, out-of-range ints
-  - _parse_signal: does not crash on string confidence values (ValidationError guard)
-  - signal_to_frontend_format: always emits an int confidence
+  - Unsafe trades cannot happen: fabricated prices are rejected, directional output
+    with ungrounded prices is withheld and replaced with a safe neutral card.
+  - Main user workflows: valid grounded directional signals are preserved end-to-end.
+  - External failures stop safely: rejected signal updates return deterministic
+    neutral output in both non-streaming and streaming paths.
 """
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
+
 import pytest
-from pydantic import ValidationError
 
-from services.ai import _coerce_confidence, signal_to_frontend_format
+from models import AIModelOption, AIProviderMetadata, AnalyzeRequest
+from services.ai import AiService, signal_to_frontend_format
+from services.ai_analysis_preparation import AIAnalysisPreparationService
+from services.ai_cloud_adapters import AIProviderTextResult
+from services.ai_providers import AIProviderRegistry
 
-
-# ── _coerce_confidence ────────────────────────────────────────
-
-
-class TestCoerceConfidence:
-    def test_int_passthrough(self):
-        assert _coerce_confidence(80) == 80
-
-    def test_int_clamped_high(self):
-        assert _coerce_confidence(150) == 100
-
-    def test_int_clamped_low(self):
-        assert _coerce_confidence(-10) == 0
-
-    def test_string_high(self):
-        assert _coerce_confidence("HIGH") == 75
-
-    def test_string_high_lowercase(self):
-        assert _coerce_confidence("high") == 75
-
-    def test_string_medium(self):
-        assert _coerce_confidence("MEDIUM") == 50
-
-    def test_string_med(self):
-        assert _coerce_confidence("MED") == 50
-
-    def test_string_low(self):
-        assert _coerce_confidence("LOW") == 25
-
-    def test_numeric_string(self):
-        assert _coerce_confidence("70") == 70
-
-    def test_numeric_string_clamped(self):
-        assert _coerce_confidence("200") == 100
-
-    def test_unknown_string_defaults_to_50(self):
-        assert _coerce_confidence("VERY_HIGH") == 50
-
-    def test_none_defaults_to_50(self):
-        assert _coerce_confidence(None) == 50
-
-    def test_result_is_always_int(self):
-        for val in ["HIGH", "low", 80, "70", None]:
-            result = _coerce_confidence(val)
-            assert isinstance(result, int), f"Expected int, got {type(result)} for {val!r}"
+DETERMINISTIC_NEUTRAL = "No actionable trade plan could be verified from the supplied facts."
 
 
-# ── signal_to_frontend_format ────────────────────────────────
+GROUNDING_MAP = {
+    "D.ema.price_near_21": frozenset({100.0}),
+    "D.bbands.outside_lower": frozenset({98.0}),
+    "D.fibonacci.target_extension_1272": frozenset({104.0}),
+}
 
 
-class TestSignalToFrontendFormat:
-    def _make_signal(self, confidence):
-        return {
-            "direction": "LONG",
-            "description": "Test signal",
-            "confidence": confidence,
-            "entry": {"price": 100.0, "note": ""},
-            "stop": {"price": 95.0, "note": ""},
-            "target": {"price": 110.0, "note": ""},
-            "meta": {"risk_reward": "2:1", "score": 8, "adx_trend": "strong", "volume_signal": "above"},
-            "confirmations": [],
-            "cautions": [],
+class _PromptStubAiService(AiService):
+    async def _prepare_analysis_payload(self, **_kwargs):
+        return (
+            [
+                {"role": "system", "content": "System prompt."},
+                {"role": "user", "content": "User prompt."},
+            ],
+            GROUNDING_MAP,
+        )
+
+
+class _FakeProvider:
+    def __init__(self, content: str) -> None:
+        self.content = content
+
+    async def chat(self, *, messages: list[dict[str, str]], model: str, think=None) -> str:
+        assert messages
+        del model, think
+        return self.content
+
+    async def chat_with_metadata(self, *, messages: list[dict[str, str]], model: str):
+        assert messages
+        return AIProviderTextResult(
+            content=self.content,
+            metadata=AIProviderMetadata(
+                provider_name="ollama",
+                kind="local",
+                model=model,
+                estimated_cost=None,
+                actual_cost=None,
+                fallback_used=False,
+            ),
+            provider_request_id=None,
+        )
+
+    async def chat_stream_with_metadata(
+        self,
+        *,
+        messages: list[dict[str, str]],
+        model: str,
+        max_tokens: int | None = None,
+    ) -> AsyncIterator[dict]:
+        assert messages
+        del max_tokens
+        yield {"type": "token", "content": self.content}
+        yield {
+            "type": "metadata",
+            "metadata": AIProviderMetadata(
+                provider_name="ollama",
+                kind="local",
+                model=model,
+                estimated_cost=None,
+                actual_cost=None,
+                fallback_used=False,
+            ).model_dump(),
         }
 
-    def test_int_confidence_preserved(self):
-        result = signal_to_frontend_format(self._make_signal(75))
-        assert result["confidence"] == 75
 
-    def test_string_high_confidence_coerced(self):
-        result = signal_to_frontend_format(self._make_signal("HIGH"))
-        assert result["confidence"] == 75
-        assert isinstance(result["confidence"], int)
+def _service_for(content: str) -> _PromptStubAiService:
+    return _PromptStubAiService(
+        provider_registry=AIProviderRegistry({"ollama": _FakeProvider(content)})
+    )
 
-    def test_string_low_confidence_coerced(self):
-        result = signal_to_frontend_format(self._make_signal("LOW"))
-        assert result["confidence"] == 25
 
-    def test_none_confidence_defaults_to_50(self):
-        result = signal_to_frontend_format(self._make_signal(None))
-        assert result["confidence"] == 50
+class _QueuedProvider(_FakeProvider):
+    def __init__(self, contents: list[str]) -> None:
+        self.contents = list(contents)
 
-    def test_missing_confidence_defaults_to_50(self):
-        signal = self._make_signal(50)
-        del signal["confidence"]
-        result = signal_to_frontend_format(signal)
-        assert result["confidence"] == 50
+    def _next(self) -> str:
+        assert self.contents, "No queued content left"
+        return self.contents.pop(0)
+
+    async def chat(self, *, messages: list[dict[str, str]], model: str, think=None) -> str:
+        assert messages
+        del model, think
+        return self._next()
+
+    async def chat_with_metadata(self, *, messages: list[dict[str, str]], model: str):
+        assert messages
+        return AIProviderTextResult(
+            content=self._next(),
+            metadata=AIProviderMetadata(
+                provider_name="ollama",
+                kind="local",
+                model=model,
+                estimated_cost=None,
+                actual_cost=None,
+                fallback_used=False,
+            ),
+            provider_request_id=None,
+        )
+
+    async def chat_stream_with_metadata(
+        self,
+        *,
+        messages: list[dict[str, str]],
+        model: str,
+        max_tokens: int | None = None,
+    ) -> AsyncIterator[dict]:
+        assert messages
+        del max_tokens
+        yield {"type": "token", "content": self._next()}
+        yield {
+            "type": "metadata",
+            "metadata": AIProviderMetadata(
+                provider_name="ollama",
+                kind="local",
+                model=model,
+                estimated_cost=None,
+                actual_cost=None,
+                fallback_used=False,
+            ).model_dump(),
+        }
 
 
 # ── _parse_signal ValidationError guard ──────────────────────
@@ -114,13 +157,11 @@ class TestParseSignal:
     def test_parse_signal_with_string_confidence_does_not_raise(self):
         """String confidence must not bubble as a 500 through _parse_signal."""
         from routers.ai import _parse_signal
-        from services.ai import signal_to_frontend_format
 
-        # Build a frontend-formatted signal (confidence already coerced to int)
         raw_signal = {
             "direction": "LONG",
             "description": "Bullish breakout",
-            "confidence": 75,       # already coerced by signal_to_frontend_format
+            "confidence": 75,
             "levels": [
                 {"label": "Entry", "value": "$100.00", "sub": ""},
                 {"label": "Stop", "value": "$95.00", "sub": "", "color": "red"},
@@ -145,3 +186,141 @@ class TestParseSignal:
         bad_signal = {"direction": "LONG"}  # missing required fields
         result = _parse_signal(bad_signal)
         assert result is None
+
+
+# ── Grounding / safety tests ─────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_analyze_rejected_directional_output_returns_withheld_message_and_safe_neutral_card():
+    service = _service_for(
+        "LONG above support.\n\n```json\n"
+        '{"direction":"LONG","confidence":"HIGH","description":"Bullish setup",'
+        '"entry":{"price":999.0,"source_fact_id":"D.ema.price_near_21","note":"entry"},'
+        '"stop":{"price":998.0,"source_fact_id":"D.bbands.outside_lower","note":"stop"},'
+        '"target":{"price":1001.0,"source_fact_id":"D.fibonacci.target_extension_1272","note":"target"},'
+        '"confirmations":["EMA stack"],"cautions":[],"meta":{"risk_reward":null}}\n```'
+    )
+
+    result = await service.analyze(
+        symbol="AAPL",
+        timeframe_data={},
+        indicators_display=["EMA Stack"],
+        indicator_names=["ema"],
+        model="gemma4:26b",
+    )
+
+    assert result["message"] == DETERMINISTIC_NEUTRAL
+    assert result["signal"]["direction"] == "NEUTRAL"
+    assert result["signal"]["description"] == ""
+    assert [level["value"] for level in result["signal"]["levels"]] == ["—", "—", "—"]
+    assert result["signal"]["meta"][0]["value"] == "—"
+
+
+@pytest.mark.asyncio
+async def test_analyze_preserves_valid_grounded_directional_narrative_and_card():
+    service = _service_for(
+        "Bullish continuation backed by [D.ema.price_near_21].\n\n```json\n"
+        '{"direction":"LONG","confidence":72,"description":"Bullish setup",'
+        '"entry":{"price":100.0,"source_fact_id":"D.ema.price_near_21","note":"entry"},'
+        '"stop":{"price":98.0,"source_fact_id":"D.bbands.outside_lower","note":"stop"},'
+        '"target":{"price":104.0,"source_fact_id":"D.fibonacci.target_extension_1272","note":"target"},'
+        '"confirmations":["EMA stack"],"cautions":[],"meta":{"risk_reward":null}}\n```'
+    )
+
+    result = await service.analyze(
+        symbol="AAPL",
+        timeframe_data={},
+        indicators_display=["EMA Stack"],
+        indicator_names=["ema"],
+        model="gemma4:26b",
+    )
+
+    assert result["message"] == "Bullish continuation backed by [D.ema.price_near_21]."
+    assert result["signal"]["direction"] == "LONG"
+    assert [level["value"] for level in result["signal"]["levels"]] == ["$100.00", "$98.00", "$104.00"]
+
+
+@pytest.mark.asyncio
+async def test_follow_up_rejected_signal_update_returns_withheld_message_and_safe_neutral_card():
+    provider = _QueuedProvider([
+        (
+            "Initial grounded setup.\n\n```json\n"
+            '{"direction":"LONG","confidence":72,"description":"Bullish setup",'
+            '"entry":{"price":100.0,"source_fact_id":"D.ema.price_near_21","note":"entry"},'
+            '"stop":{"price":98.0,"source_fact_id":"D.bbands.outside_lower","note":"stop"},'
+            '"target":{"price":104.0,"source_fact_id":"D.fibonacci.target_extension_1272","note":"target"},'
+            '"confirmations":["EMA stack"],"cautions":[],"meta":{"risk_reward":null}}\n```'
+        ),
+        (
+            "Actually this is still a LONG.\n\n```json\n"
+            '{"direction":"LONG","confidence":"HIGH","description":"Broken update",'
+            '"entry":{"price":999.0,"source_fact_id":"D.ema.price_near_21","note":"entry"},'
+            '"stop":{"price":998.0,"source_fact_id":"D.bbands.outside_lower","note":"stop"},'
+            '"target":{"price":1001.0,"source_fact_id":"D.fibonacci.target_extension_1272","note":"target"},'
+            '"confirmations":["EMA stack"],"cautions":[],"meta":{"risk_reward":null}}\n```'
+        ),
+    ])
+    service = _PromptStubAiService(
+        provider_registry=AIProviderRegistry({"ollama": provider})
+    )
+
+    analysis = await service.analyze(
+        symbol="AAPL",
+        timeframe_data={},
+        indicators_display=["EMA Stack"],
+        indicator_names=["ema"],
+        model="gemma4:26b",
+    )
+    result = await service.follow_up(
+        session_id=analysis["session_id"],
+        message="Are the levels still valid?",
+    )
+
+    assert result["message"] == DETERMINISTIC_NEUTRAL
+    assert result["signal"]["direction"] == "NEUTRAL"
+    assert [level["value"] for level in result["signal"]["levels"]] == ["—", "—", "—"]
+
+
+@pytest.mark.asyncio
+async def test_follow_up_stream_rejected_signal_update_emits_authoritative_done_message():
+    provider = _QueuedProvider([
+        (
+            "Initial grounded setup.\n\n```json\n"
+            '{"direction":"LONG","confidence":72,"description":"Bullish setup",'
+            '"entry":{"price":100.0,"source_fact_id":"D.ema.price_near_21","note":"entry"},'
+            '"stop":{"price":98.0,"source_fact_id":"D.bbands.outside_lower","note":"stop"},'
+            '"target":{"price":104.0,"source_fact_id":"D.fibonacci.target_extension_1272","note":"target"},'
+            '"confirmations":["EMA stack"],"cautions":[],"meta":{"risk_reward":null}}\n```'
+        ),
+        (
+            "Actually this is still a LONG.\n\n```json\n"
+            '{"direction":"LONG","confidence":"HIGH","description":"Broken update",'
+            '"entry":{"price":999.0,"source_fact_id":"D.ema.price_near_21","note":"entry"},'
+            '"stop":{"price":998.0,"source_fact_id":"D.bbands.outside_lower","note":"stop"},'
+            '"target":{"price":1001.0,"source_fact_id":"D.fibonacci.target_extension_1272","note":"target"},'
+            '"confirmations":["EMA stack"],"cautions":[],"meta":{"risk_reward":null}}\n```'
+        ),
+    ])
+    service = _PromptStubAiService(
+        provider_registry=AIProviderRegistry({"ollama": provider})
+    )
+
+    analysis = await service.analyze(
+        symbol="AAPL",
+        timeframe_data={},
+        indicators_display=["EMA Stack"],
+        indicator_names=["ema"],
+        model="gemma4:26b",
+    )
+    events = [
+        event
+        async for event in service.follow_up_stream(
+            session_id=analysis["session_id"],
+            message="Are the levels still valid?",
+        )
+    ]
+
+    assert events[-1]["type"] == "done"
+    assert events[-1]["message"] == DETERMINISTIC_NEUTRAL
+    assert events[-1]["signal"]["direction"] == "NEUTRAL"

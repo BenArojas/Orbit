@@ -12,7 +12,7 @@
 
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { api } from "@/lib/api";
+import { parallaxApi } from "@/modules/parallax/api";
 import {
   useCreateWatchlist,
   useDeleteWatchlist,
@@ -31,14 +31,14 @@ export default function WatchlistTab({ activeConid, activeSymbol }: WatchlistTab
   // All watchlists for this account
   const { data: watchlists, isLoading: loadingLists } = useQuery({
     queryKey: ["watchlists"],
-    queryFn: () => api.getWatchlists(),
+    queryFn: () => parallaxApi.getWatchlists(),
     staleTime: 30_000,
   });
 
   // Which watchlists contain this conid
   const { data: membership, isLoading: loadingMembership } = useQuery({
     queryKey: ["watchlist-membership", activeConid],
-    queryFn: () => api.watchlistMembership(activeConid!),
+    queryFn: () => parallaxApi.watchlistMembership(activeConid!),
     enabled: activeConid != null,
     staleTime: 10_000,
   });
@@ -47,7 +47,7 @@ export default function WatchlistTab({ activeConid, activeSymbol }: WatchlistTab
 
   const addMutation = useMutation({
     mutationFn: ({ watchlistId }: { watchlistId: string }) =>
-      api.watchlistAddInstrument(watchlistId, activeConid!),
+      parallaxApi.watchlistAddInstrument(watchlistId, activeConid!),
     onSuccess: (_data, { watchlistId }) => {
       // Re-check membership for this stock
       qc.invalidateQueries({ queryKey: ["watchlist-membership", activeConid] });
@@ -60,7 +60,7 @@ export default function WatchlistTab({ activeConid, activeSymbol }: WatchlistTab
 
   const removeMutation = useMutation({
     mutationFn: ({ watchlistId }: { watchlistId: string }) =>
-      api.watchlistRemoveInstrument(watchlistId, activeConid!),
+      parallaxApi.watchlistRemoveInstrument(watchlistId, activeConid!),
     onSuccess: (_data, { watchlistId }) => {
       qc.invalidateQueries({ queryKey: ["watchlist-membership", activeConid] });
       qc.invalidateQueries({ queryKey: ["watchlist-instruments", watchlistId] });

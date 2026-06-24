@@ -103,7 +103,17 @@ def _extension_prices(norm: _Norm) -> dict[float, float]:
     return out
 
 
-def _make_fact(*, tf, condition, text, polarity, strength, priority, data) -> PromptFact:
+def _make_fact(
+    *,
+    tf,
+    condition,
+    text,
+    polarity,
+    strength,
+    priority,
+    data,
+    price_values: tuple[float, ...] = (),
+) -> PromptFact:
     return PromptFact(
         id=f"{tf}.fibonacci.{condition}",
         timeframe=tf,
@@ -113,6 +123,7 @@ def _make_fact(*, tf, condition, text, polarity, strength, priority, data) -> Pr
         strength=strength,
         priority=priority,
         data=data,
+        price_values=price_values,
     )
 
 
@@ -145,6 +156,7 @@ def build_fibonacci_facts(
             ),
             polarity="bullish", strength=70, priority=95,
             data={"pct_above_swing_high": pct_above, "swing_high": norm.swing_high},
+            price_values=(last_close, norm.swing_high),
         ))
         return _finalize(facts, norm, timeframe)
 
@@ -158,6 +170,7 @@ def build_fibonacci_facts(
             ),
             polarity="bearish", strength=70, priority=95,
             data={"pct_below_swing_low": pct_below, "swing_low": norm.swing_low},
+            price_values=(last_close, norm.swing_low),
         ))
         return _finalize(facts, norm, timeframe)
 
@@ -176,6 +189,7 @@ def build_fibonacci_facts(
         ),
         polarity="neutral", strength=40, priority=80,
         data={"pct_into_swing": pct_into},
+        price_values=(last_close, norm.swing_low, norm.swing_high),
     ))
 
     # Golden pocket
@@ -192,6 +206,7 @@ def build_fibonacci_facts(
             ),
             polarity=polarity, strength=80, priority=90,
             data={"level_0618": gp[0.618], "level_0650": gp[0.650], "level_0716": gp[0.716]},
+            price_values=(last_close, gp_lo, gp_hi, gp[0.650]),
         ))
     else:
         nearest = min(_GP_BOUNDARIES, key=lambda r: abs(last_close - gp[r]))
@@ -205,6 +220,7 @@ def build_fibonacci_facts(
                 ),
                 polarity="neutral", strength=55, priority=85,
                 data={"distance_atr": distance_atr, "nearest_boundary_ratio": nearest},
+                price_values=(last_close, gp[nearest]),
             ))
 
     # price_near_<ratio> for individual retracement levels
@@ -223,6 +239,7 @@ def build_fibonacci_facts(
                 ),
                 polarity="neutral", strength=60, priority=70,
                 data={"level_price": level.price, "ratio": level.level},
+                price_values=(last_close, level.price),
             ))
 
     if not any_near and not inside_gp:
@@ -242,6 +259,7 @@ def build_fibonacci_facts(
             ),
             polarity="neutral", strength=30, priority=40,
             data={"nearest_above": nearest_above, "nearest_below": nearest_below},
+            price_values=(last_close,),
         ))
 
     return _finalize(facts, norm, timeframe)
@@ -258,6 +276,7 @@ def _finalize(facts: list[PromptFact], norm: _Norm, timeframe: str) -> list[Prom
             text=f"Extension target {ratio:g}: ${price:.2f} ({direction_word} the swing).",
             polarity=ext_polarity, strength=45, priority=50,
             data={"price": price, "ratio": ratio},
+            price_values=(price,),
         ))
 
     if norm.is_nested:
@@ -280,5 +299,6 @@ def _finalize(facts: list[PromptFact], norm: _Norm, timeframe: str) -> list[Prom
                 polarity="bullish" if norm.direction == "up" else "bearish",
                 strength=75, priority=88,
                 data={"convergence_price": price, "timeframes": tfs},
+                price_values=(price,),
             ))
     return facts

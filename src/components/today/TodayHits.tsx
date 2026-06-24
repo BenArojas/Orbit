@@ -8,7 +8,7 @@
 
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { api, type TriggerHit } from "@/lib/api";
+import { parallaxApi, type TriggerHit } from "@/modules/parallax/api";
 import { useNavigationStore } from "@/store/navigation";
 import { useDismissHit, useSnoozeHit } from "@/hooks/useHitMutations";
 import { HitCard } from "./HitCard";
@@ -22,7 +22,7 @@ export function TodayHits() {
 
   const { data: hits, isLoading } = useQuery<TriggerHit[]>({
     queryKey: ["trigger-hits", "active"],
-    queryFn: () => api.getTriggerHits({ status: "active", limit: 200 }),
+    queryFn: () => parallaxApi.getTriggerHits({ status: "active", limit: 200 }),
     staleTime: 15_000,
     refetchInterval: 30_000,
   });

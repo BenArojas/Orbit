@@ -2,7 +2,10 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from deps import require_ibkr_auth
+from models import TradingSafetyConfirmation, TradingSafetyDecision
+from routers import orders as orders_router_module
 from routers.orders import router as orders_router
+from routers.trading_safety import router as trading_safety_router
 
 
 class _FakeState:
@@ -79,6 +82,7 @@ class _FakeIbkr:
 def _client(fake_ibkr: _FakeIbkr) -> TestClient:
     app = FastAPI()
     app.include_router(orders_router)
+    app.include_router(trading_safety_router)
     app.dependency_overrides[require_ibkr_auth] = lambda: fake_ibkr
     return TestClient(app)
 
@@ -122,6 +126,28 @@ def test_preview_order_posts_whatif_and_allows_live_accounts():
     )
 
 
+def test_trading_safety_order_action_describes_live_place_confirmation():
+    fake = _FakeIbkr()
+    resp = _client(fake).get(
+        "/moonmarket/trading-safety/order-action?account_id=U12345&action=place"
+    )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body == {
+        "account_id": "U12345",
+        "action": "place",
+        "allowed": True,
+        "mode": "live_confirmation_required",
+        "confirmation": {
+            "required": True,
+            "title": "Real-money order",
+            "message": "Review and confirm before sending this live order to IBKR.",
+            "confirm_label": "Place Live Order",
+        },
+    }
+
+
 def test_place_order_posts_single_order_for_paper_account():
     fake = _FakeIbkr()
     resp = _client(fake).post(
@@ -136,6 +162,117 @@ def test_place_order_posts_single_order_for_paper_account():
         "/iserver/account/DU12345/orders",
         {"json": {"orders": [_single_order()]}},
     )
+
+
+def test_trading_safety_unknown_account_returns_404():
+    fake = _FakeIbkr()
+    resp = _client(fake).get(
+        "/moonmarket/trading-safety/order-action?account_id=U99999&action=place"
+    )
+
+    assert resp.status_code == 404
+    assert resp.json()["detail"]["error"] == "moonmarket_account_not_found"
+
+
+def test_trading_safety_never_treats_account_missing_from_snapshot_as_paper():
+    """An account absent from the evaluated snapshot must never default to paper.
+
+    Regression: when the account list omitted the account but a follow-up
+    lookup saw it, the policy silently returned paper_allowed for a live
+    account. The policy must fail closed with a 404 instead.
+    """
+    fake = _FakeIbkr()
+    original = fake.brokerage_accounts
+    calls = {"count": 0}
+
+    async def inconsistent_snapshot():
+        calls["count"] += 1
+        if calls["count"] == 1:
+            return []
+        return await original()
+
+    fake.brokerage_accounts = inconsistent_snapshot
+    resp = _client(fake).get(
+        "/moonmarket/trading-safety/order-action?account_id=U12345&action=place"
+    )
+
+    assert resp.status_code == 404
+    assert resp.json()["detail"]["error"] == "moonmarket_account_not_found"
+
+
+def test_trading_safety_decision_rejects_inconsistent_mode_and_confirmation():
+    import pytest
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        TradingSafetyDecision(
+            account_id="U12345",
+            action="place",
+            allowed=True,
+            mode="rejected",
+            confirmation=TradingSafetyConfirmation(required=False),
+        )
+
+    with pytest.raises(ValidationError):
+        TradingSafetyDecision(
+            account_id="U12345",
+            action="place",
+            allowed=True,
+            mode="live_confirmation_required",
+            confirmation=TradingSafetyConfirmation(required=False),
+        )
+
+    with pytest.raises(ValidationError):
+        TradingSafetyDecision(
+            account_id="U12345",
+            action="place",
+            allowed=True,
+            mode="live_confirmation_required",
+            confirmation=TradingSafetyConfirmation(
+                required=True,
+                title="Real-money order",
+                message=None,
+                confirm_label=None,
+            ),
+        )
+
+    with pytest.raises(ValidationError):
+        TradingSafetyDecision(
+            account_id="DU12345",
+            action="place",
+            allowed=True,
+            mode="paper_allowed",
+            confirmation=TradingSafetyConfirmation(required=True),
+        )
+
+
+def test_place_order_stops_before_ibkr_when_trading_safety_rejects(monkeypatch):
+    class _DenyPolicy:
+        async def evaluate_order_action(self, account_id: str, action: str):
+            return TradingSafetyDecision(
+                account_id=account_id,
+                action=action,
+                allowed=False,
+                mode="rejected",
+                confirmation=TradingSafetyConfirmation(
+                    required=False,
+                    title=None,
+                    message="Trading Safety rejected this order.",
+                    confirm_label=None,
+                ),
+            )
+
+    monkeypatch.setattr(orders_router_module, "_safety_policy", lambda _ibkr: _DenyPolicy(), raising=False)
+
+    fake = _FakeIbkr()
+    resp = _client(fake).post(
+        "/moonmarket/orders",
+        json={"account_id": "U12345", "orders": [_single_order()]},
+    )
+
+    assert resp.status_code == 403
+    assert resp.json()["detail"]["error"] == "trading_safety_rejected"
+    assert not any(endpoint.endswith("/orders") for _, endpoint, _ in fake.requests)
 
 
 def test_place_order_preserves_bracket_payload_for_paper_account():
@@ -295,6 +432,35 @@ def test_reply_requires_account_id_for_paper_guard():
     )
 
 
+def test_reply_stops_before_ibkr_when_trading_safety_rejects(monkeypatch):
+    class _DenyPolicy:
+        async def evaluate_order_action(self, account_id: str, action: str):
+            return TradingSafetyDecision(
+                account_id=account_id,
+                action=action,
+                allowed=False,
+                mode="rejected",
+                confirmation=TradingSafetyConfirmation(
+                    required=False,
+                    title=None,
+                    message="Trading Safety rejected this reply.",
+                    confirm_label=None,
+                ),
+            )
+
+    monkeypatch.setattr(orders_router_module, "_safety_policy", lambda _ibkr: _DenyPolicy(), raising=False)
+
+    fake = _FakeIbkr()
+    resp = _client(fake).post(
+        "/moonmarket/orders/U12345/reply/reply-1",
+        json={"confirmed": True},
+    )
+
+    assert resp.status_code == 403
+    assert resp.json()["detail"]["error"] == "trading_safety_rejected"
+    assert not any(endpoint.startswith("/iserver/reply/") for _, endpoint, _ in fake.requests)
+
+
 def test_cancel_and_modify_call_ibkr_for_paper_account():
     fake = _FakeIbkr()
     client = _client(fake)
@@ -313,6 +479,58 @@ def test_cancel_and_modify_call_ibkr_for_paper_account():
         "/iserver/account/DU12345/order/order-1",
         {"json": {"conid": 265598, "orderType": "LMT", "side": "BUY", "tif": "DAY", "quantity": 5.0, "price": 181.0}},
     )
+
+
+def test_cancel_stops_before_ibkr_when_trading_safety_rejects(monkeypatch):
+    class _DenyPolicy:
+        async def evaluate_order_action(self, account_id: str, action: str):
+            return TradingSafetyDecision(
+                account_id=account_id,
+                action=action,
+                allowed=False,
+                mode="rejected",
+                confirmation=TradingSafetyConfirmation(
+                    required=False,
+                    title=None,
+                    message="Trading Safety rejected this cancel.",
+                    confirm_label=None,
+                ),
+            )
+
+    monkeypatch.setattr(orders_router_module, "_safety_policy", lambda _ibkr: _DenyPolicy(), raising=False)
+
+    fake = _FakeIbkr()
+    resp = _client(fake).delete("/moonmarket/orders/U12345/order-1")
+
+    assert resp.status_code == 403
+    assert resp.json()["detail"]["error"] == "trading_safety_rejected"
+    assert not any(method == "DELETE" and "/order/" in endpoint for method, endpoint, _ in fake.requests)
+
+
+def test_modify_stops_before_ibkr_when_trading_safety_rejects(monkeypatch):
+    class _DenyPolicy:
+        async def evaluate_order_action(self, account_id: str, action: str):
+            return TradingSafetyDecision(
+                account_id=account_id,
+                action=action,
+                allowed=False,
+                mode="rejected",
+                confirmation=TradingSafetyConfirmation(
+                    required=False,
+                    title=None,
+                    message="Trading Safety rejected this modify.",
+                    confirm_label=None,
+                ),
+            )
+
+    monkeypatch.setattr(orders_router_module, "_safety_policy", lambda _ibkr: _DenyPolicy(), raising=False)
+
+    fake = _FakeIbkr()
+    resp = _client(fake).patch("/moonmarket/orders/U12345/order-1", json=_single_order())
+
+    assert resp.status_code == 403
+    assert resp.json()["detail"]["error"] == "trading_safety_rejected"
+    assert not any(method == "POST" and "/order/" in endpoint for method, endpoint, _ in fake.requests)
 
 
 def test_live_account_allows_all_order_mutations():

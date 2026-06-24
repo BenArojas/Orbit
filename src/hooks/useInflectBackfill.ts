@@ -3,7 +3,7 @@
  */
 
 import { useQuery } from "@tanstack/react-query";
-import { api } from "@/lib/api";
+import { inflectApi } from "@/modules/inflect/api";
 
 export function useInflectBackfill({
   accountId,
@@ -19,7 +19,7 @@ export function useInflectBackfill({
   return useQuery({
     queryKey: ["inflect", "backfill-status", accountId ?? null, conid ?? null],
     queryFn: ({ signal }) =>
-      api.inflectBackfillStatus({ accountId: accountId as string, conid: conid as number }, signal),
+      inflectApi.inflectBackfillStatus({ accountId: accountId as string, conid: conid as number }, signal),
     enabled: canFetch,
     refetchInterval: canFetch ? 60_000 : false,
     select: (response) => response.items.find((item) => item.conid === conid) ?? null,

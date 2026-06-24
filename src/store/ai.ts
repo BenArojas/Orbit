@@ -16,7 +16,18 @@
 
 import { create } from "zustand";
 import type { SignalData } from "@/components/ai";
-import type { AiStatusResponse, OllamaModelResponse } from "@/lib/api";
+import type { AnalysisStatus } from "@/modules/parallax/api";
+import type {
+  AIProviderMetadata,
+  AIRunReceipt,
+  AIProviderName,
+  AIProviderStatus,
+  AIProvidersResponse,
+  AIRoutingPolicyResponse,
+  AIRoutingMode,
+  AiStatusResponse,
+  OllamaModelResponse,
+} from "@/modules/parallax/api";
 
 /* ── Types ── */
 
@@ -58,11 +69,25 @@ interface AiState {
   availableModels: OllamaModelResponse[];
   platform: string;
   ollamaError: string | null;
+  providers: AIProviderStatus[];
+  activeProvider: AIProviderName;
+  routingMode: AIRoutingMode;
+  cloudEnabled: boolean;
+  localFallbackEnabled: boolean;
+  lastProviderMetadata: AIProviderMetadata | null;
+  lastRunReceipt: AIRunReceipt | null;
+  analysisProvider: AIProviderName | null;
+  analysisModel: string | null;
+  analysisFallbackEnabled: boolean | null;
 
   /* ── Chat session ── */
   sessionId: string | null;
   messages: ChatMessage[];
   signal: SignalData | null;
+  analysisStatus: AnalysisStatus | null;
+  analysisWarning: string | null;
+  analysisNarrative: string | null;
+  analysisRejectedOutput: string | null;
 
   /* ── Loading states ── */
   isAnalyzing: boolean;
@@ -75,11 +100,20 @@ interface AiState {
   /* ── Actions: Ollama ── */
   setOllamaStatus: (status: AiStatusResponse) => void;
   setAvailableModels: (models: OllamaModelResponse[]) => void;
+  setProvidersStatus: (status: AIProvidersResponse) => void;
+  updateProviderStatus: (provider: AIProviderStatus) => void;
+  setRoutingPolicy: (policy: AIRoutingPolicyResponse) => void;
+  setLastProviderMetadata: (metadata: AIProviderMetadata | null) => void;
+  setLastRunReceipt: (receipt: AIRunReceipt | null) => void;
+  setAnalysisProvider: (provider: AIProviderName) => void;
+  setAnalysisModel: (model: string | null) => void;
+  setAnalysisFallbackEnabled: (enabled: boolean) => void;
 
   /* ── Actions: Chat ── */
   setSessionId: (id: string) => void;
   addMessage: (msg: ChatMessage) => void;
   setSignal: (signal: SignalData | null) => void;
+  setAnalysisOutcome: (status: AnalysisStatus, warning: string | null, narrative: string | null, rejectedOutput: string | null) => void;
   clearChat: () => void;
 
   /* ── Actions: Loading ── */
@@ -101,11 +135,25 @@ export const useAiStore = create<AiState>()((set) => ({
   availableModels: [],
   platform: "",
   ollamaError: null,
+  providers: [],
+  activeProvider: "ollama",
+  routingMode: "local_only",
+  cloudEnabled: false,
+  localFallbackEnabled: true,
+  lastProviderMetadata: null,
+  lastRunReceipt: null,
+  analysisProvider: null,
+  analysisModel: null,
+  analysisFallbackEnabled: null,
 
   // Chat session
   sessionId: null,
   messages: [],
   signal: null,
+  analysisStatus: null,
+  analysisWarning: null,
+  analysisNarrative: null,
+  analysisRejectedOutput: null,
 
   // Loading
   isAnalyzing: false,
@@ -127,6 +175,38 @@ export const useAiStore = create<AiState>()((set) => ({
 
   setAvailableModels: (models) => set({ availableModels: models }),
 
+  setProvidersStatus: (status) =>
+    set({
+      providers: status.providers,
+      activeProvider: status.active_provider,
+      routingMode: status.routing_mode,
+      cloudEnabled: status.cloud_enabled,
+    }),
+
+  updateProviderStatus: (provider) =>
+    set((state) => ({
+      providers: state.providers.map((existing) =>
+        existing.provider_name === provider.provider_name ? provider : existing
+      ),
+    })),
+
+  setRoutingPolicy: (policy) =>
+    set({
+      activeProvider: policy.active_provider,
+      routingMode: policy.routing_mode,
+      localFallbackEnabled: policy.local_fallback_enabled,
+    }),
+
+  setLastProviderMetadata: (metadata) => set({ lastProviderMetadata: metadata }),
+  setLastRunReceipt: (receipt) => set({ lastRunReceipt: receipt }),
+
+  setAnalysisProvider: (provider) => set({ analysisProvider: provider }),
+
+  setAnalysisModel: (model) => set({ analysisModel: model }),
+
+  setAnalysisFallbackEnabled: (enabled) =>
+    set({ analysisFallbackEnabled: enabled }),
+
   // ── Chat actions ──
 
   setSessionId: (id) => set({ sessionId: id }),
@@ -136,12 +216,21 @@ export const useAiStore = create<AiState>()((set) => ({
 
   setSignal: (signal) => set({ signal }),
 
+  setAnalysisOutcome: (status, warning, narrative, rejectedOutput) =>
+    set({ analysisStatus: status, analysisWarning: warning, analysisNarrative: narrative, analysisRejectedOutput: rejectedOutput }),
+
   clearChat: () =>
     set({
       sessionId: null,
       messages: [],
       signal: null,
+      analysisStatus: null,
+      analysisWarning: null,
+      analysisNarrative: null,
+      analysisRejectedOutput: null,
       streamingContent: "",
+      lastProviderMetadata: null,
+      lastRunReceipt: null,
     }),
 
   // ── Loading actions ──

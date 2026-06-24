@@ -23,11 +23,11 @@ import { useState, useEffect, useMemo, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import {
-  api,
+  parallaxApi,
   type StockTagMap,
   type WatchlistItemResponse,
   type WatchlistQuote,
-} from "../../lib/api";
+} from "@/modules/parallax/api";
 import { useNavigationStore } from "../../store/navigation";
 import { useWatchlistStore } from "../../store/watchlist";
 import { useIbkrReadyTier } from "@/hooks/useIbkrReadyTier";
@@ -67,7 +67,7 @@ export default function WatchlistSidebar() {
   // Rule 3: static — watchlist names don't change mid-session; mutations invalidate explicitly
   const { data: watchlists } = useQuery({
     queryKey: ["watchlists"],
-    queryFn: ({ signal }) => api.getWatchlists(signal),
+    queryFn: ({ signal }) => parallaxApi.getWatchlists(signal),
     staleTime: Infinity,
     refetchInterval: false,
     enabled: ibkrReady,
@@ -88,7 +88,7 @@ export default function WatchlistSidebar() {
     error: instrumentsError,
   } = useQuery({
     queryKey: ["watchlist-instruments", selectedWatchlistId],
-    queryFn: ({ signal }) => api.getWatchlistInstruments(selectedWatchlistId!, signal),
+    queryFn: ({ signal }) => parallaxApi.getWatchlistInstruments(selectedWatchlistId!, signal),
     enabled: ibkrReady && !!selectedWatchlistId,
     staleTime: Infinity,
     refetchInterval: false,
@@ -109,7 +109,7 @@ export default function WatchlistSidebar() {
   // mechanism, so this poll is slowed to a 60s safety net rather than 30s.
   const { data: quotesData } = useQuery({
     queryKey: ["watchlist-quotes", selectedWatchlistId, conidsKey],
-    queryFn: ({ signal }) => api.getWatchlistQuotes(selectedWatchlistId!, conids, signal),
+    queryFn: ({ signal }) => parallaxApi.getWatchlistQuotes(selectedWatchlistId!, conids, signal),
     enabled: ibkrReady && !!selectedWatchlistId && conids.length > 0,
     staleTime: 30_000,
     refetchInterval: 60_000,

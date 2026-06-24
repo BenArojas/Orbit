@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { BarChart3, ListTree, ShoppingCart } from "lucide-react";
 import { useNavigate } from "react-router-dom";
-import { api } from "@/lib/api";
+import { moonmarketApi } from "@/modules/moonmarket/api";
 import { Pulse } from "@/components/dashboard/skeletons";
 import { useLiveQuotes } from "@/hooks/useLiveQuotes";
 import { useOrderTicketStore } from "@/orbit/OrderTicket/useOrderTicketStore";
@@ -218,7 +218,7 @@ export function PortfolioPage({ accountId, accountsLoading }: { accountId: strin
   const portfolioQuery = useQuery({
     queryKey: ["moonmarket", "portfolio", accountId],
     enabled: Boolean(accountId),
-    queryFn: ({ signal }) => api.moonmarketPortfolio(accountId ?? undefined, signal),
+    queryFn: ({ signal }) => moonmarketApi.moonmarketPortfolio(accountId ?? undefined, signal),
     refetchInterval: 10_000,
     refetchIntervalInBackground: false,
   });
@@ -226,7 +226,7 @@ export function PortfolioPage({ accountId, accountsLoading }: { accountId: strin
   const performanceQuery = useQuery({
     queryKey: ["moonmarket", "performance", accountId, period],
     enabled: Boolean(accountId),
-    queryFn: ({ signal }) => api.moonmarketPerformance(accountId as string, period, signal),
+    queryFn: ({ signal }) => moonmarketApi.moonmarketPerformance(accountId as string, period, signal),
     staleTime: 15 * 60 * 1000,
     refetchInterval: 15 * 60 * 1000,
     refetchIntervalInBackground: false,

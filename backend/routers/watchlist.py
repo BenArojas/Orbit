@@ -23,11 +23,11 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from constants import DEFAULT_QUOTE_FIELDS_STR
-from deps import get_db, get_ibkr
+from deps import get_ibkr, get_instrument_identity
 from exceptions import IBKRAuthError, IBKRConnectionError, IBKRRateLimitError, IBKRRequestError
 from models import WatchlistAddRequest, WatchlistCreateRequest
-from services.db import DatabaseService
 from services.ibkr import IBKRService, _safe_float
+from services.instrument_identity import InstrumentIdentityService
 
 log = logging.getLogger("parallax.routers.watchlist")
 
@@ -177,7 +177,7 @@ async def remove_watchlist_instrument(
 async def get_watchlist_instruments(
     watchlist_id: str,
     ibkr: IBKRService = Depends(get_ibkr),
-    db: DatabaseService = Depends(get_db),
+    identity: InstrumentIdentityService = Depends(get_instrument_identity),
 ):
     """
     Fetch instruments in a specific IBKR watchlist WITHOUT market data.
@@ -208,32 +208,12 @@ async def get_watchlist_instruments(
             # into instrument lists — skip them rather than crash.
             continue
 
-        raw_conid = inst.get("conid") or inst.get("C")
-        if not raw_conid:
-            continue
-        try:
-            conid = int(raw_conid)
-        except (TypeError, ValueError):
+        normalized = identity.normalize_watchlist_identity(inst)
+        if normalized is None:
             continue
 
-        symbol = inst.get("symbol", "") or inst.get("SYM", "") or inst.get("ticker", "")
-        company_name = inst.get("name", "") or inst.get("N", "") or inst.get("companyHeader", "")
-
-        items.append({
-            "conid": conid,
-            "symbol": symbol,
-            "companyName": company_name,
-        })
-
-        # Cache in instruments table (Orbit sharing). Doesn't block — upsert
-        # is fire-and-go; a failed row doesn't prevent us returning the list.
-        if symbol:
-            try:
-                await db.upsert_instrument(
-                    conid=conid, symbol=symbol, company_name=company_name,
-                )
-            except Exception as exc:  # pragma: no cover - defensive, shouldn't happen
-                log.warning("instrument cache failed for conid=%s: %s", conid, exc)
+        items.append(normalized)
+        await identity.cache_watchlist_identity(inst)
 
     return {"id": watchlist_id, "name": watchlist_name, "items": items}
 

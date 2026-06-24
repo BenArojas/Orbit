@@ -28,6 +28,8 @@ Signal extraction:
 
 import datetime
 import logging
+from dataclasses import dataclass
+from decimal import Decimal
 from typing import Any, Optional
 
 from models import CandleData, IndicatorResult, FibonacciResult, FibonacciSnapshot
@@ -37,10 +39,48 @@ from services.indicators import (
     IndicatorService,
 )
 from services.prompt_facts import build_prompt_facts
+from services.prompt_facts._common import quantize_ground_price
 from services.prompt_facts.render import render_prompt_facts
 from services.prompt_facts.truncate import truncate_by_value
 
 log = logging.getLogger("parallax.prompt")
+
+
+@dataclass(frozen=True)
+class PromptContextBundle:
+    context: str
+    allowed_fact_ids: frozenset[str]
+    grounding_map: dict[str, frozenset[Decimal]]
+
+
+def _build_grounding_map(blocks: list["PromptContextBlock"]) -> dict[str, frozenset[Decimal]]:
+    grounding_map: dict[str, frozenset[Decimal]] = {}
+    for block in blocks:
+        for fact in block.facts:
+            if not fact.price_values:
+                continue
+            grounding_map[fact.id] = frozenset(quantize_ground_price(value) for value in fact.price_values)
+    return grounding_map
+
+
+def _build_prompt_context_bundle(
+    *,
+    symbol: str,
+    timeframe_data: dict[str, dict[str, Any]],
+    indicator_priority: list[str],
+    budget_tokens: int,
+) -> PromptContextBundle:
+    blocks = build_prompt_facts(
+        symbol=symbol,
+        timeframe_data=timeframe_data,
+        indicator_priority=indicator_priority,
+    )
+    blocks = truncate_by_value(blocks, budget_tokens=budget_tokens)
+    return PromptContextBundle(
+        context=render_prompt_facts(blocks),
+        allowed_fact_ids=frozenset(fact.id for block in blocks for fact in block.facts),
+        grounding_map=_build_grounding_map(blocks),
+    )
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -738,13 +778,27 @@ def build_full_prompt_context(
     timeframe_data: dict of timeframe → {"candles", "indicators", "fibs",
         "fibonacci"}  (same shape as the router produces).
     """
-    blocks = build_prompt_facts(
+    return build_full_prompt_context_bundle(
         symbol=symbol,
         timeframe_data=timeframe_data,
         indicator_priority=indicator_priority,
+        budget_tokens=budget_tokens,
+    ).context
+
+
+def build_full_prompt_context_bundle(
+    *,
+    symbol: str,
+    timeframe_data: dict[str, dict[str, Any]],
+    indicator_priority: list[str],
+    budget_tokens: int,
+) -> PromptContextBundle:
+    return _build_prompt_context_bundle(
+        symbol=symbol,
+        timeframe_data=timeframe_data,
+        indicator_priority=indicator_priority,
+        budget_tokens=budget_tokens,
     )
-    blocks = truncate_by_value(blocks, budget_tokens=budget_tokens)
-    return render_prompt_facts(blocks)
 
 
 def build_multi_timeframe_context(
@@ -824,25 +878,30 @@ _SYSTEM_BASE = """You are Parallax AI, an expert technical analysis assistant fo
 
 Your role:
 - Analyze the provided indicator data and identify trading setups
-- Provide clear direction (STRONG LONG, LONG, NEUTRAL, SHORT, STRONG SHORT)
-- Give specific entry, stop-loss, and target levels with reasoning
+- Provide clear direction (STRONG LONG, LONG, NEUTRAL, SHORT, STRONG SHORT), where a direction means a complete actionable setup, not a general bias
+- Give specific entry, stop-loss, and target levels with reasoning only when verified facts support numeric levels
 - List confirmation factors and caution flags
 - Be concise and data-driven — no fluff, no disclaimers about "not financial advice"
 
 DIRECTION CRITERIA — use these thresholds consistently:
 - STRONG LONG: 3+ primary indicators align bullish, no major cautions, trend confirmed by ADX > 25 or strong EMA stack
 - LONG: Majority of indicators lean bullish, minor cautions acceptable
-- NEUTRAL: Mixed signals, no clear edge, or conflicting timeframes
+- NEUTRAL: Mixed or insufficient verified evidence. Do not invent a trade plan.
 - SHORT: Majority of indicators lean bearish, minor bullish outliers acceptable
 - STRONG SHORT: 3+ primary indicators align bearish, no major bullish signals, trend confirmed
 
 RESPONSE FORMAT:
 1. Start with a 2-3 paragraph analysis explaining what the indicators show
 2. Structure your analysis: higher timeframe trend first, then lower timeframe entry timing
-3. Be explicit about entry price, stop-loss, and target with brief reasoning for each
+3. Be explicit about entry price, stop-loss, and target with brief reasoning for each when the verified facts support numeric levels
 4. List what confirms the setup and what could go wrong
 
 Reference verified facts by their bracketed ID (e.g., [D.ema.stack_bullish]) when citing evidence. This keeps your analysis auditable and fact-grounded.
+Use exactly one rendered fact ID per bracketed citation. Do not combine IDs inside one bracket.
+
+If verified facts do not contain enough information to support a complete actionable setup, return NEUTRAL and set entry, stop, target, source_fact_id, and risk_reward to null.
+If any of entry, stop, or target lacks an exact grounded price, both the prose and JSON must be NEUTRAL with null levels.
+Never estimate an indicator value, support/resistance level, or price target that is absent from Verified Facts.
 
 For follow-up questions, respond conversationally about the chart and setup."""
 
@@ -855,12 +914,12 @@ INDICATOR_HINTS: dict[str, str] = {
     "macd": "Note MACD crossovers, histogram direction changes, and zero-line crosses. Histogram shrinking often precedes a crossover.",
     "ema": "Analyze the EMA stack order (9>21>50>200 = strong uptrend). Crossovers between EMAs are key signals. Price bouncing off an EMA is support/resistance.",
     "bbands": "Bollinger Band squeeze (narrow width) precedes breakouts. Walks along upper/lower band show strong momentum. Price returning to middle band is mean reversion.",
-    "vwap": "VWAP is the institutional benchmark. Price above VWAP = bullish institutional flow. Key for intraday setups.",
-    "atr": "Use ATR for sizing stops and targets. 1.5-2x ATR for stops is standard. Expanding ATR = increasing volatility.",
+    "vwap": "VWAP is a useful intraday reference, not proof of institutional participation. Price location versus VWAP helps frame trend, pullback, and reclaim setups.",
+    "atr": "ATR is a distance, not an absolute price level. Use it for stop distance and volatility context only; 1.5-2.0x ATR distance is a common guide.",
     "stoch": "Stochastic is most useful in ranges — less reliable in strong trends. %K/%D crossovers in oversold/overbought zones are the key signals.",
-    "obv": "OBV divergences from price are powerful signals. Rising OBV with flat price = accumulation. Falling OBV with flat price = distribution.",
+    "obv": "OBV divergences can confirm or weaken price action, but they do not prove institutional participation.",
     "adx": "ADX > 25 means the trend is strong enough to trade with trend-following strategies. ADX < 20 favors range-bound / mean-reversion setups.",
-    "volume": "Volume confirms price moves. Breakouts on high volume are more reliable. Low volume moves are suspect.",
+    "volume": "Volume can strengthen or weaken a setup, but it does not prove institutional participation. Breakouts on strong volume are more reliable than thin moves.",
     "fibonacci": "Focus on Fibonacci levels near current price (0.382, 0.5, 0.618 are key). Confluence of Fibonacci with EMA or VWAP levels strengthens the zone.",
 }
 
@@ -1162,9 +1221,11 @@ def build_analysis_user_message(
     parts.append(
         "REQUIRED OUTPUT:\n"
         "- Clear direction call with reasoning\n"
-        "- Specific entry price with rationale (e.g., pullback to EMA 21, break above resistance)\n"
-        "- Stop-loss price with rationale (e.g., below swing low, 1.5x ATR)\n"
-        "- Target price with rationale (e.g., next resistance, Fibonacci extension)\n"
+        "- Keep the narrative concise: target at most 350 words before the JSON block\n"
+        "- If exact grounded prices support a complete setup, give entry, stop, and target using only values from 'Grounded price candidates' labels\n"
+        "- If any of entry, stop, or target lacks an exact grounded price, both the prose and JSON must be NEUTRAL with null levels\n"
+        "- ATR is a distance only, not an absolute price level or trade level\n"
+        "- Use one fact ID per bracketed citation\n"
         "- 2-4 confirmation factors supporting the setup\n"
         "- 1-3 caution flags or risks to watch"
     )
@@ -1196,27 +1257,28 @@ def build_analysis_user_message(
 # fails, but it's rare in practice.
 
 SIGNAL_INLINE_JSON_INSTRUCTION = (
-    "After your full written analysis, append a fenced JSON block in this "
-    "EXACT format. The JSON block is REQUIRED and must be the LAST thing "
-    "in your response:\n\n"
-    "```json\n"
-    "{\n"
-    '  "direction": "STRONG LONG | LONG | NEUTRAL | SHORT | STRONG SHORT",\n'
-    '  "confidence": 0-100,\n'
-    '  "description": "one-sentence setup summary",\n'
-    '  "entry":  {"price": 0.00, "note": "rationale"},\n'
-    '  "stop":   {"price": 0.00, "note": "rationale"},\n'
-    '  "target": {"price": 0.00, "note": "rationale"},\n'
-    '  "confirmations": ["...", "..."],\n'
-    '  "cautions": ["..."],\n'
-    '  "meta": {\n'
-    '    "risk_reward":   "e.g. 2.5:1",\n'
-    '    "score":         "e.g. 7/10",\n'
-    '    "adx_trend":     "e.g. Strong (28.5)",\n'
-    '    "volume_signal": "e.g. Above avg"\n'
-    "  }\n"
-    "}\n"
-    "```"
+    "After your full written analysis, append one fenced ```json``` block. "
+    "That JSON block is REQUIRED and must be the LAST thing in your response.\n"
+    "Return valid JSON with these top-level keys: direction, confidence, "
+    "description, entry, stop, target, confirmations, cautions, meta.\n"
+    "Each of entry, stop, and target must contain price, source_fact_id, and note.\n"
+    "Conditional contract:\n"
+    "- If direction is NEUTRAL, set entry.price, stop.price, target.price, "
+    "entry.source_fact_id, stop.source_fact_id, target.source_fact_id, and "
+    "meta.risk_reward to null.\n"
+    "- If direction is STRONG LONG, LONG, SHORT, or STRONG SHORT, every entry, "
+    "stop, and target price must copy an exact numeric price from a "
+    "'Grounded price candidates' label in Verified Facts. "
+    "Semantic fact text identifies context (support, resistance, trend direction) "
+    "but its prices are NOT eligible unless also listed under "
+    "'Grounded price candidates'. "
+    "Each source_fact_id must be the exact bracketed fact ID whose "
+    "'Grounded price candidates' label contains that price.\n"
+    "- If any of entry, stop, or target lacks an exact grounded price, the prose "
+    "and JSON must both be NEUTRAL with null levels.\n"
+    "- ATR facts describe distance, not absolute price levels.\n"
+    "- Never invent support, resistance, targets, stops, or indicator values.\n"
+    "- The server calculates risk_reward from validated prices; do not estimate it."
 )
 
 
@@ -1269,26 +1331,29 @@ SIGNAL_JSON_SCHEMA: dict = {
         "entry": {
             "type": "object",
             "properties": {
-                "price": {"type": "number"},
-                "note": {"type": "string"},
+                "price": {"type": ["number", "null"]},
+                "source_fact_id": {"type": ["string", "null"]},
+                "note": {"type": ["string", "null"]},
             },
-            "required": ["price", "note"],
+            "required": ["price", "source_fact_id", "note"],
         },
         "stop": {
             "type": "object",
             "properties": {
-                "price": {"type": "number"},
-                "note": {"type": "string"},
+                "price": {"type": ["number", "null"]},
+                "source_fact_id": {"type": ["string", "null"]},
+                "note": {"type": ["string", "null"]},
             },
-            "required": ["price", "note"],
+            "required": ["price", "source_fact_id", "note"],
         },
         "target": {
             "type": "object",
             "properties": {
-                "price": {"type": "number"},
-                "note": {"type": "string"},
+                "price": {"type": ["number", "null"]},
+                "source_fact_id": {"type": ["string", "null"]},
+                "note": {"type": ["string", "null"]},
             },
-            "required": ["price", "note"],
+            "required": ["price", "source_fact_id", "note"],
         },
         "confirmations": {
             "type": "array",
@@ -1303,7 +1368,6 @@ SIGNAL_JSON_SCHEMA: dict = {
         "meta": {
             "type": "object",
             "properties": {
-                "risk_reward": {"type": "string", "description": "e.g. 2.5:1"},
                 "score": {"type": "string", "description": "e.g. 7/10"},
                 "adx_trend": {"type": "string", "description": "e.g. Strong (28.5)"},
                 "volume_signal": {"type": "string", "description": "e.g. Above avg"},

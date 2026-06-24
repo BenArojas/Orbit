@@ -1,11 +1,11 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { api } from "@/lib/api";
+import { parallaxApi } from "@/modules/parallax/api";
 
 export function useCreateWatchlist() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (name: string) => api.createWatchlist(name),
+    mutationFn: (name: string) => parallaxApi.createWatchlist(name),
     onSuccess: (created) => {
       qc.invalidateQueries({ queryKey: ["watchlists"] });
       toast.success(`Created "${created.name}"`);
@@ -20,7 +20,7 @@ export function useCreateWatchlist() {
 export function useDeleteWatchlist() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (watchlistId: string) => api.deleteWatchlist(watchlistId),
+    mutationFn: (watchlistId: string) => parallaxApi.deleteWatchlist(watchlistId),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["watchlists"] });
       toast.success("Watchlist deleted");

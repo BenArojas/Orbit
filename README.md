@@ -42,20 +42,20 @@ If you're looking for something specific, this is where it lives.
 | [`backend/docs/ibkr_market_data_fields.md`](backend/docs/ibkr_market_data_fields.md) | IBKR Client Portal market-data field IDs (e.g. `31` = last price, `7762` = volume). Reference when adding new fields to snapshot endpoints. |
 | [`docs/archive/README.md`](docs/archive/README.md) | Index of archived design docs for shipped v1 features (moved here during v1 close-out cleanup). |
 
-### Agent skills
+### Agent guidance
 
-These are not meant to be read top-to-bottom. Codex and Claude Code load them when a task matches their trigger. The two folders should stay mirrored:
+Project knowledge is loaded on demand from canonical docs:
 
-- Codex: `.agents/skills/`
-- Claude Code: `.claude/skills/`
+| Source | Covers |
+|-------|--------|
+| [`docs/architecture/backend.md`](docs/architecture/backend.md) | FastAPI, persistence, IBKR, and execution boundaries. |
+| [`docs/architecture/frontend.md`](docs/architecture/frontend.md) | React state, transport, and module API conventions. |
+| [`docs/architecture/modules.md`](docs/architecture/modules.md) | Orbit ownership, `conid`, and trading safety. |
+| [`docs/testing.md`](docs/testing.md) | Critical-promises testing and size limits. |
+| [`PROJECT_PLAN.md`](PROJECT_PLAN.md) | Roadmap and deferred work. |
 
-| Skill | Triggers on |
-|-------|-------------|
-| [`parallax-backend`](.agents/skills/parallax-backend/SKILL.md) | Any backend task — routers, services, models, indicators, IBKR, DB. |
-| [`parallax-frontend`](.agents/skills/parallax-frontend/SKILL.md) | Any frontend task — components, hooks, pages, stores, charts, styling. |
-| [`parallax-git`](.agents/skills/parallax-git/SKILL.md) | Branching, commit messages, PR workflow, merge policy. |
-| [`parallax-hub`](.agents/skills/parallax-hub/SKILL.md) | Orbit module boundaries: instruments table, conid lookups, MoonMarket/Inflect boundaries. |
-| [`parallax-v2-roadmap`](.agents/skills/parallax-v2-roadmap/SKILL.md) | Future features, deferred work, "is this v1 or v2?" decisions. |
+Workflow skills remain under `.agents/skills/`. Matching Claude skill files are
+symlinks to those canonical copies rather than duplicated text.
 
 ---
 

@@ -12,7 +12,7 @@
 
 import { useState } from "react";
 
-import type { FibFactorName } from "@/lib/api";
+import type { FibFactorName } from "@/modules/parallax/api";
 import { FIB_FACTOR_ORDER, FIB_GLOSSARY } from "./glossary";
 
 interface FibScoreBreakdownProps {

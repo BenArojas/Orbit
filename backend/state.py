@@ -5,7 +5,7 @@ Tracks session status, WebSocket state, and subscription tracking.
 
 import asyncio
 from typing import Any, Optional
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 
 
 class IBKRState(BaseModel):
@@ -78,8 +78,8 @@ class IBKRState(BaseModel):
     # Lifecycle
     shutdown_event: asyncio.Event = Field(default_factory=asyncio.Event)
 
-    class Config:
-        arbitrary_types_allowed = True
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
 
     def reset(self) -> None:
         """Clear all session state (on logout or disconnect)."""

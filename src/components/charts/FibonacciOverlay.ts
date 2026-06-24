@@ -29,7 +29,7 @@ import {
   type Time,
 } from "lightweight-charts";
 
-import type { FibonacciLevel } from "@/lib/api";
+import type { FibonacciLevel } from "@/modules/parallax/api";
 import {
   FIB_BOUNDARY_COLOR,
   FIB_COLOR_PALETTE,

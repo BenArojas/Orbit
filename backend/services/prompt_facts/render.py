@@ -1,6 +1,7 @@
 """Renderer: PromptContextBlock list -> deterministic prompt text."""
 from __future__ import annotations
 
+from services.prompt_facts._common import quantize_ground_price
 from services.prompt_facts.types import PromptContextBlock, PromptFact
 
 _TF_ORDER = ["M", "W", "D", "4H", "1H"]
@@ -14,8 +15,11 @@ def _tf_sort_key(tf: str) -> int:
 
 
 def _fact_line(f: PromptFact) -> str:
-    # "  [D.ema.stack_bullish] EMA stack bullish."
-    return f"  [{f.id}] {f.text}"
+    line = f"  [{f.id}] {f.text}"
+    if f.price_values:
+        candidates = ", ".join(f"${quantize_ground_price(v)}" for v in f.price_values)
+        line += f" | Grounded price candidates: {candidates}"
+    return line
 
 
 def render_prompt_facts(blocks: list[PromptContextBlock]) -> str:

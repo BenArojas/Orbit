@@ -10,7 +10,7 @@
  */
 
 import { useState } from "react";
-import type { OllamaModelResponse } from "@/lib/api";
+import type { OllamaModelResponse } from "@/modules/parallax/api";
 
 interface AiModelSelectorProps {
   models: OllamaModelResponse[];
@@ -18,6 +18,7 @@ interface AiModelSelectorProps {
   onSelect: (model: string) => void;
   onRefresh: () => void;
   isRefreshing: boolean;
+  disabled?: boolean;
 }
 
 export default function AiModelSelector({
@@ -26,6 +27,7 @@ export default function AiModelSelector({
   onSelect,
   onRefresh,
   isRefreshing,
+  disabled = false,
 }: AiModelSelectorProps) {
   const [isOpen, setIsOpen] = useState(false);
 
@@ -35,8 +37,10 @@ export default function AiModelSelector({
     <div className="relative">
       {/* Trigger button */}
       <button
+        type="button"
+        disabled={disabled}
         onClick={() => setIsOpen(!isOpen)}
-        className="flex items-center gap-1.5 rounded-md border border-[var(--border)] bg-[var(--bg-0)] px-2 py-1 text-[10px] transition-all hover:border-[var(--clr-cyan)]"
+        className="flex items-center gap-1.5 rounded-md border border-[var(--border)] bg-[var(--bg-0)] px-2 py-1 text-[10px] transition-all hover:border-[var(--clr-cyan)] disabled:cursor-not-allowed disabled:opacity-50"
       >
         <div className="h-1.5 w-1.5 rounded-full bg-[var(--clr-green)] shadow-[0_0_6px_var(--clr-green)]" />
         <span className="font-medium text-[var(--text-2)] max-w-[120px] truncate">
@@ -100,7 +104,7 @@ export default function AiModelSelector({
                 onRefresh();
                 setIsOpen(false);
               }}
-              disabled={isRefreshing}
+              disabled={disabled || isRefreshing}
               className="flex w-full items-center justify-center gap-1 rounded px-2 py-1 text-[9px] text-[var(--text-3)] transition-all hover:bg-[var(--bg-3)] hover:text-[var(--clr-cyan)] disabled:opacity-50"
             >
               {isRefreshing ? "Scanning..." : "Rescan models"}

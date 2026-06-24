@@ -6,7 +6,20 @@ the v2 learning algorithm can tune them in one place.
 """
 from __future__ import annotations
 
+from decimal import Decimal, ROUND_HALF_UP
 from typing import Literal, Optional
+
+_GROUNDING_CENT = Decimal("0.01")
+
+
+def quantize_ground_price(value: float) -> Decimal:
+    """Quantize a price to cents for grounding.
+
+    The single source of truth for grounding precision: the renderer formats
+    candidates from this, the grounding map is built from this, so the price a
+    model sees is always exactly the price the validator allows.
+    """
+    return Decimal(str(value)).quantize(_GROUNDING_CENT, rounding=ROUND_HALF_UP)
 
 
 def is_near(price: float, level: float, atr: Optional[float] = None) -> bool:
@@ -78,11 +91,12 @@ def is_falling_n(
     return net < 0 and same_sign >= (n + 1) // 2
 
 
-# Underlying-bar lookback per displayed timeframe (see spec §6.3).
-# 1H / 4H are not true 1H/4H candles — see AI_TIMEFRAME_MAP in routers/ai.py.
+# Recency lookback per displayed timeframe, counted in true bars of that
+# timeframe (resolved via TIMEFRAME_SPEC in constants/ibkr_history.py — 1H/4H
+# are real 1h/4h bars, not resampled finer candles).
 _RECENCY_WINDOWS: dict[str, int] = {
-    "1H": 60,
-    "4H": 48,
+    "1H": 7,
+    "4H": 3,
     "D":   5,
     "W":   5,
     "M":   5,

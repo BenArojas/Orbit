@@ -14,12 +14,12 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 
-import { api } from "@/lib/api";
+import { parallaxApi } from "@/modules/parallax/api";
 import type {
   Drawing,
   CreateDrawingRequest,
   UpdateDrawingRequest,
-} from "@/lib/api";
+} from "@/modules/parallax/api";
 
 const DRAWING_SOFT_CAP = 50;
 
@@ -40,7 +40,7 @@ function drawingsKey(conid: number) {
 export function useDrawings(conid: number | null) {
   return useQuery<Drawing[]>({
     queryKey: drawingsKey(conid ?? 0),
-    queryFn: () => api.getDrawings(conid!),
+    queryFn: () => parallaxApi.getDrawings(conid!),
     enabled: conid != null && conid > 0,
     staleTime: 60_000,
     gcTime: 5 * 60_000,
@@ -56,7 +56,7 @@ export function useDrawings(conid: number | null) {
 export function useCreateDrawing(conid: number) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (req: CreateDrawingRequest) => api.createDrawing(req),
+    mutationFn: (req: CreateDrawingRequest) => parallaxApi.createDrawing(req),
     onSuccess: () => {
       // Soft-cap warning: check before invalidation so the cached count
       // still reflects what was there before this new drawing.
@@ -79,7 +79,7 @@ export function useUpdateDrawing(conid: number) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: ({ id, req }: { id: number; req: UpdateDrawingRequest }) =>
-      api.updateDrawing(id, req),
+      parallaxApi.updateDrawing(id, req),
     onMutate: async ({ id, req }) => {
       await qc.cancelQueries({ queryKey: drawingsKey(conid) });
       const prev = qc.getQueryData<Drawing[]>(drawingsKey(conid));
@@ -114,7 +114,7 @@ export function useUpdateDrawing(conid: number) {
 export function useDeleteDrawing(conid: number) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (id: number) => api.deleteDrawing(id),
+    mutationFn: (id: number) => parallaxApi.deleteDrawing(id),
     onMutate: async (id) => {
       await qc.cancelQueries({ queryKey: drawingsKey(conid) });
       const prev = qc.getQueryData<Drawing[]>(drawingsKey(conid));

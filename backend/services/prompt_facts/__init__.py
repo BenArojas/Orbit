@@ -21,6 +21,7 @@ from services.prompt_facts.macd import build_macd_facts
 from services.prompt_facts.obv import build_obv_facts
 from services.prompt_facts.rsi import build_rsi_facts
 from services.prompt_facts.stoch import build_stoch_facts
+from services.prompt_facts.types import PromptFact
 from services.prompt_facts.volume import build_volume_facts
 from services.prompt_facts.vwap import build_vwap_facts
 
@@ -53,6 +54,20 @@ def _build_for_tf(
     last_close = candles[-1].close if candles else 0.0
     by_name = _group_indicators(indicators)
 
+    # Current close — always grounded so the model has a fallback anchor
+    if last_close > 0:
+        facts.append(PromptFact(
+            id=f"{timeframe}.price.current_close",
+            timeframe=timeframe,
+            indicator="price",
+            text=f"Current close: ${last_close:.2f}.",
+            polarity="neutral",
+            strength=50,
+            priority=60,
+            data={"close": last_close},
+            price_values=(last_close,),
+        ))
+
     # Fibonacci — primary snapshot if present, else auto-computed result
     fib_source: FibonacciResult | FibonacciSnapshot | None = None
     if fibs:
@@ -66,9 +81,10 @@ def _build_for_tf(
             symbol=symbol, timeframe=timeframe, fib=fib_source, last_close=last_close,
         ))
 
-    if "ema" in by_name:
+    ema_indicators = [ind for name, inds in by_name.items() if name.startswith("ema_") for ind in inds]
+    if ema_indicators:
         facts.extend(build_ema_facts(
-            symbol=symbol, timeframe=timeframe, emas=by_name["ema"], last_close=last_close,
+            symbol=symbol, timeframe=timeframe, emas=ema_indicators, last_close=last_close,
         ))
 
     if "rsi" in by_name and by_name["rsi"]:

@@ -36,6 +36,8 @@ from services.ibkr import IBKRService
 from services.screener import ScreenerService
 from services.sectors import SectorService
 from services.ai import AiService
+from services.ai_analysis_preparation import AIAnalysisPreparationService
+from services.ai_providers import AIProviderRegistry, OllamaLLMProvider
 from services.ollama import OllamaLifecycle
 from services.ollama_context import OllamaContextService
 from services.scanner import ScannerService
@@ -126,8 +128,16 @@ async def lifespan(app: FastAPI):
     # ceiling per model and caches it, so the prompt truncator uses an
     # accurate budget instead of the static tier table.
     ollama_context = OllamaContextService(ollama)
-    ai = AiService(context_service=ollama_context)
+    ai_provider_registry = AIProviderRegistry({
+        "ollama": OllamaLLMProvider(),
+    })
+    app.state.ai_provider_registry = ai_provider_registry
+    ai = AiService(
+        context_service=ollama_context,
+        provider_registry=ai_provider_registry,
+    )
     app.state.ai = ai
+    app.state.ai_analysis_preparation = AIAnalysisPreparationService()
 
     # Background trigger scanner (Phase 6.1 / 6.2)
     # Evaluates active trigger rules every N minutes while the app is open.
@@ -394,6 +404,9 @@ app.include_router(moonmarket_router)
 
 from routers.orders import router as orders_router
 app.include_router(orders_router)
+
+from routers.trading_safety import router as trading_safety_router
+app.include_router(trading_safety_router)
 
 from routers.options import router as options_router
 app.include_router(options_router)

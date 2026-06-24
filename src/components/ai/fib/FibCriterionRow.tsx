@@ -18,7 +18,7 @@
 import { useState, useEffect } from "react";
 
 import { FIB_GLOSSARY } from "./glossary";
-import type { FibFactorName } from "@/lib/api";
+import type { FibFactorName } from "@/modules/parallax/api";
 
 interface FibCriterionRowProps {
   factor: FibFactorName;

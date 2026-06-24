@@ -46,9 +46,14 @@ from models.inflect import (
     JournalEntry,
     JournalUpsertRequest,
 )
+from services.client_portal_execution import (
+    ClientPortalExecutionAdapter,
+    InflectExecutionAdapter,
+)
 from services.db import DatabaseService
 from services.inflect.matcher import match_fills
 from services.inflect.pa_transactions import PaBackfillResult
+from services.instrument_identity import InstrumentIdentityService
 from services.moonmarket import MoonMarketService
 
 # Upper bound for "open-ended" fill windows (≈ year 2100 in epoch ms). The
@@ -71,10 +76,16 @@ class InflectService:
         ibkr,
         db: DatabaseService,
         moonmarket: MoonMarketService,
+        identity: InstrumentIdentityService | None = None,
+        execution: InflectExecutionAdapter | None = None,
     ) -> None:
         self.ibkr = ibkr
         self.db = db
         self.moonmarket = moonmarket
+        self.identity = identity or InstrumentIdentityService(db)
+        self.execution = execution or (
+            ClientPortalExecutionAdapter(ibkr) if ibkr is not None else None
+        )
         self._position_cache: dict[tuple[str, int], float | None] = {}
 
     # ── Calendar ───────────────────────────────────────────────
@@ -309,7 +320,7 @@ class InflectService:
         conids = sorted({int(row["conid"]) for row in fills} | set(lot_conids))
         instruments = {
             int(row["conid"]): row
-            for row in await self.db.get_instruments_by_conids(conids)
+            for row in await self.identity.get_many(conids)
         }
         symbols: dict[int, str] = {}
         for row in fills:
@@ -880,13 +891,11 @@ class InflectService:
         key = (account_id, conid)
         if key in self._position_cache:
             return self._position_cache[key]
-        if self.ibkr is None:
+        if self.execution is None:
             self._position_cache[key] = None
             return None
 
-        payload = await self.ibkr._request(
-            "GET", f"/portfolio2/{account_id}/positions"
-        )
+        payload = await self.execution.portfolio_positions(account_id)
         position = self._position_from_payload(payload, conid)
         self._position_cache[key] = position
         return position

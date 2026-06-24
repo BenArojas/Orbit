@@ -1,0 +1,171 @@
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { createElement, type ReactElement } from "react";
+
+import { parallaxApi } from "@/modules/parallax/api";
+import type { AIProviderName, AIProvidersResponse } from "@/modules/parallax/api";
+import { useAiStore } from "@/store";
+
+import AiProvidersSettings from "../AiProvidersSettings";
+
+vi.mock("@/modules/parallax/api", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/modules/parallax/api")>();
+  return {
+    ...actual,
+    parallaxApi: {
+      ...actual.parallaxApi,
+      aiProviders: vi.fn(),
+      aiSaveProviderKey: vi.fn(),
+      aiDeleteProviderKey: vi.fn(),
+    },
+  };
+});
+
+function renderWithQueryClient(element: ReactElement) {
+  const client = new QueryClient({
+    defaultOptions: {
+      queries: { retry: false },
+      mutations: { retry: false },
+    },
+  });
+  return render(createElement(QueryClientProvider, { client }, element));
+}
+
+const cloudProviders: Array<[AIProviderName, string]> = [
+  ["openrouter", "OpenRouter"],
+  ["openai", "OpenAI"],
+  ["anthropic", "Anthropic"],
+  ["gemini", "Gemini"],
+  ["grok", "Grok"],
+];
+
+const providersResponse: AIProvidersResponse = {
+  active_provider: "ollama",
+  routing_mode: "local_only",
+  cloud_enabled: false,
+  providers: [
+    {
+      provider_name: "ollama",
+      display_name: "Ollama",
+      kind: "local",
+      enabled: true,
+      ready: true,
+      selected_model: "gemma4:26b",
+      has_key: false,
+      error: null,
+    },
+    ...cloudProviders.map(([providerName, display]) => ({
+      provider_name: providerName,
+      display_name: display,
+      kind: "cloud" as const,
+      enabled: false,
+      ready: false,
+      selected_model: null,
+      has_key: false,
+      error: null,
+    })),
+  ],
+};
+
+describe("AiProvidersSettings", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    useAiStore.setState({
+      providers: [],
+      activeProvider: "ollama",
+      routingMode: "local_only",
+      cloudEnabled: false,
+      localFallbackEnabled: true,
+    });
+    vi.mocked(parallaxApi.aiProviders).mockResolvedValue(providersResponse);
+    vi.mocked(parallaxApi.aiSaveProviderKey).mockImplementation(
+      async (providerName) => ({
+        provider_name: providerName,
+        display_name: "OpenRouter",
+        kind: "cloud",
+        enabled: true,
+        ready: false,
+        selected_model: null,
+        has_key: true,
+        error: null,
+      }),
+    );
+    vi.mocked(parallaxApi.aiDeleteProviderKey).mockImplementation(
+      async (providerName) => ({
+        provider_name: providerName,
+        display_name: "OpenRouter",
+        kind: "cloud",
+        enabled: false,
+        ready: false,
+        selected_model: null,
+        has_key: false,
+        error: null,
+      }),
+    );
+  });
+
+  it("renders provider cards with cloud providers disabled until a key is present", async () => {
+    renderWithQueryClient(<AiProvidersSettings />);
+
+    for (const provider of ["Ollama", "OpenRouter", "OpenAI", "Anthropic", "Gemini", "Grok"]) {
+      expect((await screen.findAllByText(provider)).length).toBeGreaterThan(0);
+    }
+    expect(screen.getByText("Local")).toBeInTheDocument();
+    expect(screen.getAllByText("Disabled")).toHaveLength(5);
+    expect(screen.queryByDisplayValue("sk-or-secret")).not.toBeInTheDocument();
+  });
+
+  it("renders credential management without execution or spend controls", async () => {
+    renderWithQueryClient(<AiProvidersSettings />);
+
+    expect(await screen.findByLabelText("OpenRouter API key")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Routing mode")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Active provider")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Local fallback")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Per-call cost cap")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Monthly cost cap")).not.toBeInTheDocument();
+    expect(screen.queryByText("Monthly spend")).not.toBeInTheDocument();
+  });
+
+  it("saves a cloud provider key without rendering the secret after success", async () => {
+    renderWithQueryClient(<AiProvidersSettings />);
+
+    const keyInput = await screen.findByLabelText("OpenRouter API key");
+    fireEvent.change(keyInput, { target: { value: "sk-or-secret" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save OpenRouter key" }));
+
+    await waitFor(() => {
+      expect(parallaxApi.aiSaveProviderKey).toHaveBeenCalledWith(
+        "openrouter",
+        { api_key: "sk-or-secret" },
+      );
+    });
+    await waitFor(() => {
+      expect(useAiStore.getState().providers.find(
+        (provider) => provider.provider_name === "openrouter",
+      )?.has_key).toBe(true);
+    });
+    expect(screen.queryByDisplayValue("sk-or-secret")).not.toBeInTheDocument();
+    expect(screen.getByText("Key saved")).toBeInTheDocument();
+  });
+
+  it("shows keychain unavailable state without enabling the provider", async () => {
+    vi.mocked(parallaxApi.aiSaveProviderKey).mockRejectedValueOnce(
+      new Error("OS keychain is unavailable. Cloud AI providers remain disabled."),
+    );
+    renderWithQueryClient(<AiProvidersSettings />);
+
+    const keyInput = await screen.findByLabelText("OpenRouter API key");
+    fireEvent.change(keyInput, { target: { value: "sk-or-secret" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save OpenRouter key" }));
+
+    expect(await screen.findByText(
+      "OS keychain is unavailable. Cloud AI providers remain disabled.",
+    )).toBeInTheDocument();
+    expect(useAiStore.getState().providers.find(
+      (provider) => provider.provider_name === "openrouter",
+    )?.enabled).toBe(false);
+    expect(screen.queryByDisplayValue("sk-or-secret")).not.toBeInTheDocument();
+  });
+});

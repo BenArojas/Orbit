@@ -28,7 +28,7 @@ import {
   type Time,
   type SeriesType,
 } from "lightweight-charts";
-import type { IndicatorResult, IndicatorValue, CandleData } from "@/lib/api";
+import type { IndicatorResult, IndicatorValue, CandleData } from "@/modules/parallax/api";
 import type { IndicatorId } from "@/store/chart";
 
 // ── Types ────────────────────────────────────────────────────
