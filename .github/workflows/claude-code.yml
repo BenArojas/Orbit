@@ -44,6 +44,11 @@ jobs:
       - uses: anthropics/claude-code-action@v1
         if: steps.check.outputs.needs_planning == 'true'
         with:
+          # Set EITHER secret: CLAUDE_CODE_OAUTH_TOKEN (uses your Claude Pro/Max
+          # subscription via `claude setup-token`, no separate API bill) OR
+          # ANTHROPIC_API_KEY (metered Anthropic API). If both are set the OAuth
+          # token wins. Leave the unused one empty.
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
           claude_args: |
@@ -112,6 +117,11 @@ jobs:
       - uses: anthropics/claude-code-action@v1
         if: steps.check.outputs.needs_planning == 'false'
         with:
+          # Set EITHER secret: CLAUDE_CODE_OAUTH_TOKEN (uses your Claude Pro/Max
+          # subscription via `claude setup-token`, no separate API bill) OR
+          # ANTHROPIC_API_KEY (metered Anthropic API). If both are set the OAuth
+          # token wins. Leave the unused one empty.
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
           branch_prefix: "claude/"
@@ -213,6 +223,11 @@ jobs:
 
       - uses: anthropics/claude-code-action@v1
         with:
+          # Set EITHER secret: CLAUDE_CODE_OAUTH_TOKEN (uses your Claude Pro/Max
+          # subscription via `claude setup-token`, no separate API bill) OR
+          # ANTHROPIC_API_KEY (metered Anthropic API). If both are set the OAuth
+          # token wins. Leave the unused one empty.
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
           claude_args: |

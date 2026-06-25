@@ -183,12 +183,44 @@ because the default `GITHUB_TOKEN` cannot write user-level Projects V2.
 | Secret | Used by | Notes |
 | --- | --- | --- |
 | `PROJECT_PAT` | board-sync + project-automation | Classic PAT with `project` + `repo` scope. Required for any board movement. |
-| `OPENROUTER_API_KEY` | opencode | |
-| `ANTHROPIC_API_KEY` | Claude | Add via `gh secret set ANTHROPIC_API_KEY`. |
-| `OPENAI_API_KEY` | Codex | Add via `gh secret set OPENAI_API_KEY`. |
+| `OPENROUTER_API_KEY` | opencode | Also powers Claude/GPT models via the model override below. |
+| `CLAUDE_CODE_OAUTH_TOKEN` | Claude | From `claude setup-token` (Claude Pro/Max). Uses your subscription instead of metered API. Preferred over the API key if both are set. |
+| `ANTHROPIC_API_KEY` | Claude | Metered Anthropic API. Only needed if you are not using the OAuth token. |
+| `OPENAI_API_KEY` | Codex | Metered OpenAI API. `gh secret set OPENAI_API_KEY`. |
 
 Add only the keys for the agents you intend to use. A runner whose key is missing
 will fail its agent step; the others are unaffected.
+
+### Cost & billing
+
+These runners call hosted models from CI, which is **metered usage billed
+separately from any Claude.ai or ChatGPT subscription**:
+
+- **Anthropic API key** and **OpenAI API key** — pay-per-token via the provider
+  API. A Claude Pro/Max or ChatGPT Plus/Pro subscription does **not** cover API calls.
+- **Claude exception** — set `CLAUDE_CODE_OAUTH_TOKEN` (from `claude setup-token`,
+  requires Claude Pro/Max) instead of `ANTHROPIC_API_KEY`. The Claude runner then
+  draws on your subscription's included usage rather than billing the API.
+- **OpenRouter** — prepaid, metered per token (often a small markup over provider
+  rates) in exchange for one key across many models.
+- **GitHub Actions minutes** are also metered (free for public repos; included
+  minutes for private).
+
+### Running a different model (OpenRouter)
+
+The opencode runner takes an optional per-comment model override so you can drive
+**Claude or GPT/Codex models through your existing `OPENROUTER_API_KEY`** with no
+new keys:
+
+```text
+/oc                                          # default: z-ai/glm-5.2
+/oc model=anthropic/claude-sonnet-4.6        # Claude via OpenRouter
+/oc model=openai/gpt-4.1                      # GPT/Codex-class via OpenRouter
+```
+
+Use any slug from the OpenRouter model catalog. This is the no-extra-key way to
+"run Claude/Codex"; the native `claude-code.yml` / `codex.yml` runners are the
+full-capability path when you have provider keys (or a Claude subscription token).
 
 Keep agents mostly manual-triggered (one comment per task). Automatic review on
 every PR can become expensive.

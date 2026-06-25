@@ -49,13 +49,25 @@ jobs:
               console.log("Issue does not have agent:needs-planning label - skipping planner job");
             }
 
+      - name: Resolve opencode model
+        id: model
+        env:
+          COMMENT_BODY: ${{ github.event.comment.body }}
+        run: |
+          # Optional override: comment "/oc model=anthropic/claude-sonnet-4.6"
+          # (or any OpenRouter slug). Defaults to z-ai/glm-5.2.
+          MODEL=$(printf '%s' "$COMMENT_BODY" | grep -oE 'model=[^[:space:]]+' | head -1 | cut -d= -f2 || true)
+          [ -z "$MODEL" ] && MODEL="z-ai/glm-5.2"
+          echo "model=openrouter/$MODEL" >> "$GITHUB_OUTPUT"
+          echo "Using model: openrouter/$MODEL"
+
       - uses: anomalyco/opencode/github@latest
         if: steps.check.outputs.needs_planning == 'true'
         env:
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          model: openrouter/z-ai/glm-5.2
+          model: ${{ steps.model.outputs.model }}
           use_github_token: true
           prompt: |
             You are the Orbit planner agent. Read this parent issue and break it down into small executable sub-issues.
@@ -124,13 +136,23 @@ jobs:
           add-labels: "agent:in-progress"
           status: "in-progress"
 
+      - name: Resolve opencode model
+        id: model
+        env:
+          COMMENT_BODY: ${{ github.event.comment.body }}
+        run: |
+          MODEL=$(printf '%s' "$COMMENT_BODY" | grep -oE 'model=[^[:space:]]+' | head -1 | cut -d= -f2 || true)
+          [ -z "$MODEL" ] && MODEL="z-ai/glm-5.2"
+          echo "model=openrouter/$MODEL" >> "$GITHUB_OUTPUT"
+          echo "Using model: openrouter/$MODEL"
+
       - uses: anomalyco/opencode/github@latest
         if: steps.check.outputs.needs_planning == 'false'
         env:
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          model: openrouter/z-ai/glm-5.2
+          model: ${{ steps.model.outputs.model }}
           use_github_token: true
           prompt: |
             Implement this issue. Follow AGENTS.md for project rules.
@@ -227,12 +249,22 @@ jobs:
           add-labels: "agent:needs-review"
           status: "in-review"
 
+      - name: Resolve opencode model
+        id: model
+        env:
+          COMMENT_BODY: ${{ github.event.comment.body }}
+        run: |
+          MODEL=$(printf '%s' "$COMMENT_BODY" | grep -oE 'model=[^[:space:]]+' | head -1 | cut -d= -f2 || true)
+          [ -z "$MODEL" ] && MODEL="z-ai/glm-5.2"
+          echo "model=openrouter/$MODEL" >> "$GITHUB_OUTPUT"
+          echo "Using model: openrouter/$MODEL"
+
       - uses: anomalyco/opencode/github@latest
         env:
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          model: openrouter/z-ai/glm-5.2
+          model: ${{ steps.model.outputs.model }}
           use_github_token: true
           prompt: |
             Review this pull request as the Orbit review agent.
