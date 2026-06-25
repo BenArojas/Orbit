@@ -1,0 +1,278 @@
+name: Codex
+
+# Codex runner for the issue-driven board flow. openai/codex-action only edits
+# files / emits a message — it does NOT commit, push, or open PRs — so this
+# workflow does the git, gh, and board work itself ("Codex is the brain, the
+# workflow is the hands"). Board moves go through ./.github/actions/board-sync.
+#   planner  — /codex (or @codex) on an issue WITH agent:needs-planning
+#   coder    — /codex (or @codex) on an issue WITHOUT agent:needs-planning
+#   reviewer — /codex (or @codex) on a pull request
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+jobs:
+  # ===================================================================
+  # Planner — Codex emits structured tasks; the workflow creates the issues.
+  # ===================================================================
+  planner:
+    if: |
+      (contains(github.event.comment.body, '/codex') || contains(github.event.comment.body, '@codex')) &&
+      github.event.issue.pull_request == null
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Check if issue needs planning
+        id: check
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const issue_number = context.payload.issue.number;
+            const { data: labels } = await github.rest.issues.listLabelsOnIssue({ owner, repo, issue_number });
+            core.setOutput("needs_planning", labels.some(l => l.name === "agent:needs-planning") ? "true" : "false");
+
+      - name: Capture parent issue body
+        if: steps.check.outputs.needs_planning == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh issue view "${{ github.event.issue.number }}" --json title,body --jq '"# " + .title + "\n\n" + .body' > /tmp/parent-issue.md
+
+      - uses: openai/codex-action@v1
+        if: steps.check.outputs.needs_planning == 'true'
+        with:
+          openai-api-key: ${{ secrets.OPENAI_API_KEY }}
+          sandbox: read-only
+          output-file: /tmp/plan.json
+          output-schema: '{"type":"object","additionalProperties":false,"required":["tasks"],"properties":{"tasks":{"type":"array","maxItems":5,"items":{"type":"object","additionalProperties":false,"required":["title","body"],"properties":{"title":{"type":"string"},"body":{"type":"string"}}}}}}'
+          prompt: |
+            You are the Orbit planner. Read AGENTS.md in this repository and the parent
+            issue saved at /tmp/parent-issue.md. Break the goal into 1-5 small tasks, each
+            small enough for one focused PR.
+
+            Output ONLY JSON matching the provided schema. For each task, "title" is a short
+            summary and "body" MUST contain these sections: Task, Relevant files, Acceptance
+            criteria, Non-goals, Test command, Risk level, and "Part of #${{ github.event.issue.number }}".
+            Do not write code or run git/gh.
+
+      - name: Create sub-issues from plan
+        if: steps.check.outputs.needs_planning == 'true' && success()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          count=$(jq '.tasks | length' /tmp/plan.json)
+          echo "Creating $count sub-issue(s)"
+          for i in $(seq 0 $((count - 1))); do
+            title=$(jq -r ".tasks[$i].title" /tmp/plan.json)
+            jq -r ".tasks[$i].body" /tmp/plan.json > /tmp/task-body.md
+            gh issue create --title "[Task]: $title" \
+              --label "agent:ready-for-coding" --label "risk:low" \
+              --body-file /tmp/task-body.md
+          done
+
+      - name: Move parent to ready for coding
+        if: steps.check.outputs.needs_planning == 'true' && success()
+        uses: ./.github/actions/board-sync
+        with:
+          project-pat: ${{ secrets.PROJECT_PAT }}
+          issue-number: ${{ github.event.issue.number }}
+          remove-labels: "agent:needs-planning"
+          add-labels: "agent:ready-for-coding"
+          status: "ready-for-coding"
+
+  # ===================================================================
+  # Coder — Codex edits files; the workflow commits, pushes, and opens the PR.
+  # ===================================================================
+  coder:
+    if: |
+      (contains(github.event.comment.body, '/codex') || contains(github.event.comment.body, '@codex')) &&
+      github.event.issue.pull_request == null
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check if issue needs planning (skip coder if so)
+        id: check
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const issue_number = context.payload.issue.number;
+            const { data: labels } = await github.rest.issues.listLabelsOnIssue({ owner, repo, issue_number });
+            core.setOutput("needs_planning", labels.some(l => l.name === "agent:needs-planning") ? "true" : "false");
+
+      - name: Mark issue in progress + move board
+        if: steps.check.outputs.needs_planning == 'false'
+        uses: ./.github/actions/board-sync
+        with:
+          project-pat: ${{ secrets.PROJECT_PAT }}
+          issue-number: ${{ github.event.issue.number }}
+          remove-labels: "agent:ready-for-coding,agent:changes-requested"
+          add-labels: "agent:in-progress"
+          status: "in-progress"
+
+      - name: Capture issue body
+        if: steps.check.outputs.needs_planning == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh issue view "${{ github.event.issue.number }}" --json title,body --jq '"# " + .title + "\n\n" + .body' > /tmp/issue.md
+
+      - uses: openai/codex-action@v1
+        if: steps.check.outputs.needs_planning == 'false'
+        with:
+          openai-api-key: ${{ secrets.OPENAI_API_KEY }}
+          sandbox: workspace-write
+          prompt: |
+            Implement the issue described in /tmp/issue.md. Follow AGENTS.md in this repository.
+
+            - Make the smallest change that satisfies the issue's acceptance criteria.
+            - Edit files directly in the working directory.
+            - Run the test command from the issue if one is specified.
+            - Do NOT run git or gh and do NOT open a PR — the workflow handles branch,
+              commit, push, and PR creation.
+            - Stop without editing if the task requires changing architecture, auth,
+              permissions, persistence, broker behavior, secrets, deployment, migrations,
+              or trading-safety boundaries; explain why in your final message instead.
+
+      - name: Commit, push, and open PR
+        id: pr
+        if: steps.check.outputs.needs_planning == 'false' && success()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          BASE_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+          if git diff --quiet && git diff --cached --quiet; then
+            echo "Codex made no file changes; nothing to open a PR for." >&2
+            echo "opened=false" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          BRANCH="codex/${ISSUE_NUMBER}-$(date +%s)"
+          git checkout -b "$BRANCH"
+          git add -A
+          git commit -m "feat: implement #${ISSUE_NUMBER} via Codex"
+          git push origin "$BRANCH"
+          gh pr create \
+            --base "$BASE_BRANCH" \
+            --head "$BRANCH" \
+            --title "Codex: resolve #${ISSUE_NUMBER}" \
+            --body "Automated implementation by Codex.
+
+          Closes #${ISSUE_NUMBER}
+
+          Do not merge without human approval."
+          echo "opened=true" >> "$GITHUB_OUTPUT"
+
+      - name: Mark PR open + move board
+        if: steps.check.outputs.needs_planning == 'false' && steps.pr.outputs.opened == 'true'
+        uses: ./.github/actions/board-sync
+        with:
+          project-pat: ${{ secrets.PROJECT_PAT }}
+          issue-number: ${{ github.event.issue.number }}
+          remove-labels: "agent:in-progress"
+          add-labels: "agent:pr-open"
+          status: "pr-open"
+
+  # ===================================================================
+  # Reviewer — Codex emits a verdict; the workflow submits the review + routes.
+  # ===================================================================
+  reviewer:
+    if: |
+      (contains(github.event.comment.body, '/codex') || contains(github.event.comment.body, '@codex')) &&
+      github.event.issue.pull_request != null
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Extract linked issue + checkout PR diff
+        id: extract
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          PR_NUMBER="${{ github.event.issue.number }}"
+          BODY=$(gh pr view "$PR_NUMBER" --json body --jq '.body')
+          ISSUE=$(printf '%s' "$BODY" | grep -oiE 'closes #([0-9]+)' | grep -oE '[0-9]+' | head -1 || true)
+          echo "pr_number=$PR_NUMBER" >> "$GITHUB_OUTPUT"
+          echo "issue_number=$ISSUE" >> "$GITHUB_OUTPUT"
+          gh pr diff "$PR_NUMBER" > /tmp/pr.diff || true
+
+      - name: Mark in review + move board
+        if: steps.extract.outputs.issue_number != ''
+        uses: ./.github/actions/board-sync
+        with:
+          project-pat: ${{ secrets.PROJECT_PAT }}
+          issue-number: ${{ steps.extract.outputs.issue_number }}
+          remove-labels: "agent:pr-open"
+          add-labels: "agent:needs-review"
+          status: "in-review"
+
+      - uses: openai/codex-action@v1
+        with:
+          openai-api-key: ${{ secrets.OPENAI_API_KEY }}
+          sandbox: read-only
+          output-file: /tmp/review.json
+          output-schema: '{"type":"object","additionalProperties":false,"required":["verdict","summary"],"properties":{"verdict":{"type":"string","enum":["approve","request_changes"]},"summary":{"type":"string"}}}'
+          prompt: |
+            Review the pull request diff saved at /tmp/pr.diff as the Orbit review agent.
+            Read AGENTS.md in this repository for project rules.
+
+            Check for: correctness vs the issue's acceptance criteria, serious bugs and edge
+            cases, security/secret leakage, trading-safety regressions, performance
+            regressions, and near-term maintainability problems. Avoid low-value style nits.
+
+            Output ONLY JSON matching the schema: "verdict" is "approve" or "request_changes",
+            and "summary" is concise review feedback. Do not run git or gh.
+
+      - name: Submit review + route board
+        if: steps.extract.outputs.issue_number != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ steps.extract.outputs.pr_number }}
+        run: |
+          set -euo pipefail
+          VERDICT=$(jq -r '.verdict' /tmp/review.json)
+          jq -r '.summary' /tmp/review.json > /tmp/review-body.md
+          if [ "$VERDICT" = "approve" ]; then
+            gh pr review "$PR_NUMBER" --approve --body-file /tmp/review-body.md
+          else
+            gh pr review "$PR_NUMBER" --request-changes --body-file /tmp/review-body.md
+          fi
+          echo "verdict=$VERDICT" >> "$GITHUB_OUTPUT"
+        id: review
+
+      - name: Route approved -> Human Approval
+        if: steps.review.outputs.verdict == 'approve' && steps.extract.outputs.issue_number != ''
+        uses: ./.github/actions/board-sync
+        with:
+          project-pat: ${{ secrets.PROJECT_PAT }}
+          issue-number: ${{ steps.extract.outputs.issue_number }}
+          remove-labels: "agent:needs-review"
+          add-labels: "human:needs-approval"
+          status: "human-approval"
+
+      - name: Route changes requested -> Changes Requested
+        if: steps.review.outputs.verdict == 'request_changes' && steps.extract.outputs.issue_number != ''
+        uses: ./.github/actions/board-sync
+        with:
+          project-pat: ${{ secrets.PROJECT_PAT }}
+          issue-number: ${{ steps.extract.outputs.issue_number }}
+          remove-labels: "agent:needs-review"
+          add-labels: "agent:changes-requested"
+          status: "changes-requested"

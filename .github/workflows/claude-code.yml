@@ -1,24 +1,269 @@
 name: Claude Code
 
+# Claude runner for the issue-driven board flow. Mirrors opencode.yml:
+#   planner  — /claude (or @claude) on an issue WITH agent:needs-planning
+#   coder    — /claude (or @claude) on an issue WITHOUT agent:needs-planning
+#   reviewer — /claude (or @claude) on a pull request
+# All board column + label moves go through ./.github/actions/board-sync.
 on:
   issue_comment:
-    types: [created]
-  pull_request_review_comment:
     types: [created]
 
 permissions:
   contents: write
   pull-requests: write
   issues: write
+  id-token: write
 
 jobs:
-  claude:
-    if: contains(github.event.comment.body, '@claude')
+  # ===================================================================
+  # Planner — break a parent issue into small executable sub-issues.
+  # Flow: Needs Planning -> (creates sub-issues) -> Ready for Coding
+  # ===================================================================
+  planner:
+    if: |
+      (contains(github.event.comment.body, '@claude') || contains(github.event.comment.body, '/claude')) &&
+      github.event.issue.pull_request == null
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Check if issue needs planning
+        id: check
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const issue_number = context.payload.issue.number;
+            const { data: labels } = await github.rest.issues.listLabelsOnIssue({ owner, repo, issue_number });
+            const needsPlanning = labels.some(l => l.name === "agent:needs-planning");
+            core.setOutput("needs_planning", needsPlanning ? "true" : "false");
+
+      - uses: anthropics/claude-code-action@v1
+        if: steps.check.outputs.needs_planning == 'true'
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          claude_args: |
+            --max-turns 12
+            --model claude-sonnet-4-6
+          prompt: |
+            You are the Orbit planner agent. Read parent issue #${{ github.event.issue.number }}
+            and break it into small executable sub-issues.
+
+            Steps:
+            1. Read the parent issue body and all comments carefully.
+            2. Read AGENTS.md for workflow rules, constraints, and non-goals.
+            3. Break the goal into 1-5 small tasks, each small enough for one focused PR.
+            4. For each task, create a GitHub issue using:
+               gh issue create --title "[Task]: <short title>" --label "agent:ready-for-coding" --label "risk:low" --body "<body>"
+            5. The issue body MUST include: Task, Relevant files, Acceptance criteria,
+               Non-goals, Test command, Risk level, and "Part of #${{ github.event.issue.number }}".
+            6. Do NOT write code, create branches, push, or open PRs. You are planning only.
+            7. Keep each task tiny and safe. Prefer smaller tasks over larger ones.
+
+      - name: Move parent to ready for coding
+        if: steps.check.outputs.needs_planning == 'true' && success()
+        uses: ./.github/actions/board-sync
+        with:
+          project-pat: ${{ secrets.PROJECT_PAT }}
+          issue-number: ${{ github.event.issue.number }}
+          remove-labels: "agent:needs-planning"
+          add-labels: "agent:ready-for-coding"
+          status: "ready-for-coding"
+
+  # ===================================================================
+  # Coder — implement an approved issue and open a PR.
+  # Flow: Ready for Coding / Changes Requested -> In Progress -> Pr Open
+  # ===================================================================
+  coder:
+    if: |
+      (contains(github.event.comment.body, '@claude') || contains(github.event.comment.body, '/claude')) &&
+      github.event.issue.pull_request == null
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Check if issue needs planning (skip coder if so)
+        id: check
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const issue_number = context.payload.issue.number;
+            const { data: labels } = await github.rest.issues.listLabelsOnIssue({ owner, repo, issue_number });
+            const needsPlanning = labels.some(l => l.name === "agent:needs-planning");
+            core.setOutput("needs_planning", needsPlanning ? "true" : "false");
+
+      - name: Mark issue in progress + move board
+        if: steps.check.outputs.needs_planning == 'false'
+        uses: ./.github/actions/board-sync
+        with:
+          project-pat: ${{ secrets.PROJECT_PAT }}
+          issue-number: ${{ github.event.issue.number }}
+          remove-labels: "agent:ready-for-coding,agent:changes-requested"
+          add-labels: "agent:in-progress"
+          status: "in-progress"
+
+      - uses: anthropics/claude-code-action@v1
+        if: steps.check.outputs.needs_planning == 'false'
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          branch_prefix: "claude/"
+          claude_args: |
+            --max-turns 20
+            --model claude-sonnet-4-6
+          prompt: |
+            Implement issue #${{ github.event.issue.number }}. Follow AGENTS.md for project rules.
+
+            Workflow:
+            1. Read the issue body and acceptance criteria.
+            2. Read AGENTS.md for project rules, constraints, and non-goals.
+            3. Implement the smallest change that satisfies the issue.
+            4. Run the test command from the issue if one is specified.
+            5. Create a branch named claude/${{ github.event.issue.number }}-<short-desc>,
+               commit your changes, and push it.
+            6. Open a pull request whose body includes the line "Closes #${{ github.event.issue.number }}"
+               and fills the PR template checklist. Do NOT merge.
+            7. Stop for human approval before changing architecture, auth, permissions,
+               persistence, broker behavior, secrets, deployment, migrations, or trading-safety.
+
+      - name: Ensure PR is linked, mark PR open + move board
+        if: steps.check.outputs.needs_planning == 'false' && success()
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.PROJECT_PAT }}
+          script: |
+            const { owner, repo } = context.repo;
+            const issue_number = context.payload.issue.number;
+            const { data: prs } = await github.rest.pulls.list({
+              owner, repo, state: "open", sort: "created", direction: "desc", per_page: 20,
+            });
+            let linkedPr = null;
+            for (const pr of prs) {
+              const body = pr.body || "";
+              const match = body.match(/closes\s+#(\d+)/i);
+              if (match && parseInt(match[1]) === issue_number) { linkedPr = pr; break; }
+            }
+            if (!linkedPr) {
+              for (const pr of prs) {
+                if (pr.head.ref.startsWith("claude/")) { linkedPr = pr; break; }
+              }
+            }
+            if (linkedPr) {
+              const body = linkedPr.body || "";
+              if (!new RegExp(`closes\\s+#${issue_number}`, "i").test(body)) {
+                await github.rest.pulls.update({ owner, repo, pull_number: linkedPr.number, body: body + `\n\nCloses #${issue_number}` });
+                console.log(`Patched PR #${linkedPr.number} with 'Closes #${issue_number}'`);
+              }
+            } else {
+              console.log("No linked PR found yet; board will advance when the PR is opened/labelled.");
+            }
+
+      - name: Mark PR open on the board
+        if: steps.check.outputs.needs_planning == 'false' && success()
+        uses: ./.github/actions/board-sync
+        with:
+          project-pat: ${{ secrets.PROJECT_PAT }}
+          issue-number: ${{ github.event.issue.number }}
+          remove-labels: "agent:in-progress"
+          add-labels: "agent:pr-open"
+          status: "pr-open"
+
+  # ===================================================================
+  # Reviewer — review a PR and route it to Changes Requested / Human Approval.
+  # Flow: Pr Open -> In Review -> (Changes Requested | Human Approval)
+  # ===================================================================
+  reviewer:
+    if: |
+      (contains(github.event.comment.body, '@claude') || contains(github.event.comment.body, '/claude')) &&
+      github.event.issue.pull_request != null
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Extract linked issue
+        id: extract
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const pr_number = context.payload.issue.number;
+            const { data: pr } = await github.rest.pulls.get({ owner, repo, pull_number: pr_number });
+            const match = (pr.body || "").match(/closes\s+#(\d+)/i);
+            core.setOutput("issue_number", match ? match[1] : "");
+            core.setOutput("pr_number", String(pr_number));
+
+      - name: Mark in review + move board
+        if: steps.extract.outputs.issue_number != ''
+        uses: ./.github/actions/board-sync
+        with:
+          project-pat: ${{ secrets.PROJECT_PAT }}
+          issue-number: ${{ steps.extract.outputs.issue_number }}
+          remove-labels: "agent:pr-open"
+          add-labels: "agent:needs-review"
+          status: "in-review"
+
       - uses: anthropics/claude-code-action@v1
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
           claude_args: |
-            --max-turns 6
-            --append-system-prompt "Follow AGENTS.md, CLAUDE.md, the linked issue, and the PR template. Keep responses concise. Prefer minimal diffs. Do not merge. Stop for human approval on high-risk changes."
+            --max-turns 15
+            --model claude-sonnet-4-6
+          prompt: |
+            Review pull request #${{ github.event.issue.number }} as the Orbit review agent.
+
+            Steps:
+            1. Read AGENTS.md and the linked issue (from "Closes #N" in the PR body).
+            2. Review the PR diff for: correctness vs the issue's acceptance criteria,
+               serious bugs and edge cases, security/secret leakage, trading-safety
+               regressions, performance regressions, and near-term maintainability problems.
+            3. Avoid low-value style comments unless they block readability or consistency.
+            4. Submit a FORMAL review with the gh CLI (not just a comment):
+               - Acceptable:  gh pr review ${{ github.event.issue.number }} --approve --body "<summary>"
+               - Needs work:  gh pr review ${{ github.event.issue.number }} --request-changes --body "<list>"
+            5. Do NOT push commits, create branches, or merge.
+
+      - name: Determine review verdict
+        id: verdict
+        if: steps.extract.outputs.issue_number != ''
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const pull_number = parseInt('${{ steps.extract.outputs.pr_number }}');
+            const { data: reviews } = await github.rest.pulls.listReviews({ owner, repo, pull_number, per_page: 100 });
+            const states = reviews.map(r => r.state);
+            let verdict = "none";
+            if (states.lastIndexOf("CHANGES_REQUESTED") > states.lastIndexOf("APPROVED")) verdict = "changes_requested";
+            else if (states.includes("APPROVED")) verdict = "approved";
+            core.setOutput("verdict", verdict);
+            console.log(`Latest review verdict: ${verdict}`);
+
+      - name: Route approved -> Human Approval
+        if: steps.verdict.outputs.verdict == 'approved'
+        uses: ./.github/actions/board-sync
+        with:
+          project-pat: ${{ secrets.PROJECT_PAT }}
+          issue-number: ${{ steps.extract.outputs.issue_number }}
+          remove-labels: "agent:needs-review"
+          add-labels: "human:needs-approval"
+          status: "human-approval"
+
+      - name: Route changes requested -> Changes Requested
+        if: steps.verdict.outputs.verdict == 'changes_requested'
+        uses: ./.github/actions/board-sync
+        with:
+          project-pat: ${{ secrets.PROJECT_PAT }}
+          issue-number: ${{ steps.extract.outputs.issue_number }}
+          remove-labels: "agent:needs-review"
+          add-labels: "agent:changes-requested"
+          status: "changes-requested"

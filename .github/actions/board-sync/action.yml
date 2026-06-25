@@ -1,0 +1,144 @@
+name: "Board Sync"
+description: >
+  Move a GitHub Projects (v2) board item to a status column and/or adjust the
+  agent:* labels on the linked issue. All writes use a PAT because the default
+  GITHUB_TOKEN cannot write user-level Projects V2.
+
+inputs:
+  project-pat:
+    description: "PAT with `project` + `repo` scope (stored as a repo secret)."
+    required: true
+  issue-number:
+    description: "Issue number whose board item should be moved / labelled."
+    required: true
+  status:
+    description: >
+      Logical column to move the item to. One of: backlog, needs-planning,
+      ready-for-coding, in-progress, pr-open, in-review, changes-requested,
+      human-approval, done. Leave empty to only change labels.
+    required: false
+    default: ""
+  add-labels:
+    description: "Comma-separated labels to add to the issue."
+    required: false
+    default: ""
+  remove-labels:
+    description: "Comma-separated labels to remove from the issue (missing labels are ignored)."
+    required: false
+    default: ""
+  project-number:
+    description: "User ProjectV2 number."
+    required: false
+    default: "1"
+  project-id:
+    description: "ProjectV2 node id."
+    required: false
+    default: "PVT_kwHOCdGZYc4Bbcft"
+  status-field-id:
+    description: "Status single-select field node id."
+    required: false
+    default: "PVTSSF_lAHOCdGZYc4BbcftzhWM-EQ"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Sync labels and board status
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.project-pat }}
+        OWNER: ${{ github.repository_owner }}
+        REPO: ${{ github.repository }}
+        ISSUE_NUMBER: ${{ inputs.issue-number }}
+        STATUS: ${{ inputs.status }}
+        ADD_LABELS: ${{ inputs.add-labels }}
+        REMOVE_LABELS: ${{ inputs.remove-labels }}
+        PROJECT_NUMBER: ${{ inputs.project-number }}
+        PROJECT_ID: ${{ inputs.project-id }}
+        STATUS_FIELD_ID: ${{ inputs.status-field-id }}
+      run: |
+        set -euo pipefail
+
+        if [ -z "$ISSUE_NUMBER" ]; then
+          echo "board-sync: no issue-number provided; nothing to do."
+          exit 0
+        fi
+
+        # ── Label changes (best-effort; missing labels are not fatal) ──
+        if [ -n "$REMOVE_LABELS" ]; then
+          IFS=',' read -ra _rm <<< "$REMOVE_LABELS"
+          for lbl in "${_rm[@]}"; do
+            lbl="$(echo "$lbl" | xargs)"   # trim whitespace
+            [ -z "$lbl" ] && continue
+            gh issue edit "$ISSUE_NUMBER" --repo "$REPO" --remove-label "$lbl" >/dev/null 2>&1 || true
+          done
+        fi
+        if [ -n "$ADD_LABELS" ]; then
+          IFS=',' read -ra _add <<< "$ADD_LABELS"
+          ADD_ARGS=()
+          for lbl in "${_add[@]}"; do
+            lbl="$(echo "$lbl" | xargs)"
+            [ -z "$lbl" ] && continue
+            ADD_ARGS+=(--add-label "$lbl")
+          done
+          if [ ${#ADD_ARGS[@]} -gt 0 ]; then
+            gh issue edit "$ISSUE_NUMBER" --repo "$REPO" "${ADD_ARGS[@]}" >/dev/null 2>&1 || true
+          fi
+        fi
+
+        # ── Board column move (only if a status was requested) ──
+        if [ -z "$STATUS" ]; then
+          echo "board-sync: labels updated; no status requested."
+          exit 0
+        fi
+
+        case "$STATUS" in
+          backlog)            OPT="f75ad846" ;;
+          needs-planning)     OPT="61e4505c" ;;
+          ready-for-coding)   OPT="47fc9ee4" ;;
+          in-progress)        OPT="8a244bab" ;;
+          pr-open)            OPT="778733cb" ;;
+          in-review)          OPT="df73e18b" ;;
+          changes-requested)  OPT="182692a0" ;;
+          human-approval)     OPT="4bff2a14" ;;
+          done)               OPT="98236657" ;;
+          *) echo "board-sync: unknown status '$STATUS'"; exit 1 ;;
+        esac
+
+        # Find the project item id for this issue.
+        ITEM_QUERY='
+        query($org: String!, $num: Int!) {
+          user(login: $org) {
+            projectV2(number: $num) {
+              items(first: 100) {
+                nodes { id content { ... on Issue { number } } }
+              }
+            }
+          }
+        }'
+
+        ITEM_ID=$(gh api graphql -f query="$ITEM_QUERY" -f org="$OWNER" -F num="$PROJECT_NUMBER" \
+          --jq ".data.user.projectV2.items.nodes[] | select(.content.number == $ISSUE_NUMBER) | .id" 2>/dev/null || true)
+
+        if [ -z "$ITEM_ID" ]; then
+          echo "board-sync: issue #$ISSUE_NUMBER is not in project #$PROJECT_NUMBER; skipping board move."
+          exit 0
+        fi
+
+        UPDATE_MUTATION='
+        mutation($project: ID!, $item: ID!, $field: ID!, $value: String!) {
+          updateProjectV2ItemFieldValue(input: {
+            projectId: $project
+            itemId: $item
+            fieldId: $field
+            value: { singleSelectOptionId: $value }
+          }) { projectV2Item { id } }
+        }'
+
+        gh api graphql \
+          -f query="$UPDATE_MUTATION" \
+          -f project="$PROJECT_ID" \
+          -f item="$ITEM_ID" \
+          -f field="$STATUS_FIELD_ID" \
+          -f value="$OPT"
+
+        echo "board-sync: issue #$ISSUE_NUMBER → $STATUS ($OPT)"
