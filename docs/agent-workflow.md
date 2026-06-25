@@ -148,39 +148,50 @@ A good Agent Task issue includes:
 
 A coding agent should only work on one issue at a time.
 
-## Claude Code integration
+## Agent runners (opencode / Claude / Codex)
 
-This repo includes `.github/workflows/claude-code.yml`.
+Three interchangeable runners drive the same board flow. Each is a workflow that
+reacts to a comment trigger and auto-selects a role from context:
 
-Setup required:
+| Agent | Workflow | Trigger comment | Action used | API-key secret |
+| --- | --- | --- | --- | --- |
+| opencode | `.github/workflows/opencode.yml` | `/oc` or `/opencode` | `anomalyco/opencode/github` | `OPENROUTER_API_KEY` |
+| Claude | `.github/workflows/claude-code.yml` | `@claude` or `/claude` | `anthropics/claude-code-action@v1` | `ANTHROPIC_API_KEY` |
+| Codex | `.github/workflows/codex.yml` | `/codex` or `@codex` | `openai/codex-action@v1` | `OPENAI_API_KEY` |
 
-1. Install the Claude Code GitHub app or run `/install-github-app` from Claude Code locally.
-2. Add a GitHub repository secret named `ANTHROPIC_API_KEY`.
-3. Comment `@claude` on an issue or PR.
+Role is chosen automatically:
 
-Suggested comments:
+- Comment on an **issue with `agent:needs-planning`** → **planner** (splits it into
+  `agent:ready-for-coding` sub-issues, then moves the parent to Ready for Coding).
+- Comment on an **issue without `agent:needs-planning`** → **coder** (implements,
+  opens a PR with `Closes #N`, moves In Progress → Pr Open).
+- Comment on a **pull request** → **reviewer** (submits a formal `gh pr review`,
+  then routes the linked issue to Human Approval or Changes Requested from the
+  verdict).
 
-```text
-@claude implement this issue using AGENTS.md. Open a PR and do not merge.
-```
+### How the board moves
 
-```text
-@claude review this PR against AGENTS.md and the linked issue. Focus on correctness, security, trading-safety, and high-impact bugs only.
-```
+All column + label transitions go through one shared composite action,
+`.github/actions/board-sync`, which writes the GitHub Projects (v2) Status field
+and the `agent:*` labels using `PROJECT_PAT`. `.github/workflows/project-automation.yml`
+covers the human/event-driven transitions (PR opened/merged, review submitted by
+a human, issue closed/reopened, manual label changes). Both use `PROJECT_PAT`
+because the default `GITHUB_TOKEN` cannot write user-level Projects V2.
 
-Keep Claude mostly manual-triggered. Automatic review on every PR can become expensive.
+### One-time setup (repository secrets)
 
-## Codex integration
+| Secret | Used by | Notes |
+| --- | --- | --- |
+| `PROJECT_PAT` | board-sync + project-automation | Classic PAT with `project` + `repo` scope. Required for any board movement. |
+| `OPENROUTER_API_KEY` | opencode | |
+| `ANTHROPIC_API_KEY` | Claude | Add via `gh secret set ANTHROPIC_API_KEY`. |
+| `OPENAI_API_KEY` | Codex | Add via `gh secret set OPENAI_API_KEY`. |
 
-Codex should use `AGENTS.md` as repo guidance.
+Add only the keys for the agents you intend to use. A runner whose key is missing
+will fail its agent step; the others are unaffected.
 
-Recommended use:
-
-```text
-@codex review
-```
-
-Use Codex mainly for PR review or focused issue execution through GitHub's agent UI. Keep it diff-based when possible.
+Keep agents mostly manual-triggered (one comment per task). Automatic review on
+every PR can become expensive.
 
 ## Token-budget rules
 
