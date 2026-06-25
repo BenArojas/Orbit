@@ -148,39 +148,82 @@ A good Agent Task issue includes:
 
 A coding agent should only work on one issue at a time.
 
-## Claude Code integration
+## Agent runners (opencode / Claude / Codex)
 
-This repo includes `.github/workflows/claude-code.yml`.
+Three interchangeable runners drive the same board flow. Each is a workflow that
+reacts to a comment trigger and auto-selects a role from context:
 
-Setup required:
+| Agent | Workflow | Trigger comment | Action used | API-key secret |
+| --- | --- | --- | --- | --- |
+| opencode | `.github/workflows/opencode.yml` | `/oc` or `/opencode` | `anomalyco/opencode/github` | `OPENROUTER_API_KEY` |
+| Claude | `.github/workflows/claude-code.yml` | `@claude` or `/claude` | `anthropics/claude-code-action@v1` | `ANTHROPIC_API_KEY` |
+| Codex | `.github/workflows/codex.yml` | `/codex` or `@codex` | `openai/codex-action@v1` | `OPENAI_API_KEY` |
 
-1. Install the Claude Code GitHub app or run `/install-github-app` from Claude Code locally.
-2. Add a GitHub repository secret named `ANTHROPIC_API_KEY`.
-3. Comment `@claude` on an issue or PR.
+Role is chosen automatically:
 
-Suggested comments:
+- Comment on an **issue with `agent:needs-planning`** → **planner** (splits it into
+  `agent:ready-for-coding` sub-issues, then moves the parent to Ready for Coding).
+- Comment on an **issue without `agent:needs-planning`** → **coder** (implements,
+  opens a PR with `Closes #N`, moves In Progress → Pr Open).
+- Comment on a **pull request** → **reviewer** (submits a formal `gh pr review`,
+  then routes the linked issue to Human Approval or Changes Requested from the
+  verdict).
+
+### How the board moves
+
+All column + label transitions go through one shared composite action,
+`.github/actions/board-sync`, which writes the GitHub Projects (v2) Status field
+and the `agent:*` labels using `PROJECT_PAT`. `.github/workflows/project-automation.yml`
+covers the human/event-driven transitions (PR opened/merged, review submitted by
+a human, issue closed/reopened, manual label changes). Both use `PROJECT_PAT`
+because the default `GITHUB_TOKEN` cannot write user-level Projects V2.
+
+### One-time setup (repository secrets)
+
+| Secret | Used by | Notes |
+| --- | --- | --- |
+| `PROJECT_PAT` | board-sync + project-automation | Classic PAT with `project` + `repo` scope. Required for any board movement. |
+| `OPENROUTER_API_KEY` | opencode | Also powers Claude/GPT models via the model override below. |
+| `CLAUDE_CODE_OAUTH_TOKEN` | Claude | From `claude setup-token` (Claude Pro/Max). Uses your subscription instead of metered API. Preferred over the API key if both are set. |
+| `ANTHROPIC_API_KEY` | Claude | Metered Anthropic API. Only needed if you are not using the OAuth token. |
+| `OPENAI_API_KEY` | Codex | Metered OpenAI API. `gh secret set OPENAI_API_KEY`. |
+
+Add only the keys for the agents you intend to use. A runner whose key is missing
+will fail its agent step; the others are unaffected.
+
+### Cost & billing
+
+These runners call hosted models from CI, which is **metered usage billed
+separately from any Claude.ai or ChatGPT subscription**:
+
+- **Anthropic API key** and **OpenAI API key** — pay-per-token via the provider
+  API. A Claude Pro/Max or ChatGPT Plus/Pro subscription does **not** cover API calls.
+- **Claude exception** — set `CLAUDE_CODE_OAUTH_TOKEN` (from `claude setup-token`,
+  requires Claude Pro/Max) instead of `ANTHROPIC_API_KEY`. The Claude runner then
+  draws on your subscription's included usage rather than billing the API.
+- **OpenRouter** — prepaid, metered per token (often a small markup over provider
+  rates) in exchange for one key across many models.
+- **GitHub Actions minutes** are also metered (free for public repos; included
+  minutes for private).
+
+### Running a different model (OpenRouter)
+
+The opencode runner takes an optional per-comment model override so you can drive
+**Claude or GPT/Codex models through your existing `OPENROUTER_API_KEY`** with no
+new keys:
 
 ```text
-@claude implement this issue using AGENTS.md. Open a PR and do not merge.
+/oc                                          # default: z-ai/glm-5.2
+/oc model=anthropic/claude-sonnet-4.6        # Claude via OpenRouter
+/oc model=openai/gpt-4.1                      # GPT/Codex-class via OpenRouter
 ```
 
-```text
-@claude review this PR against AGENTS.md and the linked issue. Focus on correctness, security, trading-safety, and high-impact bugs only.
-```
+Use any slug from the OpenRouter model catalog. This is the no-extra-key way to
+"run Claude/Codex"; the native `claude-code.yml` / `codex.yml` runners are the
+full-capability path when you have provider keys (or a Claude subscription token).
 
-Keep Claude mostly manual-triggered. Automatic review on every PR can become expensive.
-
-## Codex integration
-
-Codex should use `AGENTS.md` as repo guidance.
-
-Recommended use:
-
-```text
-@codex review
-```
-
-Use Codex mainly for PR review or focused issue execution through GitHub's agent UI. Keep it diff-based when possible.
+Keep agents mostly manual-triggered (one comment per task). Automatic review on
+every PR can become expensive.
 
 ## Token-budget rules
 
