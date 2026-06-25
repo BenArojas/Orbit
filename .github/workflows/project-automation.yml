@@ -8,11 +8,12 @@ on:
   pull_request_review:
     types: [submitted]
 
+# The default GITHUB_TOKEN cannot write to user-level Projects V2, and there is
+# no "projects" permission scope for it (an invalid scope makes the whole
+# workflow fail at startup validation). All board writes use PROJECT_PAT — a
+# classic PAT with `project` + `repo` scope stored as a repo secret.
 permissions:
-  issues: read
-  pull-requests: read
   contents: read
-  projects: write
 
 jobs:
   sync-status:
@@ -23,7 +24,17 @@ jobs:
     steps:
       - name: Sync issue/PR status to project board
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.PROJECT_PAT }}
+          OWNER: ${{ github.repository_owner }}
+          # Event values pass through env (never interpolated directly into the
+          # script) to avoid shell injection from untrusted issue/PR text.
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_ACTION: ${{ github.event.action }}
+          LABEL_NAME: ${{ github.event.label.name }}
+          EVT_ISSUE_NUMBER: ${{ github.event.issue.number }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+          PR_MERGED: ${{ github.event.pull_request.merged }}
+          REVIEW_STATE: ${{ github.event.review.state }}
         run: |
           set -euo pipefail
 
@@ -42,12 +53,11 @@ jobs:
           ISSUE_NUMBER=""
           TARGET_STATUS=""
 
-          if [ "${{ github.event_name }}" = "issues" ]; then
-            ISSUE_NUMBER="${{ github.event.issue.number }}"
+          if [ "$EVENT_NAME" = "issues" ]; then
+            ISSUE_NUMBER="$EVT_ISSUE_NUMBER"
 
-            if [ "${{ github.event.action }}" = "labeled" ]; then
-              LABEL="${{ github.event.label.name }}"
-              case "$LABEL" in
+            if [ "$EVENT_ACTION" = "labeled" ]; then
+              case "$LABEL_NAME" in
                 agent:needs-planning)      TARGET_STATUS="$NEEDS_PLANNING" ;;
                 agent:ready-for-coding)    TARGET_STATUS="$READY_FOR_CODING" ;;
                 agent:in-progress)         TARGET_STATUS="$IN_PROGRESS" ;;
@@ -55,38 +65,31 @@ jobs:
                 agent:needs-review)        TARGET_STATUS="$IN_REVIEW" ;;
                 agent:changes-requested)   TARGET_STATUS="$CHANGES_REQUESTED" ;;
                 human:needs-approval)      TARGET_STATUS="$HUMAN_APPROVAL" ;;
-                *) echo "Label '$LABEL' has no status mapping; skipping." ; exit 0 ;;
+                *) echo "Label '$LABEL_NAME' has no status mapping; skipping." ; exit 0 ;;
               esac
-            elif [ "${{ github.event.action }}" = "closed" ]; then
+            elif [ "$EVENT_ACTION" = "closed" ]; then
               TARGET_STATUS="$DONE"
-            elif [ "${{ github.event.action }}" = "reopened" ]; then
+            elif [ "$EVENT_ACTION" = "reopened" ]; then
               TARGET_STATUS="$BACKLOG"
             fi
 
-          elif [ "${{ github.event_name }}" = "pull_request" ]; then
-            PR_ACTION="${{ github.event.action }}"
-            PR_BODY="${{ github.event.pull_request.body }}"
-            PR_MERGED="${{ github.event.pull_request.merged }}"
-
+          elif [ "$EVENT_NAME" = "pull_request" ]; then
             # Extract "Closes #N" from PR body
-            ISSUE_NUMBER=$(echo "$PR_BODY" | grep -oiE 'closes #([0-9]+)' | grep -oE '[0-9]+' | head -1 || true)
+            ISSUE_NUMBER=$(printf '%s' "$PR_BODY" | grep -oiE 'closes #([0-9]+)' | grep -oE '[0-9]+' | head -1 || true)
 
             if [ -z "$ISSUE_NUMBER" ]; then
               echo "No linked issue found in PR body; skipping."
               exit 0
             fi
 
-            if [ "$PR_ACTION" = "opened" ]; then
+            if [ "$EVENT_ACTION" = "opened" ]; then
               TARGET_STATUS="$PR_OPEN"
-            elif [ "$PR_ACTION" = "closed" ] && [ "$PR_MERGED" = "true" ]; then
+            elif [ "$EVENT_ACTION" = "closed" ] && [ "$PR_MERGED" = "true" ]; then
               TARGET_STATUS="$DONE"
             fi
 
-          elif [ "${{ github.event_name }}" = "pull_request_review" ]; then
-            REVIEW_STATE="${{ github.event.review.state }}"
-            PR_BODY="${{ github.event.pull_request.body }}"
-
-            ISSUE_NUMBER=$(echo "$PR_BODY" | grep -oiE 'closes #([0-9]+)' | grep -oE '[0-9]+' | head -1 || true)
+          elif [ "$EVENT_NAME" = "pull_request_review" ]; then
+            ISSUE_NUMBER=$(printf '%s' "$PR_BODY" | grep -oiE 'closes #([0-9]+)' | grep -oE '[0-9]+' | head -1 || true)
 
             if [ -z "$ISSUE_NUMBER" ]; then
               echo "No linked issue found in PR body; skipping."
@@ -109,7 +112,7 @@ jobs:
 
           # ── Find the project item ID for this issue ────────────────
           ITEM_QUERY='
-          query($org: String!, $num: Int!) {
+          query($org: String!) {
             user(login: $org) {
               projectV2(number: 1) {
                 items(first: 100) {
@@ -124,7 +127,7 @@ jobs:
             }
           }'
 
-          ITEM_ID=$(gh api graphql -f query="$ITEM_QUERY" -f org="BenArojas" \
+          ITEM_ID=$(gh api graphql -f query="$ITEM_QUERY" -f org="$OWNER" \
             --jq ".data.user.projectV2.items.nodes[] | select(.content.number == $ISSUE_NUMBER) | .id" 2>/dev/null || true)
 
           if [ -z "$ITEM_ID" ]; then
