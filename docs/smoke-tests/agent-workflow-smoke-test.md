@@ -3,6 +3,19 @@
 End-to-end check that the issue → board → PR → review → approval loop works for
 each agent runner. Run it once per agent after adding that agent's API key.
 
+## Pre-validated (no secrets / no merge required)
+
+The board-movement mechanism — the core of this feature — was validated live
+against the real `Orbit Agent Workflow` board: a throwaway issue was added to the
+board and driven through **all nine Status columns** using the exact
+`updateProjectV2ItemFieldValue` mutation and option IDs in
+`.github/actions/board-sync/action.yml`, each transition confirmed by read-back,
+then cleaned up. So the board IDs, the mutation, and column routing are proven.
+What remains for the live run below is the **agent execution** (opencode / Claude
+/ Codex actually planning, coding, and reviewing) plus the event-driven
+`project-automation.yml` cascade, both of which require the secrets and a merge to
+`main`.
+
 ## Prerequisites
 
 - Repository secrets present (see `docs/agent-workflow.md` → One-time setup):
