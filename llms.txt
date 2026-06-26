@@ -34,6 +34,10 @@ Cross-module identity uses `conid` (IBKR contract id); ticker text is display me
 - [OpenAPI spec](http://localhost:8000/openapi.json): full machine-readable API contract.
 - [Interactive docs](http://localhost:8000/docs): Swagger UI for the same contract.
 - [Agent manifest](http://localhost:8000/.well-known/agent.json): capabilities + safety policy as JSON.
+- **MCP server (read-only):** `http://localhost:8000/mcp-server/mcp` — streamable-http MCP
+  exposing decision-support reads only (no order placement, no mutations). Loopback-only;
+  available while the Orbit app is running. Wiring + the `MCP_EXPOSE_PORTFOLIO` flag are in
+  [docs/agent-workflow.md](docs/agent-workflow.md#mcp-server-read-only-for-runtime-agents).
 
 ## Canonical docs (this repo)
 
