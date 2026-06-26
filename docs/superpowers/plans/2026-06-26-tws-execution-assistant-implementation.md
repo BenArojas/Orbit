@@ -136,15 +136,27 @@ exercised by that behavior.
 - Always-on/system-tray execution.
 - Packaging, installer, and production TWS settings.
 
-## 9. Human approval questions
+## 9. Human approval questions and decisions
 
-1. Approve Slice 1 as process-local session mode plus frontend/backend gating, with no DB persistence?
-2. Approve the public mode contract shape: `GET /orbit/session/mode`, optional minimal switch endpoint, and `none | client_portal | tws`?
-3. Confirm the fourth module label stays `TWS Execution Assistant` for first UI work.
-4. Should Slice 1 add one public-boundary gating test, or use typecheck/manual smoke only?
-5. Before Slice 4, choose `ib_async` or official `ibapi`, and confirm whether v1 wording allows IB Gateway as well as TWS.
-6. Before reconciliation work, decide whether client ID `0` is forbidden in v1 or allowed only for read-only external-order detection.
-7. Before plan draft work, approve the first persistence schema and whether `PROJECT_PLAN.md` should track the mission as active.
+All questions below were answered by the human before the relevant slice was coded.
+
+| # | Question | Decision |
+|---|---|---|
+| 1 | Approve Slice 1 as process-local session mode plus frontend/backend gating, with no DB persistence? | **Approved.** Session mode is derived from IBKR auth state + explicit `_tws_override` boolean; no DB row. |
+| 2 | Approve the public mode contract shape: `GET /orbit/session/mode`, optional minimal switch endpoint, and `none \| client_portal \| tws`? | **Approved.** `BrokerSessionSwitchTarget = "client_portal" \| "tws"` (cannot POST `"none"`). |
+| 3 | Confirm the fourth module label stays `TWS Execution Assistant` for first UI work. | **Confirmed.** |
+| 4 | Should Slice 1 add one public-boundary gating test, or use typecheck/manual smoke only? | **One public-boundary test added** (`test_orbit_session_router.py`, 10 cases). |
+| 5 | Before Slice 4, choose `ib_async` or official `ibapi`, and confirm whether v1 wording allows IB Gateway as well as TWS. | **`ib_async` (installed as `ib-async==2.1.0`).** Label is "TWS / IB Gateway". Default ports: 4002 (Gateway) and 7497 (TWS), both configurable. |
+| 6 | Before reconciliation work, decide whether client ID `0` is forbidden in v1 or allowed only for read-only external-order detection. | **Client ID 0 is allowed for read-only external-order detection.** Adapter uses `reqAllOpenOrdersAsync()` to see all orders. `is_unmanaged = order.clientId != self._client_id`. No guard required on the connect form. |
+| 7 | Before plan draft work, approve the first persistence schema and whether `PROJECT_PLAN.md` should track the mission as active. | **Process-local (in-memory dict), no SQLite, no migration.** Drafts are lost on backend restart by design — the "Save Draft (session only)" UI label makes this explicit. `PROJECT_PLAN.md` updated. |
+
+### Additional decisions made during review (Slices 5–6)
+
+**InstrumentIdentityService routing bypass (Slice 6):**
+`get_sec_type()` in `TwsBrokerAdapter` calls `reqContractDetailsAsync` directly rather than routing through `InstrumentIdentityService`. This is the correct routing: `InstrumentIdentityService` is a Client Portal / SQLite cache pattern that does not apply in TWS mode. Approved as the canonical TWS-context instrument lookup — not a spike shortcut.
+
+**Paper/live account detection (Slice 4–6, deferred):**
+No paper/live account-type check exists on connect. Paper is the default port convention only, not enforced. This is **explicitly deferred to the Slice 7 HITL gate**, which must happen before any order-submission path exists. The gap is noted in `tws_broker_adapter.py:connect()`. No order-placement code exists today, so current live-read risk is accepted.
 
 ## 10. Planner self-review: what was kept small, what was deliberately not planned yet
 
