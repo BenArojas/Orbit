@@ -1,0 +1,64 @@
+from __future__ import annotations
+
+import uuid
+from datetime import datetime, timezone
+from typing import TYPE_CHECKING
+
+from models.execution_plan import ExecutionPlan, ExecutionPlanDraftRequest
+
+if TYPE_CHECKING:
+    from services.tws_broker_adapter import TwsBrokerAdapter
+
+
+class ExecutionPlanService:
+    """Process-local store for execution plan drafts. Lost on backend restart by design."""
+
+    def __init__(self) -> None:
+        self._plans: dict[str, ExecutionPlan] = {}
+
+    def create_draft(self, req: ExecutionPlanDraftRequest) -> ExecutionPlan:
+        plan = ExecutionPlan(
+            plan_id=str(uuid.uuid4()),
+            conid=req.conid,
+            symbol=req.symbol,
+            side=req.side,
+            quantity=req.quantity,
+            order_type=req.order_type,
+            limit_price=req.limit_price,
+            status="draft",
+            validation_errors=[],
+            created_at=datetime.now(timezone.utc),
+        )
+        self._plans[plan.plan_id] = plan
+        return plan
+
+    def get(self, plan_id: str) -> ExecutionPlan | None:
+        return self._plans.get(plan_id)
+
+    async def validate(self, plan: ExecutionPlan, adapter: TwsBrokerAdapter) -> ExecutionPlan:
+        errors: list[str] = []
+
+        if plan.quantity <= 0:
+            errors.append("Quantity must be positive.")
+        if plan.order_type == "LMT" and not (plan.limit_price and plan.limit_price > 0):
+            errors.append("Limit orders require a positive limit price.")
+
+        if not errors:
+            sec_type = await adapter.get_sec_type(plan.conid)
+            if sec_type is None:
+                errors.append(
+                    f"Instrument {plan.conid} could not be verified — "
+                    "check that TWS is connected and the conid is valid."
+                )
+            elif sec_type != "STK":
+                errors.append(
+                    f"Only equities are supported in v1 "
+                    f"(conid {plan.conid} is {sec_type})."
+                )
+
+        updated = plan.model_copy(update={
+            "status": "invalid" if errors else "valid",
+            "validation_errors": errors,
+        })
+        self._plans[plan.plan_id] = updated
+        return updated

@@ -10,6 +10,7 @@ without knowing how they were created.
 from fastapi import Depends, HTTPException, Request, status
 
 from services.broker_session import BrokerSessionService
+from services.execution_plan import ExecutionPlanService
 from services.tws_broker_adapter import TwsBrokerAdapter
 from services.db import DatabaseService
 from services.ibkr import IBKRService
@@ -104,6 +105,11 @@ def get_broker_session(request: Request) -> BrokerSessionService:
 def get_tws_adapter(request: Request) -> TwsBrokerAdapter:
     """Get the TWS broker adapter singleton stashed on app.state during lifespan."""
     return request.app.state.tws_adapter
+
+
+def get_execution_plan_service(request: Request) -> ExecutionPlanService:
+    """Get the execution plan service singleton stashed on app.state during lifespan."""
+    return request.app.state.execution_plan_service
 
 
 async def require_cp_mode(

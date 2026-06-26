@@ -38,6 +38,33 @@ export interface TwsStatusResponse {
   reconciliation_summary: ReconciliationSummary;
 }
 
+export interface PositionSnapshot {
+  conid: number;
+  symbol: string;
+  position: number;
+  avg_cost: number;
+}
+
+export interface OrderSnapshot {
+  order_id: number;
+  conid: number;
+  symbol: string;
+  side: string;
+  quantity: number;
+  order_type: string;
+  lmt_price: number | null;
+  status: string;
+  is_unmanaged: boolean;
+}
+
+export interface ReconciliationSnapshot {
+  position_count: number;
+  open_order_count: number;
+  unmanaged_order_count: number;
+  positions: PositionSnapshot[];
+  open_orders: OrderSnapshot[];
+}
+
 export interface TwsConnectRequest {
   host: string;
   port: number;
@@ -50,6 +77,32 @@ export const TWS_CONNECT_DEFAULTS: TwsConnectRequest = {
   client_id: 1,
 };
 
+export type ExecutionPlanStatus = "draft" | "valid" | "invalid";
+export type ExecutionPlanSide = "BUY" | "SELL";
+export type ExecutionPlanOrderType = "LMT" | "MKT";
+
+export interface ExecutionPlanDraftRequest {
+  conid: number;
+  symbol: string;
+  side: ExecutionPlanSide;
+  quantity: number;
+  order_type: ExecutionPlanOrderType;
+  limit_price: number | null;
+}
+
+export interface ExecutionPlan {
+  plan_id: string;
+  conid: number;
+  symbol: string;
+  side: ExecutionPlanSide;
+  quantity: number;
+  order_type: ExecutionPlanOrderType;
+  limit_price: number | null;
+  status: ExecutionPlanStatus;
+  validation_errors: string[];
+  created_at: string;
+}
+
 export const twsApi = {
   getMode: () =>
     sidecarRequest<BrokerSessionModeResponse>("GET", "/orbit/session/mode"),
@@ -61,4 +114,12 @@ export const twsApi = {
     sidecarRequest<TwsStatusResponse>("POST", "/execution-assistant/connect", req),
   disconnect: () =>
     sidecarRequest<TwsStatusResponse>("POST", "/execution-assistant/disconnect"),
+  getReconciliation: () =>
+    sidecarRequest<ReconciliationSnapshot>("GET", "/execution-assistant/reconciliation"),
+  createPlanDraft: (req: ExecutionPlanDraftRequest) =>
+    sidecarRequest<ExecutionPlan>("POST", "/execution-assistant/plans/draft", req),
+  validatePlan: (plan_id: string) =>
+    sidecarRequest<ExecutionPlan>("POST", `/execution-assistant/plans/${plan_id}/validate`),
+  getPlan: (plan_id: string) =>
+    sidecarRequest<ExecutionPlan>("GET", `/execution-assistant/plans/${plan_id}`),
 } as const;

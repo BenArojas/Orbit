@@ -30,6 +30,7 @@ from exceptions import (
     ScreenerError,
 )
 from services.broker_session import BrokerSessionService
+from services.execution_plan import ExecutionPlanService
 from services.tws_broker_adapter import TwsBrokerAdapter
 from services.db import DatabaseService
 from services.templates import seed_builtin_templates
@@ -94,6 +95,9 @@ async def lifespan(app: FastAPI):
     # TWS broker adapter — owns the ib_async IB connection; starts disconnected.
     tws_adapter = TwsBrokerAdapter()
     app.state.tws_adapter = tws_adapter
+
+    # Execution plan service — process-local draft store; lost on restart by design.
+    app.state.execution_plan_service = ExecutionPlanService()
 
     # Initialize SQLite database (Step 1.4)
     db = DatabaseService()

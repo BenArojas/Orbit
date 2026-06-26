@@ -25,3 +25,30 @@ class TwsStatusResponse(BaseModel):
     adapter_state: TwsAdapterState
     kill_switch_active: bool
     reconciliation_summary: ReconciliationSummary
+
+
+class PositionSnapshot(BaseModel):
+    conid: int
+    symbol: str
+    position: float
+    avg_cost: float
+
+
+class OrderSnapshot(BaseModel):
+    order_id: int
+    conid: int
+    symbol: str
+    side: str
+    quantity: float
+    order_type: str
+    lmt_price: float | None = None
+    status: str
+    is_unmanaged: bool
+
+
+class ReconciliationSnapshot(BaseModel):
+    position_count: int = 0
+    open_order_count: int = 0
+    unmanaged_order_count: int = 0
+    positions: list[PositionSnapshot] = []
+    open_orders: list[OrderSnapshot] = []
