@@ -204,9 +204,36 @@ async def lifespan(app: FastAPI):
 
 # ── FastAPI app ──────────────────────────────────────────────
 
+APP_DESCRIPTION = """
+Orbit is a local-first trading **decision-support** backend.
+
+⚠️ **Safety:** Orbit is decision support, not an autonomous trading bot. It never
+places or executes orders on its own — every broker action requires explicit
+human confirmation. All broker, AI, and persistence access flows through this
+backend. Machine-readable policy: `GET /.well-known/agent.json`.
+
+**Modules**
+- **Parallax** — technical analysis, screening, watchlists, alerts.
+- **MoonMarket** — portfolio, account, options, human-confirmed order workflows.
+- **Inflect** — trading journal and trade review.
+
+Use `conid` across module boundaries; ticker text is display metadata only.
+Agent briefing: see `llms.txt` in the repository root.
+"""
+
 app = FastAPI(
     title="Orbit",
     version=APP_VERSION,
+    summary="Local-first trading decision-support backend. Never trades autonomously.",
+    description=APP_DESCRIPTION,
+    contact={"name": "Orbit", "url": "https://github.com/BenArojas/orbit"},
+    license_info={"name": "See repository LICENSE"},
+    openapi_tags=[
+        {
+            "name": "agent",
+            "description": "Discovery + capability/safety manifest for agents connecting to the backend.",
+        }
+    ],
     lifespan=lifespan,
 )
 
@@ -413,6 +440,31 @@ app.include_router(options_router)
 
 from routers.inflect import router as inflect_router
 app.include_router(inflect_router)
+
+from routers.agent import router as agent_router
+app.include_router(agent_router)
+
+# Routers exposed for in-process reuse (the read-only MCP server + its tests).
+ALL_ROUTERS = [
+    auth_router, indicators_router, market_router, sectors_router, watchlist_router,
+    ws_router, triggers_router, ai_router, fibonacci_router, screener_router,
+    gateway_router, watchlist_config_router, settings_router, pulse_config_router,
+    health_router, instruments_router, drawings_router, moonmarket_router,
+    orders_router, trading_safety_router, options_router, inflect_router, agent_router,
+]
+
+
+# ── Read-only MCP server ─────────────────────────────────────
+# Mounted in-process on the existing sidecar at /mcp-server/mcp (streamable-http).
+# Strictly read-only (see mcp_server.py / test_mcp_readonly.py). The MCP ASGI app
+# has its own lifespan, so it MUST be merged with Orbit's lifespan or one of the
+# two startup paths is silently skipped.
+from fastmcp.utilities.lifespan import combine_lifespans
+from mcp_server import build_mcp
+
+_mcp_app = build_mcp(app).http_app(path="/mcp")
+app.router.lifespan_context = combine_lifespans(lifespan, _mcp_app.lifespan)
+app.mount("/mcp-server", _mcp_app)
 
 
 # ── Health endpoint ──────────────────────────────────────────

@@ -20,16 +20,29 @@ pandas_ta_datas, pandas_ta_binaries, pandas_ta_hiddenimports = collect_all("pand
 # pandas optional extensions / data files
 pandas_datas, pandas_binaries, pandas_hiddenimports = collect_all("pandas")
 
+# FastMCP (read-only MCP server) resolves its streamable-http transport and its
+# OpenAPI/route parsing dynamically, so collect each package whole — a missing
+# submodule surfaces only as ModuleNotFoundError in the packaged sidecar.
+mcp_datas, mcp_binaries, mcp_hiddenimports = [], [], []
+for _mcp_pkg in ("fastmcp", "mcp", "sse_starlette", "openapi_pydantic",
+                 "jsonschema_path", "pydantic_settings"):
+    _d, _b, _h = collect_all(_mcp_pkg)
+    mcp_datas += _d
+    mcp_binaries += _b
+    mcp_hiddenimports += _h
+
 a = Analysis(
     ["run.py"],
     pathex=["."],
     binaries=[
         *pandas_ta_binaries,
         *pandas_binaries,
+        *mcp_binaries,
     ],
     datas=[
         *pandas_ta_datas,
         *pandas_datas,
+        *mcp_datas,
     ],
     hiddenimports=[
         # ── Uvicorn (most submodules resolved via string at runtime) ──────
@@ -50,6 +63,7 @@ a = Analysis(
         "uvicorn.lifespan.off",
         # ── Application modules ───────────────────────────────────────────
         "main",
+        "mcp_server",
         "config",
         "constants",
         "state",
