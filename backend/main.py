@@ -29,6 +29,7 @@ from exceptions import (
     ParallaxError,
     ScreenerError,
 )
+from services.broker_session import BrokerSessionService
 from services.db import DatabaseService
 from services.templates import seed_builtin_templates
 from services.gateway import GatewayLifecycle
@@ -84,6 +85,10 @@ async def lifespan(app: FastAPI):
     # Create the IBKR service and stash it on app.state
     ibkr = IBKRService()
     app.state.ibkr = ibkr
+
+    # Broker session — process-local mode state (none/client_portal/tws).
+    broker_session = BrokerSessionService(ibkr)
+    app.state.broker_session = broker_session
 
     # Initialize SQLite database (Step 1.4)
     db = DatabaseService()
@@ -444,6 +449,12 @@ app.include_router(inflect_router)
 from routers.agent import router as agent_router
 app.include_router(agent_router)
 
+from routers.orbit_session import router as orbit_session_router
+app.include_router(orbit_session_router)
+
+from routers.execution_assistant import router as execution_assistant_router
+app.include_router(execution_assistant_router)
+
 # Routers exposed for in-process reuse (the read-only MCP server + its tests).
 ALL_ROUTERS = [
     auth_router, indicators_router, market_router, sectors_router, watchlist_router,
@@ -451,6 +462,7 @@ ALL_ROUTERS = [
     gateway_router, watchlist_config_router, settings_router, pulse_config_router,
     health_router, instruments_router, drawings_router, moonmarket_router,
     orders_router, trading_safety_router, options_router, inflect_router, agent_router,
+    orbit_session_router, execution_assistant_router,
 ]
 
 

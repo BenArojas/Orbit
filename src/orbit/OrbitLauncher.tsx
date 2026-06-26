@@ -1,20 +1,28 @@
 /**
  * OrbitLauncher — route "/". Combined auth + launcher.
  *
- * Slim top bar (ORBIT wordmark + GatewayStatusPill) over three hero app tiles.
- * Tiles gray/disabled until IBKR is authenticated, then colorize and navigate
- * into their modules. The IBKR connect flow lives in the pill's popover
- * (auto-opens until authenticated).
+ * Slim top bar (ORBIT wordmark + GatewayStatusPill) over four hero app tiles.
+ * Tile enable/disable is driven by broker session mode from BrokerSessionContext:
+ *   none           → all tiles disabled
+ *   client_portal  → Parallax, MoonMarket, Inflect enabled; TWS Assistant disabled
+ *   tws            → TWS Assistant enabled; Client Portal modules disabled
  */
 import { useNavigate } from "react-router-dom";
-import { useGatewayContext } from "@/context/GatewayContext";
+import { useBrokerSession } from "@/context/BrokerSessionContext";
 import { orbitModules } from "./moduleEntry";
 import { AppIcon } from "./AppIcon";
 import { GatewayStatusPill } from "./GatewayStatusPill";
 
 export function OrbitLauncher() {
   const navigate = useNavigate();
-  const { isAuthenticated } = useGatewayContext();
+  const { mode, isModuleAvailable } = useBrokerSession();
+
+  const launcherHint =
+    mode === "none"
+      ? "Connect IBKR to open your apps."
+      : mode === "tws"
+        ? "TWS mode active — Client Portal modules are disabled."
+        : null;
 
   return (
     <div className="flex h-screen flex-col bg-[var(--bg-1)]">
@@ -35,15 +43,13 @@ export function OrbitLauncher() {
               label={module.label}
               icon={module.icon}
               description={module.description}
-              enabled={isAuthenticated}
+              enabled={isModuleAvailable(module.id)}
               onOpen={() => navigate(module.path)}
             />
           ))}
         </div>
-        {!isAuthenticated && (
-          <p className="text-[11px] text-[var(--text-3)]">
-            Connect IBKR to open your apps.
-          </p>
+        {launcherHint && (
+          <p className="text-[11px] text-[var(--text-3)]">{launcherHint}</p>
         )}
       </main>
     </div>

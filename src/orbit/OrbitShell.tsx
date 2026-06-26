@@ -16,6 +16,7 @@ export const orbitRoutes: RouteObject[] = [
   { path: "/parallax/*", element: <OrbitModuleEntry moduleId="parallax" /> },
   { path: "/moonmarket/*", element: <OrbitModuleEntry moduleId="moonmarket" /> },
   { path: "/inflect/*", element: <OrbitModuleEntry moduleId="inflect" /> },
+  { path: "/tws/*", element: <OrbitModuleEntry moduleId="tws-execution-assistant" /> },
 ];
 
 export const orbitRouter = createBrowserRouter(orbitRoutes);

@@ -12,6 +12,7 @@ import { Toaster } from "@/components/ui/Toaster";
 import { OrbitAccountProvider } from "@/orbit/accountContext";
 import { OrderTicket } from "@/orbit/OrderTicket";
 import { useSettingsStore } from "@/store";
+import { BrokerSessionProvider } from "@/context/BrokerSessionContext";
 
 function OrbitSettingsEffects() {
   const loadSettings = useSettingsStore((state) => state.loadSettings);
@@ -27,14 +28,16 @@ export function OrbitProviders({ children }: { children: ReactNode }) {
   return (
     <QueryClientProvider client={queryClient}>
       <GatewayProvider>
-        <TooltipProvider>
-          <OrbitAccountProvider>
-            <OrbitSettingsEffects />
-            {children}
-            <OrderTicket />
-            <Toaster />
-          </OrbitAccountProvider>
-        </TooltipProvider>
+        <BrokerSessionProvider>
+          <TooltipProvider>
+            <OrbitAccountProvider>
+              <OrbitSettingsEffects />
+              {children}
+              <OrderTicket />
+              <Toaster />
+            </OrbitAccountProvider>
+          </TooltipProvider>
+        </BrokerSessionProvider>
       </GatewayProvider>
     </QueryClientProvider>
   );

@@ -9,6 +9,8 @@ without knowing how they were created.
 
 from fastapi import Depends, HTTPException, Request, status
 
+from services.broker_session import BrokerSessionService
+from services.tws_status import TwsStatusService
 from services.db import DatabaseService
 from services.ibkr import IBKRService
 from services.screener import ScreenerService
@@ -92,6 +94,18 @@ def get_gateway(request: Request) -> GatewayLifecycle:
 def get_scanner(request: Request) -> ScannerService:
     """Get the background scanner singleton stashed on app.state during lifespan."""
     return request.app.state.scanner
+
+
+def get_broker_session(request: Request) -> BrokerSessionService:
+    """Get the broker session service singleton stashed on app.state during lifespan."""
+    return request.app.state.broker_session
+
+
+def get_tws_status(
+    session: BrokerSessionService = Depends(get_broker_session),
+) -> TwsStatusService:
+    """Get a per-request TWS status service wrapping the broker session singleton."""
+    return TwsStatusService(session)
 
 
 async def require_ibkr_auth(ibkr: IBKRService = Depends(get_ibkr)) -> IBKRService:
