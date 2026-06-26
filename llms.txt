@@ -1,0 +1,52 @@
+# Orbit
+
+> Orbit is a local-first desktop trading decision-support platform. It helps a
+> human analyze markets, manage a portfolio, and journal trades. It is NOT an
+> autonomous trading bot and never places or executes orders on its own — every
+> broker action requires explicit human confirmation.
+
+Orbit runs entirely on the user's machine (Tauri desktop shell + a local FastAPI
+sidecar). There is no public website or hosted API for external agents to crawl
+or transact with. Agents interact with Orbit in two ways:
+
+1. **Coding agents** read this repo (see `AGENTS.md`) to plan and implement work.
+2. **Runtime agents** (the in-app AI, or any local MCP/HTTP client) call the
+   local FastAPI backend at `http://localhost:8000`.
+
+## Safety policy (non-negotiable)
+
+- Orbit is decision support, never an autonomous trading bot.
+- No order is placed or executed without explicit human confirmation.
+- All broker, AI-provider, and persistence access flows through the FastAPI backend.
+- Cloud AI is opt-in only; secrets live in the OS keychain, never in SQLite or logs.
+- Machine-readable version of this policy: `GET /.well-known/agent.json` on the running backend.
+
+## Modules
+
+- **Parallax**: technical analysis, screening, watchlists, and alerts.
+- **MoonMarket**: portfolio, account, options, and order workflows (human-confirmed).
+- **Inflect**: trading journal and trade review.
+
+Cross-module identity uses `conid` (IBKR contract id); ticker text is display metadata only.
+
+## Runtime interfaces (live backend)
+
+- [OpenAPI spec](http://localhost:8000/openapi.json): full machine-readable API contract.
+- [Interactive docs](http://localhost:8000/docs): Swagger UI for the same contract.
+- [Agent manifest](http://localhost:8000/.well-known/agent.json): capabilities + safety policy as JSON.
+
+## Canonical docs (this repo)
+
+- [Agent instructions](AGENTS.md): rules, workflow, and human-approval gates for agents.
+- [Backend architecture](docs/architecture/backend.md)
+- [Frontend architecture](docs/architecture/frontend.md)
+- [Module ownership & trading safety](docs/architecture/modules.md)
+- [Testing policy](docs/testing.md)
+- [IBKR pacing & cold start](docs/ibkr-pacing.md)
+- [Roadmap & deferred work](PROJECT_PLAN.md)
+- [Agent workflow setup](docs/agent-workflow.md)
+
+## Stack
+
+Tauri v2, React 19 / TypeScript, Tailwind / shadcn, FastAPI / Python 3.12,
+Polars (pandas only for the pandas-ta bridge), SQLite, IBKR Client Portal, Ollama.
