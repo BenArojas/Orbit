@@ -444,6 +444,15 @@ app.include_router(inflect_router)
 from routers.agent import router as agent_router
 app.include_router(agent_router)
 
+# Routers exposed for in-process reuse (the read-only MCP server + its tests).
+ALL_ROUTERS = [
+    auth_router, indicators_router, market_router, sectors_router, watchlist_router,
+    ws_router, triggers_router, ai_router, fibonacci_router, screener_router,
+    gateway_router, watchlist_config_router, settings_router, pulse_config_router,
+    health_router, instruments_router, drawings_router, moonmarket_router,
+    orders_router, trading_safety_router, options_router, inflect_router, agent_router,
+]
+
 
 # ── Health endpoint ──────────────────────────────────────────
 
