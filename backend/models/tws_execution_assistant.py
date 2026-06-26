@@ -4,6 +4,12 @@ from pydantic import BaseModel
 
 from models.broker_session import BrokerSessionMode
 
+
+class TwsConnectRequest(BaseModel):
+    host: str = "127.0.0.1"
+    port: int = 4002  # IB Gateway paper default; TWS paper is 7497
+    client_id: int = 1
+
 TwsAdapterState = Literal["not_initialized", "connecting", "connected", "disconnected", "error"]
 
 

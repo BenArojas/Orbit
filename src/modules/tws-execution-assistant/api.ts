@@ -38,6 +38,18 @@ export interface TwsStatusResponse {
   reconciliation_summary: ReconciliationSummary;
 }
 
+export interface TwsConnectRequest {
+  host: string;
+  port: number;
+  client_id: number;
+}
+
+export const TWS_CONNECT_DEFAULTS: TwsConnectRequest = {
+  host: "127.0.0.1",
+  port: 4002, // IB Gateway paper; TWS paper is 7497
+  client_id: 1,
+};
+
 export const twsApi = {
   getMode: () =>
     sidecarRequest<BrokerSessionModeResponse>("GET", "/orbit/session/mode"),
@@ -45,4 +57,8 @@ export const twsApi = {
     sidecarRequest<BrokerSessionModeResponse>("POST", "/orbit/session/mode", { target }),
   getStatus: () =>
     sidecarRequest<TwsStatusResponse>("GET", "/execution-assistant/status"),
+  connect: (req: TwsConnectRequest) =>
+    sidecarRequest<TwsStatusResponse>("POST", "/execution-assistant/connect", req),
+  disconnect: () =>
+    sidecarRequest<TwsStatusResponse>("POST", "/execution-assistant/disconnect"),
 } as const;

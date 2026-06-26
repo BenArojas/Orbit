@@ -30,6 +30,7 @@ from exceptions import (
     ScreenerError,
 )
 from services.broker_session import BrokerSessionService
+from services.tws_broker_adapter import TwsBrokerAdapter
 from services.db import DatabaseService
 from services.templates import seed_builtin_templates
 from services.gateway import GatewayLifecycle
@@ -89,6 +90,10 @@ async def lifespan(app: FastAPI):
     # Broker session — process-local mode state (none/client_portal/tws).
     broker_session = BrokerSessionService(ibkr)
     app.state.broker_session = broker_session
+
+    # TWS broker adapter — owns the ib_async IB connection; starts disconnected.
+    tws_adapter = TwsBrokerAdapter()
+    app.state.tws_adapter = tws_adapter
 
     # Initialize SQLite database (Step 1.4)
     db = DatabaseService()
@@ -196,6 +201,7 @@ async def lifespan(app: FastAPI):
 
     # Shutdown
     log.info("Orbit backend shutting down...")
+    await tws_adapter.disconnect()
     await inflect_backfill.stop()
     await inflect_sync.stop()
     await scanner.stop()
