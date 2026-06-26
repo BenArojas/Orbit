@@ -10,7 +10,7 @@ without knowing how they were created.
 from fastapi import Depends, HTTPException, Request, status
 
 from services.broker_session import BrokerSessionService
-from services.tws_status import TwsStatusService
+from services.tws_broker_adapter import TwsBrokerAdapter
 from services.db import DatabaseService
 from services.ibkr import IBKRService
 from services.screener import ScreenerService
@@ -101,11 +101,32 @@ def get_broker_session(request: Request) -> BrokerSessionService:
     return request.app.state.broker_session
 
 
-def get_tws_status(
+def get_tws_adapter(request: Request) -> TwsBrokerAdapter:
+    """Get the TWS broker adapter singleton stashed on app.state during lifespan."""
+    return request.app.state.tws_adapter
+
+
+async def require_cp_mode(
     session: BrokerSessionService = Depends(get_broker_session),
-) -> TwsStatusService:
-    """Get a per-request TWS status service wrapping the broker session singleton."""
-    return TwsStatusService(session)
+) -> None:
+    """Guard Client Portal mutation routes against execution while in TWS mode.
+
+    Raises 409 when broker session mode is 'tws' so CP mutations fail closed
+    before reaching the execution adapter. Preview and read routes must NOT
+    use this dependency — they remain available in any mode.
+    """
+    if session.current_mode() == "tws":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "error": "broker_session_mode_conflict",
+                "message": (
+                    "Client Portal order mutations are disabled while broker "
+                    "session is in TWS mode. Switch to Client Portal mode first."
+                ),
+                "current_mode": "tws",
+            },
+        )
 
 
 async def require_ibkr_auth(ibkr: IBKRService = Depends(get_ibkr)) -> IBKRService:

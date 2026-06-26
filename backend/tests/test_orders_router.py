@@ -1,11 +1,12 @@
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from deps import require_ibkr_auth
+from deps import get_broker_session, require_ibkr_auth
 from models import TradingSafetyConfirmation, TradingSafetyDecision
 from routers import orders as orders_router_module
 from routers.orders import router as orders_router
 from routers.trading_safety import router as trading_safety_router
+from services.broker_session import BrokerSessionService
 
 
 class _FakeState:
@@ -84,6 +85,9 @@ def _client(fake_ibkr: _FakeIbkr) -> TestClient:
     app.include_router(orders_router)
     app.include_router(trading_safety_router)
     app.dependency_overrides[require_ibkr_auth] = lambda: fake_ibkr
+    # Provide an authenticated client_portal session so require_cp_mode passes.
+    _session = BrokerSessionService(fake_ibkr)
+    app.dependency_overrides[get_broker_session] = lambda: _session
     return TestClient(app)
 
 
