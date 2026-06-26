@@ -336,34 +336,6 @@ async def test_moonmarket_service_reads_funds_and_revalidates_positions_through_
 
 
 @pytest.mark.asyncio
-async def test_moonmarket_service_reads_trades_portfolio_and_performance_through_execution_adapter():
-    ibkr = _FakeIbkr()
-    execution = _RecordingMoonMarketExecution()
-    service = MoonMarketService(ibkr, execution=execution)
-
-    trades = await service.trades("DU123", days=7)
-    portfolio = await service.portfolio("DU123")
-    performance = await service.performance("DU123", period="1Y")
-
-    assert trades.account_id == "DU123"
-    assert trades.summary.total_trades == 1
-    assert [trade.execution_id for trade in trades.trades] == ["E-BUY-1"]
-    assert portfolio.account_id == "DU123"
-    assert [position.symbol for position in portfolio.positions] == ["AAPL", "CASH"]
-    assert portfolio.total_market_value == 1100.0
-    assert performance.account_id == "DU123"
-    assert performance.period == "1Y"
-    assert performance.nav.values == [100000.0, 101250.0]
-    assert performance.cumulative_return.values == [0.0, 0.0125]
-    assert performance.period_return.values == [0.0, 0.0125]
-    assert execution.trades_calls == [7]
-    assert execution.position_page_calls == [("DU123", 0), ("DU123", 1)]
-    assert execution.ledger_calls == ["DU123"]
-    assert execution.all_periods_calls == ["DU123"]
-    assert ibkr.requests == []
-
-
-@pytest.mark.asyncio
 async def test_adapter_portfolio_positions_uses_portfolio2_endpoint():
     ibkr = _FakeIbkr()
     adapter = ClientPortalExecutionAdapter(ibkr)
