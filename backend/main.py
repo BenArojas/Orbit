@@ -454,6 +454,19 @@ ALL_ROUTERS = [
 ]
 
 
+# ── Read-only MCP server ─────────────────────────────────────
+# Mounted in-process on the existing sidecar at /mcp-server/mcp (streamable-http).
+# Strictly read-only (see mcp_server.py / test_mcp_readonly.py). The MCP ASGI app
+# has its own lifespan, so it MUST be merged with Orbit's lifespan or one of the
+# two startup paths is silently skipped.
+from fastmcp.utilities.lifespan import combine_lifespans
+from mcp_server import build_mcp
+
+_mcp_app = build_mcp(app).http_app(path="/mcp")
+app.router.lifespan_context = combine_lifespans(lifespan, _mcp_app.lifespan)
+app.mount("/mcp-server", _mcp_app)
+
+
 # ── Health endpoint ──────────────────────────────────────────
 
 @app.get("/health")
