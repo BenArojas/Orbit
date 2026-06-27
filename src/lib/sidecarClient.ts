@@ -48,7 +48,11 @@ export async function sidecarRequest<T>(
   const url = `${API_BASE}${path}`;
   const options: RequestInit = {
     method,
-    headers: { "Content-Type": "application/json" },
+    // Only attach Content-Type for requests that carry a body.
+    // Body-less GETs with Content-Type trigger an OPTIONS preflight on every
+    // poll cycle (e.g. /gateway/status, /orbit/session/mode), which floods
+    // the backend console with 400 noise.
+    headers: body !== undefined ? { "Content-Type": "application/json" } : {},
     signal,
   };
   if (body !== undefined) {

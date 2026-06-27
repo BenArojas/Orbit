@@ -55,6 +55,10 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
 )
+# httpx logs every upstream request at INFO, including the expected 401s from
+# IBKR /iserver/auth/status when the user is not logged into Client Portal.
+# Those are handled correctly by IBKRService; suppress the access-log spam.
+logging.getLogger("httpx").setLevel(logging.WARNING)
 log = logging.getLogger("parallax")
 
 # ── App version ──────────────────────────────────────────────
@@ -256,9 +260,10 @@ app = FastAPI(
 
 # ── CORS ─────────────────────────────────────────────────────
 
-# Allow both origins so the same backend binary works in dev (localhost:1420)
-# and in the packaged Tauri app (tauri://localhost).
-_cors_origins = list({FRONTEND_ORIGIN, TAURI_ORIGIN})
+# Allow all three origins so the same binary works in dev (localhost:1420 or
+# 127.0.0.1:1420) and in the packaged Tauri app (tauri://localhost).
+# Using a set to dedup in case FRONTEND_ORIGIN is already one of the aliases.
+_cors_origins = list({FRONTEND_ORIGIN, TAURI_ORIGIN, "http://127.0.0.1:1420"})
 
 app.add_middleware(
     CORSMiddleware,
