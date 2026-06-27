@@ -4,7 +4,7 @@ import { LockKeyhole, MoreVertical, Power, Search } from "lucide-react";
 import { BackToOrbitButton } from "@/components/ui/BackToOrbitButton";
 import { BROKER_SESSION_KEY } from "@/context/BrokerSessionContext";
 import { cn } from "@/lib/utils";
-import { twsApi, TWS_CONNECT_DEFAULTS, type ExecutionPlan, type ExecutionPlanDraftRequest, type ExecutionPlanOrderType, type ExecutionPlanSide, type OrderSnapshot, type TwsAdapterState, type TwsConnectRequest } from "./api";
+import { twsApi, TWS_CONNECT_DEFAULTS, type ExecutionPlan, type ExecutionPlanDraftRequest, type ExecutionPlanOrderType, type ExecutionPlanSide, type InstrumentResult, type OrderSnapshot, type TwsAdapterState, type TwsConnectRequest } from "./api";
 
 const STATUS_KEY = ["tws-status"];
 const RECON_KEY = ["tws-reconciliation"];
@@ -204,6 +204,7 @@ export function TwsExecutionAssistantModule() {
   const [form, setForm] = useState<TwsConnectRequest>(TWS_CONNECT_DEFAULTS);
   const [planForm, setPlanForm] = useState<ExecutionPlanDraftRequest>(PLAN_DEFAULTS);
   const [currentPlan, setCurrentPlan] = useState<ExecutionPlan | null>(null);
+  const [searchResults, setSearchResults] = useState<InstrumentResult[]>([]);
 
   const { data: status, isLoading } = useQuery({
     queryKey: STATUS_KEY,
@@ -249,6 +250,46 @@ export function TwsExecutionAssistantModule() {
     onSuccess: setCurrentPlan,
   });
 
+  const searchMutation = useMutation({
+    mutationFn: (symbol: string) => twsApi.searchInstruments(symbol),
+    onSuccess: (results) => {
+      setSearchResults(results);
+      const stk = results.filter(
+        (r) => r.sec_type === "STK" && r.exchange === "SMART" && r.currency === "USD",
+      );
+      if (stk.length === 1) {
+        setPlanForm((f) => ({ ...f, conid: stk[0].conid }));
+        setSearchResults([]);
+      }
+    },
+  });
+
+  const { data: quote } = useQuery({
+    queryKey: ["tws-quote", planForm.conid],
+    queryFn: () => twsApi.getQuote(planForm.conid),
+    enabled: status?.connected === true && planForm.conid > 0,
+    staleTime: 15000,
+    refetchInterval: 30000,
+  });
+
+  function handleSymbolChange(value: string) {
+    setPlanForm((f) => ({ ...f, symbol: value.toUpperCase(), conid: 0 }));
+    setSearchResults([]);
+  }
+
+  function runSearch() {
+    if (planForm.symbol && status?.connected) searchMutation.mutate(planForm.symbol);
+  }
+
+  function saveDraftDisabledReason(): string | null {
+    if (!planForm.symbol) return "Enter a symbol.";
+    if (!planForm.conid) return "Resolve symbol to get ConID.";
+    if (planForm.quantity <= 0) return "Quantity must be positive.";
+    if (planForm.order_type === "LMT" && !(planForm.limit_price && planForm.limit_price > 0))
+      return "Enter a limit price.";
+    return null;
+  }
+
   const adapterState = status?.adapter_state ?? "not_initialized";
   const showForm = INACTIVE_STATES.includes(adapterState);
   const connected = status?.connected === true;
@@ -279,14 +320,16 @@ export function TwsExecutionAssistantModule() {
             <span className="h-1.5 w-1.5 rounded-full border border-[var(--clr-orange)]" />
             <ConnectionBadge connected={connected} />
           </span>
-          <button
-            type="button"
-            className="h-7 rounded-md border border-[var(--clr-cyan)] px-3 text-[11px] font-semibold text-[var(--clr-cyan)] transition-colors hover:bg-[var(--clr-cyan)]/10 active:scale-[0.96] disabled:opacity-50"
-            disabled={isPending || connected}
-            onClick={() => connectMutation.mutate(form)}
-          >
-            {isPending && !connected ? "Connecting..." : "Connect TWS / IB Gateway"}
-          </button>
+          {!connected && (
+            <button
+              type="button"
+              className="h-7 rounded-md border border-[var(--clr-cyan)] px-3 text-[11px] font-semibold text-[var(--clr-cyan)] transition-colors hover:bg-[var(--clr-cyan)]/10 active:scale-[0.96] disabled:opacity-50"
+              disabled={isPending}
+              onClick={() => connectMutation.mutate(form)}
+            >
+              {isPending ? "Connecting..." : "Connect TWS / IB Gateway"}
+            </button>
+          )}
           <MoreVertical className="h-4 w-4 text-[var(--text-3)]" strokeWidth={1.7} />
         </div>
       </header>
@@ -420,20 +463,50 @@ export function TwsExecutionAssistantModule() {
                         <div className="relative">
                           <input
                             className="h-8 w-full rounded border border-border bg-[var(--bg-1)] px-2.5 pr-8 text-[12px] outline-none transition-colors focus:border-[var(--clr-cyan)] disabled:cursor-not-allowed"
-                            placeholder="e.g. AAPL"
+                            placeholder="e.g. NVDA"
                             value={planForm.symbol}
                             disabled={!canDraft}
-                            onChange={(e) => setPlanForm((f) => ({ ...f, symbol: e.target.value.toUpperCase() }))}
+                            onChange={(e) => handleSymbolChange(e.target.value)}
+                            onKeyDown={(e) => e.key === "Enter" && runSearch()}
                           />
-                          <Search className="absolute right-2.5 top-2 h-4 w-4 text-[var(--text-3)]" strokeWidth={1.7} />
+                          <button
+                            type="button"
+                            className="absolute right-2 top-2 text-[var(--text-3)] hover:text-[var(--clr-cyan)] disabled:cursor-not-allowed"
+                            disabled={!canDraft || !planForm.symbol || searchMutation.isPending}
+                            onClick={runSearch}
+                            tabIndex={-1}
+                          >
+                            <Search className="h-4 w-4" strokeWidth={1.7} />
+                          </button>
                         </div>
+                        {searchResults.length > 1 && (
+                          <ul className="mt-0.5 rounded border border-border bg-[var(--bg-1)] shadow-md">
+                            {searchResults.map((r) => (
+                              <li key={r.conid}>
+                                <button
+                                  type="button"
+                                  className="flex w-full items-center justify-between px-2.5 py-1.5 text-left text-[11px] hover:bg-[var(--bg-2)]"
+                                  onClick={() => {
+                                    setPlanForm((f) => ({ ...f, conid: r.conid }));
+                                    setSearchResults([]);
+                                  }}
+                                >
+                                  <span className="font-medium">{r.symbol}</span>
+                                  <span className="text-[var(--text-3)]">
+                                    {r.sec_type} · {r.primary_exchange || r.exchange} · {r.currency}
+                                  </span>
+                                </button>
+                              </li>
+                            ))}
+                          </ul>
+                        )}
                       </label>
                       <label className="space-y-1">
                         <span className="text-[11px] text-[var(--text-2)]">ConID</span>
                         <input
                           type="number"
                           className="h-8 w-full rounded border border-border bg-[var(--bg-1)] px-2.5 font-data text-[12px] outline-none transition-colors focus:border-[var(--clr-cyan)] disabled:cursor-not-allowed"
-                          placeholder="Optional"
+                          placeholder="Search symbol to resolve"
                           value={planForm.conid || ""}
                           disabled={!canDraft}
                           onChange={(e) => setPlanForm((f) => ({ ...f, conid: Number(e.target.value) }))}
@@ -488,13 +561,45 @@ export function TwsExecutionAssistantModule() {
                         </label>
                       )}
                     </div>
-                    <button
-                      className="h-8 rounded-md border border-[var(--clr-cyan)] px-3 text-[12px] font-semibold text-[var(--clr-cyan)] transition-colors hover:bg-[var(--clr-cyan)]/10 active:scale-[0.96] disabled:opacity-50"
-                      disabled={!canDraft || createPlanMutation.isPending || !planForm.conid || !planForm.symbol}
-                      onClick={() => createPlanMutation.mutate(planForm)}
-                    >
-                      {createPlanMutation.isPending ? "Saving..." : "Save draft"}
-                    </button>
+                    {quote !== undefined && planForm.conid > 0 && (
+                      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 rounded border border-border/60 bg-[var(--bg-1)] px-2.5 py-1.5 text-[11px]">
+                        {(quote.bid != null || quote.ask != null || quote.last != null) ? (
+                          <>
+                            {quote.bid != null && (
+                              <span><span className="text-[var(--text-3)]">Bid </span><span className="font-data text-[var(--text-1)]">{quote.bid.toFixed(2)}</span></span>
+                            )}
+                            {quote.ask != null && (
+                              <span><span className="text-[var(--text-3)]">Ask </span><span className="font-data text-[var(--text-1)]">{quote.ask.toFixed(2)}</span></span>
+                            )}
+                            {quote.last != null && (
+                              <span><span className="text-[var(--text-3)]">Last </span><span className="font-data text-[var(--text-1)]">{quote.last.toFixed(2)}</span></span>
+                            )}
+                            {quote.close != null && (
+                              <span><span className="text-[var(--text-3)]">Close </span><span className="font-data text-[var(--text-2)]">{quote.close.toFixed(2)}</span></span>
+                            )}
+                          </>
+                        ) : (
+                          <span className="text-[var(--text-3)]">Market data unavailable.</span>
+                        )}
+                      </div>
+                    )}
+                    {(() => {
+                      const reason = saveDraftDisabledReason();
+                      return (
+                        <div className="flex items-center gap-3">
+                          <button
+                            className="h-8 rounded-md border border-[var(--clr-cyan)] px-3 text-[12px] font-semibold text-[var(--clr-cyan)] transition-colors hover:bg-[var(--clr-cyan)]/10 active:scale-[0.96] disabled:opacity-50"
+                            disabled={!canDraft || createPlanMutation.isPending || reason != null}
+                            onClick={() => createPlanMutation.mutate(planForm)}
+                          >
+                            {createPlanMutation.isPending ? "Saving..." : "Save draft"}
+                          </button>
+                          {canDraft && reason != null && (
+                            <span className="text-[11px] text-[var(--text-3)]">{reason}</span>
+                          )}
+                        </div>
+                      );
+                    })()}
                   </div>
 
                   {!canDraft && (
@@ -515,6 +620,66 @@ export function TwsExecutionAssistantModule() {
                 </div>
               )}
             </Panel>
+            <div className="grid gap-2 md:grid-cols-2">
+              <Panel title="Positions">
+                {recon && recon.positions.length > 0 ? (
+                  <table className="w-full text-left text-xs">
+                    <thead>
+                      <tr className="text-xs text-[var(--text-3)]">
+                        <th className="pb-1.5 pr-4 font-medium">Symbol</th>
+                        <th className="pb-1.5 pr-4 font-medium">ConID</th>
+                        <th className="pb-1.5 pr-4 font-medium">Position</th>
+                        <th className="pb-1.5 font-medium">Avg Cost</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {recon.positions.map((p) => (
+                        <tr key={p.conid} className="border-t border-border">
+                          <td className="py-1.5 pr-4 font-medium">{p.symbol}</td>
+                          <td className="pr-4 font-data text-[var(--text-2)]">{p.conid}</td>
+                          <td className={`pr-4 font-data ${p.position < 0 ? "text-[var(--clr-red)]" : ""}`}>
+                            {p.position}
+                          </td>
+                          <td className="font-data text-[var(--text-2)]">{p.avg_cost.toFixed(2)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                ) : (
+                  <EmptyTableState label="No positions" />
+                )}
+              </Panel>
+
+              <Panel title="Open Orders">
+                {recon && recon.open_orders.length > 0 ? (
+                  <>
+                    {recon.unmanaged_order_count > 0 && (
+                      <p className="mb-2 text-xs text-[var(--clr-orange)]">
+                        {recon.unmanaged_order_count} unmanaged
+                      </p>
+                    )}
+                    <table className="w-full text-left text-xs">
+                      <thead>
+                        <tr className="text-xs text-[var(--text-3)]">
+                          <th className="pb-1.5 pr-4 font-medium">Symbol</th>
+                          <th className="pb-1.5 pr-4 font-medium">Side</th>
+                          <th className="pb-1.5 pr-4 font-medium">Qty</th>
+                          <th className="pb-1.5 pr-4 font-medium">Type</th>
+                          <th className="pb-1.5 pr-4 font-medium">Price</th>
+                          <th className="pb-1.5 pr-4 font-medium">Status</th>
+                          <th className="pb-1.5 font-medium" />
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {recon.open_orders.map((o) => <OrderRow key={o.order_id} order={o} />)}
+                      </tbody>
+                    </table>
+                  </>
+                ) : (
+                  <EmptyTableState label="No open orders" />
+                )}
+              </Panel>
+            </div>
           </div>
 
           <aside className="grid content-start gap-2">
@@ -570,66 +735,6 @@ export function TwsExecutionAssistantModule() {
           </aside>
         </div>
 
-        <div className="grid gap-2 xl:grid-cols-2">
-          <Panel title="Positions">
-            {recon && recon.positions.length > 0 ? (
-              <table className="w-full text-left text-xs">
-                <thead>
-                  <tr className="text-xs text-[var(--text-3)]">
-                    <th className="pb-1.5 pr-4 font-medium">Symbol</th>
-                    <th className="pb-1.5 pr-4 font-medium">ConID</th>
-                    <th className="pb-1.5 pr-4 font-medium">Position</th>
-                    <th className="pb-1.5 font-medium">Avg Cost</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {recon.positions.map((p) => (
-                    <tr key={p.conid} className="border-t border-border">
-                      <td className="py-1.5 pr-4 font-medium">{p.symbol}</td>
-                      <td className="pr-4 font-data text-[var(--text-2)]">{p.conid}</td>
-                      <td className={`pr-4 font-data ${p.position < 0 ? "text-[var(--clr-red)]" : ""}`}>
-                        {p.position}
-                      </td>
-                      <td className="font-data text-[var(--text-2)]">{p.avg_cost.toFixed(2)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            ) : (
-              <EmptyTableState label="No positions" />
-            )}
-          </Panel>
-
-          <Panel title="Open Orders">
-            {recon && recon.open_orders.length > 0 ? (
-              <>
-                {recon.unmanaged_order_count > 0 && (
-                  <p className="mb-2 text-xs text-[var(--clr-orange)]">
-                    {recon.unmanaged_order_count} unmanaged
-                  </p>
-                )}
-                <table className="w-full text-left text-xs">
-                  <thead>
-                    <tr className="text-xs text-[var(--text-3)]">
-                      <th className="pb-1.5 pr-4 font-medium">Symbol</th>
-                      <th className="pb-1.5 pr-4 font-medium">Side</th>
-                      <th className="pb-1.5 pr-4 font-medium">Qty</th>
-                      <th className="pb-1.5 pr-4 font-medium">Type</th>
-                      <th className="pb-1.5 pr-4 font-medium">Price</th>
-                      <th className="pb-1.5 pr-4 font-medium">Status</th>
-                      <th className="pb-1.5 font-medium" />
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {recon.open_orders.map((o) => <OrderRow key={o.order_id} order={o} />)}
-                  </tbody>
-                </table>
-              </>
-            ) : (
-              <EmptyTableState label="No open orders" />
-            )}
-          </Panel>
-        </div>
       </main>
     </div>
   );

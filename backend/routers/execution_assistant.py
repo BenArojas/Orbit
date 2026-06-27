@@ -2,7 +2,13 @@ from fastapi import APIRouter, Depends, HTTPException, status
 
 from deps import get_broker_session, get_execution_plan_service, get_tws_adapter
 from models.execution_plan import ExecutionPlan, ExecutionPlanDraftRequest
-from models.tws_execution_assistant import ReconciliationSnapshot, TwsConnectRequest, TwsStatusResponse
+from models.tws_execution_assistant import (
+    InstrumentResult,
+    QuoteSnapshot,
+    ReconciliationSnapshot,
+    TwsConnectRequest,
+    TwsStatusResponse,
+)
 from services.broker_session import BrokerSessionService
 from services.execution_plan import ExecutionPlanService
 from services.tws_broker_adapter import TwsBrokerAdapter
@@ -45,6 +51,24 @@ async def get_reconciliation(
     adapter: TwsBrokerAdapter = Depends(get_tws_adapter),
 ) -> ReconciliationSnapshot:
     return adapter.get_reconciliation()
+
+
+# ── Instrument search + quote ────────────────────────────────────────────────
+
+@router.get("/instruments/search", response_model=list[InstrumentResult])
+async def search_instruments(
+    symbol: str,
+    adapter: TwsBrokerAdapter = Depends(get_tws_adapter),
+) -> list[InstrumentResult]:
+    return await adapter.search_instruments(symbol.upper().strip())
+
+
+@router.get("/instruments/{conid}/quote", response_model=QuoteSnapshot)
+async def get_quote(
+    conid: int,
+    adapter: TwsBrokerAdapter = Depends(get_tws_adapter),
+) -> QuoteSnapshot:
+    return await adapter.get_quote(conid)
 
 
 # ── Execution plan draft + validation ────────────────────────────────────────

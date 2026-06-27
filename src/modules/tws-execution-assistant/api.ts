@@ -105,6 +105,26 @@ export interface ExecutionPlan {
   created_at: string;
 }
 
+export interface InstrumentResult {
+  conid: number;
+  symbol: string;
+  sec_type: string;
+  exchange: string;
+  primary_exchange: string;
+  currency: string;
+  local_symbol: string;
+}
+
+export interface QuoteSnapshot {
+  last: number | null;
+  close: number | null;
+  open: number | null;
+  high: number | null;
+  low: number | null;
+  bid: number | null;
+  ask: number | null;
+}
+
 export const twsApi = {
   getMode: () =>
     sidecarRequest<BrokerSessionModeResponse>("GET", "/orbit/session/mode"),
@@ -124,4 +144,11 @@ export const twsApi = {
     sidecarRequest<ExecutionPlan>("POST", `/execution-assistant/plans/${plan_id}/validate`),
   getPlan: (plan_id: string) =>
     sidecarRequest<ExecutionPlan>("GET", `/execution-assistant/plans/${plan_id}`),
+  searchInstruments: (symbol: string) =>
+    sidecarRequest<InstrumentResult[]>(
+      "GET",
+      `/execution-assistant/instruments/search?symbol=${encodeURIComponent(symbol)}`,
+    ),
+  getQuote: (conid: number) =>
+    sidecarRequest<QuoteSnapshot>("GET", `/execution-assistant/instruments/${conid}/quote`),
 } as const;

@@ -53,3 +53,23 @@ class ReconciliationSnapshot(BaseModel):
     unmanaged_order_count: int = 0
     positions: list[PositionSnapshot] = []
     open_orders: list[OrderSnapshot] = []
+
+
+class InstrumentResult(BaseModel):
+    conid: int
+    symbol: str
+    sec_type: str
+    exchange: str
+    primary_exchange: str
+    currency: str
+    local_symbol: str
+
+
+class QuoteSnapshot(BaseModel):
+    last: float | None = None
+    close: float | None = None
+    open: float | None = None
+    high: float | None = None
+    low: float | None = None
+    bid: float | None = None
+    ask: float | None = None

@@ -2,13 +2,16 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 
 from ib_async import IB, Contract
 
 from models.broker_session import BrokerSessionMode
 from models.tws_execution_assistant import (
+    InstrumentResult,
     OrderSnapshot,
     PositionSnapshot,
+    QuoteSnapshot,
     ReconciliationSnapshot,
     ReconciliationSummary,
     TwsAdapterState,
@@ -18,6 +21,17 @@ from models.tws_execution_assistant import (
 log = logging.getLogger(__name__)
 
 _IBKR_UNSET = 1.7976931348623157e+308
+
+
+def _quote_val(val: object) -> float | None:
+    """Map IBKR nan / unset sentinel / None to Python None."""
+    if val is None:
+        return None
+    try:
+        f = float(val)  # type: ignore[arg-type]
+        return None if (math.isnan(f) or f >= _IBKR_UNSET) else f
+    except (TypeError, ValueError):
+        return None
 
 
 def _lmt_price(val: float) -> float | None:
@@ -119,6 +133,77 @@ class TwsBrokerAdapter:
             log.warning("Contract lookup failed for conid %s: %s", conid, exc)
             return None
         return details[0].contract.secType if details else None
+
+    async def search_instruments(self, symbol: str) -> list[InstrumentResult]:
+        """Lookup contracts by symbol.
+
+        Tries STK/SMART/USD first; falls back to unconstrained symbol search.
+        Returns results sorted with STK SMART USD first.
+        Read-only — no orders, no account data, no connections beyond contract details.
+        """
+        if not self._ib.isConnected():
+            return []
+        try:
+            details = await self._ib.reqContractDetailsAsync(
+                Contract(symbol=symbol, secType="STK", exchange="SMART", currency="USD")
+            )
+            if not details:
+                details = await self._ib.reqContractDetailsAsync(Contract(symbol=symbol))
+        except (RuntimeError, OSError) as exc:
+            log.warning("Instrument search failed for %s: %s", symbol, exc)
+            return []
+
+        results = [
+            InstrumentResult(
+                conid=d.contract.conId,
+                symbol=d.contract.symbol,
+                sec_type=d.contract.secType,
+                exchange=d.contract.exchange,
+                primary_exchange=getattr(d.contract, "primaryExchange", "") or "",
+                currency=d.contract.currency,
+                local_symbol=d.contract.localSymbol or d.contract.symbol,
+            )
+            for d in details
+        ]
+        # STK SMART USD to the front — those are the most useful for equity drafts
+        results.sort(key=lambda r: (
+            0 if (r.sec_type == "STK" and r.exchange == "SMART" and r.currency == "USD") else 1
+        ))
+        return results
+
+    async def get_quote(self, conid: int) -> QuoteSnapshot:
+        """Fetch a best-effort market data snapshot for a conid.
+
+        Read-only — no streaming subscription persists after this call.
+        Returns an empty QuoteSnapshot when data is unavailable.
+        """
+        if not self._ib.isConnected():
+            return QuoteSnapshot()
+        try:
+            # IBKR requires exchange identity for market data (Warning 321).
+            # Supplying SMART/STK/USD is enough for equities — IBKR routes SMART
+            # to the correct primary exchange for the given conid.
+            contract = Contract(conId=conid, secType="STK", exchange="SMART", currency="USD")
+            tickers = await asyncio.wait_for(
+                self._ib.reqTickersAsync(contract), timeout=5.0
+            )
+            if not tickers:
+                return QuoteSnapshot()
+            t = tickers[0]
+            # Cancel the subscription immediately — we only wanted a snapshot.
+            self._ib.cancelMktData(t.contract)
+            return QuoteSnapshot(
+                last=_quote_val(t.last),
+                close=_quote_val(t.close),
+                open=_quote_val(t.open),
+                high=_quote_val(t.high),
+                low=_quote_val(t.low),
+                bid=_quote_val(t.bid),
+                ask=_quote_val(t.ask),
+            )
+        except (RuntimeError, OSError, asyncio.TimeoutError) as exc:
+            log.warning("Quote fetch failed for conid %s: %s", conid, exc)
+            return QuoteSnapshot()
 
     def get_reconciliation(self) -> ReconciliationSnapshot:
         if not self._ib.isConnected():
