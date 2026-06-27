@@ -1,49 +1,13 @@
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { LockKeyhole, MoreVertical, Power, Search } from "lucide-react";
 import { BackToOrbitButton } from "@/components/ui/BackToOrbitButton";
 import { BROKER_SESSION_KEY } from "@/context/BrokerSessionContext";
+import { cn } from "@/lib/utils";
 import { twsApi, TWS_CONNECT_DEFAULTS, type ExecutionPlan, type ExecutionPlanDraftRequest, type ExecutionPlanOrderType, type ExecutionPlanSide, type OrderSnapshot, type TwsAdapterState, type TwsConnectRequest } from "./api";
 
 const STATUS_KEY = ["tws-status"];
 const RECON_KEY = ["tws-reconciliation"];
-
-function ConnectionBadge({ connected }: { connected: boolean }) {
-  return (
-    <span className={connected ? "text-emerald-400" : "text-[var(--text-3)]"}>
-      {connected ? "Connected" : "Not connected"}
-    </span>
-  );
-}
-
-function adapterStateLabel(state: TwsAdapterState): string {
-  return state.replace(/_/g, " ");
-}
-
-function UnmanagedBadge() {
-  return (
-    <span className="rounded bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-400">
-      unmanaged
-    </span>
-  );
-}
-
-function OrderRow({ order }: { order: OrderSnapshot }) {
-  return (
-    <tr className="border-t border-border text-sm">
-      <td className="py-2 pr-4 font-medium">{order.symbol}</td>
-      <td className={`pr-4 ${order.side === "BUY" ? "text-emerald-400" : "text-red-400"}`}>
-        {order.side}
-      </td>
-      <td className="pr-4 font-mono">{order.quantity}</td>
-      <td className="pr-4 font-mono text-[var(--text-2)]">{order.order_type}</td>
-      <td className="pr-4 font-mono text-[var(--text-2)]">
-        {order.lmt_price != null ? order.lmt_price.toFixed(2) : "—"}
-      </td>
-      <td className="pr-4 text-[var(--text-2)]">{order.status}</td>
-      <td>{order.is_unmanaged && <UnmanagedBadge />}</td>
-    </tr>
-  );
-}
 
 const INACTIVE_STATES: TwsAdapterState[] = ["not_initialized", "disconnected", "error"];
 
@@ -56,16 +20,182 @@ const PLAN_DEFAULTS: ExecutionPlanDraftRequest = {
   limit_price: null,
 };
 
+function adapterStateLabel(state: TwsAdapterState): string {
+  return state.replace(/_/g, " ");
+}
+
+function ConnectionBadge({ connected }: { connected: boolean }) {
+  return (
+    <span className={connected ? "text-[var(--clr-green)]" : "text-[var(--clr-orange)]"}>
+      {connected ? "Connected" : "Not connected"}
+    </span>
+  );
+}
+
+function Panel({
+  title,
+  children,
+  className,
+}: {
+  title: string;
+  children: ReactNode;
+  className?: string;
+}) {
+  return (
+    <section className={cn("min-w-0 rounded-md border border-border bg-[var(--bg-2)] shadow-[0_18px_44px_rgba(0,0,0,0.18)]", className)}>
+      <div className="border-b border-border px-3 py-2">
+        <h2 className="text-[10px] font-semibold uppercase tracking-wider text-[var(--clr-cyan)]">
+          {title}
+        </h2>
+      </div>
+      <div className="p-3">{children}</div>
+    </section>
+  );
+}
+
+function StatRow({
+  label,
+  value,
+  tone,
+}: {
+  label: string;
+  value: ReactNode;
+  tone?: "warning" | "danger" | "success";
+}) {
+  return (
+    <div className="flex items-center justify-between gap-4 text-[12px]">
+      <span className="text-[var(--text-2)]">{label}</span>
+      <span
+        className={cn(
+          "font-data text-[var(--text-1)]",
+          tone === "warning" && "text-[var(--clr-orange)]",
+          tone === "danger" && "text-[var(--clr-red)]",
+          tone === "success" && "text-[var(--clr-green)]",
+        )}
+      >
+        {value}
+      </span>
+    </div>
+  );
+}
+
+function GateStrip({ connected, reconciled }: { connected: boolean; reconciled: boolean }) {
+  const steps = [
+    {
+      number: "1",
+      label: "Connect",
+      status: connected ? "Connected" : "Not connected",
+      active: !connected,
+      done: connected,
+      locked: false,
+    },
+    {
+      number: "2",
+      label: "Reconcile",
+      status: connected ? (reconciled ? "Ready" : "Loading") : "Locked",
+      active: connected && !reconciled,
+      done: reconciled,
+      locked: !connected,
+    },
+    {
+      number: "3",
+      label: "Draft plan",
+      status: reconciled ? "Ready" : "Locked",
+      active: false,
+      done: false,
+      locked: !reconciled,
+    },
+  ];
+
+  return (
+    <div className="grid overflow-hidden rounded-md border border-border bg-[var(--bg-2)] md:grid-cols-3">
+      {steps.map((step, index) => (
+        <div
+          key={step.number}
+          className={cn(
+            "relative flex min-h-11 items-center gap-2 border-border px-3 py-2",
+            index > 0 && "border-t md:border-l md:border-t-0",
+            step.active && "after:absolute after:bottom-0 after:left-0 after:h-0.5 after:w-full after:bg-[var(--clr-cyan)]",
+          )}
+        >
+          <span
+            className={cn(
+              "flex h-6 w-6 shrink-0 items-center justify-center rounded-full border font-data text-[11px]",
+              step.done
+                ? "border-[var(--clr-green)] text-[var(--clr-green)]"
+                : step.locked
+                  ? "border-border text-[var(--text-3)]"
+                  : "border-[var(--clr-cyan)] text-[var(--clr-cyan)]",
+            )}
+          >
+            {step.locked ? <LockKeyhole className="h-3 w-3" strokeWidth={1.7} /> : step.number}
+          </span>
+          <div>
+            <div className="text-[12px] font-semibold text-[var(--text-1)]">{step.label}</div>
+            <div
+              className={cn(
+                "text-[10px] font-medium",
+                step.done ? "text-[var(--clr-green)]" : step.locked ? "text-[var(--text-3)]" : "text-[var(--clr-orange)]",
+              )}
+            >
+              {step.status}
+            </div>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function PlanStatusBadge({ status }: { status: ExecutionPlan["status"] }) {
   const styles = {
     draft: "bg-[var(--bg-1)] text-[var(--text-3)]",
-    valid: "bg-emerald-500/15 text-emerald-400",
-    invalid: "bg-red-500/15 text-red-400",
+    valid: "bg-[var(--glow-green)] text-[var(--clr-green)]",
+    invalid: "bg-[var(--glow-red)] text-[var(--clr-red)]",
   };
   return (
     <span className={`rounded px-2 py-0.5 text-xs font-semibold uppercase ${styles[status]}`}>
       {status}
     </span>
+  );
+}
+
+function EmptyTableState({ label }: { label: string }) {
+  return (
+    <div className="flex min-h-16 items-center justify-center rounded border border-dashed border-border/80 bg-[var(--bg-1)]/40 text-center">
+      <div>
+        <div className="text-[12px] font-semibold text-[var(--text-1)]">{label}</div>
+        <p className="mt-1 text-[11px] text-[var(--text-3)]">
+          Connect and reconcile to view {label.toLowerCase()}.
+        </p>
+      </div>
+    </div>
+  );
+}
+
+function UnmanagedBadge() {
+  return (
+    <span className="rounded bg-[var(--glow-orange)] px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-[var(--clr-orange)]">
+      unmanaged
+    </span>
+  );
+}
+
+function OrderRow({ order }: { order: OrderSnapshot }) {
+  return (
+    <tr className="border-t border-border text-xs">
+      <td className="py-1.5 pr-4 font-medium">{order.symbol}</td>
+      <td className={`pr-4 ${order.side === "BUY" ? "text-[var(--clr-green)]" : "text-[var(--clr-red)]"}`}>
+        {order.side}
+      </td>
+      <td className="pr-4 font-data">{order.quantity}</td>
+      <td className="pr-4 font-data text-[var(--text-2)]">{order.order_type}</td>
+      <td className="pr-4 font-data text-[var(--text-2)]">
+        {order.lmt_price != null ? order.lmt_price.toFixed(2) : "-"}
+      </td>
+      <td className="pr-4 text-[var(--text-2)]">{order.status}</td>
+      <td>{order.is_unmanaged && <UnmanagedBadge />}</td>
+    </tr>
   );
 }
 
@@ -93,7 +223,6 @@ export function TwsExecutionAssistantModule() {
     onSuccess: (result) => {
       queryClient.setQueryData(STATUS_KEY, result);
       queryClient.invalidateQueries({ queryKey: RECON_KEY });
-      // Mode is now connection-derived; invalidate so launcher re-gates immediately.
       queryClient.invalidateQueries({ queryKey: BROKER_SESSION_KEY });
     },
   });
@@ -122,298 +251,386 @@ export function TwsExecutionAssistantModule() {
 
   const adapterState = status?.adapter_state ?? "not_initialized";
   const showForm = INACTIVE_STATES.includes(adapterState);
+  const connected = status?.connected === true;
+  const reconciled = connected && recon != null;
+  const canDraft = reconciled;
   const isPending =
     adapterState === "connecting" ||
     connectMutation.isPending ||
     disconnectMutation.isPending;
+  const summary = recon ?? status?.reconciliation_summary;
 
   return (
-    <div className="min-h-screen bg-[var(--bg-1)] text-foreground">
-      <div className="mx-auto max-w-4xl space-y-8 px-6 py-10">
-        <header className="space-y-1">
-          <div className="flex items-center justify-between">
-            <p className="text-[11px] font-medium uppercase tracking-[0.28em] text-[var(--text-3)]">
-              Orbit Module
-            </p>
-            <BackToOrbitButton />
+    <div className="flex h-screen flex-col overflow-hidden bg-[var(--bg-1)] text-foreground">
+      <header className="m-2 mb-1.5 flex min-h-10 items-center gap-3 rounded-md border border-border bg-[var(--bg-2)] px-3">
+        <BackToOrbitButton />
+        <div className="h-5 w-px bg-border" />
+        <p className="hidden text-[9px] font-medium uppercase tracking-[0.26em] text-[var(--text-3)] sm:block">
+          Orbit Module
+        </p>
+        <div className="flex min-w-0 items-center gap-2">
+          <h1 className="truncate text-[15px] font-semibold">TWS Execution Assistant</h1>
+          <span className="rounded bg-[var(--glow-cyan)] px-1.5 py-0.5 text-[9px] font-semibold text-[var(--clr-cyan)]">
+            Broker cockpit
+          </span>
+        </div>
+        <div className="ml-auto flex items-center gap-3">
+          <span className="hidden items-center gap-1.5 text-[11px] font-semibold sm:flex">
+            <span className="h-1.5 w-1.5 rounded-full border border-[var(--clr-orange)]" />
+            <ConnectionBadge connected={connected} />
+          </span>
+          <button
+            type="button"
+            className="h-7 rounded-md border border-[var(--clr-cyan)] px-3 text-[11px] font-semibold text-[var(--clr-cyan)] transition-colors hover:bg-[var(--clr-cyan)]/10 active:scale-[0.96] disabled:opacity-50"
+            disabled={isPending || connected}
+            onClick={() => connectMutation.mutate(form)}
+          >
+            {isPending && !connected ? "Connecting..." : "Connect TWS / IB Gateway"}
+          </button>
+          <MoreVertical className="h-4 w-4 text-[var(--text-3)]" strokeWidth={1.7} />
+        </div>
+      </header>
+
+      <main className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto px-2 pb-2">
+        <GateStrip connected={connected} reconciled={reconciled} />
+
+        <div className="grid items-start gap-2 xl:grid-cols-[minmax(0,1fr)_300px]">
+          <div className="grid min-w-0 auto-rows-max content-start gap-2">
+            <Panel title="Connection">
+              {isLoading ? (
+                <p className="text-sm text-[var(--text-3)]">Loading...</p>
+              ) : showForm ? (
+                <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_220px]">
+                  <div className="space-y-3">
+                    {adapterState === "error" && (
+                      <p className="text-xs text-[var(--clr-red)]">
+                        Connection failed. Check that TWS or IB Gateway is running on the host and port below.
+                      </p>
+                    )}
+                    <div className="grid gap-2 md:grid-cols-3">
+                      <label className="space-y-1">
+                        <span className="text-[11px] text-[var(--text-2)]">Host</span>
+                        <input
+                          className="h-8 w-full rounded border border-border bg-[var(--bg-1)] px-2.5 font-data text-[12px] outline-none transition-colors focus:border-[var(--clr-cyan)]"
+                          value={form.host}
+                          onChange={(e) => setForm((f) => ({ ...f, host: e.target.value }))}
+                        />
+                      </label>
+                      <label className="space-y-1">
+                        <span className="text-[11px] text-[var(--text-2)]">Port</span>
+                        <input
+                          type="number"
+                          className="h-8 w-full rounded border border-border bg-[var(--bg-1)] px-2.5 font-data text-[12px] outline-none transition-colors focus:border-[var(--clr-cyan)]"
+                          value={form.port}
+                          onChange={(e) => setForm((f) => ({ ...f, port: Number(e.target.value) }))}
+                        />
+                      </label>
+                      <label className="space-y-1">
+                        <span className="text-[11px] text-[var(--text-2)]">Client ID</span>
+                        <input
+                          type="number"
+                          className="h-8 w-full rounded border border-border bg-[var(--bg-1)] px-2.5 font-data text-[12px] outline-none transition-colors focus:border-[var(--clr-cyan)]"
+                          value={form.client_id}
+                          onChange={(e) => setForm((f) => ({ ...f, client_id: Number(e.target.value) }))}
+                        />
+                      </label>
+                    </div>
+                    <button
+                      className="h-8 rounded-md border border-[var(--clr-cyan)] px-3 text-[12px] font-semibold text-[var(--clr-cyan)] transition-colors hover:bg-[var(--clr-cyan)]/10 active:scale-[0.96] disabled:opacity-50"
+                      disabled={isPending}
+                      onClick={() => connectMutation.mutate(form)}
+                    >
+                      {isPending ? "Connecting..." : "Connect TWS / IB Gateway"}
+                    </button>
+                  </div>
+                  <div className="space-y-2 border-border lg:border-l lg:pl-4">
+                    <div className="flex items-center gap-2 text-[12px] font-semibold text-[var(--clr-orange)]">
+                      <span className="h-2.5 w-2.5 rounded-full border border-current" />
+                      <ConnectionBadge connected={false} />
+                    </div>
+                    <StatRow label="TWS / IB Gateway" value="-" />
+                    <StatRow label="API" value={status?.api_server_available ? "Reachable" : "-"} tone={status?.api_server_available ? "success" : undefined} />
+                  </div>
+                </div>
+              ) : (
+                <div className="grid items-start gap-3 lg:grid-cols-[minmax(0,1fr)_160px]">
+                  <dl className="grid gap-x-4 gap-y-2 text-xs sm:grid-cols-2">
+                    <StatRow label="Status" value={<ConnectionBadge connected={connected} />} tone={connected ? "success" : "warning"} />
+                    <StatRow label="Adapter state" value={adapterStateLabel(adapterState)} />
+                    <StatRow label="Kill switch" value={status?.kill_switch_active ? "Active" : "Inactive"} tone={status?.kill_switch_active ? "danger" : undefined} />
+                    <StatRow label="Broker mode" value={status?.mode ?? "-"} />
+                  </dl>
+                  <button
+                    className="h-8 rounded-md border border-border px-3 text-[12px] text-[var(--text-2)] transition-colors hover:bg-[var(--bg-3)] hover:text-[var(--text-1)] active:scale-[0.96] disabled:opacity-50"
+                    disabled={isPending}
+                    onClick={() => disconnectMutation.mutate()}
+                  >
+                    {isPending ? "Disconnecting..." : "Disconnect"}
+                  </button>
+                </div>
+              )}
+            </Panel>
+
+            <Panel title="Execution Plan">
+              {currentPlan ? (
+                <div className="space-y-3">
+                  <div className="flex flex-wrap items-center gap-2.5">
+                    <span className="text-xs font-medium">{currentPlan.symbol}</span>
+                    <span className={`text-xs font-medium ${currentPlan.side === "BUY" ? "text-[var(--clr-green)]" : "text-[var(--clr-red)]"}`}>
+                      {currentPlan.side}
+                    </span>
+                    <span className="font-data text-xs">{currentPlan.quantity}</span>
+                    <span className="font-data text-xs text-[var(--text-2)]">{currentPlan.order_type}</span>
+                    {currentPlan.limit_price != null && (
+                      <span className="font-data text-xs text-[var(--text-2)]">@ {currentPlan.limit_price}</span>
+                    )}
+                    <PlanStatusBadge status={currentPlan.status} />
+                  </div>
+
+                  {currentPlan.validation_errors.length > 0 && (
+                    <ul className="space-y-1">
+                      {currentPlan.validation_errors.map((e, i) => (
+                        <li key={i} className="text-xs text-[var(--clr-red)]">- {e}</li>
+                      ))}
+                    </ul>
+                  )}
+
+                  <div className="flex gap-2">
+                    <button
+                      className="h-8 rounded-md bg-[var(--clr-cyan)] px-3 text-xs font-semibold text-[var(--bg-0)] disabled:opacity-50"
+                      disabled={validatePlanMutation.isPending}
+                      onClick={() => validatePlanMutation.mutate(currentPlan.plan_id)}
+                    >
+                      {validatePlanMutation.isPending ? "Validating..." : "Validate"}
+                    </button>
+                    <button
+                      className="h-8 rounded-md border border-border px-3 text-xs text-[var(--text-2)]"
+                      onClick={() => setCurrentPlan(null)}
+                    >
+                      New plan
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="relative min-h-40">
+                  <div className={cn("space-y-3", !canDraft && "opacity-45")}>
+                    <div className="grid gap-2 md:grid-cols-3">
+                      <label className="space-y-1">
+                        <span className="text-[11px] text-[var(--text-2)]">Symbol</span>
+                        <div className="relative">
+                          <input
+                            className="h-8 w-full rounded border border-border bg-[var(--bg-1)] px-2.5 pr-8 text-[12px] outline-none transition-colors focus:border-[var(--clr-cyan)] disabled:cursor-not-allowed"
+                            placeholder="e.g. AAPL"
+                            value={planForm.symbol}
+                            disabled={!canDraft}
+                            onChange={(e) => setPlanForm((f) => ({ ...f, symbol: e.target.value.toUpperCase() }))}
+                          />
+                          <Search className="absolute right-2.5 top-2 h-4 w-4 text-[var(--text-3)]" strokeWidth={1.7} />
+                        </div>
+                      </label>
+                      <label className="space-y-1">
+                        <span className="text-[11px] text-[var(--text-2)]">ConID</span>
+                        <input
+                          type="number"
+                          className="h-8 w-full rounded border border-border bg-[var(--bg-1)] px-2.5 font-data text-[12px] outline-none transition-colors focus:border-[var(--clr-cyan)] disabled:cursor-not-allowed"
+                          placeholder="Optional"
+                          value={planForm.conid || ""}
+                          disabled={!canDraft}
+                          onChange={(e) => setPlanForm((f) => ({ ...f, conid: Number(e.target.value) }))}
+                        />
+                      </label>
+                      <label className="space-y-1">
+                        <span className="text-[11px] text-[var(--text-2)]">Side</span>
+                        <select
+                          className="h-8 w-full rounded border border-border bg-[var(--bg-1)] px-2.5 text-[12px] outline-none transition-colors focus:border-[var(--clr-cyan)] disabled:cursor-not-allowed"
+                          value={planForm.side}
+                          disabled={!canDraft}
+                          onChange={(e) => setPlanForm((f) => ({ ...f, side: e.target.value as ExecutionPlanSide }))}
+                        >
+                          <option value="BUY">BUY</option>
+                          <option value="SELL">SELL</option>
+                        </select>
+                      </label>
+                      <label className="space-y-1">
+                        <span className="text-[11px] text-[var(--text-2)]">Quantity</span>
+                        <input
+                          type="number"
+                          className="h-8 w-full rounded border border-border bg-[var(--bg-1)] px-2.5 font-data text-[12px] outline-none transition-colors focus:border-[var(--clr-cyan)] disabled:cursor-not-allowed"
+                          value={planForm.quantity}
+                          disabled={!canDraft}
+                          onChange={(e) => setPlanForm((f) => ({ ...f, quantity: Number(e.target.value) }))}
+                        />
+                      </label>
+                      <label className="space-y-1">
+                        <span className="text-[11px] text-[var(--text-2)]">Order type</span>
+                        <select
+                          className="h-8 w-full rounded border border-border bg-[var(--bg-1)] px-2.5 text-[12px] outline-none transition-colors focus:border-[var(--clr-cyan)] disabled:cursor-not-allowed"
+                          value={planForm.order_type}
+                          disabled={!canDraft}
+                          onChange={(e) => setPlanForm((f) => ({ ...f, order_type: e.target.value as ExecutionPlanOrderType, limit_price: null }))}
+                        >
+                          <option value="LMT">LMT</option>
+                          <option value="MKT">MKT</option>
+                        </select>
+                      </label>
+                      {planForm.order_type === "LMT" && (
+                        <label className="space-y-1">
+                          <span className="text-[11px] text-[var(--text-2)]">Limit price</span>
+                          <input
+                            type="number"
+                            step="0.01"
+                            className="h-8 w-full rounded border border-border bg-[var(--bg-1)] px-2.5 font-data text-[12px] outline-none transition-colors focus:border-[var(--clr-cyan)] disabled:cursor-not-allowed"
+                            placeholder="0.00"
+                            value={planForm.limit_price ?? ""}
+                            disabled={!canDraft}
+                            onChange={(e) => setPlanForm((f) => ({ ...f, limit_price: Number(e.target.value) || null }))}
+                          />
+                        </label>
+                      )}
+                    </div>
+                    <button
+                      className="h-8 rounded-md border border-[var(--clr-cyan)] px-3 text-[12px] font-semibold text-[var(--clr-cyan)] transition-colors hover:bg-[var(--clr-cyan)]/10 active:scale-[0.96] disabled:opacity-50"
+                      disabled={!canDraft || createPlanMutation.isPending || !planForm.conid || !planForm.symbol}
+                      onClick={() => createPlanMutation.mutate(planForm)}
+                    >
+                      {createPlanMutation.isPending ? "Saving..." : "Save draft"}
+                    </button>
+                  </div>
+
+                  {!canDraft && (
+                    <div className="absolute inset-x-0 bottom-2 flex items-center justify-center gap-3">
+                      <div className="flex h-10 w-10 items-center justify-center rounded-full border border-[var(--clr-orange)]/40 bg-[var(--glow-orange)] text-[var(--clr-orange)]">
+                        <LockKeyhole className="h-5 w-5" strokeWidth={1.6} />
+                      </div>
+                      <div>
+                        <div className="text-[14px] font-semibold text-[var(--clr-orange)]">
+                          Connect and reconcile before drafting
+                        </div>
+                        <p className="mt-0.5 max-w-md text-[11px] leading-4 text-[var(--text-2)]">
+                          You must connect to TWS / IB Gateway and load reconciliation before creating or reviewing a plan.
+                        </p>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+            </Panel>
           </div>
-          <h1 className="text-3xl font-semibold">TWS Execution Assistant</h1>
-          <p className="text-sm text-[var(--text-2)]">Read-only broker session status</p>
-        </header>
 
-        {/* Connection */}
-        <section className="space-y-4 rounded-xl border border-border bg-[var(--bg-2)] p-5">
-          <h2 className="text-[11px] font-semibold uppercase tracking-wider text-[var(--text-3)]">
-            Connection
-          </h2>
-
-          {isLoading ? (
-            <p className="text-sm text-[var(--text-3)]">Loading…</p>
-          ) : showForm ? (
-            <div className="space-y-4">
-              {adapterState === "error" && (
-                <p className="text-sm text-red-400">
-                  Connection failed — check that TWS or IB Gateway is running on the host/port below.
-                </p>
-              )}
-              <div className="grid grid-cols-3 gap-3">
-                <label className="space-y-1">
-                  <span className="text-xs text-[var(--text-3)]">Host</span>
-                  <input
-                    className="w-full rounded border border-border bg-[var(--bg-1)] px-2 py-1.5 font-mono text-sm"
-                    value={form.host}
-                    onChange={(e) => setForm((f) => ({ ...f, host: e.target.value }))}
-                  />
-                </label>
-                <label className="space-y-1">
-                  <span className="text-xs text-[var(--text-3)]">Port</span>
-                  <input
-                    type="number"
-                    className="w-full rounded border border-border bg-[var(--bg-1)] px-2 py-1.5 font-mono text-sm"
-                    value={form.port}
-                    onChange={(e) => setForm((f) => ({ ...f, port: Number(e.target.value) }))}
-                  />
-                </label>
-                <label className="space-y-1">
-                  <span className="text-xs text-[var(--text-3)]">Client ID</span>
-                  <input
-                    type="number"
-                    className="w-full rounded border border-border bg-[var(--bg-1)] px-2 py-1.5 font-mono text-sm"
-                    value={form.client_id}
-                    onChange={(e) => setForm((f) => ({ ...f, client_id: Number(e.target.value) }))}
-                  />
-                </label>
+          <aside className="grid content-start gap-2">
+            <Panel title="Reconciliation">
+              <div className="space-y-2">
+                <StatRow label="Positions" value={summary?.position_count ?? 0} />
+                <StatRow label="Open orders" value={summary?.open_order_count ?? 0} />
+                <StatRow
+                  label="Unmanaged"
+                  value={summary?.unmanaged_order_count ?? 0}
+                  tone={summary?.unmanaged_order_count ? "warning" : undefined}
+                />
               </div>
-              <button
-                className="rounded bg-[var(--accent)] px-4 py-1.5 text-sm font-medium text-white disabled:opacity-50"
-                disabled={isPending}
-                onClick={() => connectMutation.mutate(form)}
-              >
-                {isPending ? "Connecting…" : "Connect TWS / IB Gateway"}
-              </button>
-            </div>
-          ) : (
-            <div className="space-y-4">
-              <dl className="grid grid-cols-2 gap-y-3 text-sm">
-                <dt className="text-[var(--text-2)]">Status</dt>
-                <dd><ConnectionBadge connected={status?.connected ?? false} /></dd>
-                <dt className="text-[var(--text-2)]">Adapter state</dt>
-                <dd className="font-mono text-[var(--text-1)]">{adapterStateLabel(adapterState)}</dd>
-                <dt className="text-[var(--text-2)]">Kill switch</dt>
-                <dd>{status?.kill_switch_active ? "Active" : "Inactive"}</dd>
-                <dt className="text-[var(--text-2)]">Broker mode</dt>
-                <dd className="font-mono text-[var(--text-1)]">{status?.mode ?? "—"}</dd>
-              </dl>
-              <button
-                className="rounded border border-border px-4 py-1.5 text-sm text-[var(--text-2)] disabled:opacity-50"
-                disabled={isPending}
-                onClick={() => disconnectMutation.mutate()}
-              >
-                {isPending ? "Disconnecting…" : "Disconnect"}
-              </button>
-            </div>
-          )}
-        </section>
+            </Panel>
 
-        {/* Positions */}
-        {recon && recon.positions.length > 0 && (
-          <section className="space-y-3 rounded-xl border border-border bg-[var(--bg-2)] p-5">
-            <h2 className="text-[11px] font-semibold uppercase tracking-wider text-[var(--text-3)]">
-              Positions ({recon.position_count})
-            </h2>
-            <table className="w-full text-left text-sm">
-              <thead>
-                <tr className="text-xs text-[var(--text-3)]">
-                  <th className="pb-2 pr-4 font-medium">Symbol</th>
-                  <th className="pb-2 pr-4 font-medium">Qty</th>
-                  <th className="pb-2 font-medium">Avg Cost</th>
-                </tr>
-              </thead>
-              <tbody>
-                {recon.positions.map((p) => (
-                  <tr key={p.conid} className="border-t border-border">
-                    <td className="py-2 pr-4 font-medium">{p.symbol}</td>
-                    <td className={`pr-4 font-mono ${p.position < 0 ? "text-red-400" : ""}`}>
-                      {p.position}
-                    </td>
-                    <td className="font-mono text-[var(--text-2)]">{p.avg_cost.toFixed(2)}</td>
+            <Panel title="Session Health">
+              <div className="space-y-2">
+                <StatRow label="Adapter" value={adapterStateLabel(adapterState)} tone={connected ? "success" : "warning"} />
+                <StatRow label="Heartbeat" value="-" />
+                <StatRow label="Last heartbeat" value="-" />
+                <StatRow label="Account updates" value="-" />
+                <StatRow label="Market data" value="-" />
+              </div>
+            </Panel>
+
+            <Panel title="Kill Switch" className={status?.kill_switch_active ? "border-[var(--clr-red)]/40" : ""}>
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2.5">
+                  <span className="flex h-9 w-9 items-center justify-center rounded-full border border-[var(--clr-red)] text-[var(--clr-red)]">
+                    <Power className="h-[18px] w-[18px]" strokeWidth={1.7} />
+                  </span>
+                  <div>
+                    <div className="text-xs font-semibold">Kill switch</div>
+                    <div className={status?.kill_switch_active ? "text-[11px] text-[var(--clr-red)]" : "text-[11px] text-[var(--text-2)]"}>
+                      {status?.kill_switch_active ? "Active" : "Inactive"}
+                    </div>
+                  </div>
+                </div>
+                <span className="h-5 w-9 rounded-full border border-border bg-[var(--bg-1)] p-0.5">
+                  <span className={cn("block h-4 w-4 rounded-full bg-[var(--text-3)] transition-transform", status?.kill_switch_active && "translate-x-4 bg-[var(--clr-red)]")} />
+                </span>
+              </div>
+            </Panel>
+
+            <Panel title="Mode Lock">
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-[11px] text-[var(--text-2)]">No autonomous trading</span>
+                <span className="rounded-full border border-[var(--clr-cyan)]/40 bg-[var(--glow-cyan)] px-2.5 py-0.5 text-[10px] font-semibold text-[var(--clr-cyan)]">
+                  TWS only
+                </span>
+              </div>
+            </Panel>
+          </aside>
+        </div>
+
+        <div className="grid gap-2 xl:grid-cols-2">
+          <Panel title="Positions">
+            {recon && recon.positions.length > 0 ? (
+              <table className="w-full text-left text-xs">
+                <thead>
+                  <tr className="text-xs text-[var(--text-3)]">
+                    <th className="pb-1.5 pr-4 font-medium">Symbol</th>
+                    <th className="pb-1.5 pr-4 font-medium">ConID</th>
+                    <th className="pb-1.5 pr-4 font-medium">Position</th>
+                    <th className="pb-1.5 font-medium">Avg Cost</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </section>
-        )}
-
-        {/* Open Orders */}
-        {recon && recon.open_orders.length > 0 && (
-          <section className="space-y-3 rounded-xl border border-border bg-[var(--bg-2)] p-5">
-            <div className="flex items-center gap-2">
-              <h2 className="text-[11px] font-semibold uppercase tracking-wider text-[var(--text-3)]">
-                Open Orders ({recon.open_order_count})
-              </h2>
-              {recon.unmanaged_order_count > 0 && (
-                <span className="text-xs text-amber-400">
-                  {recon.unmanaged_order_count} unmanaged
-                </span>
-              )}
-            </div>
-            <table className="w-full text-left text-sm">
-              <thead>
-                <tr className="text-xs text-[var(--text-3)]">
-                  <th className="pb-2 pr-4 font-medium">Symbol</th>
-                  <th className="pb-2 pr-4 font-medium">Side</th>
-                  <th className="pb-2 pr-4 font-medium">Qty</th>
-                  <th className="pb-2 pr-4 font-medium">Type</th>
-                  <th className="pb-2 pr-4 font-medium">Price</th>
-                  <th className="pb-2 pr-4 font-medium">Status</th>
-                  <th className="pb-2 font-medium" />
-                </tr>
-              </thead>
-              <tbody>
-                {recon.open_orders.map((o) => <OrderRow key={o.order_id} order={o} />)}
-              </tbody>
-            </table>
-          </section>
-        )}
-
-        {/* Execution Plan Draft */}
-        <section className="space-y-4 rounded-xl border border-border bg-[var(--bg-2)] p-5">
-          <h2 className="text-[11px] font-semibold uppercase tracking-wider text-[var(--text-3)]">
-            Execution Plan
-          </h2>
-
-          {currentPlan ? (
-            <div className="space-y-4">
-              <div className="flex items-center gap-3">
-                <span className="text-sm font-medium">{currentPlan.symbol}</span>
-                <span className={`text-sm font-medium ${currentPlan.side === "BUY" ? "text-emerald-400" : "text-red-400"}`}>
-                  {currentPlan.side}
-                </span>
-                <span className="font-mono text-sm">{currentPlan.quantity}</span>
-                <span className="font-mono text-sm text-[var(--text-2)]">{currentPlan.order_type}</span>
-                {currentPlan.limit_price != null && (
-                  <span className="font-mono text-sm text-[var(--text-2)]">@ {currentPlan.limit_price}</span>
-                )}
-                <PlanStatusBadge status={currentPlan.status} />
-              </div>
-
-              {currentPlan.validation_errors.length > 0 && (
-                <ul className="space-y-1">
-                  {currentPlan.validation_errors.map((e, i) => (
-                    <li key={i} className="text-sm text-red-400">• {e}</li>
+                </thead>
+                <tbody>
+                  {recon.positions.map((p) => (
+                    <tr key={p.conid} className="border-t border-border">
+                      <td className="py-1.5 pr-4 font-medium">{p.symbol}</td>
+                      <td className="pr-4 font-data text-[var(--text-2)]">{p.conid}</td>
+                      <td className={`pr-4 font-data ${p.position < 0 ? "text-[var(--clr-red)]" : ""}`}>
+                        {p.position}
+                      </td>
+                      <td className="font-data text-[var(--text-2)]">{p.avg_cost.toFixed(2)}</td>
+                    </tr>
                   ))}
-                </ul>
-              )}
+                </tbody>
+              </table>
+            ) : (
+              <EmptyTableState label="No positions" />
+            )}
+          </Panel>
 
-              <div className="flex gap-2">
-                <button
-                  className="rounded bg-[var(--accent)] px-4 py-1.5 text-sm font-medium text-white disabled:opacity-50"
-                  disabled={validatePlanMutation.isPending}
-                  onClick={() => validatePlanMutation.mutate(currentPlan.plan_id)}
-                >
-                  {validatePlanMutation.isPending ? "Validating…" : "Validate"}
-                </button>
-                <button
-                  className="rounded border border-border px-4 py-1.5 text-sm text-[var(--text-2)]"
-                  onClick={() => setCurrentPlan(null)}
-                >
-                  New plan
-                </button>
-              </div>
-            </div>
-          ) : (
-            <div className="space-y-4">
-              <div className="grid grid-cols-3 gap-3">
-                <label className="space-y-1">
-                  <span className="text-xs text-[var(--text-3)]">Symbol</span>
-                  <input
-                    className="w-full rounded border border-border bg-[var(--bg-1)] px-2 py-1.5 text-sm"
-                    placeholder="AAPL"
-                    value={planForm.symbol}
-                    onChange={(e) => setPlanForm((f) => ({ ...f, symbol: e.target.value.toUpperCase() }))}
-                  />
-                </label>
-                <label className="space-y-1">
-                  <span className="text-xs text-[var(--text-3)]">ConID</span>
-                  <input
-                    type="number"
-                    className="w-full rounded border border-border bg-[var(--bg-1)] px-2 py-1.5 font-mono text-sm"
-                    value={planForm.conid || ""}
-                    onChange={(e) => setPlanForm((f) => ({ ...f, conid: Number(e.target.value) }))}
-                  />
-                </label>
-                <label className="space-y-1">
-                  <span className="text-xs text-[var(--text-3)]">Side</span>
-                  <select
-                    className="w-full rounded border border-border bg-[var(--bg-1)] px-2 py-1.5 text-sm"
-                    value={planForm.side}
-                    onChange={(e) => setPlanForm((f) => ({ ...f, side: e.target.value as ExecutionPlanSide }))}
-                  >
-                    <option value="BUY">BUY</option>
-                    <option value="SELL">SELL</option>
-                  </select>
-                </label>
-                <label className="space-y-1">
-                  <span className="text-xs text-[var(--text-3)]">Quantity</span>
-                  <input
-                    type="number"
-                    className="w-full rounded border border-border bg-[var(--bg-1)] px-2 py-1.5 font-mono text-sm"
-                    value={planForm.quantity}
-                    onChange={(e) => setPlanForm((f) => ({ ...f, quantity: Number(e.target.value) }))}
-                  />
-                </label>
-                <label className="space-y-1">
-                  <span className="text-xs text-[var(--text-3)]">Order type</span>
-                  <select
-                    className="w-full rounded border border-border bg-[var(--bg-1)] px-2 py-1.5 text-sm"
-                    value={planForm.order_type}
-                    onChange={(e) => setPlanForm((f) => ({ ...f, order_type: e.target.value as ExecutionPlanOrderType, limit_price: null }))}
-                  >
-                    <option value="LMT">LMT</option>
-                    <option value="MKT">MKT</option>
-                  </select>
-                </label>
-                {planForm.order_type === "LMT" && (
-                  <label className="space-y-1">
-                    <span className="text-xs text-[var(--text-3)]">Limit price</span>
-                    <input
-                      type="number"
-                      step="0.01"
-                      className="w-full rounded border border-border bg-[var(--bg-1)] px-2 py-1.5 font-mono text-sm"
-                      value={planForm.limit_price ?? ""}
-                      onChange={(e) => setPlanForm((f) => ({ ...f, limit_price: Number(e.target.value) || null }))}
-                    />
-                  </label>
+          <Panel title="Open Orders">
+            {recon && recon.open_orders.length > 0 ? (
+              <>
+                {recon.unmanaged_order_count > 0 && (
+                  <p className="mb-2 text-xs text-[var(--clr-orange)]">
+                    {recon.unmanaged_order_count} unmanaged
+                  </p>
                 )}
-              </div>
-              <button
-                className="rounded bg-[var(--accent)] px-4 py-1.5 text-sm font-medium text-white disabled:opacity-50"
-                disabled={createPlanMutation.isPending || !planForm.conid || !planForm.symbol}
-                onClick={() => createPlanMutation.mutate(planForm)}
-              >
-                {createPlanMutation.isPending ? "Saving…" : "Save Draft (session only)"}
-              </button>
-            </div>
-          )}
-        </section>
-
-        {/* Reconciliation summary (always visible) */}
-        <section className="space-y-4 rounded-xl border border-border bg-[var(--bg-2)] p-5">
-          <h2 className="text-[11px] font-semibold uppercase tracking-wider text-[var(--text-3)]">
-            Reconciliation
-          </h2>
-          <dl className="grid grid-cols-2 gap-y-3 text-sm">
-            <dt className="text-[var(--text-2)]">Positions</dt>
-            <dd>{status?.reconciliation_summary.position_count ?? 0}</dd>
-            <dt className="text-[var(--text-2)]">Open orders</dt>
-            <dd>{status?.reconciliation_summary.open_order_count ?? 0}</dd>
-            <dt className="text-[var(--text-2)]">Unmanaged orders</dt>
-            <dd className={status?.reconciliation_summary.unmanaged_order_count ? "text-amber-400" : ""}>
-              {status?.reconciliation_summary.unmanaged_order_count ?? 0}
-            </dd>
-          </dl>
-        </section>
-      </div>
+                <table className="w-full text-left text-xs">
+                  <thead>
+                    <tr className="text-xs text-[var(--text-3)]">
+                      <th className="pb-1.5 pr-4 font-medium">Symbol</th>
+                      <th className="pb-1.5 pr-4 font-medium">Side</th>
+                      <th className="pb-1.5 pr-4 font-medium">Qty</th>
+                      <th className="pb-1.5 pr-4 font-medium">Type</th>
+                      <th className="pb-1.5 pr-4 font-medium">Price</th>
+                      <th className="pb-1.5 pr-4 font-medium">Status</th>
+                      <th className="pb-1.5 font-medium" />
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {recon.open_orders.map((o) => <OrderRow key={o.order_id} order={o} />)}
+                  </tbody>
+                </table>
+              </>
+            ) : (
+              <EmptyTableState label="No open orders" />
+            )}
+          </Panel>
+        </div>
+      </main>
     </div>
   );
 }
