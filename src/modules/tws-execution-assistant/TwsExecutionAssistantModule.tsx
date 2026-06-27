@@ -4,7 +4,7 @@ import { LockKeyhole, MoreVertical, Power, Search } from "lucide-react";
 import { BackToOrbitButton } from "@/components/ui/BackToOrbitButton";
 import { BROKER_SESSION_KEY } from "@/context/BrokerSessionContext";
 import { cn } from "@/lib/utils";
-import { twsApi, TWS_CONNECT_DEFAULTS, type ExecutionPlan, type ExecutionPlanDraftRequest, type ExecutionPlanOrderType, type ExecutionPlanSide, type InstrumentResult, type OrderSnapshot, type TwsAdapterState, type TwsConnectRequest } from "./api";
+import { twsApi, TWS_CONNECT_DEFAULTS, type ExecutionPlan, type ExecutionPlanDraftRequest, type ExecutionPlanOrderType, type ExecutionPlanSide, type InstrumentResult, type MarketDataType, type OrderSnapshot, type QuoteSnapshot, type TwsAdapterState, type TwsConnectRequest } from "./api";
 
 const STATUS_KEY = ["tws-status"];
 const RECON_KEY = ["tws-reconciliation"];
@@ -22,6 +22,117 @@ const PLAN_DEFAULTS: ExecutionPlanDraftRequest = {
 
 function adapterStateLabel(state: TwsAdapterState): string {
   return state.replace(/_/g, " ");
+}
+
+function marketDataStatus(quote: QuoteSnapshot | undefined): {
+  value: string;
+  tone?: "warning" | "success";
+} {
+  if (!quote || quote.market_data_type === "unknown") return { value: "-" };
+  if (quote.market_data_type === "live") return { value: "Live", tone: "success" };
+  if (quote.market_data_type === "delayed_frozen") return { value: "Delayed frozen", tone: "warning" };
+  if (quote.market_data_type === "delayed") return { value: "Delayed", tone: "warning" };
+  if (quote.market_data_type === "frozen") return { value: "Frozen", tone: "warning" };
+  if (quote.market_data_type === "unavailable") {
+    return { value: quote.error_code === 10089 ? "Subscription required" : "Unavailable", tone: "warning" };
+  }
+  return { value: "-" };
+}
+
+const MDT_LABEL: Record<MarketDataType, string | null> = {
+  live: "Live",
+  frozen: "Frozen",
+  delayed: "Delayed",
+  delayed_frozen: "Delayed frozen",
+  unknown: null,
+  unavailable: null,
+};
+
+// amber for delayed/stale data, green for live
+function mdtColor(mdt: MarketDataType): string {
+  if (mdt === "live") return "text-[var(--clr-green)]";
+  if (mdt === "frozen" || mdt === "delayed" || mdt === "delayed_frozen") return "text-[var(--clr-amber,#d97706)]";
+  return "text-[var(--text-3)]";
+}
+
+function quoteGuidance(quote: QuoteSnapshot): { headline: string; body: string } | null {
+  if (quote.market_data_type === "unavailable") {
+    if (quote.error_code === 10089) {
+      return {
+        headline: "Market data subscription required",
+        body: "Your API subscription may not cover this symbol. Even if data is visible in TWS, the API requires a separate \"Market Data API\" acknowledgement in IBKR Account Management. Delayed data may be available as a fallback — you can still enter a limit price manually.",
+      };
+    }
+    return {
+      headline: "Market data unavailable",
+      body: "No data was returned. If you have a market data subscription, try re-requesting a quote. You can enter a limit price manually.",
+    };
+  }
+  if (quote.market_data_type === "delayed" || quote.market_data_type === "delayed_frozen") {
+    return {
+      headline: "Delayed data",
+      body: "Quotes may lag the market. Confirm the current price before entering a limit. Live data requires an IBKR API market data subscription for this symbol.",
+    };
+  }
+  if (quote.market_data_type === "frozen") {
+    return {
+      headline: "Frozen data",
+      body: "Last available bid/ask from when the market last closed. Live quotes will return when the market opens.",
+    };
+  }
+  return null;
+}
+
+function QuoteStrip({ quote }: { quote: QuoteSnapshot }) {
+  const hasData =
+    quote.bid != null || quote.ask != null || quote.last != null ||
+    quote.open != null || quote.high != null || quote.low != null || quote.close != null;
+
+  const mdtLabel = MDT_LABEL[quote.market_data_type];
+  const guidance = quoteGuidance(quote);
+
+  return (
+    <div className="flex flex-col gap-1.5">
+      <div className={`flex flex-wrap items-center gap-x-4 gap-y-1 rounded border bg-[var(--bg-1)] px-2.5 py-1.5 text-[11px] ${hasData ? "border-border/60" : "border-border/40"}`}>
+        {hasData ? (
+          <>
+            {quote.bid != null && (
+              <span><span className="text-[var(--text-3)]">Bid </span><span className="font-data text-[var(--text-1)]">{quote.bid.toFixed(2)}</span></span>
+            )}
+            {quote.ask != null && (
+              <span><span className="text-[var(--text-3)]">Ask </span><span className="font-data text-[var(--text-1)]">{quote.ask.toFixed(2)}</span></span>
+            )}
+            {quote.last != null && (
+              <span><span className="text-[var(--text-3)]">Last </span><span className="font-data text-[var(--text-1)]">{quote.last.toFixed(2)}</span></span>
+            )}
+            {quote.close != null && (
+              <span><span className="text-[var(--text-3)]">Close </span><span className="font-data text-[var(--text-2)]">{quote.close.toFixed(2)}</span></span>
+            )}
+            {quote.open != null && (
+              <span><span className="text-[var(--text-3)]">Open </span><span className="font-data text-[var(--text-2)]">{quote.open.toFixed(2)}</span></span>
+            )}
+            {quote.high != null && (
+              <span><span className="text-[var(--text-3)]">High </span><span className="font-data text-[var(--text-2)]">{quote.high.toFixed(2)}</span></span>
+            )}
+            {quote.low != null && (
+              <span><span className="text-[var(--text-3)]">Low </span><span className="font-data text-[var(--text-2)]">{quote.low.toFixed(2)}</span></span>
+            )}
+            {mdtLabel != null && (
+              <span className={`ml-auto shrink-0 ${mdtColor(quote.market_data_type)}`}>{mdtLabel}</span>
+            )}
+          </>
+        ) : (
+          <span className="text-[var(--text-3)]">{quote.unavailable_reason ?? "Market data unavailable."}</span>
+        )}
+      </div>
+      {guidance != null && (
+        <div className="rounded border border-border/40 bg-[var(--bg-1)] px-2.5 py-2 text-[11px] leading-[1.5]">
+          <span className="font-medium text-[var(--text-2)]">{guidance.headline} — </span>
+          <span className="text-[var(--text-3)]">{guidance.body}</span>
+        </div>
+      )}
+    </div>
+  );
 }
 
 function ConnectionBadge({ connected }: { connected: boolean }) {
@@ -264,7 +375,7 @@ export function TwsExecutionAssistantModule() {
     },
   });
 
-  const { data: quote } = useQuery({
+  const { data: quote, isLoading: quoteLoading } = useQuery({
     queryKey: ["tws-quote", planForm.conid],
     queryFn: () => twsApi.getQuote(planForm.conid),
     enabled: status?.connected === true && planForm.conid > 0,
@@ -561,27 +672,12 @@ export function TwsExecutionAssistantModule() {
                         </label>
                       )}
                     </div>
-                    {quote !== undefined && planForm.conid > 0 && (
-                      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 rounded border border-border/60 bg-[var(--bg-1)] px-2.5 py-1.5 text-[11px]">
-                        {(quote.bid != null || quote.ask != null || quote.last != null) ? (
-                          <>
-                            {quote.bid != null && (
-                              <span><span className="text-[var(--text-3)]">Bid </span><span className="font-data text-[var(--text-1)]">{quote.bid.toFixed(2)}</span></span>
-                            )}
-                            {quote.ask != null && (
-                              <span><span className="text-[var(--text-3)]">Ask </span><span className="font-data text-[var(--text-1)]">{quote.ask.toFixed(2)}</span></span>
-                            )}
-                            {quote.last != null && (
-                              <span><span className="text-[var(--text-3)]">Last </span><span className="font-data text-[var(--text-1)]">{quote.last.toFixed(2)}</span></span>
-                            )}
-                            {quote.close != null && (
-                              <span><span className="text-[var(--text-3)]">Close </span><span className="font-data text-[var(--text-2)]">{quote.close.toFixed(2)}</span></span>
-                            )}
-                          </>
-                        ) : (
-                          <span className="text-[var(--text-3)]">Market data unavailable.</span>
-                        )}
-                      </div>
+                    {planForm.conid > 0 && (
+                      quoteLoading
+                        ? <div className="rounded border border-border/60 bg-[var(--bg-1)] px-2.5 py-1.5 text-[11px] text-[var(--text-3)] animate-pulse">Fetching market data…</div>
+                        : quote !== undefined
+                          ? <QuoteStrip quote={quote} />
+                          : null
                     )}
                     {(() => {
                       const reason = saveDraftDisabledReason();
@@ -701,7 +797,7 @@ export function TwsExecutionAssistantModule() {
                 <StatRow label="Heartbeat" value="-" />
                 <StatRow label="Last heartbeat" value="-" />
                 <StatRow label="Account updates" value="-" />
-                <StatRow label="Market data" value="-" />
+                <StatRow label="Market data" value={marketDataStatus(quote).value} tone={marketDataStatus(quote).tone} />
               </div>
             </Panel>
 

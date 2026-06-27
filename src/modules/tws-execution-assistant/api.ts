@@ -115,6 +115,14 @@ export interface InstrumentResult {
   local_symbol: string;
 }
 
+export type MarketDataType =
+  | "unknown"
+  | "live"
+  | "frozen"
+  | "delayed"
+  | "delayed_frozen"
+  | "unavailable";
+
 export interface QuoteSnapshot {
   last: number | null;
   close: number | null;
@@ -123,6 +131,10 @@ export interface QuoteSnapshot {
   low: number | null;
   bid: number | null;
   ask: number | null;
+  market_data_type: MarketDataType;
+  is_delayed: boolean;
+  unavailable_reason: string | null;
+  error_code: number | null;
 }
 
 export const twsApi = {

@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import math
+import re
 
 from ib_async import IB, Contract
 
@@ -21,6 +22,33 @@ from models.tws_execution_assistant import (
 log = logging.getLogger(__name__)
 
 _IBKR_UNSET = 1.7976931348623157e+308
+_MDT_MAP: dict[int, str] = {1: "live", 2: "frozen", 3: "delayed", 4: "delayed_frozen"}
+
+# IBKR codes that are expected market-data permission responses, not real errors.
+# 10089: no live subscription, delayed data may be available.
+# 10090: partial subscription.
+_EXPECTED_MDT_ERRORS: frozenset[int] = frozenset({10089, 10090})
+
+_ib_log = logging.getLogger("ib_async")
+
+
+_EXPECTED_MDT_PATTERN = re.compile(
+    r"\b(" + "|".join(str(c) for c in _EXPECTED_MDT_ERRORS) + r")\b"
+)
+
+
+class _SuppressExpectedMdtWarnings(logging.Filter):
+    """Downgrades expected IBKR market-data permission log lines to DEBUG.
+
+    Attached to the ib_async logger only during get_quote(); removed in finally
+    so unrelated ib_async warnings are never silenced.
+    Uses a word-boundary pattern so a conid like 100890 is not a false match.
+    """
+    def filter(self, record: logging.LogRecord) -> bool:
+        if _EXPECTED_MDT_PATTERN.search(record.getMessage()):
+            record.levelno = logging.DEBUG
+            record.levelname = "DEBUG"
+        return True
 
 
 def _quote_val(val: object) -> float | None:
@@ -174,36 +202,87 @@ class TwsBrokerAdapter:
     async def get_quote(self, conid: int) -> QuoteSnapshot:
         """Fetch a best-effort market data snapshot for a conid.
 
+        Requests delayed-frozen data first so closed-market snapshots are
+        available even when live bid/ask is absent. Classifies the response
+        by IBKR market data type and surfaces error 10089 as a structured
+        unavailable result rather than an indistinguishable all-null snapshot.
+
         Read-only — no streaming subscription persists after this call.
-        Returns an empty QuoteSnapshot when data is unavailable.
         """
         if not self._ib.isConnected():
             return QuoteSnapshot()
+
+        captured_errors: list[int] = []
+
+        def _on_error(req_id: int, code: int, msg: str, contract: object) -> None:
+            # ponytail: req_id ignored — safe today (React Query single-flights per conid),
+            # filter by req_id if concurrent quote calls are ever added.
+            captured_errors.append(code)
+
+        _mdt_filter = _SuppressExpectedMdtWarnings()
+        self._ib.errorEvent += _on_error
+        _ib_log.addFilter(_mdt_filter)
         try:
+            # Request delayed-frozen before snapshot so IBKR returns the most
+            # recent available quote even when live data is unavailable.
+            self._ib.reqMarketDataType(4)
             # IBKR requires exchange identity for market data (Warning 321).
             # Supplying SMART/STK/USD is enough for equities — IBKR routes SMART
             # to the correct primary exchange for the given conid.
             contract = Contract(conId=conid, secType="STK", exchange="SMART", currency="USD")
-            tickers = await asyncio.wait_for(
-                self._ib.reqTickersAsync(contract), timeout=5.0
-            )
-            if not tickers:
+            try:
+                tickers = await asyncio.wait_for(
+                    self._ib.reqTickersAsync(contract), timeout=5.0
+                )
+            except (RuntimeError, OSError, asyncio.TimeoutError) as exc:
+                log.warning("Quote fetch failed for conid %s: %s", conid, exc)
                 return QuoteSnapshot()
+
+            if not tickers:
+                return QuoteSnapshot(
+                    market_data_type="unavailable",
+                    unavailable_reason="Market data unavailable.",
+                )
+
             t = tickers[0]
             # Cancel the subscription immediately — we only wanted a snapshot.
             self._ib.cancelMktData(t.contract)
-            return QuoteSnapshot(
-                last=_quote_val(t.last),
-                close=_quote_val(t.close),
-                open=_quote_val(t.open),
-                high=_quote_val(t.high),
-                low=_quote_val(t.low),
-                bid=_quote_val(t.bid),
-                ask=_quote_val(t.ask),
+
+            vals = (
+                _quote_val(t.last), _quote_val(t.close), _quote_val(t.open),
+                _quote_val(t.high), _quote_val(t.low), _quote_val(t.bid), _quote_val(t.ask),
             )
-        except (RuntimeError, OSError, asyncio.TimeoutError) as exc:
-            log.warning("Quote fetch failed for conid %s: %s", conid, exc)
-            return QuoteSnapshot()
+            # Check data before errors: reqMarketDataType(4) causes IBKR to fire
+            # 10089 as an informational warning and then still return delayed data.
+            # If the ticker has values, return them regardless of the warning.
+            if any(v is not None for v in vals):
+                # ponytail: marketDataType may be 0 even when delayed values arrive,
+                # giving market_data_type="unknown" and "-" in Session Health while
+                # prices are visible. Display-only inconsistency; fix if ib_async
+                # reliably populates the field in practice.
+                mdt = _MDT_MAP.get(getattr(t, "marketDataType", 0) or 0, "unknown")
+                return QuoteSnapshot(
+                    last=vals[0], close=vals[1], open=vals[2], high=vals[3],
+                    low=vals[4], bid=vals[5], ask=vals[6],
+                    market_data_type=mdt,
+                    is_delayed=mdt in ("delayed", "delayed_frozen"),
+                )
+
+            if 10089 in captured_errors:
+                return QuoteSnapshot(
+                    market_data_type="unavailable",
+                    is_delayed=False,
+                    error_code=10089,
+                    unavailable_reason="API market data subscription required; delayed market data may be available.",
+                )
+
+            return QuoteSnapshot(
+                market_data_type="unavailable",
+                unavailable_reason="Market data unavailable.",
+            )
+        finally:
+            self._ib.errorEvent -= _on_error
+            _ib_log.removeFilter(_mdt_filter)
 
     def get_reconciliation(self) -> ReconciliationSnapshot:
         if not self._ib.isConnected():

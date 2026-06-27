@@ -65,6 +65,16 @@ class InstrumentResult(BaseModel):
     local_symbol: str
 
 
+MarketDataType = Literal[
+    "unknown",
+    "live",
+    "frozen",
+    "delayed",
+    "delayed_frozen",
+    "unavailable",
+]
+
+
 class QuoteSnapshot(BaseModel):
     last: float | None = None
     close: float | None = None
@@ -73,3 +83,7 @@ class QuoteSnapshot(BaseModel):
     low: float | None = None
     bid: float | None = None
     ask: float | None = None
+    market_data_type: MarketDataType = "unknown"
+    is_delayed: bool = False
+    unavailable_reason: str | None = None
+    error_code: int | None = None

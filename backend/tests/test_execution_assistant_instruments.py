@@ -117,20 +117,53 @@ def test_quote_returns_empty_snapshot_when_no_data():
 
 # ── Adapter-level regression: primaryExchange field name ─────────────────────
 
+class _NoopEvent:
+    """Minimal errorEvent stand-in for fake IB objects that don't emit errors."""
+    def __iadd__(self, fn: object) -> "_NoopEvent":
+        return self
+    def __isub__(self, fn: object) -> "_NoopEvent":
+        return self
+
+
+class _CallableEvent:
+    """Minimal errorEvent that records handlers and supports emit()."""
+    def __init__(self) -> None:
+        self._handlers: list = []
+
+    def __iadd__(self, fn: object) -> "_CallableEvent":
+        self._handlers.append(fn)
+        return self
+
+    def __isub__(self, fn: object) -> "_CallableEvent":
+        if fn in self._handlers:
+            self._handlers.remove(fn)
+        return self
+
+    def emit(self, *args: object) -> None:
+        for h in self._handlers:
+            h(*args)
+
+
 def test_adapter_get_quote_passes_exchange_to_ib():
     """Regression: Contract(conId=...) alone triggers IBKR Warning 321.
 
     get_quote() must include secType/exchange/currency so IBKR can route
-    the market data request. This test captures the contract that reaches
-    reqTickersAsync and asserts the required fields are present.
+    the market data request. Also verifies reqMarketDataType(4) is called
+    for the delayed-frozen fallback before the snapshot request.
     """
     from ib_async import Ticker
 
     captured: list[Contract] = []
+    mdt_calls: list[int] = []
 
     class _FakeIB:
+        errorEvent = _NoopEvent()
+
         def isConnected(self) -> bool:
             return True
+
+        def reqMarketDataType(self, mdt: int) -> None:
+            mdt_calls.append(mdt)
 
         async def reqTickersAsync(self, *contracts):
             captured.extend(contracts)
@@ -157,6 +190,51 @@ def test_adapter_get_quote_passes_exchange_to_ib():
     assert result.bid == 131.48
     assert result.ask == 131.52
     assert result.last == 131.50
+    assert mdt_calls == [4], "reqMarketDataType(4) must be called for delayed-frozen fallback"
+
+
+def test_adapter_get_quote_error_10089_no_data_returns_structured_unavailable():
+    """IBKR error 10089 with no ticker data returns structured unavailable, not silent all-null.
+
+    reqMarketDataType(4) causes IBKR to fire 10089 as a warning and then return
+    delayed data if available. When NO data comes back alongside the warning,
+    the response must be specific unavailable, not an indistinguishable all-null.
+
+    Critical promise: external failures stop safely and visibly (docs/testing.md #5).
+    """
+    from ib_async import Contract as IbContract, Ticker
+
+    class _FakeIB:
+        def __init__(self) -> None:
+            self.errorEvent = _CallableEvent()
+
+        def isConnected(self) -> bool:
+            return True
+
+        def reqMarketDataType(self, _mdt: int) -> None:
+            pass
+
+        async def reqTickersAsync(self, *contracts):
+            # 10089 with an empty ticker — no delayed data available for this symbol.
+            self.errorEvent.emit(1, 10089, "No market data permissions", contracts[0] if contracts else None)
+            return [Ticker(contract=contracts[0] if contracts else IbContract())]
+
+        def cancelMktData(self, _contract: object) -> None:
+            pass
+
+    adapter = TwsBrokerAdapter()
+    adapter._ib = _FakeIB()  # type: ignore[assignment]
+    adapter._state = "connected"
+
+    result = asyncio.run(adapter.get_quote(265598))
+
+    assert result.market_data_type == "unavailable"
+    assert result.error_code == 10089
+    assert result.unavailable_reason is not None
+    assert "subscription" in result.unavailable_reason.lower()
+    assert result.is_delayed is False
+    assert result.bid is None
+    assert result.last is None
 
 
 def test_adapter_search_uses_primary_exchange_not_primary_exch():
