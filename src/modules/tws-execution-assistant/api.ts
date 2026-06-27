@@ -36,6 +36,8 @@ export interface TwsStatusResponse {
   adapter_state: TwsAdapterState;
   kill_switch_active: boolean;
   reconciliation_summary: ReconciliationSummary;
+  /** TCP-reachable even before Orbit's adapter connects. */
+  api_server_available: boolean;
 }
 
 export interface PositionSnapshot {

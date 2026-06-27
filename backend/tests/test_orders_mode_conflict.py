@@ -24,11 +24,17 @@ class _FakeIbkr:
     state = _FakeIbkrState()
 
 
+class _FakeTwsAdapter:
+    def __init__(self, *, connected: bool) -> None:
+        self._connected = connected
+
+    def is_connected(self) -> bool:
+        return self._connected
+
+
 def _client(tws_mode: bool) -> TestClient:
     fake = _FakeIbkr()
-    session = BrokerSessionService(fake)
-    if tws_mode:
-        session.set_mode("tws")
+    session = BrokerSessionService(fake, _FakeTwsAdapter(connected=tws_mode))
 
     app = FastAPI()
     app.include_router(orders_router)

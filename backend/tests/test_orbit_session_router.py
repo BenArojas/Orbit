@@ -4,6 +4,11 @@ Public-boundary test for GET/POST /orbit/session/mode.
 Critical promise: incompatible broker modules fail closed before rendering —
 the session contract that drives frontend gating must be correct at the
 router/API boundary, not just in the service.
+
+Mode is now connection-derived:
+  1. TWS adapter connected  → "tws"  (wins if both active)
+  2. CP authenticated       → "client_portal"
+  3. Neither                → "none"
 """
 
 import pytest
@@ -25,10 +30,17 @@ class _FakeIbkr:
         self.state = _FakeIbkrState(authenticated=authenticated)
 
 
-def _client(*, authenticated: bool) -> tuple[TestClient, BrokerSessionService]:
+class _FakeTwsAdapter:
+    def __init__(self, *, connected: bool) -> None:
+        self._connected = connected
+
+    def is_connected(self) -> bool:
+        return self._connected
+
+
+def _client(*, authenticated: bool, tws_connected: bool = False) -> tuple[TestClient, BrokerSessionService]:
     """Return (client, session_service) so tests can inspect service state."""
-    fake = _FakeIbkr(authenticated=authenticated)
-    session = BrokerSessionService(fake)
+    session = BrokerSessionService(_FakeIbkr(authenticated=authenticated), _FakeTwsAdapter(connected=tws_connected))
 
     app = FastAPI()
     app.include_router(orbit_session_router)
@@ -37,19 +49,22 @@ def _client(*, authenticated: bool) -> tuple[TestClient, BrokerSessionService]:
     return TestClient(app), session
 
 
-# ── GET /orbit/session/mode ──────────────────────────────────────────────────
+# ── Mode derivation ──────────────────────────────────────────────────────────
 
-def test_get_mode_unauthenticated():
-    client, _ = _client(authenticated=False)
+def test_neither_connected_yields_none_with_tws_launchable():
+    """In none mode, TWS module is the setup entry point — CP modules stay locked."""
+    client, _ = _client(authenticated=False, tws_connected=False)
     r = client.get("/orbit/session/mode")
     assert r.status_code == 200
     body = r.json()
     assert body["mode"] == "none"
-    assert body["available_modules"] == []
+    assert body["available_modules"] == ["tws-execution-assistant"]
+    assert "parallax" not in body["available_modules"]
+    assert "moonmarket" not in body["available_modules"]
 
 
-def test_get_mode_authenticated():
-    client, _ = _client(authenticated=True)
+def test_cp_auth_no_tws_yields_client_portal():
+    client, _ = _client(authenticated=True, tws_connected=False)
     r = client.get("/orbit/session/mode")
     assert r.status_code == 200
     body = r.json()
@@ -58,28 +73,35 @@ def test_get_mode_authenticated():
     assert "tws-execution-assistant" not in body["available_modules"]
 
 
-# ── POST /orbit/session/mode ─────────────────────────────────────────────────
-
-def test_post_tws_enters_tws_mode():
-    client, _ = _client(authenticated=True)
-    r = client.post("/orbit/session/mode", json={"target": "tws"})
+def test_tws_connected_yields_tws_mode():
+    client, _ = _client(authenticated=False, tws_connected=True)
+    r = client.get("/orbit/session/mode")
     assert r.status_code == 200
     body = r.json()
     assert body["mode"] == "tws"
     assert body["available_modules"] == ["tws-execution-assistant"]
 
 
-def test_post_client_portal_clears_tws_override():
-    client, _ = _client(authenticated=True)
-    # Enter TWS mode first
-    client.post("/orbit/session/mode", json={"target": "tws"})
-    # Clear back to client_portal
-    r = client.post("/orbit/session/mode", json={"target": "client_portal"})
+def test_tws_wins_when_both_active():
+    """TWS connection takes priority over CP auth for module gating."""
+    client, _ = _client(authenticated=True, tws_connected=True)
+    r = client.get("/orbit/session/mode")
     assert r.status_code == 200
     body = r.json()
-    assert body["mode"] == "client_portal"
-    assert "parallax" in body["available_modules"]
-    assert "tws-execution-assistant" not in body["available_modules"]
+    assert body["mode"] == "tws"
+    assert body["available_modules"] == ["tws-execution-assistant"]
+    assert "parallax" not in body["available_modules"]
+
+
+# ── POST /orbit/session/mode (now a no-op; validation + response still work) ─
+
+def test_post_returns_current_connection_derived_mode():
+    """POST /mode is a no-op; response reflects actual connection state."""
+    client, _ = _client(authenticated=True, tws_connected=False)
+    r = client.post("/orbit/session/mode", json={"target": "tws"})
+    assert r.status_code == 200
+    # Mode is still client_portal — the POST doesn't change anything
+    assert r.json()["mode"] == "client_portal"
 
 
 def test_post_none_is_rejected():

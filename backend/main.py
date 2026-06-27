@@ -88,13 +88,14 @@ async def lifespan(app: FastAPI):
     ibkr = IBKRService()
     app.state.ibkr = ibkr
 
-    # Broker session — process-local mode state (none/client_portal/tws).
-    broker_session = BrokerSessionService(ibkr)
-    app.state.broker_session = broker_session
-
     # TWS broker adapter — owns the ib_async IB connection; starts disconnected.
+    # Must be created before BrokerSessionService so mode can be derived from it.
     tws_adapter = TwsBrokerAdapter()
     app.state.tws_adapter = tws_adapter
+
+    # Broker session — mode derived from tws_adapter.is_connected() + ibkr auth.
+    broker_session = BrokerSessionService(ibkr, tws_adapter)
+    app.state.broker_session = broker_session
 
     # Execution plan service — process-local draft store; lost on restart by design.
     app.state.execution_plan_service = ExecutionPlanService()

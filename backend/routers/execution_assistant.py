@@ -15,7 +15,8 @@ async def get_status(
     adapter: TwsBrokerAdapter = Depends(get_tws_adapter),
     session: BrokerSessionService = Depends(get_broker_session),
 ) -> TwsStatusResponse:
-    return adapter.get_status(session.current_mode())
+    available = await adapter.check_api_server()
+    return adapter.get_status(session.current_mode(), available)
 
 
 @router.post("/connect", response_model=TwsStatusResponse)
@@ -25,7 +26,8 @@ async def connect(
     session: BrokerSessionService = Depends(get_broker_session),
 ) -> TwsStatusResponse:
     await adapter.connect(request.host, request.port, request.client_id)
-    return adapter.get_status(session.current_mode())
+    available = await adapter.check_api_server()
+    return adapter.get_status(session.current_mode(), available)
 
 
 @router.post("/disconnect", response_model=TwsStatusResponse)
@@ -34,7 +36,8 @@ async def disconnect(
     session: BrokerSessionService = Depends(get_broker_session),
 ) -> TwsStatusResponse:
     await adapter.disconnect()
-    return adapter.get_status(session.current_mode())
+    available = await adapter.check_api_server()
+    return adapter.get_status(session.current_mode(), available)
 
 
 @router.get("/reconciliation", response_model=ReconciliationSnapshot)

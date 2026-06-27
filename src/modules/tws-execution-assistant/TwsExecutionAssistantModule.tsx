@@ -1,5 +1,7 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { BackToOrbitButton } from "@/components/ui/BackToOrbitButton";
+import { BROKER_SESSION_KEY } from "@/context/BrokerSessionContext";
 import { twsApi, TWS_CONNECT_DEFAULTS, type ExecutionPlan, type ExecutionPlanDraftRequest, type ExecutionPlanOrderType, type ExecutionPlanSide, type OrderSnapshot, type TwsAdapterState, type TwsConnectRequest } from "./api";
 
 const STATUS_KEY = ["tws-status"];
@@ -91,6 +93,8 @@ export function TwsExecutionAssistantModule() {
     onSuccess: (result) => {
       queryClient.setQueryData(STATUS_KEY, result);
       queryClient.invalidateQueries({ queryKey: RECON_KEY });
+      // Mode is now connection-derived; invalidate so launcher re-gates immediately.
+      queryClient.invalidateQueries({ queryKey: BROKER_SESSION_KEY });
     },
   });
 
@@ -99,6 +103,7 @@ export function TwsExecutionAssistantModule() {
     onSuccess: (result) => {
       queryClient.setQueryData(STATUS_KEY, result);
       queryClient.setQueryData(RECON_KEY, undefined);
+      queryClient.invalidateQueries({ queryKey: BROKER_SESSION_KEY });
     },
   });
 
@@ -126,9 +131,12 @@ export function TwsExecutionAssistantModule() {
     <div className="min-h-screen bg-[var(--bg-1)] text-foreground">
       <div className="mx-auto max-w-4xl space-y-8 px-6 py-10">
         <header className="space-y-1">
-          <p className="text-[11px] font-medium uppercase tracking-[0.28em] text-[var(--text-3)]">
-            Orbit Module
-          </p>
+          <div className="flex items-center justify-between">
+            <p className="text-[11px] font-medium uppercase tracking-[0.28em] text-[var(--text-3)]">
+              Orbit Module
+            </p>
+            <BackToOrbitButton />
+          </div>
           <h1 className="text-3xl font-semibold">TWS Execution Assistant</h1>
           <p className="text-sm text-[var(--text-2)]">Read-only broker session status</p>
         </header>

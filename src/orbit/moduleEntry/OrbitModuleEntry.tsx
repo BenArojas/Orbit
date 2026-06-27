@@ -1,6 +1,7 @@
 import type { ReactElement } from "react";
 import type { LucideIcon } from "lucide-react";
 import { Activity, Briefcase, NotebookPen, Terminal } from "lucide-react";
+import { BackToOrbitButton } from "@/components/ui/BackToOrbitButton";
 import { GatewaySetup } from "@/components/gateway/GatewaySetup";
 import { useBrokerSession } from "@/context/BrokerSessionContext";
 import { InflectModule } from "@/modules/inflect/InflectModule";
@@ -61,12 +62,10 @@ export const orbitModules: Record<OrbitModuleId, OrbitModuleDefinition> = {
 
 function lockedMessage(moduleId: OrbitModuleId, mode: BrokerSessionMode): string {
   if (moduleId === "tws-execution-assistant") {
-    return mode === "none"
-      ? "Connect IBKR and switch to TWS broker mode to open the Execution Assistant."
-      : "Switch broker session to TWS mode to open the Execution Assistant.";
+    return "Connect TWS or IB Gateway from the Execution Assistant to enter TWS mode.";
   }
   return mode === "tws"
-    ? `TWS mode is active. Switch broker session to Client Portal mode to use ${orbitModules[moduleId].label}.`
+    ? `TWS mode is active. Disconnect from TWS / IB Gateway to use ${orbitModules[moduleId].label}.`
     : `Connect IBKR to open ${orbitModules[moduleId].label}. Orbit keeps you on this route so the reason is visible before the module mounts.`;
 }
 
@@ -83,9 +82,12 @@ function ModuleLockedState({
     <div className="flex min-h-screen bg-[var(--bg-1)] text-foreground">
       <div className="mx-auto flex w-full max-w-6xl flex-col gap-8 px-6 py-10 lg:flex-row lg:items-start">
         <section className="flex-1 space-y-4 pt-4">
-          <p className="text-[11px] font-medium uppercase tracking-[0.28em] text-[var(--text-3)]">
-            Orbit Module Locked
-          </p>
+          <div className="flex items-center justify-between">
+            <p className="text-[11px] font-medium uppercase tracking-[0.28em] text-[var(--text-3)]">
+              Orbit Module Locked
+            </p>
+            <BackToOrbitButton />
+          </div>
           <div className="space-y-2">
             <h1 className="text-3xl font-semibold text-foreground">
               {module.label} is locked

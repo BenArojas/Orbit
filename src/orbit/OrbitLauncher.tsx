@@ -3,7 +3,7 @@
  *
  * Slim top bar (ORBIT wordmark + GatewayStatusPill) over four hero app tiles.
  * Tile enable/disable is driven by broker session mode from BrokerSessionContext:
- *   none           → all tiles disabled
+ *   none           → TWS Assistant enabled as setup entry; CP modules disabled
  *   client_portal  → Parallax, MoonMarket, Inflect enabled; TWS Assistant disabled
  *   tws            → TWS Assistant enabled; Client Portal modules disabled
  */
@@ -19,7 +19,7 @@ export function OrbitLauncher() {
 
   const launcherHint =
     mode === "none"
-      ? "Connect IBKR to open your apps."
+      ? "Connect Client Portal Web API or open TWS Execution Assistant to connect TWS / IB Gateway."
       : mode === "tws"
         ? "TWS mode active — Client Portal modules are disabled."
         : null;

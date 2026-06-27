@@ -31,6 +31,7 @@ class TwsBrokerAdapter:
         self._ib = IB()
         self._state: TwsAdapterState = "not_initialized"
         self._client_id: int = 1
+        self._last_host: str = "127.0.0.1"
 
     async def connect(self, host: str, port: int, client_id: int) -> None:
         # KNOWN GAP: no paper/live account-type check here. Paper is the default
@@ -38,6 +39,7 @@ class TwsBrokerAdapter:
         # gate before any order-submission path exists.
         self._state = "connecting"
         self._client_id = client_id
+        self._last_host = host
         try:
             await self._ib.connectAsync(host, port, clientId=client_id, timeout=10)
             await self._ib.reqPositionsAsync()
@@ -57,7 +59,32 @@ class TwsBrokerAdapter:
             self._ib.disconnect()
         self._state = "disconnected"
 
-    def get_status(self, mode: BrokerSessionMode) -> TwsStatusResponse:
+    def is_connected(self) -> bool:
+        return self._state == "connected" and self._ib.isConnected()
+
+    async def check_api_server(self) -> bool:
+        """Return True if the TWS / IB Gateway API socket is TCP-reachable.
+
+        Short-circuits to True when Orbit's adapter is already connected.
+        Otherwise probes the last-used host (default 127.0.0.1) on IB Gateway
+        paper port 4002 and TWS paper port 7497 with a 0.5 s timeout each.
+        No IB API handshake is performed — just a raw TCP connect/close.
+        """
+        if self.is_connected():
+            return True
+        for port in (4002, 7497):
+            try:
+                _, writer = await asyncio.wait_for(
+                    asyncio.open_connection(self._last_host, port), timeout=0.5
+                )
+                writer.close()
+                await writer.wait_closed()
+                return True
+            except (OSError, asyncio.TimeoutError):
+                continue
+        return False
+
+    def get_status(self, mode: BrokerSessionMode, api_server_available: bool = False) -> TwsStatusResponse:
         connected = self._state == "connected" and self._ib.isConnected()
         if connected:
             trades = self._ib.openTrades()
@@ -74,6 +101,7 @@ class TwsBrokerAdapter:
             adapter_state=self._state,
             kill_switch_active=False,
             reconciliation_summary=summary,
+            api_server_available=api_server_available,
         )
 
     async def get_sec_type(self, conid: int) -> str | None:

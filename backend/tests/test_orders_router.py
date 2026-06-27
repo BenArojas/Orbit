@@ -85,8 +85,11 @@ def _client(fake_ibkr: _FakeIbkr) -> TestClient:
     app.include_router(orders_router)
     app.include_router(trading_safety_router)
     app.dependency_overrides[require_ibkr_auth] = lambda: fake_ibkr
-    # Provide an authenticated client_portal session so require_cp_mode passes.
-    _session = BrokerSessionService(fake_ibkr)
+    # Provide an authenticated CP session (TWS not connected) so require_cp_mode passes.
+    class _FakeTwsAdapter:
+        def is_connected(self) -> bool:
+            return False
+    _session = BrokerSessionService(fake_ibkr, _FakeTwsAdapter())
     app.dependency_overrides[get_broker_session] = lambda: _session
     return TestClient(app)
 

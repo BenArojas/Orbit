@@ -20,7 +20,7 @@ export function AppIcon({ label, icon: Icon, enabled, onOpen, badge, description
       type="button"
       aria-label={label}
       disabled={!enabled}
-      onClick={enabled ? onOpen : undefined}
+      onClick={onOpen}
       title={enabled ? undefined : "Connect IBKR to open"}
       className={[
         "relative flex h-44 w-44 flex-col items-center justify-center gap-2",
