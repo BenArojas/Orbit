@@ -163,6 +163,24 @@ export interface QuoteSnapshot {
   error_code: number | null;
 }
 
+export const TWS_TIMEFRAMES = ["1m", "5m", "15m", "30m", "4h", "1D", "1W"] as const;
+export type TwsTimeframe = (typeof TWS_TIMEFRAMES)[number];
+
+export interface BarSnapshot {
+  time: number; // Unix seconds UTC
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+}
+
+export interface BarsResponse {
+  conid: number;
+  timeframe: string;
+  bars: BarSnapshot[];
+}
+
 export const twsApi = {
   getMode: () =>
     sidecarRequest<BrokerSessionModeResponse>("GET", "/orbit/session/mode"),
@@ -193,4 +211,6 @@ export const twsApi = {
     sidecarRequest<PaperOrderPreview>("POST", `/execution-assistant/plans/${plan_id}/preview-paper`),
   placePaperOrder: (plan_id: string) =>
     sidecarRequest<PaperOrderSubmission>("POST", `/execution-assistant/plans/${plan_id}/place-paper`),
+  getBars: (conid: number, timeframe: TwsTimeframe) =>
+    sidecarRequest<BarsResponse>("GET", `/execution-assistant/instruments/${conid}/bars?timeframe=${timeframe}`),
 } as const;

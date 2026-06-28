@@ -4,7 +4,7 @@ import asyncio
 import logging
 import math
 import re
-from datetime import datetime, timezone
+from datetime import date as date_, datetime, timezone
 
 from typing import TYPE_CHECKING
 
@@ -15,6 +15,8 @@ from models.broker_session import BrokerSessionMode
 if TYPE_CHECKING:
     from models.execution_plan import ExecutionPlan
 from models.tws_execution_assistant import (
+    BarSnapshot,
+    BarsResponse,
     InstrumentResult,
     OrderSnapshot,
     PAPER_PORTS,
@@ -333,7 +335,7 @@ class TwsBrokerAdapter:
             OrderSnapshot(
                 order_id=t.order.orderId,
                 conid=t.contract.conId,
-                symbol=t.contract.symbol,
+                symbol=t.contract.symbol or t.contract.localSymbol or str(t.contract.conId),
                 side=t.order.action,
                 quantity=float(t.order.totalQuantity),
                 order_type=t.order.orderType,
@@ -372,7 +374,7 @@ class TwsBrokerAdapter:
         if plan.status != "valid":
             raise TwsPlaceOrderGuardError("plan_not_valid")
 
-        contract = Contract(conId=plan.conid, secType="STK", exchange="SMART", currency="USD")
+        contract = Contract(conId=plan.conid, symbol=plan.symbol, secType="STK", exchange="SMART", currency="USD")
         order = Order(
             action=plan.side,
             orderType=plan.order_type,
@@ -399,3 +401,61 @@ class TwsBrokerAdapter:
             limit_price=plan.limit_price,
             submitted_at=datetime.now(timezone.utc),
         )
+
+    # Timeframe → (IBKR barSizeSetting, durationStr)
+    _TF_MAP: dict[str, tuple[str, str]] = {
+        "1m":  ("1 min",   "1 D"),
+        "5m":  ("5 mins",  "5 D"),
+        "15m": ("15 mins", "10 D"),
+        "30m": ("30 mins", "20 D"),
+        "4h":  ("4 hours", "30 D"),
+        "1D":  ("1 day",   "1 Y"),
+        "1W":  ("1 week",  "3 Y"),
+    }
+
+    async def get_bars(self, conid: int, timeframe: str) -> BarsResponse:
+        """Fetch read-only OHLCV bars for a conid at the requested timeframe.
+
+        Returns an empty bars list when not connected or on any fetch error —
+        the caller treats an empty list as "unavailable" without raising.
+        Read-only: no order actions, no account data.
+        """
+        if not self._ib.isConnected():
+            return BarsResponse(conid=conid, timeframe=timeframe)
+
+        bar_size, duration = self._TF_MAP[timeframe]  # router validates; KeyError here is a bug
+        contract = Contract(conId=conid, secType="STK", exchange="SMART", currency="USD")
+        try:
+            raw = await self._ib.reqHistoricalDataAsync(
+                contract,
+                endDateTime="",
+                durationStr=duration,
+                barSizeSetting=bar_size,
+                whatToShow="TRADES",
+                useRTH=True,
+                formatDate=1,
+                keepUpToDate=False,
+                timeout=30,
+            )
+        except (RuntimeError, OSError, asyncio.TimeoutError) as exc:
+            log.warning("Bars fetch failed conid=%s tf=%s: %s", conid, timeframe, exc)
+            return BarsResponse(conid=conid, timeframe=timeframe)
+
+        bars: list[BarSnapshot] = []
+        for bar in raw:
+            try:
+                d = bar.date
+                if isinstance(d, datetime):
+                    t = int(d.timestamp())
+                elif isinstance(d, date_):
+                    t = int(datetime(d.year, d.month, d.day, tzinfo=timezone.utc).timestamp())
+                else:
+                    continue
+                bars.append(BarSnapshot(
+                    time=t, open=bar.open, high=bar.high,
+                    low=bar.low, close=bar.close, volume=bar.volume,
+                ))
+            except (TypeError, ValueError, AttributeError, OverflowError):
+                continue
+
+        return BarsResponse(conid=conid, timeframe=timeframe, bars=bars)

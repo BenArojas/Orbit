@@ -1,6 +1,7 @@
 from datetime import datetime
 from typing import Literal
 
+
 from pydantic import BaseModel
 
 from models.broker_session import BrokerSessionMode
@@ -117,3 +118,18 @@ class QuoteSnapshot(BaseModel):
     is_delayed: bool = False
     unavailable_reason: str | None = None
     error_code: int | None = None
+
+
+class BarSnapshot(BaseModel):
+    time: int  # Unix seconds UTC
+    open: float
+    high: float
+    low: float
+    close: float
+    volume: float
+
+
+class BarsResponse(BaseModel):
+    conid: int
+    timeframe: str
+    bars: list[BarSnapshot] = []

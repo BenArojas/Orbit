@@ -7,6 +7,7 @@ log = logging.getLogger(__name__)
 from deps import get_broker_session, get_execution_plan_service, get_tws_adapter
 from models.execution_plan import ExecutionPlan, ExecutionPlanDraftRequest
 from models.tws_execution_assistant import (
+    BarsResponse,
     InstrumentResult,
     PaperOrderPreview,
     PaperOrderSubmission,
@@ -75,6 +76,27 @@ async def get_quote(
     adapter: TwsBrokerAdapter = Depends(get_tws_adapter),
 ) -> QuoteSnapshot:
     return await adapter.get_quote(conid)
+
+
+_ALLOWED_TIMEFRAMES: frozenset[str] = frozenset({"1m", "5m", "15m", "30m", "4h", "1D", "1W"})
+
+
+@router.get("/instruments/{conid}/bars", response_model=BarsResponse)
+async def get_bars(
+    conid: int,
+    timeframe: str = "5m",
+    adapter: TwsBrokerAdapter = Depends(get_tws_adapter),
+) -> BarsResponse:
+    if timeframe not in _ALLOWED_TIMEFRAMES:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "error": "unsupported_timeframe",
+                "timeframe": timeframe,
+                "allowed": sorted(_ALLOWED_TIMEFRAMES),
+            },
+        )
+    return await adapter.get_bars(conid, timeframe)
 
 
 # ── Execution plan draft + validation ────────────────────────────────────────
