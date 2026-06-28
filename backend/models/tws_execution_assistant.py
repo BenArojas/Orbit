@@ -1,8 +1,12 @@
+from datetime import datetime
 from typing import Literal
 
 from pydantic import BaseModel
 
 from models.broker_session import BrokerSessionMode
+
+# Ports recognized as IBKR paper environments. Unknown/live ports are read-only.
+PAPER_PORTS: frozenset[int] = frozenset({4002, 7497})
 
 
 class TwsConnectRequest(BaseModel):
@@ -73,6 +77,32 @@ MarketDataType = Literal[
     "delayed_frozen",
     "unavailable",
 ]
+
+
+class PaperOrderPreview(BaseModel):
+    plan_id: str
+    conid: int
+    symbol: str
+    side: Literal["BUY", "SELL"]
+    quantity: float
+    order_type: Literal["LMT", "MKT"]
+    limit_price: float | None
+    tif: str  # "DAY" for MVP
+    transmit: bool  # False — preview only, no placeOrder
+    paper_only: bool = True
+
+
+class PaperOrderSubmission(BaseModel):
+    order_id: int
+    status: str  # TWS-reported broker status (e.g. "PreSubmitted") or "sent_to_tws" if no callback yet
+    plan_id: str
+    conid: int
+    symbol: str
+    side: Literal["BUY", "SELL"]
+    quantity: float
+    order_type: Literal["LMT", "MKT"]
+    limit_price: float | None
+    submitted_at: datetime
 
 
 class QuoteSnapshot(BaseModel):

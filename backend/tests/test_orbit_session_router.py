@@ -51,16 +51,14 @@ def _client(*, authenticated: bool, tws_connected: bool = False) -> tuple[TestCl
 
 # ── Mode derivation ──────────────────────────────────────────────────────────
 
-def test_neither_connected_yields_none_with_tws_launchable():
-    """In none mode, TWS module is the setup entry point — CP modules stay locked."""
+def test_neither_connected_yields_none():
+    """In none mode no tiles are available — connect from the top-bar status pill."""
     client, _ = _client(authenticated=False, tws_connected=False)
     r = client.get("/orbit/session/mode")
     assert r.status_code == 200
     body = r.json()
     assert body["mode"] == "none"
-    assert body["available_modules"] == ["tws-execution-assistant"]
-    assert "parallax" not in body["available_modules"]
-    assert "moonmarket" not in body["available_modules"]
+    assert body["available_modules"] == []
 
 
 def test_cp_auth_no_tws_yields_client_portal():

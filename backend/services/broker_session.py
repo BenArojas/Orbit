@@ -43,6 +43,9 @@ class BrokerSessionService:
         mode = self.current_mode()
         if mode == "client_portal":
             return list(_CP_MODULES)
-        # tws mode: TWS module active. none mode: TWS module is the setup entry
-        # point — the user must open it to connect; no CP modules are available.
-        return list(_TWS_MODULES)
+        if mode == "tws":
+            return list(_TWS_MODULES)
+        # none: no modules. Connecting happens from the top-bar status pill
+        # (GatewayStatusPill), not from inside a gated module — so the tiles
+        # light up only once a session exists, same as the Client Portal modules.
+        return []

@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
 from models.execution_plan import ExecutionPlan, ExecutionPlanDraftRequest
+from models.tws_execution_assistant import PaperOrderPreview
 
 if TYPE_CHECKING:
     from services.tws_broker_adapter import TwsBrokerAdapter
@@ -62,3 +63,19 @@ class ExecutionPlanService:
         })
         self._plans[plan.plan_id] = updated
         return updated
+
+    def preview_paper(self, plan: ExecutionPlan) -> PaperOrderPreview:
+        if plan.status != "valid":
+            raise ValueError(f"Plan {plan.plan_id} must be valid before preview (status={plan.status}).")
+        return PaperOrderPreview(
+            plan_id=plan.plan_id,
+            conid=plan.conid,
+            symbol=plan.symbol,
+            side=plan.side,
+            quantity=plan.quantity,
+            order_type=plan.order_type,
+            limit_price=plan.limit_price,
+            tif="DAY",
+            transmit=False,
+            paper_only=True,
+        )

@@ -4,13 +4,21 @@ import asyncio
 import logging
 import math
 import re
+from datetime import datetime, timezone
 
-from ib_async import IB, Contract
+from typing import TYPE_CHECKING
+
+from ib_async import IB, Contract, Order
 
 from models.broker_session import BrokerSessionMode
+
+if TYPE_CHECKING:
+    from models.execution_plan import ExecutionPlan
 from models.tws_execution_assistant import (
     InstrumentResult,
     OrderSnapshot,
+    PAPER_PORTS,
+    PaperOrderSubmission,
     PositionSnapshot,
     QuoteSnapshot,
     ReconciliationSnapshot,
@@ -20,6 +28,18 @@ from models.tws_execution_assistant import (
 )
 
 log = logging.getLogger(__name__)
+
+
+class TwsPlaceOrderGuardError(Exception):
+    """Raised before placeOrder() when a pre-submit guard fails deterministically.
+
+    The order was never sent to TWS — the outcome is not ambiguous.
+    error_code matches Orbit's typed error vocabulary for the router to map.
+    """
+
+    def __init__(self, error_code: str) -> None:
+        super().__init__(error_code)
+        self.error_code = error_code
 
 _IBKR_UNSET = 1.7976931348623157e+308
 _MDT_MAP: dict[int, str] = {1: "live", 2: "frozen", 3: "delayed", 4: "delayed_frozen"}
@@ -74,6 +94,8 @@ class TwsBrokerAdapter:
         self._state: TwsAdapterState = "not_initialized"
         self._client_id: int = 1
         self._last_host: str = "127.0.0.1"
+        self._connected_port: int | None = None
+        self._kill_switch_active: bool = False
 
     async def connect(self, host: str, port: int, client_id: int) -> None:
         # KNOWN GAP: no paper/live account-type check here. Paper is the default
@@ -82,10 +104,12 @@ class TwsBrokerAdapter:
         self._state = "connecting"
         self._client_id = client_id
         self._last_host = host
+        self._connected_port = None
         try:
             await self._ib.connectAsync(host, port, clientId=client_id, timeout=10)
             await self._ib.reqPositionsAsync()
             await self._ib.reqAllOpenOrdersAsync()
+            self._connected_port = port
             self._state = "connected"
         except (ConnectionRefusedError, asyncio.TimeoutError, OSError, RuntimeError) as exc:
             # ponytail: covers the known ib_async connect-time exceptions; client-ID
@@ -103,6 +127,13 @@ class TwsBrokerAdapter:
 
     def is_connected(self) -> bool:
         return self._state == "connected" and self._ib.isConnected()
+
+    def is_paper_port(self) -> bool:
+        """Fail-closed paper gate: True only for ports 4002 and 7497."""
+        return self._connected_port in PAPER_PORTS
+
+    def is_kill_switch_active(self) -> bool:
+        return self._kill_switch_active
 
     async def check_api_server(self) -> bool:
         """Return True if the TWS / IB Gateway API socket is TCP-reachable.
@@ -141,7 +172,7 @@ class TwsBrokerAdapter:
             mode=mode,
             connected=connected,
             adapter_state=self._state,
-            kill_switch_active=False,
+            kill_switch_active=self._kill_switch_active,
             reconciliation_summary=summary,
             api_server_available=api_server_available,
         )
@@ -319,4 +350,52 @@ class TwsBrokerAdapter:
             unmanaged_order_count=sum(1 for o in open_orders if o.is_unmanaged),
             positions=positions,
             open_orders=open_orders,
+        )
+
+    def place_paper_order(self, plan: "ExecutionPlan") -> PaperOrderSubmission:
+        """Submit a paper order to TWS for a validated plan.
+
+        Re-verifies all execution gates before calling placeOrder() — defense-in-depth
+        in case the router check and this call are separated by a race or refactor.
+        placeOrder() is synchronous; fill confirmation arrives asynchronously via
+        TWS callbacks (visible through reconciliation).
+        """
+        # ponytail: self-protection guards — mirror the router's pre-call checks so
+        # no caller path can bypass them. Kill switch is currently a constant False
+        # placeholder; the guard is kept minimal and obvious until it has real state.
+        if self._kill_switch_active:
+            raise TwsPlaceOrderGuardError("kill_switch_active")
+        if not self.is_connected():
+            raise TwsPlaceOrderGuardError("not_connected")
+        if not self.is_paper_port():
+            raise TwsPlaceOrderGuardError("not_paper_port")
+        if plan.status != "valid":
+            raise TwsPlaceOrderGuardError("plan_not_valid")
+
+        contract = Contract(conId=plan.conid, secType="STK", exchange="SMART", currency="USD")
+        order = Order(
+            action=plan.side,
+            orderType=plan.order_type,
+            totalQuantity=plan.quantity,
+            tif="DAY",
+        )
+        if plan.order_type == "LMT" and plan.limit_price is not None:
+            order.lmtPrice = plan.limit_price
+
+        trade = self._ib.placeOrder(contract, order)
+        # trade.orderStatus.status is typically "" immediately after placeOrder —
+        # the real status arrives asynchronously via TWS callbacks. "sent_to_tws"
+        # is the honest fallback: we sent it, TWS hasn't reported back yet.
+        broker_status = trade.orderStatus.status or "sent_to_tws"
+        return PaperOrderSubmission(
+            order_id=trade.order.orderId,
+            status=broker_status,
+            plan_id=plan.plan_id,
+            conid=plan.conid,
+            symbol=plan.symbol,
+            side=plan.side,
+            quantity=plan.quantity,
+            order_type=plan.order_type,
+            limit_price=plan.limit_price,
+            submitted_at=datetime.now(timezone.utc),
         )

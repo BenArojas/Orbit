@@ -11,13 +11,20 @@
  *   none reachable             → red     "IBKR · disconnected"
  */
 import { useEffect, useRef, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useGatewayContext } from "@/context/GatewayContext";
+import { BROKER_SESSION_KEY } from "@/context/BrokerSessionContext";
 import { GatewaySetup } from "@/components/gateway/GatewaySetup";
-import { twsApi } from "@/modules/tws-execution-assistant/api";
+import { twsApi, TWS_CONNECT_DEFAULTS } from "@/modules/tws-execution-assistant/api";
 
 // Same key as TwsExecutionAssistantModule — shares TanStack Query cache.
 const TWS_STATUS_KEY = ["tws-status"] as const;
+
+// Paper ports only — fail-closed gate matches the backend (4002 IB Gateway, 7497 TWS).
+const PAPER_PORTS = [
+  { port: 4002, label: "IB Gateway (4002)" },
+  { port: 7497, label: "TWS (7497)" },
+] as const;
 
 type Tone = "green" | "amber" | "red";
 
@@ -30,6 +37,7 @@ function toneColor(tone: Tone): string {
 }
 
 export function GatewayStatusPill() {
+  const queryClient = useQueryClient();
   const { status, isAuthenticated, needsLogin } = useGatewayContext();
   const { data: twsStatus } = useQuery({
     queryKey: TWS_STATUS_KEY,
@@ -40,6 +48,23 @@ export function GatewayStatusPill() {
 
   const isTwsConnected = twsStatus?.connected === true;
   const isTwsReady = !isTwsConnected && twsStatus?.api_server_available === true;
+
+  const [port, setPort] = useState<number>(TWS_CONNECT_DEFAULTS.port);
+
+  // Connect/disconnect from the pill so TWS is managed from the top bar like
+  // the Web API — both mutations refresh the session mode that gates the tiles.
+  const onSession = (result: Awaited<ReturnType<typeof twsApi.connect>>) => {
+    queryClient.setQueryData(TWS_STATUS_KEY, result);
+    queryClient.invalidateQueries({ queryKey: BROKER_SESSION_KEY });
+  };
+  const connectMutation = useMutation({
+    mutationFn: () => twsApi.connect({ ...TWS_CONNECT_DEFAULTS, port }),
+    onSuccess: onSession,
+  });
+  const disconnectMutation = useMutation({
+    mutationFn: twsApi.disconnect,
+    onSuccess: onSession,
+  });
 
   const [open, setOpen] = useState(!isAuthenticated && !isTwsConnected && !isTwsReady);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -88,8 +113,13 @@ export function GatewayStatusPill() {
   const twsHint = isTwsConnected
     ? null
     : isTwsReady
-      ? "Open TWS Execution Assistant to connect Orbit."
-      : "Open the TWS Execution Assistant module to connect.";
+      ? "TWS / IB Gateway is running. Connect Orbit to enter TWS mode."
+      : "Start TWS or IB Gateway with the API enabled, then connect.";
+  const connectError =
+    connectMutation.error || disconnectMutation.error
+      ? "Connection failed — check the port and that the API is enabled in TWS."
+      : null;
+  const busy = connectMutation.isPending || disconnectMutation.isPending;
 
   return (
     <div ref={containerRef} className="relative">
@@ -119,7 +149,44 @@ export function GatewayStatusPill() {
             </span>
           </div>
           {twsHint && (
-            <p className="mb-3 text-[11px] text-[var(--text-3)]">{twsHint}</p>
+            <p className="mb-2 text-[11px] text-[var(--text-3)]">{twsHint}</p>
+          )}
+
+          {isTwsConnected ? (
+            <button
+              type="button"
+              onClick={() => disconnectMutation.mutate()}
+              disabled={busy}
+              className="mb-1 w-full rounded-md border border-border bg-[var(--bg-1)] px-3 py-1.5 text-[12px] font-medium text-[var(--text-2)] transition-colors hover:border-[var(--clr-red)] disabled:opacity-50"
+            >
+              {busy ? "Disconnecting…" : "Disconnect"}
+            </button>
+          ) : (
+            <div className="mb-1 flex items-center gap-2">
+              <select
+                value={port}
+                onChange={(e) => setPort(Number(e.target.value))}
+                disabled={busy}
+                className="flex-1 rounded-md border border-border bg-[var(--bg-1)] px-2 py-1.5 text-[12px] text-[var(--text-2)] disabled:opacity-50"
+              >
+                {PAPER_PORTS.map((p) => (
+                  <option key={p.port} value={p.port}>
+                    {p.label}
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                onClick={() => connectMutation.mutate()}
+                disabled={busy}
+                className="rounded-md border border-[var(--clr-cyan)] bg-[var(--bg-1)] px-3 py-1.5 text-[12px] font-medium text-[var(--clr-cyan)] transition-colors hover:bg-[var(--clr-cyan)]/10 disabled:opacity-50"
+              >
+                {busy ? "Connecting…" : "Connect"}
+              </button>
+            </div>
+          )}
+          {connectError && (
+            <p className="mb-2 text-[11px] text-[var(--clr-red)]">{connectError}</p>
           )}
 
           <div className="my-3 border-t border-border" />

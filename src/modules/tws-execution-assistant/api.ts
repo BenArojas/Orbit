@@ -105,6 +105,32 @@ export interface ExecutionPlan {
   created_at: string;
 }
 
+export interface PaperOrderSubmission {
+  order_id: number;
+  status: string;
+  plan_id: string;
+  conid: number;
+  symbol: string;
+  side: ExecutionPlanSide;
+  quantity: number;
+  order_type: ExecutionPlanOrderType;
+  limit_price: number | null;
+  submitted_at: string;
+}
+
+export interface PaperOrderPreview {
+  plan_id: string;
+  conid: number;
+  symbol: string;
+  side: ExecutionPlanSide;
+  quantity: number;
+  order_type: ExecutionPlanOrderType;
+  limit_price: number | null;
+  tif: string;
+  transmit: boolean;
+  paper_only: true;
+}
+
 export interface InstrumentResult {
   conid: number;
   symbol: string;
@@ -163,4 +189,8 @@ export const twsApi = {
     ),
   getQuote: (conid: number) =>
     sidecarRequest<QuoteSnapshot>("GET", `/execution-assistant/instruments/${conid}/quote`),
+  previewPaperOrder: (plan_id: string) =>
+    sidecarRequest<PaperOrderPreview>("POST", `/execution-assistant/plans/${plan_id}/preview-paper`),
+  placePaperOrder: (plan_id: string) =>
+    sidecarRequest<PaperOrderSubmission>("POST", `/execution-assistant/plans/${plan_id}/place-paper`),
 } as const;

@@ -4,7 +4,8 @@ import { LockKeyhole, MoreVertical, Power, Search } from "lucide-react";
 import { BackToOrbitButton } from "@/components/ui/BackToOrbitButton";
 import { BROKER_SESSION_KEY } from "@/context/BrokerSessionContext";
 import { cn } from "@/lib/utils";
-import { twsApi, TWS_CONNECT_DEFAULTS, type ExecutionPlan, type ExecutionPlanDraftRequest, type ExecutionPlanOrderType, type ExecutionPlanSide, type InstrumentResult, type MarketDataType, type OrderSnapshot, type QuoteSnapshot, type TwsAdapterState, type TwsConnectRequest } from "./api";
+import { ApiError } from "@/lib/sidecarClient";
+import { twsApi, TWS_CONNECT_DEFAULTS, type ExecutionPlan, type ExecutionPlanDraftRequest, type ExecutionPlanOrderType, type ExecutionPlanSide, type InstrumentResult, type MarketDataType, type OrderSnapshot, type PaperOrderPreview, type PaperOrderSubmission, type QuoteSnapshot, type TwsAdapterState, type TwsConnectRequest } from "./api";
 
 const STATUS_KEY = ["tws-status"];
 const RECON_KEY = ["tws-reconciliation"];
@@ -82,6 +83,26 @@ function quoteGuidance(quote: QuoteSnapshot): { headline: string; body: string }
   }
   return null;
 }
+
+/** Extract the typed `error` key from a place-paper ApiError response body. */
+function submitErrorCode(err: unknown): string | null {
+  if (err instanceof ApiError) {
+    const d = err.body.detail;
+    if (d && typeof d === "object" && !Array.isArray(d)) {
+      const code = (d as Record<string, unknown>).error;
+      if (typeof code === "string") return code;
+    }
+  }
+  return null;
+}
+
+const SUBMIT_ERROR_MESSAGES: Record<string, string> = {
+  kill_switch_active: "Kill switch is active — deactivate it before placing orders.",
+  not_connected: "Lost connection to TWS — reconnect and try again.",
+  not_paper_port: "Not a paper port — only ports 4002 (IB Gateway) or 7497 (TWS) are allowed.",
+  plan_not_valid: "Plan is no longer valid — re-validate before retrying.",
+  invalid_plan: "Plan is no longer valid — re-validate before retrying.",
+};
 
 function QuoteStrip({ quote }: { quote: QuoteSnapshot }) {
   const hasData =
@@ -315,6 +336,8 @@ export function TwsExecutionAssistantModule() {
   const [form, setForm] = useState<TwsConnectRequest>(TWS_CONNECT_DEFAULTS);
   const [planForm, setPlanForm] = useState<ExecutionPlanDraftRequest>(PLAN_DEFAULTS);
   const [currentPlan, setCurrentPlan] = useState<ExecutionPlan | null>(null);
+  const [paperPreview, setPaperPreview] = useState<PaperOrderPreview | null>(null);
+  const [paperSubmission, setPaperSubmission] = useState<PaperOrderSubmission | null>(null);
   const [searchResults, setSearchResults] = useState<InstrumentResult[]>([]);
 
   const { data: status, isLoading } = useQuery({
@@ -352,13 +375,43 @@ export function TwsExecutionAssistantModule() {
     mutationFn: twsApi.createPlanDraft,
     onSuccess: (plan) => {
       setCurrentPlan(plan);
+      setPaperPreview(null);
+      setPaperSubmission(null);
       setPlanForm(PLAN_DEFAULTS);
     },
   });
 
   const validatePlanMutation = useMutation({
     mutationFn: (plan_id: string) => twsApi.validatePlan(plan_id),
-    onSuccess: setCurrentPlan,
+    onSuccess: (plan) => {
+      setCurrentPlan(plan);
+      setPaperPreview(null);
+    },
+  });
+
+  const previewPaperMutation = useMutation({
+    mutationFn: (plan_id: string) => twsApi.previewPaperOrder(plan_id),
+    onSuccess: (preview) => {
+      setPaperPreview(preview);
+      setPaperSubmission(null);
+    },
+  });
+
+  const placePaperMutation = useMutation({
+    mutationFn: (plan_id: string) => twsApi.placePaperOrder(plan_id),
+    onSuccess: (submission) => {
+      setPaperSubmission(submission);
+      queryClient.invalidateQueries({ queryKey: RECON_KEY });
+      queryClient.invalidateQueries({ queryKey: STATUS_KEY });
+    },
+    onError: (err) => {
+      // unknown_outcome means the order may have reached TWS — refresh immediately
+      // so Open Orders reflects any change before the user decides to retry.
+      if (submitErrorCode(err) === "unknown_outcome") {
+        queryClient.invalidateQueries({ queryKey: RECON_KEY });
+        queryClient.invalidateQueries({ queryKey: STATUS_KEY });
+      }
+    },
   });
 
   const searchMutation = useMutation({
@@ -557,13 +610,119 @@ export function TwsExecutionAssistantModule() {
                     >
                       {validatePlanMutation.isPending ? "Validating..." : "Validate"}
                     </button>
+                    {currentPlan.status === "valid" && (
+                      <button
+                        className="h-8 rounded-md border border-[var(--clr-cyan)] px-3 text-xs font-semibold text-[var(--clr-cyan)] transition-colors hover:bg-[var(--clr-cyan)]/10 active:scale-[0.96] disabled:opacity-50"
+                        disabled={previewPaperMutation.isPending}
+                        onClick={() => previewPaperMutation.mutate(currentPlan.plan_id)}
+                      >
+                        {previewPaperMutation.isPending ? "Building preview..." : "Preview paper order"}
+                      </button>
+                    )}
                     <button
                       className="h-8 rounded-md border border-border px-3 text-xs text-[var(--text-2)]"
-                      onClick={() => setCurrentPlan(null)}
+                      onClick={() => { setCurrentPlan(null); setPaperPreview(null); setPaperSubmission(null); }}
                     >
                       New plan
                     </button>
                   </div>
+
+                  {previewPaperMutation.isError && (
+                    <p className="text-xs text-[var(--clr-red)]">
+                      Preview rejected — connected port may not be a paper port (4002 or 7497).
+                    </p>
+                  )}
+
+                  {paperPreview != null && paperSubmission == null && (
+                    <div className="rounded border border-[var(--clr-cyan)]/30 bg-[var(--bg-1)] p-3 space-y-3">
+                      <div className="flex items-center gap-2">
+                        <span className="rounded bg-[var(--glow-cyan)] px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-[var(--clr-cyan)]">
+                          Paper preview
+                        </span>
+                        <span className="text-[10px] text-[var(--text-3)]">Review before submitting</span>
+                      </div>
+                      <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-[11px] sm:grid-cols-3">
+                        <StatRow label="Symbol" value={paperPreview.symbol} />
+                        <StatRow label="ConID" value={paperPreview.conid} />
+                        <StatRow label="Side" value={paperPreview.side} tone={paperPreview.side === "BUY" ? "success" : "danger"} />
+                        <StatRow label="Quantity" value={paperPreview.quantity} />
+                        <StatRow label="Order type" value={paperPreview.order_type} />
+                        <StatRow label="Limit price" value={paperPreview.limit_price != null ? paperPreview.limit_price.toFixed(2) : "—"} />
+                        <StatRow label="TIF" value={paperPreview.tif} />
+                        <StatRow label="Paper only" value="Yes" tone="success" />
+                      </div>
+                      <div className="flex items-center gap-3 border-t border-border/40 pt-3">
+                        <button
+                          className="h-8 rounded-md bg-[var(--clr-green)] px-4 text-xs font-semibold text-[var(--bg-0)] transition-colors hover:opacity-90 active:scale-[0.96] disabled:opacity-50"
+                          disabled={placePaperMutation.isPending}
+                          onClick={() => placePaperMutation.mutate(paperPreview.plan_id)}
+                        >
+                          {placePaperMutation.isPending ? "Placing order..." : "Place paper order"}
+                        </button>
+                        <span className="text-[10px] text-[var(--text-3)]">
+                          This will send the order to TWS paper account.
+                        </span>
+                      </div>
+                      {placePaperMutation.isError && (() => {
+                        const code = submitErrorCode(placePaperMutation.error);
+                        if (code === "unknown_outcome") {
+                          return (
+                            <div className="rounded border border-[var(--clr-amber,#d97706)]/40 bg-[var(--bg-1)] p-2.5 space-y-1.5">
+                              <p className="text-[11px] font-semibold text-[var(--clr-amber,#d97706)]">
+                                Outcome unknown — do not retry yet.
+                              </p>
+                              <p className="text-[11px] text-[var(--text-2)]">
+                                The order may have reached TWS. Check Open Orders below before retrying to avoid a duplicate position.
+                              </p>
+                              <button
+                                className="h-7 rounded border border-border px-2.5 text-[11px] text-[var(--text-2)] hover:bg-[var(--bg-2)]"
+                                onClick={() => queryClient.invalidateQueries({ queryKey: RECON_KEY })}
+                              >
+                                Refresh Open Orders
+                              </button>
+                            </div>
+                          );
+                        }
+                        const msg = SUBMIT_ERROR_MESSAGES[code ?? ""] ??
+                          "Order rejected — check that TWS is connected and on a paper port.";
+                        return <p className="text-[11px] text-[var(--clr-red)]">{msg}</p>;
+                      })()}
+                    </div>
+                  )}
+
+                  {paperSubmission != null && (
+                    <div className="rounded border border-[var(--clr-green)]/40 bg-[var(--bg-1)] p-3 space-y-2">
+                      <div className="flex items-center justify-between gap-2 flex-wrap">
+                        <div className="flex items-center gap-2">
+                          <span className="rounded bg-[var(--glow-green)] px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-[var(--clr-green)]">
+                            Order submitted
+                          </span>
+                          <span className="text-[10px] text-[var(--text-3)]">
+                            Broker order ID {paperSubmission.order_id} · status {paperSubmission.status}
+                          </span>
+                        </div>
+                        <button
+                          className="h-7 rounded border border-border px-2.5 text-[11px] text-[var(--text-2)] hover:bg-[var(--bg-2)]"
+                          onClick={() => queryClient.invalidateQueries({ queryKey: RECON_KEY })}
+                        >
+                          Refresh Open Orders
+                        </button>
+                      </div>
+                      <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-[11px] sm:grid-cols-3">
+                        <StatRow label="Symbol" value={paperSubmission.symbol} />
+                        <StatRow label="Side" value={paperSubmission.side} tone={paperSubmission.side === "BUY" ? "success" : "danger"} />
+                        <StatRow label="Quantity" value={paperSubmission.quantity} />
+                        <StatRow label="Order type" value={paperSubmission.order_type} />
+                        {paperSubmission.limit_price != null && (
+                          <StatRow label="Limit price" value={paperSubmission.limit_price.toFixed(2)} />
+                        )}
+                        <StatRow label="TWS status" value={paperSubmission.status} tone="success" />
+                      </div>
+                      <p className="text-[10px] text-[var(--text-3)]">
+                        Open Orders refreshes automatically. Use "Refresh Open Orders" to poll for fill status.
+                      </p>
+                    </div>
+                  )}
                 </div>
               ) : (
                 <div className="relative min-h-40">
