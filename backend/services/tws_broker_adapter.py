@@ -418,12 +418,15 @@ class TwsBrokerAdapter:
             open_orders=open_orders,
         )
 
-    async def place_paper_order(
+    async def place_order(
         self,
         plan: "ExecutionPlan",
+        *,
+        mode: str,
+        live_policy: object | None = None,
         advanced_override: list[str] | None = None,
     ) -> PaperOrderSubmission:
-        """Submit a paper order to TWS for a validated plan.
+        """Submit an order to TWS for a validated plan.
 
         Re-verifies all execution gates before calling placeOrder() — defense-in-depth
         in case the router check and this call are separated by a race or refactor.
@@ -439,8 +442,21 @@ class TwsBrokerAdapter:
             raise TwsPlaceOrderGuardError("kill_switch_active")
         if not self.is_connected():
             raise TwsPlaceOrderGuardError("not_connected")
-        if not self.is_paper_port():
-            raise TwsPlaceOrderGuardError("not_paper_port")
+        if mode == "paper":
+            if not self.is_paper_port():
+                raise TwsPlaceOrderGuardError("not_paper_port")
+        elif mode == "live":
+            if live_policy is None:
+                raise TwsPlaceOrderGuardError("live_session_not_armed")
+            live_policy.assert_live_allowed(  # type: ignore[union-attr]
+                account_id=self.connected_account_id(),
+                host=self.connected_host(),
+                port=self.connected_port(),
+                is_connected=self.is_connected(),
+                is_paper_port=self.is_paper_port(),
+            )
+        else:
+            raise TwsPlaceOrderGuardError("unsupported_execution_mode")
         if plan.status != "valid":
             raise TwsPlaceOrderGuardError("plan_not_valid")
 
@@ -491,14 +507,35 @@ class TwsBrokerAdapter:
             submitted_at=datetime.now(timezone.utc),
         )
 
-    def _ensure_paper_order_mutation_allowed(self) -> None:
+    async def place_paper_order(
+        self,
+        plan: "ExecutionPlan",
+        advanced_override: list[str] | None = None,
+    ) -> PaperOrderSubmission:
+        return await self.place_order(plan, mode="paper", advanced_override=advanced_override)
+
+    def _ensure_order_mutation_allowed(self, *, mode: str, live_policy: object | None = None) -> None:
         """Shared guard for cancel and modify — fail closed before any broker call."""
         if self._kill_switch_active:
             raise TwsPlaceOrderGuardError("kill_switch_active")
         if not self.is_connected():
             raise TwsPlaceOrderGuardError("not_connected")
-        if not self.is_paper_port():
-            raise TwsPlaceOrderGuardError("not_paper_port")
+        if mode == "paper":
+            if not self.is_paper_port():
+                raise TwsPlaceOrderGuardError("not_paper_port")
+            return
+        if mode == "live":
+            if live_policy is None:
+                raise TwsPlaceOrderGuardError("live_session_not_armed")
+            live_policy.assert_live_allowed(  # type: ignore[union-attr]
+                account_id=self.connected_account_id(),
+                host=self.connected_host(),
+                port=self.connected_port(),
+                is_connected=self.is_connected(),
+                is_paper_port=self.is_paper_port(),
+            )
+            return
+        raise TwsPlaceOrderGuardError("unsupported_execution_mode")
 
     def _open_trade_by_order_id(self, order_id: int):  # type: ignore[return]
         for trade in self._ib.openTrades():
@@ -506,8 +543,8 @@ class TwsBrokerAdapter:
                 return trade
         return None
 
-    def cancel_order(self, order_id: int) -> TwsOrderActionResult:
-        self._ensure_paper_order_mutation_allowed()
+    def cancel_order(self, order_id: int, *, mode: str = "paper", live_policy: object | None = None) -> TwsOrderActionResult:
+        self._ensure_order_mutation_allowed(mode=mode, live_policy=live_policy)
         trade = self._open_trade_by_order_id(order_id)
         if trade is None:
             raise TwsPlaceOrderGuardError("order_not_found")
@@ -524,9 +561,12 @@ class TwsBrokerAdapter:
         self,
         order_id: int,
         req: TwsModifyOrderRequest,
+        *,
+        mode: str = "paper",
+        live_policy: object | None = None,
         advanced_override: list[str] | None = None,
     ) -> TwsOrderActionResult:
-        self._ensure_paper_order_mutation_allowed()
+        self._ensure_order_mutation_allowed(mode=mode, live_policy=live_policy)
         trade = self._open_trade_by_order_id(order_id)
         if trade is None:
             raise TwsPlaceOrderGuardError("order_not_found")
