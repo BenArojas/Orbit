@@ -14,10 +14,10 @@ from fastapi.testclient import TestClient
 
 from deps import get_execution_plan_service, get_tws_adapter
 from models.execution_plan import ExecutionPlan
-from models.tws_execution_assistant import PaperOrderSubmission
+from models.tws_execution_assistant import PaperOrderSubmission, TwsModifyOrderRequest, TwsOrderActionResult
 from routers.execution_assistant import router as ea_router
 from services.execution_plan import ExecutionPlanService
-from services.tws_broker_adapter import TwsPlaceOrderGuardError
+from services.tws_broker_adapter import TwsAdvancedReject, TwsAdvancedRejectError, TwsPlaceOrderGuardError
 
 
 class _AdapterStub:
@@ -28,6 +28,7 @@ class _AdapterStub:
         paper_port: bool = True,
         kill_switch: bool = False,
         raise_on_place: bool = False,
+        raise_advanced_reject: bool = False,
         guard_error_code: str | None = None,
     ) -> None:
         self._sec_type = sec_type
@@ -35,9 +36,11 @@ class _AdapterStub:
         self._paper_port = paper_port
         self._kill_switch = kill_switch
         self._raise_on_place = raise_on_place
+        self._raise_advanced_reject = raise_advanced_reject
         self._guard_error_code = guard_error_code
-        # Tracks every call to place_paper_order; tests assert on this.
         self.place_paper_order_calls: int = 0
+        self.cancel_order_calls: int = 0
+        self.modify_order_calls: int = 0
 
     def is_connected(self) -> bool:
         return self._connected
@@ -48,12 +51,18 @@ class _AdapterStub:
     def is_kill_switch_active(self) -> bool:
         return self._kill_switch
 
-    def place_paper_order(self, plan: ExecutionPlan) -> PaperOrderSubmission:
+    async def place_paper_order(self, plan: ExecutionPlan, advanced_override: list[str] | None = None) -> PaperOrderSubmission:
         self.place_paper_order_calls += 1
         if self._guard_error_code:
             raise TwsPlaceOrderGuardError(self._guard_error_code)
         if self._raise_on_place:
             raise RuntimeError("Simulated adapter failure during placeOrder.")
+        if self._raise_advanced_reject:
+            raise TwsAdvancedRejectError(TwsAdvancedReject(
+                reason="TWS: Order price is too far from market.",
+                override_codes=["BYPASS_PRICE_BASED_VOLATILITY_SLOWDOWN_RESTRICTION"],
+                raw={"message": "TWS: Order price is too far from market.", "8229": "BYPASS_PRICE_BASED_VOLATILITY_SLOWDOWN_RESTRICTION"},
+            ))
         # "PreSubmitted" mirrors the first async TWS status for auto-transmit orders.
         return PaperOrderSubmission(
             order_id=9001,
@@ -65,7 +74,38 @@ class _AdapterStub:
             quantity=plan.quantity,
             order_type=plan.order_type,
             limit_price=plan.limit_price,
+            stop_price=plan.stop_price,
             submitted_at=datetime(2026, 6, 27, 12, 0, 0, tzinfo=timezone.utc),
+        )
+
+    def cancel_order(self, order_id: int) -> TwsOrderActionResult:
+        if not self._paper_port:
+            raise TwsPlaceOrderGuardError("not_paper_port")
+        if not self._connected:
+            raise TwsPlaceOrderGuardError("not_connected")
+        if self._kill_switch:
+            raise TwsPlaceOrderGuardError("kill_switch_active")
+        self.cancel_order_calls += 1
+        if self._guard_error_code:
+            raise TwsPlaceOrderGuardError(self._guard_error_code)
+        return TwsOrderActionResult(
+            order_id=order_id, status="cancel_requested", action="cancel",
+            message="Cancel request sent to TWS.",
+        )
+
+    async def modify_order(self, order_id: int, req: TwsModifyOrderRequest, advanced_override: list[str] | None = None) -> TwsOrderActionResult:
+        if not self._paper_port:
+            raise TwsPlaceOrderGuardError("not_paper_port")
+        if not self._connected:
+            raise TwsPlaceOrderGuardError("not_connected")
+        if self._kill_switch:
+            raise TwsPlaceOrderGuardError("kill_switch_active")
+        self.modify_order_calls += 1
+        if self._guard_error_code:
+            raise TwsPlaceOrderGuardError(self._guard_error_code)
+        return TwsOrderActionResult(
+            order_id=order_id, status="modify_requested", action="modify",
+            message="Modify request sent to TWS.",
         )
 
     async def get_sec_type(self, conid: int) -> str | None:
@@ -78,6 +118,7 @@ def _client(
     paper_port: bool = True,
     kill_switch: bool = False,
     raise_on_place: bool = False,
+    raise_advanced_reject: bool = False,
     guard_error_code: str | None = None,
 ) -> TestClient:
     """Convenience helper for tests that only need the TestClient."""
@@ -88,6 +129,7 @@ def _client(
     app.dependency_overrides[get_tws_adapter] = lambda: _AdapterStub(
         sec_type=sec_type, connected=connected, paper_port=paper_port,
         kill_switch=kill_switch, raise_on_place=raise_on_place,
+        raise_advanced_reject=raise_advanced_reject,
         guard_error_code=guard_error_code,
     )
     return TestClient(app)
@@ -99,12 +141,14 @@ def _setup(
     paper_port: bool = True,
     kill_switch: bool = False,
     raise_on_place: bool = False,
+    raise_advanced_reject: bool = False,
     guard_error_code: str | None = None,
 ) -> tuple[_AdapterStub, TestClient]:
     """Returns both the stub (for call-count inspection) and a TestClient."""
     stub = _AdapterStub(
         sec_type=sec_type, connected=connected, paper_port=paper_port,
         kill_switch=kill_switch, raise_on_place=raise_on_place,
+        raise_advanced_reject=raise_advanced_reject,
         guard_error_code=guard_error_code,
     )
     svc = ExecutionPlanService()
@@ -123,6 +167,7 @@ def _draft(**kwargs) -> dict:
         "quantity": 10.0,
         "order_type": "LMT",
         "limit_price": 180.0,
+        "stop_price": None,
         **kwargs,
     }
 
@@ -338,3 +383,96 @@ def test_place_paper_order_adapter_guard_not_collapsed_into_unknown_outcome():
     assert r.status_code == 409
     assert r.json()["detail"]["error"] == "not_connected"   # specific, not unknown_outcome
     assert stub.place_paper_order_calls == 1                # guard fired inside adapter
+
+
+# ── STP / STP LMT order type validation ──────────────────────────────────────
+
+def test_stp_without_stop_price_is_rejected():
+    client = _client(sec_type="STK")
+    plan_id = client.post(
+        "/execution-assistant/plans/draft",
+        json=_draft(order_type="STP", limit_price=None, stop_price=None),
+    ).json()["plan_id"]
+    body = client.post(f"/execution-assistant/plans/{plan_id}/validate").json()
+    assert body["status"] == "invalid"
+    assert "positive stop price" in body["validation_errors"][0]
+
+
+def test_stp_lmt_requires_stop_and_limit_prices():
+    client = _client(sec_type="STK")
+    plan_id = client.post(
+        "/execution-assistant/plans/draft",
+        json=_draft(order_type="STP LMT", limit_price=None, stop_price=175.0),
+    ).json()["plan_id"]
+    body = client.post(f"/execution-assistant/plans/{plan_id}/validate").json()
+    assert body["status"] == "invalid"
+    assert any("positive limit price" in e for e in body["validation_errors"])
+
+
+def test_stp_lmt_preview_contains_stop_and_limit_prices():
+    client = _client(sec_type="STK", connected=True, paper_port=True)
+    plan_id = client.post(
+        "/execution-assistant/plans/draft",
+        json=_draft(order_type="STP LMT", limit_price=181.0, stop_price=180.0),
+    ).json()["plan_id"]
+    client.post(f"/execution-assistant/plans/{plan_id}/validate")
+    body = client.post(f"/execution-assistant/plans/{plan_id}/preview-paper").json()
+    assert body["order_type"] == "STP LMT"
+    assert body["stop_price"] == 180.0
+    assert body["limit_price"] == 181.0
+
+
+# ── Cancel / Modify order endpoints ──────────────────────────────────────────
+
+def test_cancel_order_calls_broker_once_on_paper_port():
+    stub, client = _setup(sec_type="STK", connected=True, paper_port=True)
+    r = client.delete("/execution-assistant/orders/9001")
+    assert r.status_code == 200
+    assert r.json()["action"] == "cancel"
+    assert stub.cancel_order_calls == 1
+
+
+def test_cancel_order_blocked_on_non_paper_port():
+    stub, client = _setup(sec_type="STK", connected=True, paper_port=False)
+    r = client.delete("/execution-assistant/orders/9001")
+    assert r.status_code == 403
+    assert r.json()["detail"]["error"] == "not_paper_port"
+    assert stub.cancel_order_calls == 0
+
+
+def test_modify_order_calls_broker_once_on_paper_port():
+    stub, client = _setup(sec_type="STK", connected=True, paper_port=True)
+    r = client.patch(
+        "/execution-assistant/orders/9001",
+        json={"quantity": 5.0, "limit_price": 182.0, "stop_price": None},
+    )
+    assert r.status_code == 200
+    assert r.json()["action"] == "modify"
+    assert stub.modify_order_calls == 1
+
+
+def test_modify_order_blocked_on_non_paper_port():
+    stub, client = _setup(sec_type="STK", connected=True, paper_port=False)
+    r = client.patch(
+        "/execution-assistant/orders/9001",
+        json={"quantity": 5.0, "limit_price": 182.0, "stop_price": None},
+    )
+    assert r.status_code == 403
+    assert r.json()["detail"]["error"] == "not_paper_port"
+    assert stub.modify_order_calls == 0
+
+
+# ── Advanced reject / override ────────────────────────────────────────────────
+
+def test_advanced_reject_returns_override_payload_without_resubmitting():
+    """Critical promise: TWS advanced reject surfaces as typed 409 — broker was NOT called twice."""
+    stub, client = _setup(sec_type="STK", connected=True, paper_port=True, raise_advanced_reject=True)
+    plan_id = client.post("/execution-assistant/plans/draft", json=_draft()).json()["plan_id"]
+    client.post(f"/execution-assistant/plans/{plan_id}/validate")
+    r = client.post(f"/execution-assistant/plans/{plan_id}/place-paper")
+    assert r.status_code == 409
+    body = r.json()
+    assert body["detail"]["error"] == "advanced_reject"
+    assert "reject" in body["detail"]
+    assert "reason" in body["detail"]["reject"]
+    assert stub.place_paper_order_calls == 1  # attempted exactly once, never auto-resubmitted

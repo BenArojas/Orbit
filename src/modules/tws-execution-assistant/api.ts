@@ -6,6 +6,7 @@
  */
 
 import { sidecarRequest } from "@/lib/sidecarClient";
+import type { TwsOrderType } from "./orderCapabilities";
 
 export type BrokerSessionMode = "none" | "client_portal" | "tws";
 
@@ -55,6 +56,7 @@ export interface OrderSnapshot {
   quantity: number;
   order_type: string;
   lmt_price: number | null;
+  stop_price: number | null;
   status: string;
   is_unmanaged: boolean;
 }
@@ -81,7 +83,7 @@ export const TWS_CONNECT_DEFAULTS: TwsConnectRequest = {
 
 export type ExecutionPlanStatus = "draft" | "valid" | "invalid";
 export type ExecutionPlanSide = "BUY" | "SELL";
-export type ExecutionPlanOrderType = "LMT" | "MKT";
+export type ExecutionPlanOrderType = TwsOrderType;
 
 export interface ExecutionPlanDraftRequest {
   conid: number;
@@ -90,6 +92,7 @@ export interface ExecutionPlanDraftRequest {
   quantity: number;
   order_type: ExecutionPlanOrderType;
   limit_price: number | null;
+  stop_price: number | null;
 }
 
 export interface ExecutionPlan {
@@ -100,6 +103,7 @@ export interface ExecutionPlan {
   quantity: number;
   order_type: ExecutionPlanOrderType;
   limit_price: number | null;
+  stop_price: number | null;
   status: ExecutionPlanStatus;
   validation_errors: string[];
   created_at: string;
@@ -115,6 +119,7 @@ export interface PaperOrderSubmission {
   quantity: number;
   order_type: ExecutionPlanOrderType;
   limit_price: number | null;
+  stop_price: number | null;
   submitted_at: string;
 }
 
@@ -126,6 +131,7 @@ export interface PaperOrderPreview {
   quantity: number;
   order_type: ExecutionPlanOrderType;
   limit_price: number | null;
+  stop_price: number | null;
   tif: string;
   transmit: boolean;
   paper_only: true;
@@ -181,6 +187,34 @@ export interface BarsResponse {
   bars: BarSnapshot[];
 }
 
+export interface TwsOrderActionResult {
+  order_id: number;
+  status: string;
+  action: "cancel" | "modify" | "override";
+  message: string | null;
+}
+
+export interface TwsModifyOrderRequest {
+  quantity: number;
+  limit_price: number | null;
+  stop_price: number | null;
+}
+
+export interface TwsAdvancedReject {
+  order_id: number | null;
+  reason: string;
+  override_codes: string[];
+  raw: unknown;
+}
+
+export interface TwsOverrideRequest {
+  intent: "place" | "modify";
+  order_id: number | null;
+  plan_id: string | null;
+  modify: TwsModifyOrderRequest | null;
+  override_codes: string[];
+}
+
 export const twsApi = {
   getMode: () =>
     sidecarRequest<BrokerSessionModeResponse>("GET", "/orbit/session/mode"),
@@ -213,4 +247,10 @@ export const twsApi = {
     sidecarRequest<PaperOrderSubmission>("POST", `/execution-assistant/plans/${plan_id}/place-paper`),
   getBars: (conid: number, timeframe: TwsTimeframe) =>
     sidecarRequest<BarsResponse>("GET", `/execution-assistant/instruments/${conid}/bars?timeframe=${timeframe}`),
+  cancelOrder: (order_id: number) =>
+    sidecarRequest<TwsOrderActionResult>("DELETE", `/execution-assistant/orders/${order_id}`),
+  modifyOrder: (order_id: number, req: TwsModifyOrderRequest) =>
+    sidecarRequest<TwsOrderActionResult>("PATCH", `/execution-assistant/orders/${order_id}`, req),
+  overrideOrder: (req: TwsOverrideRequest) =>
+    sidecarRequest<TwsOrderActionResult>("POST", "/execution-assistant/orders/override", req),
 } as const;

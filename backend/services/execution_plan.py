@@ -6,9 +6,14 @@ from typing import TYPE_CHECKING
 
 from models.execution_plan import ExecutionPlan, ExecutionPlanDraftRequest
 from models.tws_execution_assistant import PaperOrderPreview
+from models.tws_order_capabilities import required_price_fields
 
 if TYPE_CHECKING:
     from services.tws_broker_adapter import TwsBrokerAdapter
+
+
+def _positive(value: float | None) -> bool:
+    return value is not None and value > 0
 
 
 class ExecutionPlanService:
@@ -26,6 +31,7 @@ class ExecutionPlanService:
             quantity=req.quantity,
             order_type=req.order_type,
             limit_price=req.limit_price,
+            stop_price=req.stop_price,
             status="draft",
             validation_errors=[],
             created_at=datetime.now(timezone.utc),
@@ -41,8 +47,12 @@ class ExecutionPlanService:
 
         if plan.quantity <= 0:
             errors.append("Quantity must be positive.")
-        if plan.order_type == "LMT" and not (plan.limit_price and plan.limit_price > 0):
-            errors.append("Limit orders require a positive limit price.")
+
+        required = required_price_fields(plan.order_type)
+        if "limit_price" in required and not _positive(plan.limit_price):
+            errors.append(f"{plan.order_type} orders require a positive limit price.")
+        if "stop_price" in required and not _positive(plan.stop_price):
+            errors.append(f"{plan.order_type} orders require a positive stop price.")
 
         if not errors:
             sec_type = await adapter.get_sec_type(plan.conid)
@@ -75,6 +85,7 @@ class ExecutionPlanService:
             quantity=plan.quantity,
             order_type=plan.order_type,
             limit_price=plan.limit_price,
+            stop_price=plan.stop_price,
             tif="DAY",
             transmit=False,
             paper_only=True,

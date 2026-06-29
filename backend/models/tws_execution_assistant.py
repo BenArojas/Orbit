@@ -1,10 +1,10 @@
 from datetime import datetime
 from typing import Literal
 
-
 from pydantic import BaseModel
 
 from models.broker_session import BrokerSessionMode
+from models.tws_order_capabilities import TwsOrderType
 
 # Ports recognized as IBKR paper environments. Unknown/live ports are read-only.
 PAPER_PORTS: frozenset[int] = frozenset({4002, 7497})
@@ -48,6 +48,7 @@ class OrderSnapshot(BaseModel):
     quantity: float
     order_type: str
     lmt_price: float | None = None
+    stop_price: float | None = None
     status: str
     is_unmanaged: bool
 
@@ -86,8 +87,9 @@ class PaperOrderPreview(BaseModel):
     symbol: str
     side: Literal["BUY", "SELL"]
     quantity: float
-    order_type: Literal["LMT", "MKT"]
+    order_type: TwsOrderType
     limit_price: float | None
+    stop_price: float | None
     tif: str  # "DAY" for MVP
     transmit: bool  # False — preview only, no placeOrder
     paper_only: bool = True
@@ -101,8 +103,9 @@ class PaperOrderSubmission(BaseModel):
     symbol: str
     side: Literal["BUY", "SELL"]
     quantity: float
-    order_type: Literal["LMT", "MKT"]
+    order_type: TwsOrderType
     limit_price: float | None
+    stop_price: float | None
     submitted_at: datetime
 
 
@@ -133,3 +136,31 @@ class BarsResponse(BaseModel):
     conid: int
     timeframe: str
     bars: list[BarSnapshot] = []
+
+
+class TwsOrderActionResult(BaseModel):
+    order_id: int
+    status: str
+    action: Literal["cancel", "modify", "override"]
+    message: str | None = None
+
+
+class TwsModifyOrderRequest(BaseModel):
+    quantity: float
+    limit_price: float | None = None
+    stop_price: float | None = None
+
+
+class TwsAdvancedReject(BaseModel):
+    order_id: int | None = None
+    reason: str
+    override_codes: list[str] = []
+    raw: dict[str, object] | str
+
+
+class TwsOverrideRequest(BaseModel):
+    intent: Literal["place", "modify"]
+    order_id: int | None = None
+    plan_id: str | None = None
+    modify: TwsModifyOrderRequest | None = None
+    override_codes: list[str]

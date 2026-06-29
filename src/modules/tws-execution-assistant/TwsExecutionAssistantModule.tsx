@@ -6,7 +6,8 @@ import { ThemeToggle } from "@/components/ui/ThemeToggle";
 import { BROKER_SESSION_KEY } from "@/context/BrokerSessionContext";
 import { cn } from "@/lib/utils";
 import { ApiError } from "@/lib/sidecarClient";
-import { twsApi, TWS_CONNECT_DEFAULTS, TWS_TIMEFRAMES, type ExecutionPlan, type ExecutionPlanDraftRequest, type ExecutionPlanOrderType, type ExecutionPlanSide, type InstrumentResult, type OrderSnapshot, type PaperOrderPreview, type PaperOrderSubmission, type QuoteSnapshot, type TwsConnectRequest, type TwsTimeframe } from "./api";
+import { twsApi, TWS_CONNECT_DEFAULTS, TWS_TIMEFRAMES, type ExecutionPlan, type ExecutionPlanDraftRequest, type ExecutionPlanOrderType, type ExecutionPlanSide, type InstrumentResult, type OrderSnapshot, type PaperOrderPreview, type PaperOrderSubmission, type QuoteSnapshot, type ReconciliationSnapshot, type TwsAdvancedReject, type TwsConnectRequest, type TwsModifyOrderRequest, type TwsTimeframe } from "./api";
+import { TWS_ORDER_CAPABILITIES, canModifyOrderType, priceFieldsFor, type TwsOrderType } from "./orderCapabilities";
 import { TwsCandleChart } from "./TwsCandleChart";
 
 const STATUS_KEY = ["tws-status"];
@@ -19,6 +20,7 @@ const PLAN_DEFAULTS: ExecutionPlanDraftRequest = {
   quantity: 1,
   order_type: "LMT",
   limit_price: null,
+  stop_price: null,
 };
 
 
@@ -123,6 +125,18 @@ function submitErrorCode(err: unknown): string | null {
   return null;
 }
 
+/** Extract TwsAdvancedReject from an advanced_reject ApiError. */
+function extractAdvancedReject(err: unknown): TwsAdvancedReject | null {
+  if (err instanceof ApiError && submitErrorCode(err) === "advanced_reject") {
+    const d = err.body.detail as Record<string, unknown>;
+    const reject = d.reject;
+    if (reject && typeof reject === "object" && !Array.isArray(reject)) {
+      return reject as TwsAdvancedReject;
+    }
+  }
+  return null;
+}
+
 const SUBMIT_ERROR_MESSAGES: Record<string, string> = {
   kill_switch_active: "Kill switch is active — deactivate it before placing orders.",
   not_connected: "Lost connection to TWS — reconnect and try again.",
@@ -176,20 +190,76 @@ function UnmanagedBadge() {
   );
 }
 
-function OrderRow({ order }: { order: OrderSnapshot }) {
+function OrderRow({
+  order,
+  onCancel,
+  onModify,
+}: {
+  order: OrderSnapshot;
+  onCancel: (order_id: number) => void;
+  onModify: (order: OrderSnapshot) => void;
+}) {
+  const [confirmingCancel, setConfirmingCancel] = useState(false);
+  const priceDisplay = (() => {
+    if (order.lmt_price != null && order.stop_price != null)
+      return `STP ${order.stop_price.toFixed(2)} / LMT ${order.lmt_price.toFixed(2)}`;
+    if (order.stop_price != null) return order.stop_price.toFixed(2);
+    if (order.lmt_price != null) return order.lmt_price.toFixed(2);
+    return "—";
+  })();
   return (
-    <tr className="border-t border-border text-xs">
-      <td className="py-1.5 pr-4 font-medium">{order.symbol}</td>
-      <td className={`pr-4 ${order.side === "BUY" ? "text-[var(--clr-green)]" : "text-[var(--clr-red)]"}`}>
+    <tr className={cn("border-t border-border text-xs transition-colors", confirmingCancel && "bg-[var(--clr-red)]/5")}>
+      <td className="py-1.5 pr-3 font-medium">{order.symbol}</td>
+      <td className={`pr-3 ${order.side === "BUY" ? "text-[var(--clr-green)]" : "text-[var(--clr-red)]"}`}>
         {order.side}
       </td>
-      <td className="pr-4 font-data">{order.quantity}</td>
-      <td className="pr-4 font-data text-[var(--text-2)]">{order.order_type}</td>
-      <td className="pr-4 font-data text-[var(--text-2)]">
-        {order.lmt_price != null ? order.lmt_price.toFixed(2) : "-"}
+      <td className="pr-3 font-data">{order.quantity}</td>
+      <td className="pr-3 font-data text-[var(--text-2)]">{order.order_type}</td>
+      <td className="pr-3 font-data text-[var(--text-2)]">{priceDisplay}</td>
+      <td className="pr-3 text-[var(--text-2)]">{order.status}</td>
+      <td className="pr-2">{order.is_unmanaged && <UnmanagedBadge />}</td>
+      <td className="whitespace-nowrap py-1">
+        <div className="flex items-center gap-1.5">
+          {confirmingCancel ? (
+            <div className="flex items-center gap-1 rounded-full border border-[var(--clr-red)]/40 bg-[var(--clr-red)]/8 px-2 py-0.5">
+              <span className="text-[9px] text-[var(--text-3)]">Sure?</span>
+              <button
+                type="button"
+                className="rounded px-1.5 py-0.5 text-[9px] font-semibold text-[var(--clr-red)] hover:bg-[var(--clr-red)]/20 active:scale-95"
+                onClick={() => { onCancel(order.order_id); setConfirmingCancel(false); }}
+              >
+                Yes
+              </button>
+              <button
+                type="button"
+                className="rounded px-1 py-0.5 text-[10px] leading-none text-[var(--text-3)] hover:text-[var(--text-1)]"
+                onClick={() => setConfirmingCancel(false)}
+              >
+                ✕
+              </button>
+            </div>
+          ) : (
+            <button
+              type="button"
+              className="h-5 rounded border border-[var(--clr-red)]/50 px-1.5 text-[10px] text-[var(--clr-red)] hover:bg-[var(--clr-red)]/10 active:scale-95"
+              onClick={() => setConfirmingCancel(true)}
+            >
+              Cancel
+            </button>
+          )}
+          {canModifyOrderType(order.order_type) ? (
+            <button
+              type="button"
+              className="h-5 rounded border border-[var(--clr-cyan)]/50 px-1.5 text-[10px] text-[var(--clr-cyan)] hover:bg-[var(--clr-cyan)]/10 active:scale-95"
+              onClick={() => onModify(order)}
+            >
+              Modify
+            </button>
+          ) : (
+            <span className="text-[10px] text-[var(--text-3)]" title="Modify not supported for this order type.">—</span>
+          )}
+        </div>
       </td>
-      <td className="pr-4 text-[var(--text-2)]">{order.status}</td>
-      <td>{order.is_unmanaged && <UnmanagedBadge />}</td>
     </tr>
   );
 }
@@ -204,6 +274,10 @@ export function TwsExecutionAssistantModule() {
   const [searchResults, setSearchResults] = useState<InstrumentResult[]>([]);
   const [activeTimeframe, setActiveTimeframe] = useState<TwsTimeframe>("5m");
   const [selectedExchange, setSelectedExchange] = useState("");
+  const [editingOrder, setEditingOrder] = useState<OrderSnapshot | null>(null);
+  const [modifyForm, setModifyForm] = useState<TwsModifyOrderRequest>({ quantity: 1, limit_price: null, stop_price: null });
+  const [modifyReview, setModifyReview] = useState(false);
+  const [advancedReject, setAdvancedReject] = useState<TwsAdvancedReject | null>(null);
 
   const { data: status } = useQuery({
     queryKey: STATUS_KEY,
@@ -255,17 +329,132 @@ export function TwsExecutionAssistantModule() {
   const placePaperMutation = useMutation({
     mutationFn: (plan_id: string) => twsApi.placePaperOrder(plan_id),
     onSuccess: (submission) => {
+      setAdvancedReject(null);
       setPaperSubmission(submission);
       queryClient.invalidateQueries({ queryKey: RECON_KEY });
       queryClient.invalidateQueries({ queryKey: STATUS_KEY });
     },
     onError: (err) => {
-      // unknown_outcome means the order may have reached TWS — refresh immediately
-      // so Open Orders reflects any change before the user decides to retry.
+      const reject = extractAdvancedReject(err);
+      if (reject) {
+        setAdvancedReject(reject);
+        return;
+      }
       if (submitErrorCode(err) === "unknown_outcome") {
         queryClient.invalidateQueries({ queryKey: RECON_KEY });
         queryClient.invalidateQueries({ queryKey: STATUS_KEY });
       }
+    },
+  });
+
+  const overrideOrderMutation = useMutation({
+    mutationFn: (req: Parameters<typeof twsApi.overrideOrder>[0]) => twsApi.overrideOrder(req),
+    onSuccess: (result) => {
+      setAdvancedReject(null);
+      if (editingOrder) {
+        setEditingOrder(null);
+        setModifyReview(false);
+      } else if (currentPlan) {
+        // Build a full receipt from the plan — paperSubmission is null when the
+        // original place was blocked by an advanced reject.
+        setPaperSubmission({
+          order_id: result.order_id,
+          status: result.status,
+          plan_id: currentPlan.plan_id,
+          conid: currentPlan.conid,
+          symbol: currentPlan.symbol,
+          side: currentPlan.side,
+          quantity: currentPlan.quantity,
+          order_type: currentPlan.order_type,
+          limit_price: currentPlan.limit_price,
+          stop_price: currentPlan.stop_price,
+          submitted_at: new Date().toISOString(),
+        });
+      }
+      setTimeout(() => {
+        queryClient.refetchQueries({ queryKey: RECON_KEY });
+        queryClient.invalidateQueries({ queryKey: STATUS_KEY });
+      }, 1000);
+    },
+    onError: (err) => {
+      const reject = extractAdvancedReject(err);
+      if (reject) {
+        setAdvancedReject(reject);
+        return;
+      }
+      queryClient.invalidateQueries({ queryKey: RECON_KEY });
+      queryClient.invalidateQueries({ queryKey: STATUS_KEY });
+    },
+  });
+
+  const cancelOrderMutation = useMutation({
+    mutationFn: (order_id: number) => twsApi.cancelOrder(order_id),
+    onMutate: async (order_id) => {
+      await queryClient.cancelQueries({ queryKey: RECON_KEY });
+      const previous = queryClient.getQueryData<ReconciliationSnapshot>(RECON_KEY);
+      if (previous) {
+        const removed = previous.open_orders.find((o) => o.order_id === order_id);
+        queryClient.setQueryData<ReconciliationSnapshot>(RECON_KEY, {
+          ...previous,
+          open_orders: previous.open_orders.filter((o) => o.order_id !== order_id),
+          open_order_count: previous.open_order_count - 1,
+          unmanaged_order_count: removed?.is_unmanaged
+            ? previous.unmanaged_order_count - 1
+            : previous.unmanaged_order_count,
+        });
+      }
+      return { previous };
+    },
+    onError: (_err, _id, ctx) => {
+      if (ctx?.previous) queryClient.setQueryData(RECON_KEY, ctx.previous);
+      queryClient.invalidateQueries({ queryKey: RECON_KEY });
+      queryClient.invalidateQueries({ queryKey: STATUS_KEY });
+    },
+    onSuccess: () => {
+      // Delay refetch to let TWS process the cancel before we confirm truth.
+      setTimeout(() => {
+        queryClient.refetchQueries({ queryKey: RECON_KEY });
+        queryClient.invalidateQueries({ queryKey: STATUS_KEY });
+      }, 1000);
+    },
+  });
+
+  const modifyOrderMutation = useMutation({
+    mutationFn: ({ order_id, req }: { order_id: number; req: TwsModifyOrderRequest }) =>
+      twsApi.modifyOrder(order_id, req),
+    onMutate: async ({ order_id, req }) => {
+      await queryClient.cancelQueries({ queryKey: RECON_KEY });
+      const previous = queryClient.getQueryData<ReconciliationSnapshot>(RECON_KEY);
+      if (previous) {
+        queryClient.setQueryData<ReconciliationSnapshot>(RECON_KEY, {
+          ...previous,
+          open_orders: previous.open_orders.map((o) =>
+            o.order_id === order_id
+              ? { ...o, quantity: req.quantity, lmt_price: req.limit_price, stop_price: req.stop_price }
+              : o,
+          ),
+        });
+      }
+      return { previous };
+    },
+    onError: (err, _vars, ctx) => {
+      const reject = extractAdvancedReject(err);
+      if (reject) {
+        setAdvancedReject(reject);
+        return;
+      }
+      if (ctx?.previous) queryClient.setQueryData(RECON_KEY, ctx.previous);
+      queryClient.invalidateQueries({ queryKey: RECON_KEY });
+      queryClient.invalidateQueries({ queryKey: STATUS_KEY });
+    },
+    onSuccess: () => {
+      setAdvancedReject(null);
+      setEditingOrder(null);
+      setModifyReview(false);
+      setTimeout(() => {
+        queryClient.refetchQueries({ queryKey: RECON_KEY });
+        queryClient.invalidateQueries({ queryKey: STATUS_KEY });
+      }, 1000);
     },
   });
 
@@ -313,7 +502,22 @@ export function TwsExecutionAssistantModule() {
     if (!planForm.symbol) return "Enter a symbol.";
     if (!planForm.conid) return "Resolve symbol to get ConID.";
     if (planForm.quantity <= 0) return "Quantity must be positive.";
-    if (planForm.order_type === "LMT" && !(planForm.limit_price && planForm.limit_price > 0))
+    const fields = priceFieldsFor(planForm.order_type);
+    if (fields.includes("stop_price") && !(planForm.stop_price && planForm.stop_price > 0))
+      return "Enter a stop trigger.";
+    if (fields.includes("limit_price") && !(planForm.limit_price && planForm.limit_price > 0))
+      return "Enter a limit price.";
+    return null;
+  }
+
+  function modifyDisabledReason(): string | null {
+    if (!editingOrder) return null;
+    if (modifyForm.quantity <= 0) return "Quantity must be positive.";
+    if (!canModifyOrderType(editingOrder.order_type)) return null;
+    const fields = priceFieldsFor(editingOrder.order_type as TwsOrderType);
+    if (fields.includes("stop_price") && !(modifyForm.stop_price && modifyForm.stop_price > 0))
+      return "Enter a stop trigger.";
+    if (fields.includes("limit_price") && !(modifyForm.limit_price && modifyForm.limit_price > 0))
       return "Enter a limit price.";
     return null;
   }
@@ -451,7 +655,187 @@ export function TwsExecutionAssistantModule() {
 
         <div className="grid min-h-[405px] gap-1.5 xl:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]">
           <Panel title="Execution Plan" className="h-full">
-              {paperSubmission != null ? (
+              {advancedReject != null ? (
+                <div className="flex h-full flex-col">
+                  <div className="flex-1 min-h-0 overflow-y-auto flex flex-col gap-4 pb-2">
+                    <div className="rounded border border-[var(--clr-orange)]/40 bg-[var(--clr-orange)]/8 px-4 py-3">
+                      <div className="text-[10px] font-semibold uppercase tracking-wider text-[var(--clr-orange)]">TWS Rejected</div>
+                      <p className="mt-1 text-xs text-[var(--text-1)]">{advancedReject.reason}</p>
+                    </div>
+                    {advancedReject.override_codes.length > 0 && (
+                      <div className="space-y-1.5">
+                        <div className="text-[10px] font-semibold uppercase tracking-wider text-[var(--text-3)]">Override codes</div>
+                        <div className="flex flex-wrap gap-1.5">
+                          {advancedReject.override_codes.map((code) => (
+                            <span key={code} className="rounded bg-[var(--bg-0)] border border-border px-2 py-0.5 font-mono text-[10px] text-[var(--text-2)]">{code}</span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    <details className="rounded border border-border">
+                      <summary className="cursor-pointer px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-[var(--text-3)] select-none">Raw TWS response</summary>
+                      <pre className="overflow-x-auto p-3 text-[10px] text-[var(--text-3)] font-mono">{JSON.stringify(advancedReject.raw, null, 2)}</pre>
+                    </details>
+                  </div>
+                  <div className="shrink-0 flex flex-wrap items-center gap-3 pt-2">
+                    <button
+                      className="h-9 rounded-md bg-[var(--clr-orange)] px-5 text-sm font-semibold text-[var(--bg-0)] transition-colors hover:opacity-90 active:scale-[0.96] disabled:opacity-50"
+                      disabled={overrideOrderMutation.isPending}
+                      onClick={() => {
+                        if (editingOrder) {
+                          overrideOrderMutation.mutate({
+                            intent: "modify",
+                            order_id: editingOrder.order_id,
+                            plan_id: null,
+                            modify: modifyForm,
+                            override_codes: advancedReject.override_codes,
+                          });
+                        } else if (currentPlan) {
+                          overrideOrderMutation.mutate({
+                            intent: "place",
+                            order_id: null,
+                            plan_id: currentPlan.plan_id,
+                            modify: null,
+                            override_codes: advancedReject.override_codes,
+                          });
+                        }
+                      }}
+                    >
+                      {overrideOrderMutation.isPending ? "Submitting..." : "Override and submit"}
+                    </button>
+                    <button
+                      className="h-9 rounded-md border border-border px-4 text-sm text-[var(--text-2)] hover:bg-[var(--bg-1)] hover:text-[var(--text-1)]"
+                      disabled={overrideOrderMutation.isPending}
+                      onClick={() => {
+                        setAdvancedReject(null);
+                        queryClient.invalidateQueries({ queryKey: RECON_KEY });
+                      }}
+                    >
+                      Cancel
+                    </button>
+                    {overrideOrderMutation.isError && submitErrorCode(overrideOrderMutation.error) !== "advanced_reject" && (
+                      <p className="w-full text-xs text-[var(--clr-red)]">Override failed — check TWS connection and try again.</p>
+                    )}
+                  </div>
+                </div>
+              ) : editingOrder != null ? (() => {
+                const editableFields = canModifyOrderType(editingOrder.order_type)
+                  ? priceFieldsFor(editingOrder.order_type as TwsOrderType)
+                  : [];
+                const reason = modifyDisabledReason();
+                return (
+                  <div className="flex h-full flex-col">
+                    <div className="flex-1 min-h-0 overflow-y-auto flex flex-col gap-5 pb-2">
+                      <div className="rounded border border-[var(--clr-orange)]/30 bg-[var(--bg-0)] px-4 py-3">
+                        <div className="text-xs text-[var(--text-3)]">Modifying {editingOrder.order_type} order #{editingOrder.order_id}</div>
+                        <div className="mt-0.5 font-data text-sm font-semibold">{editingOrder.symbol} {editingOrder.side}</div>
+                      </div>
+                      {!modifyReview ? (
+                        <>
+                          <label className="space-y-1.5">
+                            <span className="text-xs font-medium text-[var(--text-2)]">Quantity</span>
+                            <input
+                              type="number"
+                              className="h-9 w-full rounded border border-border bg-[var(--bg-0)] px-3 font-data text-sm outline-none transition-colors focus:border-[var(--clr-cyan)]"
+                              value={modifyForm.quantity}
+                              onChange={(e) => setModifyForm((f) => ({ ...f, quantity: Number(e.target.value) }))}
+                            />
+                          </label>
+                          {editableFields.includes("stop_price") && (
+                            <label className="space-y-1.5">
+                              <span className="text-xs font-medium text-[var(--text-2)]">Stop trigger</span>
+                              <input
+                                type="number" step="0.01"
+                                className="h-9 w-full rounded border border-border bg-[var(--bg-0)] px-3 font-data text-sm outline-none transition-colors focus:border-[var(--clr-cyan)]"
+                                placeholder="0.00"
+                                value={modifyForm.stop_price ?? ""}
+                                onChange={(e) => setModifyForm((f) => ({ ...f, stop_price: Number(e.target.value) || null }))}
+                              />
+                            </label>
+                          )}
+                          {editableFields.includes("limit_price") && (
+                            <label className="space-y-1.5">
+                              <span className="text-xs font-medium text-[var(--text-2)]">Limit price</span>
+                              <input
+                                type="number" step="0.01"
+                                className="h-9 w-full rounded border border-border bg-[var(--bg-0)] px-3 font-data text-sm outline-none transition-colors focus:border-[var(--clr-cyan)]"
+                                placeholder="0.00"
+                                value={modifyForm.limit_price ?? ""}
+                                onChange={(e) => setModifyForm((f) => ({ ...f, limit_price: Number(e.target.value) || null }))}
+                              />
+                            </label>
+                          )}
+                        </>
+                      ) : (
+                        <div className="grid grid-cols-2 gap-x-6 gap-y-4">
+                          <div className="space-y-0.5">
+                            <div className="text-xs font-medium text-[var(--text-3)]">Quantity</div>
+                            <div className="font-data text-sm text-[var(--text-2)] line-through">{editingOrder.quantity}</div>
+                            <div className="font-data text-sm font-semibold text-[var(--text-1)]">{modifyForm.quantity}</div>
+                          </div>
+                          {editableFields.includes("stop_price") && (
+                            <div className="space-y-0.5">
+                              <div className="text-xs font-medium text-[var(--text-3)]">Stop trigger</div>
+                              <div className="font-data text-sm text-[var(--text-2)] line-through">{editingOrder.stop_price?.toFixed(2) ?? "—"}</div>
+                              <div className="font-data text-sm font-semibold text-[var(--text-1)]">{modifyForm.stop_price?.toFixed(2) ?? "—"}</div>
+                            </div>
+                          )}
+                          {editableFields.includes("limit_price") && (
+                            <div className="space-y-0.5">
+                              <div className="text-xs font-medium text-[var(--text-3)]">Limit price</div>
+                              <div className="font-data text-sm text-[var(--text-2)] line-through">{editingOrder.lmt_price?.toFixed(2) ?? "—"}</div>
+                              <div className="font-data text-sm font-semibold text-[var(--text-1)]">{modifyForm.limit_price?.toFixed(2) ?? "—"}</div>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                    <div className="shrink-0 flex flex-col gap-3 pt-2">
+                      {modifyOrderMutation.isError && (
+                        <p className="text-xs text-[var(--clr-red)]">
+                          {SUBMIT_ERROR_MESSAGES[submitErrorCode(modifyOrderMutation.error) ?? ""] ??
+                            "Modify failed — check that TWS is connected and on a paper port."}
+                        </p>
+                      )}
+                      {!modifyReview ? (
+                        <div className="flex flex-wrap items-center gap-3">
+                          <button
+                            className="h-9 rounded-md border border-[var(--clr-cyan)] px-5 text-sm font-semibold text-[var(--clr-cyan)] transition-colors hover:bg-[var(--clr-cyan)]/10 active:scale-[0.96] disabled:opacity-50"
+                            disabled={!!reason}
+                            onClick={() => { modifyOrderMutation.reset(); setModifyReview(true); }}
+                          >
+                            Review changes
+                          </button>
+                          <button
+                            className="h-9 rounded-md border border-border px-4 text-sm text-[var(--text-2)] hover:bg-[var(--bg-1)] hover:text-[var(--text-1)]"
+                            onClick={() => { setEditingOrder(null); setModifyReview(false); modifyOrderMutation.reset(); }}
+                          >
+                            Cancel
+                          </button>
+                          {reason && <span className="text-xs text-[var(--text-3)]">{reason}</span>}
+                        </div>
+                      ) : (
+                        <div className="flex flex-wrap items-center gap-3">
+                          <button
+                            className="h-9 rounded-md bg-[var(--clr-orange)] px-5 text-sm font-semibold text-[var(--bg-0)] transition-colors hover:opacity-90 active:scale-[0.96] disabled:opacity-50"
+                            disabled={modifyOrderMutation.isPending}
+                            onClick={() => modifyOrderMutation.mutate({ order_id: editingOrder.order_id, req: modifyForm })}
+                          >
+                            {modifyOrderMutation.isPending ? "Submitting..." : "Submit changes"}
+                          </button>
+                          <button
+                            className="h-9 rounded-md border border-border px-4 text-sm text-[var(--text-2)] hover:bg-[var(--bg-1)] hover:text-[var(--text-1)] disabled:opacity-50"
+                            disabled={modifyOrderMutation.isPending}
+                            onClick={() => setModifyReview(false)}
+                          >
+                            Back
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })() : paperSubmission != null ? (
                 <div className="flex h-full flex-col">
                   {/* Top content — scrolls when taller than the panel */}
                   <div className="flex-1 min-h-0 overflow-y-auto flex flex-col gap-5 pb-2">
@@ -463,6 +847,14 @@ export function TwsExecutionAssistantModule() {
                       </span>
                       <span className="font-data text-xl font-semibold text-[var(--text-1)]">{paperSubmission.quantity}</span>
                       <span className="font-data text-xl font-semibold text-[var(--text-2)]">{paperSubmission.order_type}</span>
+                      {paperSubmission.stop_price != null && (
+                        <>
+                          <span className="text-lg text-[var(--text-3)]">STP</span>
+                          <span className="font-data text-2xl font-bold text-[var(--text-1)]">
+                            {paperSubmission.stop_price.toFixed(2)}
+                          </span>
+                        </>
+                      )}
                       {paperSubmission.limit_price != null && (
                         <>
                           <span className="text-lg text-[var(--text-3)]">@</span>
@@ -495,6 +887,12 @@ export function TwsExecutionAssistantModule() {
                         <div className="text-xs font-medium text-[var(--text-3)]">Order type</div>
                         <div className="font-data text-sm text-[var(--text-1)]">{paperSubmission.order_type}</div>
                       </div>
+                      {paperSubmission.stop_price != null && (
+                        <div className="space-y-0.5">
+                          <div className="text-xs font-medium text-[var(--text-3)]">Stop trigger</div>
+                          <div className="font-data text-sm text-[var(--text-1)]">{paperSubmission.stop_price.toFixed(2)}</div>
+                        </div>
+                      )}
                       {paperSubmission.limit_price != null && (
                         <div className="space-y-0.5">
                           <div className="text-xs font-medium text-[var(--text-3)]">Limit price</div>
@@ -519,7 +917,7 @@ export function TwsExecutionAssistantModule() {
                   <div className="shrink-0 flex flex-wrap items-center gap-3 pt-2">
                     <button
                       className="h-9 rounded-md border border-[var(--clr-cyan)] px-5 text-sm font-semibold text-[var(--clr-cyan)] transition-colors hover:bg-[var(--clr-cyan)]/10 active:scale-[0.96]"
-                      onClick={() => { placePaperMutation.reset(); setCurrentPlan(null); setPaperPreview(null); setPaperSubmission(null); }}
+                      onClick={() => { placePaperMutation.reset(); setCurrentPlan(null); setPaperPreview(null); setPaperSubmission(null); setPlanForm(PLAN_DEFAULTS); }}
                     >
                       New order
                     </button>
@@ -543,6 +941,14 @@ export function TwsExecutionAssistantModule() {
                       </span>
                       <span className="font-data text-xl font-semibold text-[var(--text-1)]">{paperPreview.quantity}</span>
                       <span className="font-data text-xl font-semibold text-[var(--text-2)]">{paperPreview.order_type}</span>
+                      {paperPreview.stop_price != null && (
+                        <>
+                          <span className="text-lg text-[var(--text-3)]">STP</span>
+                          <span className="font-data text-2xl font-bold text-[var(--text-1)]">
+                            {paperPreview.stop_price.toFixed(2)}
+                          </span>
+                        </>
+                      )}
                       {paperPreview.limit_price != null && (
                         <>
                           <span className="text-lg text-[var(--text-3)]">@</span>
@@ -555,14 +961,15 @@ export function TwsExecutionAssistantModule() {
 
                     {/* Detail grid */}
                     <div className="grid grid-cols-2 gap-x-6 gap-y-4 sm:grid-cols-3">
-                      {[
+                      {([
                         { label: "ConID", value: paperPreview.conid },
                         { label: "Side", value: paperPreview.side, tone: paperPreview.side === "BUY" ? "success" : "danger" },
                         { label: "Quantity", value: paperPreview.quantity },
                         { label: "Order type", value: paperPreview.order_type },
-                        { label: "Limit price", value: paperPreview.limit_price != null ? paperPreview.limit_price.toFixed(2) : "—" },
+                        ...(paperPreview.stop_price != null ? [{ label: "Stop trigger", value: paperPreview.stop_price.toFixed(2) }] : []),
+                        ...(paperPreview.limit_price != null ? [{ label: "Limit price", value: paperPreview.limit_price.toFixed(2) }] : []),
                         { label: "TIF", value: paperPreview.tif },
-                      ].map(({ label, value, tone }) => (
+                      ] as { label: string; value: unknown; tone?: string }[]).map(({ label, value, tone }) => (
                         <div key={label} className="space-y-0.5">
                           <div className="text-xs font-medium text-[var(--text-3)]">{label}</div>
                           <div className={cn(
@@ -570,13 +977,13 @@ export function TwsExecutionAssistantModule() {
                             tone === "success" && "font-semibold text-[var(--clr-green)]",
                             tone === "danger" && "font-semibold text-[var(--clr-red)]",
                             !tone && "text-[var(--text-1)]",
-                          )}>{value}</div>
+                          )}>{String(value)}</div>
                         </div>
                       ))}
                     </div>
 
                     {/* Notional */}
-                    {paperPreview.order_type === "LMT" && paperPreview.limit_price != null && (
+                    {paperPreview.limit_price != null && (
                       <div className="flex items-center justify-between rounded border border-border/50 bg-[var(--bg-0)] px-4 py-3">
                         <span className="text-xs text-[var(--text-3)]">
                           {paperPreview.quantity} × {paperPreview.limit_price.toFixed(2)}
@@ -634,7 +1041,7 @@ export function TwsExecutionAssistantModule() {
                         disabled={placePaperMutation.isPending}
                         onClick={() => placePaperMutation.mutate(paperPreview.plan_id)}
                       >
-                        {placePaperMutation.isPending ? "Placing order..." : "Place paper order"}
+                        {placePaperMutation.isPending ? "Placing order..." : "Place order"}
                       </button>
                       <button
                         className="h-9 rounded-md border border-border px-4 text-sm text-[var(--text-2)] transition-colors hover:bg-[var(--bg-1)] hover:text-[var(--text-1)] disabled:opacity-50"
@@ -739,13 +1146,28 @@ export function TwsExecutionAssistantModule() {
                           className="h-9 w-full rounded border border-border bg-[var(--bg-0)] px-3 text-sm outline-none transition-colors focus:border-[var(--clr-cyan)] disabled:cursor-not-allowed"
                           value={planForm.order_type}
                           disabled={!canDraft}
-                          onChange={(e) => setPlanForm((f) => ({ ...f, order_type: e.target.value as ExecutionPlanOrderType, limit_price: null }))}
+                          onChange={(e) => setPlanForm((f) => ({ ...f, order_type: e.target.value as ExecutionPlanOrderType, limit_price: null, stop_price: null }))}
                         >
-                          <option value="LMT">LMT</option>
-                          <option value="MKT">MKT</option>
+                          {(Object.keys(TWS_ORDER_CAPABILITIES) as ExecutionPlanOrderType[]).map((t) => (
+                            <option key={t} value={t}>{t}</option>
+                          ))}
                         </select>
                       </label>
-                      {planForm.order_type === "LMT" && (
+                      {priceFieldsFor(planForm.order_type).includes("stop_price") && (
+                        <label className="space-y-1.5">
+                          <span className="text-xs font-medium text-[var(--text-2)]">Stop trigger</span>
+                          <input
+                            type="number"
+                            step="0.01"
+                            className="h-11 w-full rounded border border-border bg-[var(--bg-0)] px-3 font-data text-sm font-semibold outline-none transition-colors focus:border-[var(--clr-cyan)] disabled:cursor-not-allowed"
+                            placeholder="0.00"
+                            value={planForm.stop_price ?? ""}
+                            disabled={!canDraft}
+                            onChange={(e) => setPlanForm((f) => ({ ...f, stop_price: Number(e.target.value) || null }))}
+                          />
+                        </label>
+                      )}
+                      {priceFieldsFor(planForm.order_type).includes("limit_price") && (
                         <label className="space-y-1.5">
                           <span className="text-xs font-medium text-[var(--text-2)]">Limit price</span>
                           <input
@@ -762,7 +1184,7 @@ export function TwsExecutionAssistantModule() {
                     </div>
 
                     {/* Notional value */}
-                    {planForm.order_type === "LMT" && planForm.limit_price != null && planForm.limit_price > 0 && planForm.quantity > 0 && (
+                    {planForm.limit_price != null && planForm.limit_price > 0 && planForm.quantity > 0 && (
                       <div className="flex items-center justify-between rounded border border-border/50 bg-[var(--bg-0)] px-4 py-3">
                         <span className="text-xs text-[var(--text-3)]">
                           {planForm.quantity} × {planForm.limit_price.toFixed(2)}
@@ -802,7 +1224,7 @@ export function TwsExecutionAssistantModule() {
                             disabled={!canDraft || reviewMutation.isPending || reason != null}
                             onClick={() => { placePaperMutation.reset(); reviewMutation.mutate(planForm); }}
                           >
-                            {reviewMutation.isPending ? "Reviewing..." : "Review paper order"}
+                            {reviewMutation.isPending ? "Reviewing..." : "Review order"}
                           </button>
                           {canDraft && reason != null && (
                             <span className="text-xs text-[var(--text-3)]">{reason}</span>
@@ -931,11 +1353,24 @@ export function TwsExecutionAssistantModule() {
                       <th className="pb-1.5 pr-4 font-medium">Type</th>
                       <th className="pb-1.5 pr-4 font-medium">Price</th>
                       <th className="pb-1.5 pr-4 font-medium">Status</th>
-                      <th className="pb-1.5 font-medium" />
+                      <th className="pb-1.5 pr-2 font-medium" />
+                      <th className="pb-1.5 font-medium">Actions</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {recon.open_orders.map((o) => <OrderRow key={o.order_id} order={o} />)}
+                    {recon.open_orders.map((o) => (
+                      <OrderRow
+                        key={o.order_id}
+                        order={o}
+                        onCancel={(id) => cancelOrderMutation.mutate(id)}
+                        onModify={(order) => {
+                          setEditingOrder(order);
+                          setModifyForm({ quantity: order.quantity, limit_price: order.lmt_price, stop_price: order.stop_price });
+                          setModifyReview(false);
+                          modifyOrderMutation.reset();
+                        }}
+                      />
+                    ))}
                   </tbody>
                 </table>
               </div>

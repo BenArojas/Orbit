@@ -13,14 +13,37 @@ from models.tws_execution_assistant import (
     PaperOrderSubmission,
     QuoteSnapshot,
     ReconciliationSnapshot,
+    TwsAdvancedReject,
     TwsConnectRequest,
+    TwsModifyOrderRequest,
+    TwsOrderActionResult,
+    TwsOverrideRequest,
     TwsStatusResponse,
 )
 from services.broker_session import BrokerSessionService
 from services.execution_plan import ExecutionPlanService
-from services.tws_broker_adapter import TwsBrokerAdapter, TwsPlaceOrderGuardError
+from services.tws_broker_adapter import TwsAdvancedRejectError, TwsBrokerAdapter, TwsPlaceOrderGuardError
 
 router = APIRouter(prefix="/execution-assistant", tags=["execution-assistant"])
+
+_GUARD_STATUS: dict[str, int] = {
+    "kill_switch_active": status.HTTP_409_CONFLICT,
+    "not_connected": status.HTTP_409_CONFLICT,
+    "not_paper_port": status.HTTP_403_FORBIDDEN,
+    "plan_not_valid": status.HTTP_422_UNPROCESSABLE_ENTITY,
+    "order_not_found": status.HTTP_404_NOT_FOUND,
+    "unsupported_order_type": status.HTTP_422_UNPROCESSABLE_ENTITY,
+    "invalid_quantity": status.HTTP_422_UNPROCESSABLE_ENTITY,
+    "invalid_limit_price": status.HTTP_422_UNPROCESSABLE_ENTITY,
+    "invalid_stop_price": status.HTTP_422_UNPROCESSABLE_ENTITY,
+}
+
+
+def _guard_http_error(exc: TwsPlaceOrderGuardError) -> HTTPException:
+    return HTTPException(
+        status_code=_GUARD_STATUS.get(exc.error_code, status.HTTP_409_CONFLICT),
+        detail={"error": exc.error_code},
+    )
 
 
 @router.get("/status", response_model=TwsStatusResponse)
@@ -207,21 +230,17 @@ async def place_paper_order(
             detail={"error": "plan_not_valid", "status": plan.status},
         )
     try:
-        return adapter.place_paper_order(plan)
+        return await adapter.place_paper_order(plan)
     except TwsPlaceOrderGuardError as exc:
         # Guard fired after the router's own pre-call check (state changed between
         # check and call). Order was never sent — outcome is deterministic.
-        _guard_status = {
-            "kill_switch_active": status.HTTP_409_CONFLICT,
-            "not_connected": status.HTTP_409_CONFLICT,
-            "not_paper_port": status.HTTP_403_FORBIDDEN,
-            "plan_not_valid": status.HTTP_422_UNPROCESSABLE_ENTITY,
-        }
+        raise _guard_http_error(exc)
+    except TwsAdvancedRejectError as exc:
         raise HTTPException(
-            status_code=_guard_status.get(exc.error_code, status.HTTP_409_CONFLICT),
-            detail={"error": exc.error_code},
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"error": "advanced_reject", "reject": exc.reject.model_dump()},
         )
-    except Exception as exc:
+    except (RuntimeError, OSError, ConnectionError, TimeoutError) as exc:
         # Failure at or after the placeOrder() call — outcome is ambiguous.
         # The order may have reached TWS; warn the user before retrying.
         log.error("Paper order placement failed for plan %s: %s", plan_id, exc)
@@ -233,5 +252,111 @@ async def place_paper_order(
                     "Order placement failed unexpectedly. Check TWS Open Orders "
                     "before retrying — the order may have reached TWS."
                 ),
+            },
+        )
+
+
+# ── Cancel / Modify open orders ──────────────────────────────────────────────
+
+@router.delete("/orders/{order_id}", response_model=TwsOrderActionResult)
+async def cancel_order(
+    order_id: int,
+    adapter: TwsBrokerAdapter = Depends(get_tws_adapter),
+) -> TwsOrderActionResult:
+    try:
+        return adapter.cancel_order(order_id)
+    except TwsPlaceOrderGuardError as exc:
+        raise _guard_http_error(exc)
+    except (RuntimeError, OSError) as exc:
+        log.error("TWS cancel failed for order %s: %s", order_id, exc)
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "error": "unknown_outcome",
+                "message": "Cancel failed unexpectedly. Refresh Open Orders before retrying.",
+            },
+        )
+
+
+@router.patch("/orders/{order_id}", response_model=TwsOrderActionResult)
+async def modify_order(
+    order_id: int,
+    req: TwsModifyOrderRequest,
+    adapter: TwsBrokerAdapter = Depends(get_tws_adapter),
+) -> TwsOrderActionResult:
+    try:
+        return await adapter.modify_order(order_id, req)
+    except TwsPlaceOrderGuardError as exc:
+        raise _guard_http_error(exc)
+    except TwsAdvancedRejectError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"error": "advanced_reject", "reject": exc.reject.model_dump()},
+        )
+    except (RuntimeError, OSError) as exc:
+        log.error("TWS modify failed for order %s: %s", order_id, exc)
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "error": "unknown_outcome",
+                "message": "Modify failed unexpectedly. Refresh Open Orders before retrying.",
+            },
+        )
+
+
+def _override_codes(req: TwsOverrideRequest) -> list[str]:
+    codes = [c.strip() for c in req.override_codes if c.strip()]
+    if not codes:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"error": "override_codes_required"},
+        )
+    return codes
+
+
+@router.post("/orders/override", response_model=TwsOrderActionResult)
+async def override_order(
+    req: TwsOverrideRequest,
+    svc: ExecutionPlanService = Depends(get_execution_plan_service),
+    adapter: TwsBrokerAdapter = Depends(get_tws_adapter),
+) -> TwsOrderActionResult:
+    try:
+        codes = _override_codes(req)
+        if req.intent == "place":
+            if req.plan_id is None:
+                raise HTTPException(status_code=422, detail={"error": "plan_id_required"})
+            plan = svc.get(req.plan_id)
+            if plan is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail={"error": "plan_not_found", "plan_id": req.plan_id},
+                )
+            submission = await adapter.place_paper_order(plan, advanced_override=codes)
+            return TwsOrderActionResult(
+                order_id=submission.order_id,
+                status=submission.status,
+                action="override",
+                message="Override order sent to TWS.",
+            )
+        if req.order_id is None or req.modify is None:
+            raise HTTPException(
+                status_code=422,
+                detail={"error": "modify_override_requires_order_id_and_modify"},
+            )
+        return await adapter.modify_order(req.order_id, req.modify, advanced_override=codes)
+    except TwsPlaceOrderGuardError as exc:
+        raise _guard_http_error(exc)
+    except TwsAdvancedRejectError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"error": "advanced_reject", "reject": exc.reject.model_dump()},
+        )
+    except (RuntimeError, OSError) as exc:
+        log.error("TWS override failed: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "error": "unknown_outcome",
+                "message": "Override failed unexpectedly. Refresh Open Orders before retrying.",
             },
         )

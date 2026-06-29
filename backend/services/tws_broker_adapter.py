@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import copy
+import json
 import logging
 import math
 import re
@@ -11,6 +13,7 @@ from typing import TYPE_CHECKING
 from ib_async import IB, Contract, Order
 
 from models.broker_session import BrokerSessionMode
+from models.tws_order_capabilities import can_modify_order_type
 
 if TYPE_CHECKING:
     from models.execution_plan import ExecutionPlan
@@ -26,6 +29,9 @@ from models.tws_execution_assistant import (
     ReconciliationSnapshot,
     ReconciliationSummary,
     TwsAdapterState,
+    TwsAdvancedReject,
+    TwsModifyOrderRequest,
+    TwsOrderActionResult,
     TwsStatusResponse,
 )
 
@@ -42,6 +48,40 @@ class TwsPlaceOrderGuardError(Exception):
     def __init__(self, error_code: str) -> None:
         super().__init__(error_code)
         self.error_code = error_code
+
+
+class TwsAdvancedRejectError(Exception):
+    """Raised when TWS returns an overridable advanced reject during placeOrder."""
+
+    def __init__(self, reject: TwsAdvancedReject) -> None:
+        super().__init__(reject.reason)
+        self.reject = reject
+
+
+# TWS error codes that carry overridable advanced reject payloads.
+_ADVANCED_REJECT_CODES: frozenset[int] = frozenset({399, 201})
+
+
+def _advanced_reject_from_raw(order_id: int | None, raw: str) -> TwsAdvancedReject:
+    try:
+        parsed = json.loads(raw)
+    except (json.JSONDecodeError, TypeError, ValueError):
+        return TwsAdvancedReject(order_id=order_id, reason="TWS rejected the order.", override_codes=[], raw=raw)
+
+    codes: list[str] = []
+    if isinstance(parsed, dict):
+        for key in ("8229", "errorCode", "code", "override", "overrideCode"):
+            value = parsed.get(key)
+            if isinstance(value, str) and value:
+                codes.extend(part.strip() for part in value.split(",") if part.strip())
+        reason = str(
+            parsed.get("message") or parsed.get("errorMsg") or parsed.get("reason")
+            or "TWS rejected the order."
+        )
+        return TwsAdvancedReject(
+            order_id=order_id, reason=reason, override_codes=sorted(set(codes)), raw=parsed
+        )
+    return TwsAdvancedReject(order_id=order_id, reason="TWS rejected the order.", override_codes=[], raw=raw)
 
 _IBKR_UNSET = 1.7976931348623157e+308
 _MDT_MAP: dict[int, str] = {1: "live", 2: "frozen", 3: "delayed", 4: "delayed_frozen"}
@@ -86,6 +126,17 @@ def _quote_val(val: object) -> float | None:
 
 def _lmt_price(val: float) -> float | None:
     return val if val and 0 < val < _IBKR_UNSET else None
+
+
+def _order_stop_price(order: Order) -> float | None:
+    return _lmt_price(getattr(order, "auxPrice", None))
+
+
+def _apply_plan_prices(order: Order, plan: "ExecutionPlan") -> None:
+    if plan.order_type in ("LMT", "STP LMT") and plan.limit_price is not None:
+        order.lmtPrice = plan.limit_price
+    if plan.order_type in ("STP", "STP LMT") and plan.stop_price is not None:
+        order.auxPrice = plan.stop_price
 
 
 class TwsBrokerAdapter:
@@ -340,6 +391,7 @@ class TwsBrokerAdapter:
                 quantity=float(t.order.totalQuantity),
                 order_type=t.order.orderType,
                 lmt_price=_lmt_price(t.order.lmtPrice),
+                stop_price=_order_stop_price(t.order),
                 status=t.orderStatus.status,
                 is_unmanaged=t.order.clientId != self._client_id,
             )
@@ -354,17 +406,23 @@ class TwsBrokerAdapter:
             open_orders=open_orders,
         )
 
-    def place_paper_order(self, plan: "ExecutionPlan") -> PaperOrderSubmission:
+    async def place_paper_order(
+        self,
+        plan: "ExecutionPlan",
+        advanced_override: list[str] | None = None,
+    ) -> PaperOrderSubmission:
         """Submit a paper order to TWS for a validated plan.
 
         Re-verifies all execution gates before calling placeOrder() — defense-in-depth
         in case the router check and this call are separated by a race or refactor.
         placeOrder() is synchronous; fill confirmation arrives asynchronously via
         TWS callbacks (visible through reconciliation).
+
+        Awaits 300 ms after placeOrder() to capture any immediate TWS advanced rejects
+        before returning. If TWS fires an overridable error, raises TwsAdvancedRejectError
+        so the caller can surface the reject payload and prompt the user to override.
+        Pass advanced_override codes (from a prior reject) to resubmit with override.
         """
-        # ponytail: self-protection guards — mirror the router's pre-call checks so
-        # no caller path can bypass them. Kill switch is currently a constant False
-        # placeholder; the guard is kept minimal and obvious until it has real state.
         if self._kill_switch_active:
             raise TwsPlaceOrderGuardError("kill_switch_active")
         if not self.is_connected():
@@ -381,13 +439,31 @@ class TwsBrokerAdapter:
             totalQuantity=plan.quantity,
             tif="DAY",
         )
-        if plan.order_type == "LMT" and plan.limit_price is not None:
-            order.lmtPrice = plan.limit_price
+        _apply_plan_prices(order, plan)
+        if advanced_override:
+            order.advancedErrorOverride = ",".join(advanced_override)
 
-        trade = self._ib.placeOrder(contract, order)
+        captured_rejects: list[TwsAdvancedReject] = []
+
+        def _on_error(req_id: int, code: int, msg: str, contract: object) -> None:
+            if code in _ADVANCED_REJECT_CODES and msg:
+                captured_rejects.append(_advanced_reject_from_raw(None, msg))
+
+        # Statuses that mean TWS accepted the order — any captured 399 was informational.
+        _ACCEPTED: frozenset[str] = frozenset({"PreSubmitted", "Submitted", "Filled", "PartiallyFilled"})
+
+        self._ib.errorEvent += _on_error
+        try:
+            trade = self._ib.placeOrder(contract, order)
+            # Wait briefly for TWS to fire any immediate advanced reject errors.
+            await asyncio.sleep(0.3)
+            if captured_rejects and trade.orderStatus.status not in _ACCEPTED:
+                raise TwsAdvancedRejectError(captured_rejects[0])
+        finally:
+            self._ib.errorEvent -= _on_error
+
         # trade.orderStatus.status is typically "" immediately after placeOrder —
-        # the real status arrives asynchronously via TWS callbacks. "sent_to_tws"
-        # is the honest fallback: we sent it, TWS hasn't reported back yet.
+        # the real status arrives asynchronously via TWS callbacks.
         broker_status = trade.orderStatus.status or "sent_to_tws"
         return PaperOrderSubmission(
             order_id=trade.order.orderId,
@@ -399,7 +475,92 @@ class TwsBrokerAdapter:
             quantity=plan.quantity,
             order_type=plan.order_type,
             limit_price=plan.limit_price,
+            stop_price=plan.stop_price,
             submitted_at=datetime.now(timezone.utc),
+        )
+
+    def _ensure_paper_order_mutation_allowed(self) -> None:
+        """Shared guard for cancel and modify — fail closed before any broker call."""
+        if self._kill_switch_active:
+            raise TwsPlaceOrderGuardError("kill_switch_active")
+        if not self.is_connected():
+            raise TwsPlaceOrderGuardError("not_connected")
+        if not self.is_paper_port():
+            raise TwsPlaceOrderGuardError("not_paper_port")
+
+    def _open_trade_by_order_id(self, order_id: int):  # type: ignore[return]
+        for trade in self._ib.openTrades():
+            if trade.order.orderId == order_id:
+                return trade
+        return None
+
+    def cancel_order(self, order_id: int) -> TwsOrderActionResult:
+        self._ensure_paper_order_mutation_allowed()
+        trade = self._open_trade_by_order_id(order_id)
+        if trade is None:
+            raise TwsPlaceOrderGuardError("order_not_found")
+        self._ib.cancelOrder(trade.order)
+        status_text = trade.orderStatus.status or "cancel_requested"
+        return TwsOrderActionResult(
+            order_id=order_id,
+            status=status_text,
+            action="cancel",
+            message="Cancel request sent to TWS.",
+        )
+
+    async def modify_order(
+        self,
+        order_id: int,
+        req: TwsModifyOrderRequest,
+        advanced_override: list[str] | None = None,
+    ) -> TwsOrderActionResult:
+        self._ensure_paper_order_mutation_allowed()
+        trade = self._open_trade_by_order_id(order_id)
+        if trade is None:
+            raise TwsPlaceOrderGuardError("order_not_found")
+        if not can_modify_order_type(trade.order.orderType):
+            raise TwsPlaceOrderGuardError("unsupported_order_type")
+        if req.quantity <= 0:
+            raise TwsPlaceOrderGuardError("invalid_quantity")
+        if trade.order.orderType in ("LMT", "STP LMT"):
+            if not (req.limit_price and req.limit_price > 0):
+                raise TwsPlaceOrderGuardError("invalid_limit_price")
+        if trade.order.orderType in ("STP", "STP LMT"):
+            if not (req.stop_price and req.stop_price > 0):
+                raise TwsPlaceOrderGuardError("invalid_stop_price")
+
+        updated = copy.copy(trade.order)
+        updated.totalQuantity = req.quantity
+        if req.limit_price is not None:
+            updated.lmtPrice = req.limit_price
+        if req.stop_price is not None:
+            updated.auxPrice = req.stop_price
+        if advanced_override:
+            updated.advancedErrorOverride = ",".join(advanced_override)
+
+        captured_rejects: list[TwsAdvancedReject] = []
+
+        def _on_error(req_id: int, code: int, msg: str, contract: object) -> None:
+            if code in _ADVANCED_REJECT_CODES and msg:
+                captured_rejects.append(_advanced_reject_from_raw(order_id, msg))
+
+        _ACCEPTED: frozenset[str] = frozenset({"PreSubmitted", "Submitted", "Filled", "PartiallyFilled"})
+
+        self._ib.errorEvent += _on_error
+        try:
+            result = self._ib.placeOrder(trade.contract, updated)
+            await asyncio.sleep(0.3)
+            if captured_rejects and result.orderStatus.status not in _ACCEPTED:
+                raise TwsAdvancedRejectError(captured_rejects[0])
+        finally:
+            self._ib.errorEvent -= _on_error
+
+        status_text = result.orderStatus.status or "modify_requested"
+        return TwsOrderActionResult(
+            order_id=order_id,
+            status=status_text,
+            action="modify",
+            message="Modify request sent to TWS.",
         )
 
     # Timeframe → (IBKR barSizeSetting, durationStr)
