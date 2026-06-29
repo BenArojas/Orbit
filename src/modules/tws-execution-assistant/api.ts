@@ -123,6 +123,24 @@ export interface PaperOrderSubmission {
   submitted_at: string;
 }
 
+export interface TwsLivePolicyStatus {
+  connected_account_id: string | null;
+  connected_host: string;
+  connected_port: number | null;
+  is_paper_port: boolean;
+  allowlisted: boolean;
+  armed: boolean;
+  arm_expires_on: string[];
+}
+
+export interface TwsLiveAllowlistRequest {
+  account_id: string;
+  host: string;
+  port: number;
+}
+
+export type TwsLiveArmRequest = TwsLiveAllowlistRequest;
+
 export interface PaperOrderPreview {
   plan_id: string;
   conid: number;
@@ -134,7 +152,7 @@ export interface PaperOrderPreview {
   stop_price: number | null;
   tif: string;
   transmit: boolean;
-  paper_only: true;
+  paper_only: boolean;
 }
 
 export interface InstrumentResult {
@@ -253,4 +271,16 @@ export const twsApi = {
     sidecarRequest<TwsOrderActionResult>("PATCH", `/execution-assistant/orders/${order_id}`, req),
   overrideOrder: (req: TwsOverrideRequest) =>
     sidecarRequest<TwsOrderActionResult>("POST", "/execution-assistant/orders/override", req),
+  getLiveStatus: () =>
+    sidecarRequest<TwsLivePolicyStatus>("GET", "/execution-assistant/live/status"),
+  allowLive: (req: TwsLiveAllowlistRequest) =>
+    sidecarRequest<TwsLivePolicyStatus>("POST", "/execution-assistant/live/allow", req),
+  armLive: (req: TwsLiveArmRequest) =>
+    sidecarRequest<TwsLivePolicyStatus>("POST", "/execution-assistant/live/arm", req),
+  disarmLive: () =>
+    sidecarRequest<TwsLivePolicyStatus>("POST", "/execution-assistant/live/disarm"),
+  previewLiveOrder: (plan_id: string) =>
+    sidecarRequest<PaperOrderPreview>("POST", `/execution-assistant/plans/${plan_id}/preview-live`),
+  placeLiveOrder: (plan_id: string) =>
+    sidecarRequest<PaperOrderSubmission>("POST", `/execution-assistant/plans/${plan_id}/place-live`),
 } as const;
