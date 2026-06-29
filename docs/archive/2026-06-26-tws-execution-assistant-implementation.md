@@ -15,7 +15,7 @@ Build the TWS Execution Assistant as a fourth Orbit module behind an exclusive b
 
 ## 3. Current repo baseline
 
-- `docs/superpowers/specs/2026-06-05-tws-execution-assistant-design.md` defines the fourth-module, exclusive-session, adapter-bounded design.
+- `docs/archive/2026-06-05-tws-execution-assistant-design.md` defines the fourth-module, exclusive-session, adapter-bounded design.
 - `docs/research/tws-execution-assistant-research-packet.md` confirms the first slice should be non-trading boundary work.
 - `src/orbit/moduleEntry/OrbitModuleEntry.tsx` currently registers only `parallax`, `moonmarket`, and `inflect`, gated only by Gateway authentication.
 - `src/orbit/OrbitLauncher.tsx` renders all registered modules and enables them only by `isAuthenticated`.

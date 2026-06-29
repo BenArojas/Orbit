@@ -59,9 +59,9 @@ order to TWS/IB Gateway, and see the submitted order appear in Open Orders.
 - `docs/architecture/backend.md`
 - `docs/architecture/frontend.md`
 - `docs/architecture/modules.md`
-- `docs/superpowers/specs/2026-06-05-tws-execution-assistant-design.md`
-- `docs/superpowers/plans/2026-06-26-tws-execution-assistant-implementation.md`
-- `docs/superpowers/plans/2026-06-27-tws-market-data-capability-plan.md`
+- `docs/archive/2026-06-05-tws-execution-assistant-design.md`
+- `docs/archive/2026-06-26-tws-execution-assistant-implementation.md`
+- `docs/archive/2026-06-27-tws-market-data-capability-plan.md`
 - `PROJECT_PLAN.md`
 - Current implementation files under `backend/routers/`,
   `backend/services/`, `backend/models/`, and

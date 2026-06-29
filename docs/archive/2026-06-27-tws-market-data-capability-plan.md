@@ -35,9 +35,9 @@
 - `AGENTS.md`
 - `docs/testing.md`
 - `docs/architecture/modules.md`
-- `docs/superpowers/specs/2026-06-05-tws-execution-assistant-design.md`
-- `docs/superpowers/specs/2026-06-27-tws-broker-cockpit-ui-design.md`
-- `docs/superpowers/plans/2026-06-26-tws-execution-assistant-implementation.md`
+- `docs/archive/2026-06-05-tws-execution-assistant-design.md`
+- `docs/archive/2026-06-27-tws-broker-cockpit-ui-design.md`
+- `docs/archive/2026-06-26-tws-execution-assistant-implementation.md`
 - `PROJECT_PLAN.md`
 - IBKR market data type docs: live, frozen, delayed, delayed frozen.
 - IBKR market data subscription docs: API market data often needs Level 1 subscription and Market Data API acknowledgement.

@@ -1,20 +1,19 @@
 # Archived Design Docs
 
-These are **plans and specs for v1 features that have already shipped**. They are
+These are **plans and specs for features that have already shipped**. They are
 kept for historical reference only — they are not active/forward-looking design.
 If you are an agent (Claude Code, Codex) or a human looking for the *current*
 design of a system, look in `docs/superpowers/plans/`, `docs/superpowers/specs/`,
 and `docs/ibkr-pacing.md` first. Only consult this folder when you need the
-original rationale behind a shipped v1 feature.
+original rationale behind a shipped feature.
 
 > Nothing here is dead weight to delete — these documents explain *why* shipped
 > code looks the way it does. They were moved out of the active design folders
-> during the v1 close-out cleanup so the active folders only hold docs that v2
-> still builds on.
+> so the active folders only hold docs that current work still builds on.
 
 ## Contents
 
-| Feature (shipped in v1) | Plan | Spec |
+| Feature | Plan | Spec |
 | --- | --- | --- |
 | AI prompt fact layer | `2026-05-24-ai-prompt-fact-layer.md` | `2026-05-24-ai-prompt-fact-layer-design.md` |
 | MoonMarket portfolio | `2026-05-26-moonmarket-portfolio.md` | `2026-05-26-moonmarket-portfolio-design.md` |
@@ -29,6 +28,12 @@ original rationale behind a shipped v1 feature.
 | AI analysis data + grounding pipeline | `2026-06-21-ai-analysis-data-grounding-pipeline.md` | — |
 | AI neutral-vs-rejected signal handling | — | `2026-06-21-ai-neutral-vs-rejected-handling-design.md` |
 | AI streaming reliability (finish_reason + reformat context) | `2026-06-21-ai-streaming-reliability-finish-reason-reformat.md` | — |
+| TWS Execution Assistant parent + shell/gating | `2026-06-26-tws-execution-assistant-implementation.md` | `2026-06-05-tws-execution-assistant-design.md` |
+| TWS paper order MVP | `2026-06-27-tws-paper-order-mvp-plan.md` | — |
+| TWS market data capability | `2026-06-27-tws-market-data-capability-plan.md` | — |
+| TWS broker cockpit UI | — | `2026-06-27-tws-broker-cockpit-ui-design.md` |
+| TWS terminal cockpit redesign | — | `2026-06-28-tws-terminal-cockpit-redesign.md` |
+| TWS order management | `2026-06-28-tws-order-management-implementation.md` | `2026-06-28-tws-order-management-design.md` |
 
 ## What was kept active (not archived)
 
@@ -42,6 +47,9 @@ Left in `docs/superpowers/` because v2 builds directly on them:
 - `docs/ibkr-pacing.md` — IBKR rate/pacing limits, needed for v2 automation
 - **Cloud + Hybrid AI** master design: `specs/2026-06-05-orbit-v2-cloud-hybrid-ai-design.md` — the parent mission shipped, but v2 still builds on this design.
 - **AI prompt grounding + evaluation loop:** `plans/2026-06-19-ai-prompt-grounding-evaluation-loop.md` — validator/grader/runner shipped, but live OpenRouter evaluation and prompt promotion never ran. This is the remaining semantic-reasoning track (prompt quality), kept active.
+
+TWS follow-up work is tracked in `PROJECT_PLAN.md`; new live-trading,
+advanced-order, and market-data-extra missions should get new specs/plans.
 
 ## What was deleted (recoverable via git history)
 
