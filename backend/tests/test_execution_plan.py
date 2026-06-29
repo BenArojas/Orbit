@@ -12,12 +12,13 @@ from datetime import datetime, timezone
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from deps import get_execution_plan_service, get_tws_adapter
+from deps import get_execution_plan_service, get_tws_adapter, get_tws_live_policy
 from models.execution_plan import ExecutionPlan
 from models.tws_execution_assistant import PaperOrderSubmission, TwsModifyOrderRequest, TwsOrderActionResult
 from routers.execution_assistant import router as ea_router
 from services.execution_plan import ExecutionPlanService
 from services.tws_broker_adapter import TwsAdvancedReject, TwsAdvancedRejectError, TwsPlaceOrderGuardError
+from services.tws_live_policy import TwsLivePolicyService
 
 
 class _AdapterStub:
@@ -78,9 +79,7 @@ class _AdapterStub:
             submitted_at=datetime(2026, 6, 27, 12, 0, 0, tzinfo=timezone.utc),
         )
 
-    def cancel_order(self, order_id: int) -> TwsOrderActionResult:
-        if not self._paper_port:
-            raise TwsPlaceOrderGuardError("not_paper_port")
+    def cancel_order(self, order_id: int, *, mode: str = "paper", live_policy=None) -> TwsOrderActionResult:
         if not self._connected:
             raise TwsPlaceOrderGuardError("not_connected")
         if self._kill_switch:
@@ -93,9 +92,7 @@ class _AdapterStub:
             message="Cancel request sent to TWS.",
         )
 
-    async def modify_order(self, order_id: int, req: TwsModifyOrderRequest, advanced_override: list[str] | None = None) -> TwsOrderActionResult:
-        if not self._paper_port:
-            raise TwsPlaceOrderGuardError("not_paper_port")
+    async def modify_order(self, order_id: int, req: TwsModifyOrderRequest, *, mode: str = "paper", live_policy=None, advanced_override: list[str] | None = None) -> TwsOrderActionResult:
         if not self._connected:
             raise TwsPlaceOrderGuardError("not_connected")
         if self._kill_switch:
@@ -107,6 +104,15 @@ class _AdapterStub:
             order_id=order_id, status="modify_requested", action="modify",
             message="Modify request sent to TWS.",
         )
+
+    def connected_account_id(self) -> str | None:
+        return "U12345" if self._connected else None
+
+    def connected_host(self) -> str:
+        return "127.0.0.1"
+
+    def connected_port(self) -> int | None:
+        return 7497 if self._paper_port else 7496
 
     async def get_sec_type(self, conid: int) -> str | None:
         return self._sec_type
@@ -132,6 +138,7 @@ def _client(
         raise_advanced_reject=raise_advanced_reject,
         guard_error_code=guard_error_code,
     )
+    app.dependency_overrides[get_tws_live_policy] = lambda: TwsLivePolicyService()
     return TestClient(app)
 
 
@@ -156,6 +163,7 @@ def _setup(
     app.include_router(ea_router)
     app.dependency_overrides[get_execution_plan_service] = lambda: svc
     app.dependency_overrides[get_tws_adapter] = lambda: stub
+    app.dependency_overrides[get_tws_live_policy] = lambda: TwsLivePolicyService()
     return stub, TestClient(app)
 
 
@@ -432,11 +440,12 @@ def test_cancel_order_calls_broker_once_on_paper_port():
     assert stub.cancel_order_calls == 1
 
 
-def test_cancel_order_blocked_on_non_paper_port():
+def test_cancel_on_live_port_blocked_by_unarmed_live_policy():
+    """Critical promise: cancel on a live port is blocked by the unarmed live policy, not the broker."""
     stub, client = _setup(sec_type="STK", connected=True, paper_port=False)
     r = client.delete("/execution-assistant/orders/9001")
     assert r.status_code == 403
-    assert r.json()["detail"]["error"] == "not_paper_port"
+    assert r.json()["detail"]["error"] == "live_session_not_allowlisted"
     assert stub.cancel_order_calls == 0
 
 
@@ -451,14 +460,15 @@ def test_modify_order_calls_broker_once_on_paper_port():
     assert stub.modify_order_calls == 1
 
 
-def test_modify_order_blocked_on_non_paper_port():
+def test_modify_on_live_port_blocked_by_unarmed_live_policy():
+    """Critical promise: modify on a live port is blocked by the unarmed live policy, not the broker."""
     stub, client = _setup(sec_type="STK", connected=True, paper_port=False)
     r = client.patch(
         "/execution-assistant/orders/9001",
         json={"quantity": 5.0, "limit_price": 182.0, "stop_price": None},
     )
     assert r.status_code == 403
-    assert r.json()["detail"]["error"] == "not_paper_port"
+    assert r.json()["detail"]["error"] == "live_session_not_allowlisted"
     assert stub.modify_order_calls == 0
 
 
