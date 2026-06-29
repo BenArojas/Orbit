@@ -32,6 +32,7 @@ from exceptions import (
 from services.broker_session import BrokerSessionService
 from services.execution_plan import ExecutionPlanService
 from services.tws_broker_adapter import TwsBrokerAdapter
+from services.tws_live_policy import TwsLivePolicyService
 from services.db import DatabaseService
 from services.templates import seed_builtin_templates
 from services.gateway import GatewayLifecycle
@@ -103,6 +104,9 @@ async def lifespan(app: FastAPI):
 
     # Execution plan service — process-local draft store; lost on restart by design.
     app.state.execution_plan_service = ExecutionPlanService()
+
+    # TWS live policy — process-local allowlist and arm state; lost on restart by design.
+    app.state.tws_live_policy = TwsLivePolicyService()
 
     # Initialize SQLite database (Step 1.4)
     db = DatabaseService()

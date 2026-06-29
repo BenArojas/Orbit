@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 
 log = logging.getLogger(__name__)
 
-from deps import get_broker_session, get_execution_plan_service, get_tws_adapter
+from deps import get_broker_session, get_execution_plan_service, get_tws_adapter, get_tws_live_policy
 from models.execution_plan import ExecutionPlan, ExecutionPlanDraftRequest
 from models.tws_execution_assistant import (
     BarsResponse,
@@ -15,6 +15,9 @@ from models.tws_execution_assistant import (
     ReconciliationSnapshot,
     TwsAdvancedReject,
     TwsConnectRequest,
+    TwsLiveAllowlistRequest,
+    TwsLiveArmRequest,
+    TwsLivePolicyStatus,
     TwsModifyOrderRequest,
     TwsOrderActionResult,
     TwsOverrideRequest,
@@ -23,6 +26,7 @@ from models.tws_execution_assistant import (
 from services.broker_session import BrokerSessionService
 from services.execution_plan import ExecutionPlanService
 from services.tws_broker_adapter import TwsAdvancedRejectError, TwsBrokerAdapter, TwsPlaceOrderGuardError
+from services.tws_live_policy import TwsLivePolicyService
 
 router = APIRouter(prefix="/execution-assistant", tags=["execution-assistant"])
 
@@ -36,6 +40,11 @@ _GUARD_STATUS: dict[str, int] = {
     "invalid_quantity": status.HTTP_422_UNPROCESSABLE_ENTITY,
     "invalid_limit_price": status.HTTP_422_UNPROCESSABLE_ENTITY,
     "invalid_stop_price": status.HTTP_422_UNPROCESSABLE_ENTITY,
+    "paper_port_cannot_arm_live": status.HTTP_403_FORBIDDEN,
+    "paper_port_cannot_live_trade": status.HTTP_403_FORBIDDEN,
+    "live_session_mismatch": status.HTTP_409_CONFLICT,
+    "live_session_not_allowlisted": status.HTTP_403_FORBIDDEN,
+    "live_session_not_armed": status.HTTP_403_FORBIDDEN,
 }
 
 
@@ -81,6 +90,65 @@ async def get_reconciliation(
     adapter: TwsBrokerAdapter = Depends(get_tws_adapter),
 ) -> ReconciliationSnapshot:
     return adapter.get_reconciliation()
+
+
+# ── Live policy ──────────────────────────────────────────────────────────────
+
+def _live_status(adapter: TwsBrokerAdapter, policy: TwsLivePolicyService) -> TwsLivePolicyStatus:
+    return policy.status(
+        account_id=adapter.connected_account_id(),
+        host=adapter.connected_host(),
+        port=adapter.connected_port(),
+        is_connected=adapter.is_connected(),
+        is_paper_port=adapter.is_paper_port(),
+    )
+
+
+@router.get("/live/status", response_model=TwsLivePolicyStatus)
+async def get_live_status(
+    adapter: TwsBrokerAdapter = Depends(get_tws_adapter),
+    policy: TwsLivePolicyService = Depends(get_tws_live_policy),
+) -> TwsLivePolicyStatus:
+    return _live_status(adapter, policy)
+
+
+@router.post("/live/allow", response_model=TwsLivePolicyStatus)
+async def allow_live_session(
+    req: TwsLiveAllowlistRequest,
+    adapter: TwsBrokerAdapter = Depends(get_tws_adapter),
+    policy: TwsLivePolicyService = Depends(get_tws_live_policy),
+) -> TwsLivePolicyStatus:
+    policy.allow(req)
+    return _live_status(adapter, policy)
+
+
+@router.post("/live/arm", response_model=TwsLivePolicyStatus)
+async def arm_live_session(
+    req: TwsLiveArmRequest,
+    adapter: TwsBrokerAdapter = Depends(get_tws_adapter),
+    policy: TwsLivePolicyService = Depends(get_tws_live_policy),
+) -> TwsLivePolicyStatus:
+    try:
+        policy.arm(
+            req,
+            account_id=adapter.connected_account_id(),
+            host=adapter.connected_host(),
+            port=adapter.connected_port(),
+            is_connected=adapter.is_connected(),
+            is_paper_port=adapter.is_paper_port(),
+        )
+    except TwsPlaceOrderGuardError as exc:
+        raise _guard_http_error(exc)
+    return _live_status(adapter, policy)
+
+
+@router.post("/live/disarm", response_model=TwsLivePolicyStatus)
+async def disarm_live_session(
+    adapter: TwsBrokerAdapter = Depends(get_tws_adapter),
+    policy: TwsLivePolicyService = Depends(get_tws_live_policy),
+) -> TwsLivePolicyStatus:
+    policy.disarm()
+    return _live_status(adapter, policy)
 
 
 # ── Instrument search + quote ────────────────────────────────────────────────

@@ -188,6 +188,18 @@ class TwsBrokerAdapter:
     def is_kill_switch_active(self) -> bool:
         return self._kill_switch_active
 
+    def connected_host(self) -> str:
+        return self._last_host
+
+    def connected_port(self) -> int | None:
+        return self._connected_port
+
+    def connected_account_id(self) -> str | None:
+        if not self.is_connected():
+            return None
+        accounts = self._ib.managedAccounts()
+        return accounts[0] if accounts else None
+
     async def check_api_server(self) -> bool:
         """Return True if the TWS / IB Gateway API socket is TCP-reachable.
 
