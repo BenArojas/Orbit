@@ -79,7 +79,9 @@ async def connect(
 async def disconnect(
     adapter: TwsBrokerAdapter = Depends(get_tws_adapter),
     session: BrokerSessionService = Depends(get_broker_session),
+    policy: TwsLivePolicyService = Depends(get_tws_live_policy),
 ) -> TwsStatusResponse:
+    policy.disarm()
     await adapter.disconnect()
     available = await adapter.check_api_server()
     return adapter.get_status(session.current_mode(), available)

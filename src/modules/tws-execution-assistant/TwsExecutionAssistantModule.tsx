@@ -1121,7 +1121,7 @@ export function TwsExecutionAssistantModule() {
                         disabled={placeOrderMutation.isPending}
                         onClick={() => placeOrderMutation.mutate(paperPreview.plan_id)}
                       >
-                        {placeOrderMutation.isPending ? "Placing order..." : isLiveSession ? "Place LIVE order" : "Place order"}
+                        {placeOrderMutation.isPending ? "Placing order..." : "Place order"}
                       </button>
                       <button
                         className="h-9 rounded-md border border-border px-4 text-sm text-[var(--text-2)] transition-colors hover:bg-[var(--bg-1)] hover:text-[var(--text-1)] disabled:opacity-50"
