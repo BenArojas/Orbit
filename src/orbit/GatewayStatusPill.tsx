@@ -20,10 +20,11 @@ import { twsApi, TWS_CONNECT_DEFAULTS } from "@/modules/tws-execution-assistant/
 // Same key as TwsExecutionAssistantModule — shares TanStack Query cache.
 const TWS_STATUS_KEY = ["tws-status"] as const;
 
-// Paper ports only — fail-closed gate matches the backend (4002 IB Gateway, 7497 TWS).
-const PAPER_PORTS = [
-  { port: 4002, label: "IB Gateway (4002)" },
-  { port: 7497, label: "TWS (7497)" },
+const PORT_PRESETS = [
+  { port: 4002, label: "IB Gateway paper (4002)" },
+  { port: 4001, label: "IB Gateway live (4001)" },
+  { port: 7497, label: "TWS paper (7497)" },
+  { port: 7496, label: "TWS live (7496)" },
 ] as const;
 
 type Tone = "green" | "amber" | "red";
@@ -169,7 +170,7 @@ export function GatewayStatusPill() {
                 disabled={busy}
                 className="flex-1 rounded-md border border-border bg-[var(--bg-1)] px-2 py-1.5 text-[12px] text-[var(--text-2)] disabled:opacity-50"
               >
-                {PAPER_PORTS.map((p) => (
+                {PORT_PRESETS.map((p) => (
                   <option key={p.port} value={p.port}>
                     {p.label}
                   </option>

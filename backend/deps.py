@@ -12,6 +12,7 @@ from fastapi import Depends, HTTPException, Request, status
 from services.broker_session import BrokerSessionService
 from services.execution_plan import ExecutionPlanService
 from services.tws_broker_adapter import TwsBrokerAdapter
+from services.tws_live_policy import TwsLivePolicyService
 from services.db import DatabaseService
 from services.ibkr import IBKRService
 from services.screener import ScreenerService
@@ -110,6 +111,11 @@ def get_tws_adapter(request: Request) -> TwsBrokerAdapter:
 def get_execution_plan_service(request: Request) -> ExecutionPlanService:
     """Get the execution plan service singleton stashed on app.state during lifespan."""
     return request.app.state.execution_plan_service
+
+
+def get_tws_live_policy(request: Request) -> TwsLivePolicyService:
+    """Get the TWS live policy service singleton stashed on app.state during lifespan."""
+    return request.app.state.tws_live_policy
 
 
 async def require_cp_mode(

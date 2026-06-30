@@ -15,6 +15,28 @@ class TwsConnectRequest(BaseModel):
     port: int = 4002  # IB Gateway paper default; TWS paper is 7497
     client_id: int = 1
 
+
+class TwsLiveAllowlistRequest(BaseModel):
+    account_id: str
+    host: str = "127.0.0.1"
+    port: int
+
+
+class TwsLiveArmRequest(BaseModel):
+    account_id: str
+    host: str = "127.0.0.1"
+    port: int
+
+
+class TwsLivePolicyStatus(BaseModel):
+    connected_account_id: str | None = None
+    connected_host: str = "127.0.0.1"
+    connected_port: int | None = None
+    is_paper_port: bool = False
+    allowlisted: bool = False
+    armed: bool = False
+    arm_expires_on: list[str] = ["disconnect", "app_restart", "account_change"]
+
 TwsAdapterState = Literal["not_initialized", "connecting", "connected", "disconnected", "error"]
 
 

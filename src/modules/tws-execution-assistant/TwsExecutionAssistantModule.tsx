@@ -6,12 +6,13 @@ import { ThemeToggle } from "@/components/ui/ThemeToggle";
 import { BROKER_SESSION_KEY } from "@/context/BrokerSessionContext";
 import { cn } from "@/lib/utils";
 import { ApiError } from "@/lib/sidecarClient";
-import { twsApi, TWS_CONNECT_DEFAULTS, TWS_TIMEFRAMES, type ExecutionPlan, type ExecutionPlanDraftRequest, type ExecutionPlanOrderType, type ExecutionPlanSide, type InstrumentResult, type OrderSnapshot, type PaperOrderPreview, type PaperOrderSubmission, type QuoteSnapshot, type ReconciliationSnapshot, type TwsAdvancedReject, type TwsConnectRequest, type TwsModifyOrderRequest, type TwsTimeframe } from "./api";
+import { twsApi, TWS_CONNECT_DEFAULTS, TWS_TIMEFRAMES, type ExecutionPlan, type ExecutionPlanDraftRequest, type ExecutionPlanOrderType, type ExecutionPlanSide, type InstrumentResult, type OrderSnapshot, type PaperOrderPreview, type PaperOrderSubmission, type QuoteSnapshot, type ReconciliationSnapshot, type TwsAdvancedReject, type TwsConnectRequest, type TwsLiveAllowlistRequest, type TwsModifyOrderRequest, type TwsTimeframe } from "./api";
 import { TWS_ORDER_CAPABILITIES, canModifyOrderType, priceFieldsFor, type TwsOrderType } from "./orderCapabilities";
 import { TwsCandleChart } from "./TwsCandleChart";
 
 const STATUS_KEY = ["tws-status"];
 const RECON_KEY = ["tws-reconciliation"];
+const LIVE_STATUS_KEY = ["tws-live-status"];
 
 const PLAN_DEFAULTS: ExecutionPlanDraftRequest = {
   conid: 0,
@@ -310,12 +311,42 @@ export function TwsExecutionAssistantModule() {
     },
   });
 
+  const { data: livePolicy } = useQuery({
+    queryKey: LIVE_STATUS_KEY,
+    queryFn: twsApi.getLiveStatus,
+    refetchInterval: 5000,
+    enabled: status?.connected === true,
+  });
+
+  const isLiveSession = status?.connected === true && livePolicy?.is_paper_port === false;
+  const liveRequest: TwsLiveAllowlistRequest | null =
+    livePolicy?.connected_account_id && livePolicy.connected_port != null
+      ? { account_id: livePolicy.connected_account_id, host: livePolicy.connected_host, port: livePolicy.connected_port }
+      : null;
+
+  const allowLiveMutation = useMutation({
+    mutationFn: twsApi.allowLive,
+    onSuccess: (result) => queryClient.setQueryData(LIVE_STATUS_KEY, result),
+  });
+
+  const armLiveMutation = useMutation({
+    mutationFn: twsApi.armLive,
+    onSuccess: (result) => queryClient.setQueryData(LIVE_STATUS_KEY, result),
+  });
+
+  const disarmLiveMutation = useMutation({
+    mutationFn: twsApi.disarmLive,
+    onSuccess: (result) => queryClient.setQueryData(LIVE_STATUS_KEY, result),
+  });
+
   const reviewMutation = useMutation({
     mutationFn: async (req: ExecutionPlanDraftRequest) => {
       const plan = await twsApi.createPlanDraft(req);
       const validated = await twsApi.validatePlan(plan.plan_id);
       if (validated.status !== "valid") return { plan: validated, preview: null };
-      const preview = await twsApi.previewPaperOrder(plan.plan_id);
+      const preview = isLiveSession
+        ? await twsApi.previewLiveOrder(plan.plan_id)
+        : await twsApi.previewPaperOrder(plan.plan_id);
       return { plan: validated, preview };
     },
     onSuccess: ({ plan, preview }) => {
@@ -326,8 +357,9 @@ export function TwsExecutionAssistantModule() {
     },
   });
 
-  const placePaperMutation = useMutation({
-    mutationFn: (plan_id: string) => twsApi.placePaperOrder(plan_id),
+  const placeOrderMutation = useMutation({
+    mutationFn: (plan_id: string) =>
+      isLiveSession ? twsApi.placeLiveOrder(plan_id) : twsApi.placePaperOrder(plan_id),
     onSuccess: (submission) => {
       setAdvancedReject(null);
       setPaperSubmission(submission);
@@ -602,6 +634,46 @@ export function TwsExecutionAssistantModule() {
                 TWS only
               </span>
             </div>
+            {isLiveSession && liveRequest && (
+              <div className="flex items-center gap-2 border-l border-border px-4 py-2.5">
+                <span className={cn(
+                  "rounded-full px-2 py-0.5 text-[10px] font-semibold",
+                  livePolicy?.armed
+                    ? "border border-[var(--clr-red)]/40 bg-[var(--clr-red)]/10 text-[var(--clr-red)]"
+                    : "border border-[var(--clr-orange)]/40 bg-[var(--glow-orange)] text-[var(--clr-orange)]",
+                )}>
+                  {livePolicy?.armed ? "LIVE ARMED" : "LIVE LOCKED"}
+                </span>
+                {!livePolicy?.allowlisted ? (
+                  <button
+                    type="button"
+                    className="h-6 rounded border border-[var(--clr-orange)]/50 px-2 text-[10px] font-semibold text-[var(--clr-orange)] hover:bg-[var(--clr-orange)]/10 disabled:opacity-50"
+                    disabled={allowLiveMutation.isPending}
+                    onClick={() => allowLiveMutation.mutate(liveRequest)}
+                  >
+                    Allow account
+                  </button>
+                ) : !livePolicy.armed ? (
+                  <button
+                    type="button"
+                    className="h-6 rounded border border-[var(--clr-red)]/50 px-2 text-[10px] font-semibold text-[var(--clr-red)] hover:bg-[var(--clr-red)]/10 disabled:opacity-50"
+                    disabled={armLiveMutation.isPending}
+                    onClick={() => armLiveMutation.mutate(liveRequest)}
+                  >
+                    Arm live
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    className="h-6 rounded border border-border px-2 text-[10px] text-[var(--text-2)] hover:bg-[var(--bg-0)]"
+                    disabled={disarmLiveMutation.isPending}
+                    onClick={() => disarmLiveMutation.mutate()}
+                  >
+                    Disarm
+                  </button>
+                )}
+              </div>
+            )}
           </div>
         ) : (
           <div className="rounded-md border border-border bg-[var(--bg-1)] px-3 py-2">
@@ -794,7 +866,9 @@ export function TwsExecutionAssistantModule() {
                       {modifyOrderMutation.isError && (
                         <p className="text-xs text-[var(--clr-red)]">
                           {SUBMIT_ERROR_MESSAGES[submitErrorCode(modifyOrderMutation.error) ?? ""] ??
-                            "Modify failed — check that TWS is connected and on a paper port."}
+                            (isLiveSession
+                              ? "Modify rejected — check that TWS is connected and live trading is armed."
+                              : "Modify failed — check that TWS is connected and on a paper port.")}
                         </p>
                       )}
                       {!modifyReview ? (
@@ -917,7 +991,7 @@ export function TwsExecutionAssistantModule() {
                   <div className="shrink-0 flex flex-wrap items-center gap-3 pt-2">
                     <button
                       className="h-9 rounded-md border border-[var(--clr-cyan)] px-5 text-sm font-semibold text-[var(--clr-cyan)] transition-colors hover:bg-[var(--clr-cyan)]/10 active:scale-[0.96]"
-                      onClick={() => { placePaperMutation.reset(); setCurrentPlan(null); setPaperPreview(null); setPaperSubmission(null); setPlanForm(PLAN_DEFAULTS); }}
+                      onClick={() => { placeOrderMutation.reset(); setCurrentPlan(null); setPaperPreview(null); setPaperSubmission(null); setPlanForm(PLAN_DEFAULTS); }}
                     >
                       New order
                     </button>
@@ -998,12 +1072,16 @@ export function TwsExecutionAssistantModule() {
                     )}
 
                     {/* Safety notice */}
-                    <div className="flex items-start gap-3 rounded border border-[var(--clr-green)]/25 bg-[var(--glow-green)] px-4 py-3">
-                      <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-[var(--clr-green)]" strokeWidth={1.7} />
+                    <div className={cn("flex items-start gap-3 rounded px-4 py-3", isLiveSession ? "border border-[var(--clr-red)]/25 bg-[var(--clr-red)]/5" : "border border-[var(--clr-green)]/25 bg-[var(--glow-green)]")}>
+                      <CheckCircle2 className={cn("mt-0.5 h-4 w-4 shrink-0", isLiveSession ? "text-[var(--clr-red)]" : "text-[var(--clr-green)]")} strokeWidth={1.7} />
                       <div>
-                        <p className="text-xs font-semibold text-[var(--clr-green)]">This is a PAPER order only.</p>
+                        <p className={cn("text-xs font-semibold", isLiveSession ? "text-[var(--clr-red)]" : "text-[var(--clr-green)]")}>
+                          {isLiveSession ? "This is a LIVE order." : "This is a PAPER order only."}
+                        </p>
                         <p className="mt-0.5 text-xs text-[var(--text-2)]">
-                          It will be routed to your TWS paper account and will not impact live trading.
+                          {isLiveSession
+                            ? "It will be routed to the armed live TWS account."
+                            : "It will be routed to your TWS paper account and will not impact live trading."}
                         </p>
                       </div>
                     </div>
@@ -1011,8 +1089,8 @@ export function TwsExecutionAssistantModule() {
 
                   {/* Bottom: errors + actions — always visible */}
                   <div className="shrink-0 flex flex-col gap-3 pt-2">
-                    {placePaperMutation.isError && (() => {
-                      const code = submitErrorCode(placePaperMutation.error);
+                    {placeOrderMutation.isError && (() => {
+                      const code = submitErrorCode(placeOrderMutation.error);
                       if (code === "unknown_outcome") {
                         return (
                           <div className="rounded border border-[var(--clr-amber,#d97706)]/40 bg-[var(--bg-0)] p-3 space-y-1.5">
@@ -1032,21 +1110,23 @@ export function TwsExecutionAssistantModule() {
                         );
                       }
                       const msg = SUBMIT_ERROR_MESSAGES[code ?? ""] ??
-                        "Order rejected — check that TWS is connected and on a paper port.";
+                        (isLiveSession
+                          ? "Live order rejected — check that TWS is connected and live trading is armed."
+                          : "Order rejected — check that TWS is connected and on a paper port.");
                       return <p className="text-xs text-[var(--clr-red)]">{msg}</p>;
                     })()}
                     <div className="flex flex-wrap items-center gap-3">
                       <button
                         className="h-9 rounded-md bg-[var(--clr-green)] px-5 text-sm font-semibold text-[var(--bg-0)] transition-colors hover:opacity-90 active:scale-[0.96] disabled:opacity-50"
-                        disabled={placePaperMutation.isPending}
-                        onClick={() => placePaperMutation.mutate(paperPreview.plan_id)}
+                        disabled={placeOrderMutation.isPending}
+                        onClick={() => placeOrderMutation.mutate(paperPreview.plan_id)}
                       >
-                        {placePaperMutation.isPending ? "Placing order..." : "Place order"}
+                        {placeOrderMutation.isPending ? "Placing order..." : "Place order"}
                       </button>
                       <button
                         className="h-9 rounded-md border border-border px-4 text-sm text-[var(--text-2)] transition-colors hover:bg-[var(--bg-1)] hover:text-[var(--text-1)] disabled:opacity-50"
-                        disabled={placePaperMutation.isPending}
-                        onClick={() => { placePaperMutation.reset(); setCurrentPlan(null); setPaperPreview(null); setPaperSubmission(null); }}
+                        disabled={placeOrderMutation.isPending}
+                        onClick={() => { placeOrderMutation.reset(); setCurrentPlan(null); setPaperPreview(null); setPaperSubmission(null); }}
                       >
                         Edit ticket
                       </button>
@@ -1222,7 +1302,7 @@ export function TwsExecutionAssistantModule() {
                           <button
                             className="h-9 rounded-md border border-[var(--clr-cyan)] px-4 text-sm font-semibold text-[var(--clr-cyan)] transition-colors hover:bg-[var(--clr-cyan)]/10 active:scale-[0.96] disabled:opacity-50"
                             disabled={!canDraft || reviewMutation.isPending || reason != null}
-                            onClick={() => { placePaperMutation.reset(); reviewMutation.mutate(planForm); }}
+                            onClick={() => { placeOrderMutation.reset(); reviewMutation.mutate(planForm); }}
                           >
                             {reviewMutation.isPending ? "Reviewing..." : "Review order"}
                           </button>

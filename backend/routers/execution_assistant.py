@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 
 log = logging.getLogger(__name__)
 
-from deps import get_broker_session, get_execution_plan_service, get_tws_adapter
+from deps import get_broker_session, get_execution_plan_service, get_tws_adapter, get_tws_live_policy
 from models.execution_plan import ExecutionPlan, ExecutionPlanDraftRequest
 from models.tws_execution_assistant import (
     BarsResponse,
@@ -15,6 +15,9 @@ from models.tws_execution_assistant import (
     ReconciliationSnapshot,
     TwsAdvancedReject,
     TwsConnectRequest,
+    TwsLiveAllowlistRequest,
+    TwsLiveArmRequest,
+    TwsLivePolicyStatus,
     TwsModifyOrderRequest,
     TwsOrderActionResult,
     TwsOverrideRequest,
@@ -23,6 +26,7 @@ from models.tws_execution_assistant import (
 from services.broker_session import BrokerSessionService
 from services.execution_plan import ExecutionPlanService
 from services.tws_broker_adapter import TwsAdvancedRejectError, TwsBrokerAdapter, TwsPlaceOrderGuardError
+from services.tws_live_policy import TwsLivePolicyService
 
 router = APIRouter(prefix="/execution-assistant", tags=["execution-assistant"])
 
@@ -36,6 +40,11 @@ _GUARD_STATUS: dict[str, int] = {
     "invalid_quantity": status.HTTP_422_UNPROCESSABLE_ENTITY,
     "invalid_limit_price": status.HTTP_422_UNPROCESSABLE_ENTITY,
     "invalid_stop_price": status.HTTP_422_UNPROCESSABLE_ENTITY,
+    "paper_port_cannot_arm_live": status.HTTP_403_FORBIDDEN,
+    "paper_port_cannot_live_trade": status.HTTP_403_FORBIDDEN,
+    "live_session_mismatch": status.HTTP_409_CONFLICT,
+    "live_session_not_allowlisted": status.HTTP_403_FORBIDDEN,
+    "live_session_not_armed": status.HTTP_403_FORBIDDEN,
 }
 
 
@@ -70,7 +79,9 @@ async def connect(
 async def disconnect(
     adapter: TwsBrokerAdapter = Depends(get_tws_adapter),
     session: BrokerSessionService = Depends(get_broker_session),
+    policy: TwsLivePolicyService = Depends(get_tws_live_policy),
 ) -> TwsStatusResponse:
+    policy.disarm()
     await adapter.disconnect()
     available = await adapter.check_api_server()
     return adapter.get_status(session.current_mode(), available)
@@ -81,6 +92,65 @@ async def get_reconciliation(
     adapter: TwsBrokerAdapter = Depends(get_tws_adapter),
 ) -> ReconciliationSnapshot:
     return adapter.get_reconciliation()
+
+
+# ── Live policy ──────────────────────────────────────────────────────────────
+
+def _live_status(adapter: TwsBrokerAdapter, policy: TwsLivePolicyService) -> TwsLivePolicyStatus:
+    return policy.status(
+        account_id=adapter.connected_account_id(),
+        host=adapter.connected_host(),
+        port=adapter.connected_port(),
+        is_connected=adapter.is_connected(),
+        is_paper_port=adapter.is_paper_port(),
+    )
+
+
+@router.get("/live/status", response_model=TwsLivePolicyStatus)
+async def get_live_status(
+    adapter: TwsBrokerAdapter = Depends(get_tws_adapter),
+    policy: TwsLivePolicyService = Depends(get_tws_live_policy),
+) -> TwsLivePolicyStatus:
+    return _live_status(adapter, policy)
+
+
+@router.post("/live/allow", response_model=TwsLivePolicyStatus)
+async def allow_live_session(
+    req: TwsLiveAllowlistRequest,
+    adapter: TwsBrokerAdapter = Depends(get_tws_adapter),
+    policy: TwsLivePolicyService = Depends(get_tws_live_policy),
+) -> TwsLivePolicyStatus:
+    policy.allow(req)
+    return _live_status(adapter, policy)
+
+
+@router.post("/live/arm", response_model=TwsLivePolicyStatus)
+async def arm_live_session(
+    req: TwsLiveArmRequest,
+    adapter: TwsBrokerAdapter = Depends(get_tws_adapter),
+    policy: TwsLivePolicyService = Depends(get_tws_live_policy),
+) -> TwsLivePolicyStatus:
+    try:
+        policy.arm(
+            req,
+            account_id=adapter.connected_account_id(),
+            host=adapter.connected_host(),
+            port=adapter.connected_port(),
+            is_connected=adapter.is_connected(),
+            is_paper_port=adapter.is_paper_port(),
+        )
+    except TwsPlaceOrderGuardError as exc:
+        raise _guard_http_error(exc)
+    return _live_status(adapter, policy)
+
+
+@router.post("/live/disarm", response_model=TwsLivePolicyStatus)
+async def disarm_live_session(
+    adapter: TwsBrokerAdapter = Depends(get_tws_adapter),
+    policy: TwsLivePolicyService = Depends(get_tws_live_policy),
+) -> TwsLivePolicyStatus:
+    policy.disarm()
+    return _live_status(adapter, policy)
 
 
 # ── Instrument search + quote ────────────────────────────────────────────────
@@ -194,6 +264,71 @@ async def preview_paper_order(
     return svc.preview_paper(plan)
 
 
+@router.post("/plans/{plan_id}/preview-live", response_model=PaperOrderPreview)
+async def preview_live_order(
+    plan_id: str,
+    svc: ExecutionPlanService = Depends(get_execution_plan_service),
+    adapter: TwsBrokerAdapter = Depends(get_tws_adapter),
+    policy: TwsLivePolicyService = Depends(get_tws_live_policy),
+) -> PaperOrderPreview:
+    try:
+        policy.assert_live_allowed(
+            account_id=adapter.connected_account_id(),
+            host=adapter.connected_host(),
+            port=adapter.connected_port(),
+            is_connected=adapter.is_connected(),
+            is_paper_port=adapter.is_paper_port(),
+        )
+    except TwsPlaceOrderGuardError as exc:
+        raise _guard_http_error(exc)
+    plan = svc.get(plan_id)
+    if plan is None:
+        raise HTTPException(status_code=404, detail={"error": "plan_not_found", "plan_id": plan_id})
+    if plan.status != "valid":
+        raise HTTPException(status_code=422, detail={"error": "plan_not_valid", "status": plan.status})
+    preview = svc.preview_paper(plan)
+    return preview.model_copy(update={"paper_only": False})
+
+
+@router.post("/plans/{plan_id}/place-live", response_model=PaperOrderSubmission)
+async def place_live_order(
+    plan_id: str,
+    svc: ExecutionPlanService = Depends(get_execution_plan_service),
+    adapter: TwsBrokerAdapter = Depends(get_tws_adapter),
+    policy: TwsLivePolicyService = Depends(get_tws_live_policy),
+) -> PaperOrderSubmission:
+    try:
+        policy.assert_live_allowed(
+            account_id=adapter.connected_account_id(),
+            host=adapter.connected_host(),
+            port=adapter.connected_port(),
+            is_connected=adapter.is_connected(),
+            is_paper_port=adapter.is_paper_port(),
+        )
+    except TwsPlaceOrderGuardError as exc:
+        raise _guard_http_error(exc)
+    plan = svc.get(plan_id)
+    if plan is None:
+        raise HTTPException(status_code=404, detail={"error": "plan_not_found", "plan_id": plan_id})
+    if plan.status != "valid":
+        raise HTTPException(status_code=422, detail={"error": "plan_not_valid", "status": plan.status})
+    try:
+        return await adapter.place_order(plan, mode="live", live_policy=policy)
+    except TwsPlaceOrderGuardError as exc:
+        raise _guard_http_error(exc)
+    except TwsAdvancedRejectError as exc:
+        raise HTTPException(status_code=409, detail={"error": "advanced_reject", "reject": exc.reject.model_dump()})
+    except (RuntimeError, OSError, ConnectionError, TimeoutError) as exc:
+        log.error("Live order placement failed for plan %s: %s", plan_id, exc)
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "error": "unknown_outcome",
+                "message": "Live order placement failed unexpectedly. Check TWS Open Orders before retrying.",
+            },
+        )
+
+
 @router.post("/plans/{plan_id}/place-paper", response_model=PaperOrderSubmission)
 async def place_paper_order(
     plan_id: str,
@@ -258,13 +393,34 @@ async def place_paper_order(
 
 # ── Cancel / Modify open orders ──────────────────────────────────────────────
 
+def _order_mode(adapter: TwsBrokerAdapter) -> str:
+    return "paper" if adapter.is_paper_port() else "live"
+
+
+def _assert_live_precheck(adapter: TwsBrokerAdapter, policy: TwsLivePolicyService) -> None:
+    try:
+        policy.assert_live_allowed(
+            account_id=adapter.connected_account_id(),
+            host=adapter.connected_host(),
+            port=adapter.connected_port(),
+            is_connected=adapter.is_connected(),
+            is_paper_port=adapter.is_paper_port(),
+        )
+    except TwsPlaceOrderGuardError as exc:
+        raise _guard_http_error(exc)
+
+
 @router.delete("/orders/{order_id}", response_model=TwsOrderActionResult)
 async def cancel_order(
     order_id: int,
     adapter: TwsBrokerAdapter = Depends(get_tws_adapter),
+    policy: TwsLivePolicyService = Depends(get_tws_live_policy),
 ) -> TwsOrderActionResult:
+    mode = _order_mode(adapter)
+    if mode == "live":
+        _assert_live_precheck(adapter, policy)
     try:
-        return adapter.cancel_order(order_id)
+        return adapter.cancel_order(order_id, mode=mode, live_policy=policy if mode == "live" else None)
     except TwsPlaceOrderGuardError as exc:
         raise _guard_http_error(exc)
     except (RuntimeError, OSError) as exc:
@@ -283,9 +439,13 @@ async def modify_order(
     order_id: int,
     req: TwsModifyOrderRequest,
     adapter: TwsBrokerAdapter = Depends(get_tws_adapter),
+    policy: TwsLivePolicyService = Depends(get_tws_live_policy),
 ) -> TwsOrderActionResult:
+    mode = _order_mode(adapter)
+    if mode == "live":
+        _assert_live_precheck(adapter, policy)
     try:
-        return await adapter.modify_order(order_id, req)
+        return await adapter.modify_order(order_id, req, mode=mode, live_policy=policy if mode == "live" else None)
     except TwsPlaceOrderGuardError as exc:
         raise _guard_http_error(exc)
     except TwsAdvancedRejectError as exc:
@@ -319,7 +479,11 @@ async def override_order(
     req: TwsOverrideRequest,
     svc: ExecutionPlanService = Depends(get_execution_plan_service),
     adapter: TwsBrokerAdapter = Depends(get_tws_adapter),
+    policy: TwsLivePolicyService = Depends(get_tws_live_policy),
 ) -> TwsOrderActionResult:
+    mode = _order_mode(adapter)
+    if mode == "live":
+        _assert_live_precheck(adapter, policy)
     try:
         codes = _override_codes(req)
         if req.intent == "place":
@@ -331,7 +495,9 @@ async def override_order(
                     status_code=status.HTTP_404_NOT_FOUND,
                     detail={"error": "plan_not_found", "plan_id": req.plan_id},
                 )
-            submission = await adapter.place_paper_order(plan, advanced_override=codes)
+            submission = await adapter.place_order(
+                plan, mode=mode, live_policy=policy if mode == "live" else None, advanced_override=codes
+            )
             return TwsOrderActionResult(
                 order_id=submission.order_id,
                 status=submission.status,
@@ -343,7 +509,9 @@ async def override_order(
                 status_code=422,
                 detail={"error": "modify_override_requires_order_id_and_modify"},
             )
-        return await adapter.modify_order(req.order_id, req.modify, advanced_override=codes)
+        return await adapter.modify_order(
+            req.order_id, req.modify, mode=mode, live_policy=policy if mode == "live" else None, advanced_override=codes
+        )
     except TwsPlaceOrderGuardError as exc:
         raise _guard_http_error(exc)
     except TwsAdvancedRejectError as exc:
