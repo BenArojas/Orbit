@@ -487,9 +487,9 @@ def _guard_http_error(exc: TwsPlaceOrderGuardError) -> HTTPException:
         "kill_switch_active": status.HTTP_409_CONFLICT,
         "not_connected": status.HTTP_409_CONFLICT,
         "not_paper_port": status.HTTP_403_FORBIDDEN,
-        "plan_not_valid": status.HTTP_422_UNPROCESSABLE_ENTITY,
+        "plan_not_valid": status.HTTP_422_UNPROCESSABLE_CONTENT,
         "order_not_found": status.HTTP_404_NOT_FOUND,
-        "unsupported_order_type": status.HTTP_422_UNPROCESSABLE_ENTITY,
+        "unsupported_order_type": status.HTTP_422_UNPROCESSABLE_CONTENT,
     }
     return HTTPException(
         status_code=guard_status.get(exc.error_code, status.HTTP_409_CONFLICT),
@@ -689,9 +689,9 @@ Add `import copy`.
 Update `_guard_http_error()` status map with:
 
 ```python
-"invalid_quantity": status.HTTP_422_UNPROCESSABLE_ENTITY,
-"invalid_limit_price": status.HTTP_422_UNPROCESSABLE_ENTITY,
-"invalid_stop_price": status.HTTP_422_UNPROCESSABLE_ENTITY,
+"invalid_quantity": status.HTTP_422_UNPROCESSABLE_CONTENT,
+"invalid_limit_price": status.HTTP_422_UNPROCESSABLE_CONTENT,
+"invalid_stop_price": status.HTTP_422_UNPROCESSABLE_CONTENT,
 ```
 
 - [ ] **Step 3: Add router endpoint**
@@ -950,7 +950,7 @@ def _override_codes(request: TwsOverrideRequest) -> list[str]:
     codes = [code.strip() for code in request.override_codes if code.strip()]
     if not codes:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail={"error": "override_codes_required"},
         )
     return codes

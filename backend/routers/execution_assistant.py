@@ -40,13 +40,13 @@ _GUARD_STATUS: dict[str, int] = {
     "kill_switch_active": status.HTTP_409_CONFLICT,
     "not_connected": status.HTTP_409_CONFLICT,
     "not_paper_port": status.HTTP_403_FORBIDDEN,
-    "plan_not_valid": status.HTTP_422_UNPROCESSABLE_ENTITY,
+    "plan_not_valid": status.HTTP_422_UNPROCESSABLE_CONTENT,
     "order_not_found": status.HTTP_404_NOT_FOUND,
-    "unsupported_order_type": status.HTTP_422_UNPROCESSABLE_ENTITY,
-    "invalid_quantity": status.HTTP_422_UNPROCESSABLE_ENTITY,
-    "invalid_limit_price": status.HTTP_422_UNPROCESSABLE_ENTITY,
-    "invalid_stop_price": status.HTTP_422_UNPROCESSABLE_ENTITY,
-    "oca_group_modify_unsupported": status.HTTP_422_UNPROCESSABLE_ENTITY,
+    "unsupported_order_type": status.HTTP_422_UNPROCESSABLE_CONTENT,
+    "invalid_quantity": status.HTTP_422_UNPROCESSABLE_CONTENT,
+    "invalid_limit_price": status.HTTP_422_UNPROCESSABLE_CONTENT,
+    "invalid_stop_price": status.HTTP_422_UNPROCESSABLE_CONTENT,
+    "oca_group_modify_unsupported": status.HTTP_422_UNPROCESSABLE_CONTENT,
     "flatten_cancel_timeout": status.HTTP_409_CONFLICT,
     "paper_port_cannot_arm_live": status.HTTP_403_FORBIDDEN,
     "paper_port_cannot_live_trade": status.HTTP_403_FORBIDDEN,
@@ -190,7 +190,7 @@ async def get_bars(
 ) -> BarsResponse:
     if timeframe not in _ALLOWED_TIMEFRAMES:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail={
                 "error": "unsupported_timeframe",
                 "timeframe": timeframe,
@@ -266,7 +266,7 @@ async def preview_paper_order(
         )
     if plan.status != "valid":
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail={"error": "plan_not_valid", "status": plan.status},
         )
     return svc.preview_paper(plan)
@@ -369,7 +369,7 @@ async def place_paper_order(
         )
     if plan.status != "valid":
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail={"error": "plan_not_valid", "status": plan.status},
         )
     try:
@@ -476,7 +476,7 @@ def _override_codes(req: TwsOverrideRequest) -> list[str]:
     codes = [c.strip() for c in req.override_codes if c.strip()]
     if not codes:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail={"error": "override_codes_required"},
         )
     return codes
@@ -608,7 +608,7 @@ def _validated_package_preview(req: TwsOrderPackageRequest) -> TwsOrderPackagePr
         return preview_order_package(req)
     except TwsOrderPackageValidationError as exc:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail={"error": "invalid_order_package", "errors": exc.errors},
         )
 
