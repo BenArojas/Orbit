@@ -42,7 +42,7 @@ const POLICY_SOURCE_PATTERNS = [
   /^\.agents\/skills\/[^/]+\/SKILL\.md$/,
 ];
 
-const POLICY_KEYWORDS = /\b(policy|guard|allowed|blocked|required|must|never|safety|confirmation|permission|auth|live|paper|cloud|local|conid|typed error|rate[- ]?limit|pacing|autonomous|IBKR|Ollama|sidecar|merge to dev)\b/i;
+const POLICY_KEYWORDS = /\b(policy|guard|allowed|blocked|required|must|never|safety|confirmation|permission|auth|live|paper|cloud|local|conid|typed error|rate[- ]?limit|pacing|autonomous|IBKR|sidecar|merge to dev)\b/i;
 
 const KNOWN_STALE_PATTERNS = [
   {
@@ -61,14 +61,6 @@ const KNOWN_STALE_PATTERNS = [
       /mutation controls are disabled/i,
       /403-on-live/i,
       /No live account can place, confirm, cancel, or modify orders/i,
-    ],
-  },
-  {
-    name: "cloud-key-sqlite-storage",
-    message: "Cloud keys use OS keychain only; SQLite stores opaque api_key_ref values.",
-    patterns: [
-      /api_key_encrypted/i,
-      /API keys stay local:\s*encrypted at rest/i,
     ],
   },
 ];

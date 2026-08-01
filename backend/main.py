@@ -2,7 +2,7 @@
 Orbit backend — FastAPI application entrypoint.
 
 This is the Python sidecar that Tauri launches automatically.
-It owns all communication with IBKR, Ollama, and SQLite.
+It owns all communication with IBKR and SQLite.
 The React frontend talks exclusively to this server.
 
 Run in dev mode:
@@ -19,13 +19,11 @@ from starlette.middleware.cors import CORSMiddleware
 
 from config import FRONTEND_ORIGIN, TAURI_ORIGIN, REQUEST_LOG_ENABLED
 from exceptions import (
-    AIError,
     GatewayError,
     IBKRAuthError,
     IBKRConnectionError,
     IBKRRateLimitError,
     IBKRRequestError,
-    OllamaConnectionError,
     ParallaxError,
     ScreenerError,
 )
@@ -39,11 +37,6 @@ from services.gateway import GatewayLifecycle
 from services.ibkr import IBKRService
 from services.screener import ScreenerService
 from services.sectors import SectorService
-from services.ai import AiService
-from services.ai_analysis_preparation import AIAnalysisPreparationService
-from services.ai_providers import AIProviderRegistry, OllamaLLMProvider
-from services.ollama import OllamaLifecycle
-from services.ollama_context import OllamaContextService
 from services.scanner import ScannerService
 from services.moonmarket import MoonMarketService
 from services.inflect.service import InflectService
@@ -126,42 +119,6 @@ async def lifespan(app: FastAPI):
     # Screener service (Phase 5)
     app.state.screener = ScreenerService(ibkr)
 
-    # Ollama lifecycle — detect binary, start server, list models (Step 4.12)
-    # This NEVER downloads or installs anything. It detects what the user
-    # already has, starts the Ollama server if present, and lists models.
-    # If Ollama isn't installed, the frontend shows a setup guide with links.
-    ollama = OllamaLifecycle()
-    app.state.ollama = ollama
-
-    # Run startup: detect → start server → check models → restore selection.
-    # This is fast (no downloads) so we run it inline, not in background.
-    saved_model = await db.get_setting("ai_model")
-    try:
-        await ollama.startup(saved_model=saved_model)
-        if ollama.status()["ready"]:
-            log.info("Ollama ready — AI features available (model: %s)", ollama.selected_model)
-        else:
-            log.info("Ollama state: %s — frontend will guide setup", ollama.state.value)
-    except (OllamaConnectionError, AIError, OSError) as e:
-        log.error("Ollama startup failed: %s", e)
-
-    # AI service — stateless wrapper for Ollama chat/analysis.
-    # The model name is passed per-request from ollama.selected_model.
-    # OllamaContextService queries /api/show to get the true context-window
-    # ceiling per model and caches it, so the prompt truncator uses an
-    # accurate budget instead of the static tier table.
-    ollama_context = OllamaContextService(ollama)
-    ai_provider_registry = AIProviderRegistry({
-        "ollama": OllamaLLMProvider(),
-    })
-    app.state.ai_provider_registry = ai_provider_registry
-    ai = AiService(
-        context_service=ollama_context,
-        provider_registry=ai_provider_registry,
-    )
-    app.state.ai = ai
-    app.state.ai_analysis_preparation = AIAnalysisPreparationService()
-
     # Background trigger scanner (Phase 6.1 / 6.2)
     # Evaluates active trigger rules every N minutes while the app is open.
     scanner = ScannerService(ibkr=ibkr, db=db)
@@ -218,8 +175,6 @@ async def lifespan(app: FastAPI):
     await inflect_backfill.stop()
     await inflect_sync.stop()
     await scanner.stop()
-    await ai.shutdown()
-    await ollama.shutdown()
     await db.close()
     await ibkr.shutdown()
     await gateway.shutdown()
@@ -233,7 +188,7 @@ Orbit is a local-first trading **decision-support** backend.
 
 ⚠️ **Safety:** Orbit is decision support, not an autonomous trading bot. It never
 places or executes orders on its own — every broker action requires explicit
-human confirmation. All broker, AI, and persistence access flows through this
+human confirmation. All broker and persistence access flows through this
 backend. Machine-readable policy: `GET /.well-known/agent.json`.
 
 **Modules**
@@ -344,28 +299,6 @@ async def ibkr_request_error_handler(request: Request, exc: IBKRRequestError):
     )
 
 
-@app.exception_handler(OllamaConnectionError)
-async def ollama_connection_error_handler(request: Request, exc: OllamaConnectionError):
-    return JSONResponse(
-        status_code=503,
-        content={
-            "error": "ollama_connection_error",
-            "message": exc.message,
-        },
-    )
-
-
-@app.exception_handler(AIError)
-async def ai_error_handler(request: Request, exc: AIError):
-    return JSONResponse(
-        status_code=500,
-        content={
-            "error": "ai_error",
-            "message": exc.message,
-        },
-    )
-
-
 @app.exception_handler(ScreenerError)
 async def screener_error_handler(request: Request, exc: ScreenerError):
     return JSONResponse(
@@ -417,11 +350,9 @@ app.include_router(watchlist_router)
 app.include_router(ws_router)
 
 from routers.triggers import router as triggers_router
-from routers.ai import router as ai_router
 from routers.fibonacci import router as fibonacci_router
 
 app.include_router(triggers_router)
-app.include_router(ai_router)
 app.include_router(fibonacci_router)
 
 from routers.screener import router as screener_router
@@ -481,7 +412,7 @@ app.include_router(tws_stream_router)
 # Routers exposed for in-process reuse (the read-only MCP server + its tests).
 ALL_ROUTERS = [
     auth_router, indicators_router, market_router, sectors_router, watchlist_router,
-    ws_router, triggers_router, ai_router, fibonacci_router, screener_router,
+    ws_router, triggers_router, fibonacci_router, screener_router,
     gateway_router, watchlist_config_router, settings_router, pulse_config_router,
     health_router, instruments_router, drawings_router, moonmarket_router,
     orders_router, trading_safety_router, options_router, inflect_router, agent_router,

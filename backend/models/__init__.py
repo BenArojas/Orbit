@@ -21,9 +21,6 @@ Note: Watchlists are managed in IBKR — no local models needed.
 
 from __future__ import annotations
 
-from datetime import datetime
-from decimal import Decimal
-
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from typing import Any, Literal, Optional
 
@@ -710,8 +707,8 @@ class FibonacciCandidate(BaseModel):
     A swing candidate the algorithm considered.
 
     The top-scoring candidate becomes the active fib; lower-scoring
-    candidates are returned for transparency (so the LLM and the user
-    can see what else was in play).
+    candidates are returned for transparency so the user can see what else
+    was in play.
 
     `status` indicates whether the swing is currently tradeable:
       - "active"     — current price is still inside the swing's wick
@@ -745,13 +742,12 @@ class FibonacciResult(BaseModel):
 
     The service auto-detects the highest-scoring swing, computes BOTH
     retracement and extension levels from it, and reports every candidate
-    swing it considered along with the full scoring breakdown. The LLM
-    reads this to build narrative analysis; the frontend renders the
-    active fib on the chart.
+    swing it considered along with the full scoring breakdown. The frontend
+    renders the active fib on the chart.
 
     This result is fib-only — it does NOT reach into EMAs, watchlists, or
-    other indicators. Cross-indicator confluence (fib sitting on an EMA,
-    watchlist framing) happens in the AI prompt layer, not here.
+    other indicators. Cross-indicator confluence and watchlist framing are
+    outside this fib-only result.
     """
     tool_mode: str = "retracement"  # "retracement" or "extension" (which is primary)
     swing_high: float
@@ -768,7 +764,7 @@ class FibonacciResult(BaseModel):
     convergence_zones: list[dict] = []    # Cross-TF fib-to-fib convergences (populated post-hoc)
     is_nested: bool = False         # Active fib is nested inside a larger parent
     parent_fib_id: Optional[str] = None   # Future hook for locked-parent linking
-    reasoning: str                  # Human-readable explanation for the LLM
+    reasoning: str                  # Human-readable explanation for the user
     source: str = "auto"            # "auto", "manual", or "locked"
 
     # When no candidate is currently inside the swing's wick range,
@@ -779,26 +775,6 @@ class FibonacciResult(BaseModel):
     # a historical swing to study.
     no_active_fib: bool = False
     no_active_fib_reason: Optional[str] = None
-
-
-class FibonacciSnapshot(BaseModel):
-    """
-    Snapshot of one fib currently active on the user's chart.
-
-    This is the lightweight contract the frontend sends to the AI
-    endpoint so the prompt can reflect the exact fibs the trader chose
-    to keep visible, without leaking candidate-panel history.
-    """
-    source: Literal["auto", "manual", "locked"]
-    swing_high: float
-    swing_low: float
-    swing_high_time: int
-    swing_low_time: int
-    direction: Literal["up", "down"]
-    score: Optional[float] = None
-    is_primary: bool = False
-    timeframe: Optional[str] = None
-    note: Optional[str] = None
 
 
 class IndicatorComputeResponse(BaseModel):
@@ -996,377 +972,6 @@ class WatchlistMembershipResponse(BaseModel):
 
 
 # ═══════════════════════════════════════════════════════════════
-#  AI Analysis (Phase 4 — tasks 4.9–4.12)
-# ═══════════════════════════════════════════════════════════════
-
-
-AIProviderName = Literal["ollama", "openai", "anthropic", "gemini", "grok", "openrouter"]
-AIProviderKind = Literal["local", "cloud"]
-AIRoutingMode = Literal[
-    "local_only",
-    "cloud_manual",
-    "cloud_with_local_fallback",
-]
-
-
-class AnalyzeRequest(BaseModel):
-    """
-    Request to run an AI technical analysis on a stock.
-
-    The frontend sends this when the user clicks "Run Analysis" in the AI panel.
-    It includes which timeframes and indicators to analyze.
-
-    watchlist is optional — not every ticker comes from a watchlist.
-    When present, the prompt builder adds watchlist-specific framing
-    to guide the AI's analysis style (e.g., RS Leaders → trend continuation).
-
-    Example: "Analyze AAPL on 4H and D timeframes using RSI, MACD, EMA Stack"
-    """
-    conid: int                                          # IBKR contract ID
-    symbol: str                                         # Ticker for display
-    timeframes: list[str] = Field(
-        default=["4H", "D"],
-        description="Timeframes to analyze: 1H, 4H, D, W",
-    )
-    indicators: list[str] = Field(
-        default=["rsi", "macd", "ema_50", "ema_200"],
-        description="Indicator names to include in analysis",
-    )
-    session_id: Optional[str] = None                    # Resume existing session or None for new
-    watchlist: Optional[str] = None                     # Originating watchlist name (if any)
-    indicator_priority: Optional[list[str]] = None      # Ordered list — first = most important. None = let AI decide.
-
-    # Chart context mode — controls what raw price history (if any) is appended
-    # to each timeframe section. "none" = indicator values only (default).
-    # "summary" = compact recent-closes string + price action blurb (low cost).
-    # "ohlcv"   = full OHLCV table for the last context_bars bars (high cost).
-    # "patterns" = pre-computed candlestick pattern list (medium cost, no raw flood).
-    context_mode: Literal["none", "summary", "ohlcv", "patterns"] = "none"
-    context_bars: int = Field(
-        default=10,
-        ge=5,
-        le=30,
-        description="Number of bars to include when context_mode != 'none' (5–30).",
-    )
-    fibs: list[FibonacciSnapshot] = Field(
-        default_factory=list,
-        description=(
-            "User's active fibs on the chart. When non-empty, these override "
-            "server-side auto-detection for AI prompting."
-        ),
-    )
-    provider_name: AIProviderName = "ollama"
-    model: Optional[str] = None
-    task_type: Literal["analysis", "execution_sensitive"] = "analysis"
-
-
-class AIAnalysisSnapshotRunRequest(BaseModel):
-    snapshot_id: str = Field(min_length=1)
-
-
-class AIProviderStatus(BaseModel):
-    """Current status for one AI provider exposed to the frontend."""
-    provider_name: AIProviderName
-    display_name: str
-    kind: AIProviderKind
-    enabled: bool
-    ready: bool
-    selected_model: Optional[str] = None
-    has_key: bool = False
-    error: Optional[str] = None
-
-
-class AIProviderMetadata(BaseModel):
-    """Provider metadata attached to completed AI analysis events."""
-    provider_name: AIProviderName
-    kind: AIProviderKind
-    model: Optional[str] = None
-    estimated_cost: Optional[float] = None
-    actual_cost: Optional[float] = None
-    fallback_used: bool = False
-    requested_model: Optional[str] = Field(default=None, exclude_if=lambda value: value is None)
-    resolved_model: Optional[str] = Field(default=None, exclude_if=lambda value: value is None)
-    provider_request_id: Optional[str] = Field(default=None, exclude_if=lambda value: value is None)
-    input_tokens: Optional[int] = Field(default=None, exclude_if=lambda value: value is None)
-    output_tokens: Optional[int] = Field(default=None, exclude_if=lambda value: value is None)
-    reasoning_tokens: Optional[int] = Field(default=None, exclude_if=lambda value: value is None)
-    cached_tokens: Optional[int] = Field(default=None, exclude_if=lambda value: value is None)
-    duration_ms: Optional[int] = Field(default=None, exclude_if=lambda value: value is None)
-    finish_reason: Optional[str] = Field(default=None, exclude_if=lambda value: value is None)
-
-
-class AIProvidersResponse(BaseModel):
-    """Local-only provider state for Slice 2."""
-    providers: list[AIProviderStatus]
-    active_provider: AIProviderName
-    routing_mode: AIRoutingMode
-    cloud_enabled: bool
-
-
-class AIModelOption(BaseModel):
-    """One validated fixed OpenRouter text model available to the user."""
-    id: str
-    name: str
-    context_length: int
-    max_completion_tokens: int
-    prompt_price_per_token: str
-    completion_price_per_token: str
-    request_price: str
-
-
-class AIProviderModelsResponse(BaseModel):
-    """Authenticated OpenRouter catalog plus the persisted default model."""
-    provider_name: Literal["openrouter"]
-    models: list[AIModelOption]
-    selected_model: Optional[str] = None
-    fetched_at: datetime
-
-
-class AIProviderModelUpdateRequest(BaseModel):
-    """Persist a validated provider model selection."""
-    model: str = Field(min_length=1)
-
-
-class AIDataDisclosure(BaseModel):
-    sent_to_cloud: list[str]
-    kept_local: list[str]
-    exact_payload_available_until: datetime
-
-
-class AICostQuote(BaseModel):
-    currency: Literal["USD"] = "USD"
-    estimated_input_tokens: int
-    expected_output_tokens: int
-    max_output_tokens: int
-    estimated_cost_usd: Decimal
-    maximum_cost_usd: Decimal
-
-
-class AIAnalysisPreviewResponse(BaseModel):
-    snapshot_id: str
-    expires_at: datetime
-    provider_name: Literal["openrouter"]
-    model: AIModelOption
-    request_body: dict[str, Any]
-    disclosure: AIDataDisclosure
-    cost: AICostQuote
-    fallback_enabled: bool
-
-
-class AIProviderKeySaveRequest(BaseModel):
-    """Request body for saving a cloud provider API key to OS keychain."""
-    api_key: str = Field(min_length=1)
-
-
-class AIRoutingPolicyResponse(BaseModel):
-    """Non-secret AI routing settings."""
-    active_provider: AIProviderName = "ollama"
-    routing_mode: AIRoutingMode = "local_only"
-    local_fallback_enabled: bool = True
-
-
-class AIRoutingPolicyUpdate(AIRoutingPolicyResponse):
-    """Update body for non-secret AI routing settings."""
-
-
-class AIRunAttempt(BaseModel):
-    provider_name: AIProviderName
-    requested_model: Optional[str] = None
-    resolved_model: Optional[str] = None
-    status: Literal["success", "failed", "fallback_success", "blocked"]
-    provider_request_id: Optional[str] = None
-    input_tokens: Optional[int] = None
-    output_tokens: Optional[int] = None
-    reasoning_tokens: Optional[int] = None
-    cached_tokens: Optional[int] = None
-    estimated_cost_usd: Optional[Decimal] = None
-    actual_cost_usd: Optional[Decimal] = None
-    duration_ms: int = 0
-    error_code: Optional[str] = None
-
-
-class AIRunReceipt(BaseModel):
-    run_id: str
-    requested_provider: AIProviderName
-    requested_model: Optional[str] = None
-    executed_provider: Optional[AIProviderName] = None
-    resolved_model: Optional[str] = None
-    fallback_used: bool
-    fallback_reason: Optional[str] = None
-    status: Literal["success", "failed", "fallback_success", "blocked"]
-    attempts: list[AIRunAttempt]
-    created_at: datetime
-
-
-class ChatMessage(BaseModel):
-    """A single message in a chat conversation."""
-    role: str                                           # "user", "assistant", or "system"
-    content: str                                        # Message text
-
-
-class ChatRequest(BaseModel):
-    """
-    Request to send a follow-up message in an existing analysis session.
-
-    The frontend sends this when the user types a question in the AI chat
-    after an initial analysis has been run.
-
-    session_id links to the conversation started by AnalyzeRequest.
-    """
-    session_id: str                                     # Must match an active session
-    message: str                                        # The user's follow-up question
-
-
-class SignalLevel(BaseModel):
-    """One price level in the signal card (Entry, Stop, or Target)."""
-    label: str                                          # "Entry", "Stop", "Target"
-    value: str                                          # Formatted price string
-    sub: str                                            # Brief note
-    color: Optional[str] = None                         # "green" for target, "red" for stop
-
-
-class SignalCheck(BaseModel):
-    """One confirmation or caution item in the signal card."""
-    text: str                                           # Description text
-    type: str                                           # "confirm" or "caution"
-
-
-class SignalMeta(BaseModel):
-    """Meta info row in the signal card."""
-    label: str                                          # "R:R", "Score", "ADX", "Vol"
-    value: str                                          # Display value
-
-
-class SignalData(BaseModel):
-    """
-    The structured trading signal displayed in the Action Signal card.
-
-    This is the AI's recommendation after analyzing a stock's technicals.
-    Direction indicates the overall bias, confidence is how sure the AI is.
-    """
-    direction: str                                      # "STRONG LONG", "LONG", "NEUTRAL", "SHORT", "STRONG SHORT"
-    description: str                                    # 1-2 sentence summary
-    confidence: int                                     # 0-100
-    levels: list[SignalLevel]                            # Entry, Stop, Target
-    meta: list[SignalMeta]                               # R:R, Score, ADX, Vol
-    checks: list[SignalCheck]                            # Confirmations + cautions
-
-
-class AIQualityChecks(BaseModel):
-    response_completed: bool
-    signal_parsed: bool
-    entry_present: bool
-    stop_present: bool
-    target_present: bool
-    checks_count: int
-    narrative_characters: int
-
-
-class AIComparisonSide(BaseModel):
-    receipt: AIRunReceipt
-    message: str
-    signal: Optional[SignalData] = None
-    quality: AIQualityChecks
-
-
-class AIComparisonResponse(BaseModel):
-    snapshot_id: str
-    same_input: Literal[True] = True
-    local: AIComparisonSide
-    cloud: AIComparisonSide
-
-
-class AnalyzeResponse(BaseModel):
-    """
-    Response from POST /ai/analyze — the AI's trading signal and analysis.
-
-    status:    "directional" | "neutral" | "rejected"
-    narrative: Model free-text (signal JSON stripped); null for rejected
-    warning:   Safety line shown once for neutral/rejected; null for directional
-    message:   Kept for backward compat — equals narrative (directional) or
-               warning (neutral/rejected)
-    signal:    Structured Action Signal card data; null if parsing failed
-    """
-    session_id: str
-    signal: Optional[SignalData] = None
-    status: Literal["directional", "neutral", "rejected"]
-    narrative: Optional[str] = None
-    warning: Optional[str] = None
-    message: str
-    rejected_output: Optional[str] = None
-    provider: Optional[AIProviderMetadata] = None
-
-
-class ChatResponse(BaseModel):
-    """
-    Response from POST /ai/chat — AI's reply to a follow-up question.
-
-    signal: Updated signal (only present if AI revised its recommendation)
-    message: The AI's response text
-    """
-    session_id: str
-    signal: Optional[SignalData] = None
-    message: str
-
-
-class AiStatusResponse(BaseModel):
-    """
-    Response from GET /ai/status — Ollama lifecycle state.
-
-    The frontend uses this to decide which UI to show:
-      - "not_installed" → Install guide with download link
-      - "no_models"     → Model guide with pull commands
-      - "running"       → Model picker dropdown (multiple models, no selection)
-      - "ready"         → AI features fully available
-      - "error"         → Error message with retry option
-    """
-    state: str                                          # "not_installed", "installed", "running", "no_models", "ready", "error"
-    selected_model: Optional[str] = None                # Currently selected model name (null if none)
-    ready: bool                                         # True = AI features fully available
-    error: Optional[str] = None                         # Error message if state is "error"
-    platform: str = ""                                  # "darwin", "windows", "linux"
-
-
-class OllamaModelResponse(BaseModel):
-    """One locally available model from Ollama."""
-    name: str                                           # e.g. "gemma4:26b"
-    size_bytes: int                                     # Raw size in bytes
-    size_gb: float                                      # Size in GB (rounded to 1 decimal)
-    family: str                                         # Model family (e.g. "gemma4")
-    parameter_size: str                                 # e.g. "26B"
-    quantization: str                                   # e.g. "Q4_K_M"
-    modified_at: str                                    # ISO timestamp
-
-
-class RecommendedModel(BaseModel):
-    """A model we recommend to users based on their hardware."""
-    name: str                                           # Ollama model name for pull
-    display_name: str                                   # User-friendly name
-    size_gb: float                                      # Download size in GB
-    min_ram_gb: int                                     # Minimum RAM to run it
-    description: str                                    # Why to choose this model
-    pull_command: str                                   # Terminal command to pull it
-    tier: str                                           # "minimal", "light", "recommended", "heavy"
-
-
-class SetupGuideResponse(BaseModel):
-    """
-    Setup guide for users who need to install Ollama or pull a model.
-    Gives the frontend everything it needs to show a helpful guide page.
-    """
-    install_url: str                                    # Platform-specific download URL
-    install_note: str                                   # Brief install instruction
-    models_url: str                                     # Link to Ollama model library
-    recommended_models: list[RecommendedModel]          # Suggested models by tier
-    pull_example: str                                   # Example pull command
-
-
-class ModelSelectRequest(BaseModel):
-    """Request to select which model the AI should use."""
-    model: str                                          # Ollama model name
-
-
-# ═══════════════════════════════════════════════════════════════
 #  Screener (Phase 5 — tasks 5.3–5.6)
 # ═══════════════════════════════════════════════════════════════
 
@@ -1528,8 +1133,8 @@ class FilterCatalogueEntry(BaseModel):
     One entry in the canonical IBKR filter catalogue exposed to the frontend.
 
     Mirrors `FilterEntry` in `constants/ibkr_filters.py`. The `description`
-    field is served to both surfaces — Ollama (as prompt context) and the
-    UI (as a `title` tooltip on the Add Filter menu items).
+    field is served to the UI as a `title` tooltip on the Add Filter menu
+    items.
     """
     code: str                          # IBKR filter code, e.g. "marketCapAbove1e6"
     label: str                         # Human label, e.g. "Market Cap"
@@ -1538,30 +1143,8 @@ class FilterCatalogueEntry(BaseModel):
     example: str                       # Example value (string) for placeholders
     category: Literal["fundamental", "technical", "analyst", "short_ownership"]
     popular: bool                      # True → shown as an always-visible quick-pick chip
-    description: Optional[str] = None  # Short natural-language tooltip / Ollama context
+    description: Optional[str] = None  # Short natural-language tooltip
     paired_code: str = ""              # Opposite-direction code (or "" if none)
-
-
-class AiFilterRequest(BaseModel):
-    """Request to generate IBKR filter codes from a natural language query."""
-    query: str                        # e.g. "oversold large caps with strong earnings"
-    model: str                        # Ollama model name (from user's selection)
-    preset_context: Optional[str] = None  # e.g. "Most Active — US Stocks" (helps AI understand universe)
-
-
-class AiFilterSuggestion(BaseModel):
-    """One AI-suggested filter."""
-    code: str          # IBKR filter code e.g. "marketCapAbove1e6"
-    value: str         # Filter value as string e.g. "10000"
-    display_label: str # Human-readable e.g. "Market Cap ≥ $10B"
-    reasoning: str     # Why the AI chose this filter
-
-
-class AiFilterResponse(BaseModel):
-    """Response from POST /screener/ai-filters."""
-    filters: list[AiFilterSuggestion]
-    summary: str       # One sentence summary of what the query translates to
-    raw_query: str     # Echoed back for reference
 
 
 class ContractInfoResponse(BaseModel):

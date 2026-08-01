@@ -21,7 +21,7 @@
 
 ### Existing Constraints
 
-- `AGENTS.md:14-20`: decision support only; FastAPI owns broker/AI/persistence access; `conid` is required across module boundaries; typed trust-boundary errors are required.
+- `AGENTS.md:14-20`: decision support only; FastAPI owns broker/persistence access; `conid` is required across module boundaries; typed trust-boundary errors are required.
 - `AGENTS.md:26-35`: resolve focused context, one smallest tracer bullet, ask before architecture/module/safety/persistence/public-contract changes, update `PROJECT_PLAN.md` only after plan approval.
 - `docs/testing.md:3-35`: default zero new tests, but trading safety and external-failure behavior are critical promises; normal max is one new test per slice.
 - `docs/architecture/backend.md:8-13`: FastAPI sidecar owns broker/SQLite; routers translate HTTP and typed errors; services own domain logic.

@@ -1,8 +1,10 @@
 # Orbit — Project Plan
 
-> Last updated: 2026-06-28
+> Last updated: 2026-08-01
 > Status: Parallax core v1 is code-complete on `dev` through the rules/fib-trigger closeout pass. Phase 8 E2E remains the v1 sign-off gate. Phase 9, Phase 10, Phase 11, and Phase 12 are merged to `dev`. Orbit consolidation Plans #1–#7 are merged to local `dev`: options chain, Inflect v1/basis recovery,OrderTicket trailing/RTH/R-R/cash-sizing and sidecar client contract refactor are now included. Live/manual IBKR paper-account smoke testing remains the release gate.
 ---
+
+- **Parallax cleanup:** COMPLETE on `refactor/remove-ai-inflect`; deterministic analysis, screener, Fibonacci, watchlists, triggers, charts, Compare, MoonMarket, Inflect, and TWS Assistant remain the active product surfaces. Focused and final verification passed locally.
 
 ## IBKR Gateway — What We Learned (2026-04-14)
 
@@ -40,10 +42,6 @@ These are locked in. Don't revisit unless something breaks.
 | Instrument scope | Any instrument IBKR supports | Focus is US equities/ETFs, but don't restrict — if IBKR has data, show it |
 | Desktop framework | Tauri v2 | Local-only, lightweight, cross-platform |
 | Charts | TradingView Lightweight Charts v5 | Familiar, open source, high quality |
-| AI model | Local Ollama by default; fixed OpenRouter models after explicit cloud opt-in | Analysis owns the selected provider/model; direct-provider parity is deferred |
-| AI input | Structured JSON (pre-computed signals) | Not raw OHLCV — cleaner, more reliable |
-| AI scope | Full chat + signal card | Signal card on first response, then follow-up chat |
-| Ollama lifecycle | Detect-only, never auto-install | Guide user, don't decide for them |
 | Persistence | SQLite (local) | Survives restarts, shared across Orbit modules |
 | Market data | IBKR Client Portal Web API (port 5001) | Staying with this — TWS is not the current data path. `IBKRService` owns the httpx transport. |
 | TWS usage | v2 fourth-module execution assistant | TWS mode is exclusive: it enables the user-armed assistant and disables Client Portal-dependent modules until the session returns to Client Portal mode. |
@@ -61,9 +59,6 @@ These are locked in. Don't revisit unless something breaks.
 These notes are intentionally tracked in the project plan because they affect the next Orbit/MoonMarket implementation passes.
 
 - **Fibonacci swing selection fix:** SHIPPED to `dev` (`e04110d`, 2026-06-20; branch deleted). Reworked `IndicatorService._score_swing` primary-fib selection: removed `INSIDE_TOLERANCE` for strict wick-based status (played_out > broken), made `stretched_penalty` reward any active internal level (0.382/0.5/GP, importance-weighted), and rebalanced `DEFAULT_FIB_WEIGHTS` to sum to 1.0. Status-doc reword touched `backend/models`, `indicators.py`, and the parallax api contract. Design: `docs/superpowers/specs/2026-06-20-fibonacci-swing-selection-design.md`.
-- **Budget-first AI workflow:** DONE on `feature/budget-first-ai-workflow`. Scoped architecture/testing docs are canonical, Claude imports/symlinks shared guidance, four duplicated domain skills are removed, and critical-promises testing replaces mandatory TDD. Verified with JavaScript syntax, policy-drift, structure, and diff checks; no runtime application behavior changed. Design and plan archived under `docs/archive/` (`2026-06-20-budget-first-ai-workflow-design.md`, `2026-06-20-budget-first-ai-workflow.md`).
-- **Cloud + Hybrid AI:** SHIPPED to `dev` from `feature/orbit-v2-cloud-hybrid-ai-spec` (parent mission slices 1–8, including the manual OpenRouter smoke/review gate). Delivered: validated OpenRouter model selection, cloud payload preview, inspectable run receipts, provider controls owned by Analysis, fact-grounded signals with fail-closed validation, the AI Run Inspector + UX lifecycle, the data/grounding pipeline (true 1h/4h candle semantics, EMA fact grouping, sufficient history, explicit groundable price candidates), neutral-vs-rejected signal handling, and streaming reliability (`finish_reason` capture + reformat retry that preserves the original narrative). Local Ollama stays the default, cloud is explicit opt-in, keys stay in the OS keychain, and SQLite stores only opaque `api_key_ref` values. Master design (kept active): `docs/superpowers/specs/2026-06-05-orbit-v2-cloud-hybrid-ai-design.md`. Shipped plans/specs archived under `docs/archive/` (see its README index).
-- **AI semantic-reasoning quality (remaining forward track):** the prompt-grounding evaluation loop is code-complete (deterministic validator, graders, HITL runner) but its **live OpenRouter evaluation and prompt promotion never ran** — this is the open track for improving semantic reasoning (e.g. "below" ≠ "broke below", prefer NEUTRAL when the only target is structurally remote, non-equity instrument handling). Run candidates one variable at a time through the existing harness; do not hand-tune the prompt by vibes. Also pending: use the newly captured `finish_reason` distribution from real runs to decide whether the cloud `max_output_tokens` cost cap needs raising (do not raise it speculatively). Plan (kept active): `docs/superpowers/plans/2026-06-19-ai-prompt-grounding-evaluation-loop.md`.
 - **TWS Execution Assistant:** SHIPPED to `dev` from `feature/tws-execution-assistant-spec` (2026-06-29). Delivered the fourth TWS-only module, exclusive broker session mode, launcher/module gating, TWS/IB Gateway connection and reconciliation, quote snapshots with delayed/unavailable guidance, read-only bars/chart context, terminal-style cockpit layout, paper order review/place flow, STP/STP LMT draft support, cancel/modify for visible TWS open orders, and explicit advanced-reject override handling. Broker mutations stay behind `TwsBrokerAdapter`; no DB plan persistence, no autonomous trading, and no live trading enablement. Shipped TWS specs/plans are archived under `docs/archive/`.
 - **TWS follow-up missions (design branch `feature/tws-live-advanced-market-data-design`):** parent decision-locking spec approved in `docs/superpowers/specs/2026-06-29-tws-live-advanced-market-data-design.md`. Mission order is (1) **Live trading** — DONE (manual smoke verified 2026-06-30 against a real IB Gateway live account); live place/cancel/modify require explicit allowlisted session arming, backend policy rechecks, and visible ambiguous-outcome handling; arm clears immediately on disconnect; plan archived in `docs/superpowers/plans/2026-06-29-tws-live-trading.md`. (2) **Advanced order types** — DONE (manual smoke verified 2026-07-01 against the live paper account) on `feature/tws-advanced-order-types`; shipped long-only scale-out ladders (per-lot parent isolation), brackets, trailing stops (fixed/percent, TRAILLMT), GTD, MOC, LOC, and a one-condition price-condition slice, plus a Scale-Out Cockpit V2 interlude (symbol search, scenario calculator, read-only package grouping) and per-package Open Orders identification (scale-out/bracket grouped rows, advanced-kind role badges); design `docs/superpowers/specs/2026-06-30-tws-advanced-order-types-design.md`, plan `docs/superpowers/plans/2026-07-01-tws-advanced-order-types.md`; Scale-Out Cockpit V2 design `docs/superpowers/specs/2026-07-01-scale-out-cockpit-v2-design.md`, plan `docs/superpowers/plans/2026-07-01-scale-out-cockpit-v2.md`. (3) **Market-data extras** — DONE (manual smoke verified 2026-07-02) on `feature/tws-live-advanced-market-data-design`; plan `docs/superpowers/plans/2026-07-02-tws-market-data-extras.md`. Shipped a shared entitlement-classification helper (10089/10090/10197, the last covering a competing-session lockout) reused by both the REST quote snapshot and the new stream; a TWS-owned `/execution-assistant/ws` endpoint broadcasting typed events; live quote streaming, live candle updates (`keepUpToDate` bars patched via `.update()`, never a full redraw), a Level 2 depth panel with an explicit unavailable state, and a dismissible per-exchange entitlement guidance note. All layered on top of the existing REST polling, which stays as the degrade-gracefully path; no order-mutation code paths touched. Subscription/account-management automation stayed out, per the Human Approval Gate. The follow-on draggable plan chart lines feature (its own plan/spec, tracked separately above) also landed on this branch.
 - **TWS plan chart lines:** DONE on `feature/tws-plan-chart-lines` (manual smoke verified 2026-07-02) — shipped draggable plan price lines on the TWS chart with two-way form binding across standard/ladder/bracket modes, an on-by-default toggle, and drafts-only editing (no order paths touched). Grew slightly beyond the original frontend-only scope with owner sign-off: `InstrumentResult.company_name` (IBKR contract long name) now backs the chart header, plus small UX fixes found during smoke (review-time line/mode locking, symbol-switch field resets, entitlement-note layout, free-moving crosshair, neutral last-price line, panel symbol seeding across mode switches). Spec `docs/superpowers/specs/2026-07-02-tws-plan-chart-lines-design.md`, plan `docs/superpowers/plans/2026-07-02-tws-plan-chart-lines.md`.
@@ -75,8 +70,8 @@ These notes are intentionally tracked in the project plan because they affect th
 - **Deferred but required follow-up:** option bracket orders belong in a later MoonMarket trading-depth pass after single-leg option orders are validated against the IBKR paper account. Revisit this before any options trading polish or "bracket parity" work.
 - **Parallax v1 status:** Parallax v1 has shipped. v2 work should not reopen shipped v1 scope unless a regression is found.
 - **Compare-mode color customization:** still belongs in v1 polish because the hardcoded white stock line is not visible enough in light mode.
-- **v2 strategic direction:** the major v2 themes are (1) a TWS-gated execution assistant, (2) optional cloud LLM + hybrid local/frontier inference, and (3) the fib learning/confluence roadmap. These do not change the local-first default.
-- **Agent readiness (docs + discovery slice, branch `feature/agent-readiness`):** Applied the Forter agentic-readiness pillars to Orbit's real agent surfaces (local FastAPI backend + repo), since Orbit is a desktop app with no public website. Shipped: repo-root `llms.txt` briefing (states the never-autonomous-trading safety policy, module map, conid convention, runtime interface URLs); enriched FastAPI metadata (markdown `description`, `summary`, `contact`, `license_info`, `agent` tag) so `/openapi.json` and `/docs` are agent-comprehensible; a new `GET /.well-known/agent.json` capability + safety manifest (`backend/routers/agent.py`) derived from the live app object so it can't drift. Guard test `backend/tests/test_agent_manifest.py` protects the `autonomous_trading: false` promise. **Read-only MCP server (IMPLEMENTED on `feature/agent-readiness`, awaiting merge approval):** `fastmcp 3.4.2`, `FastMCP.from_fastapi` mounted in-process at `/mcp-server/mcp` (streamable-http), lifespan merged with the existing 8-singleton lifespan via `combine_lifespans`. Exposes decision-support reads only via a positive GET allowlist + catch-all EXCLUDE; `backend/tests/test_mcp_readonly.py` is the enforced safety boundary (empirically verified in 3.4.2: 29 non-sensitive read tools, +14 sensitive when `MCP_EXPOSE_PORTFOLIO` on — owner chose **default ON**; zero order/auth/gateway/settings/ai/mutation tools). Loopback-only trust boundary. fastmcp telemetry is OpenTelemetry-only (no default phone-home → local-first OK). Full-MCP-with-orders rejected (rule #1). `backend/mcp_server.py`; PyInstaller bundling via `collect_all` in `parallax-backend.spec` (full bundled-binary run is the build-gate step). Design: `docs/superpowers/specs/2026-06-26-mcp-readonly-server-design.md`; plan: `docs/superpowers/plans/2026-06-26-mcp-readonly-server.md`. **Pending human verification:** live MCP client list+call against a running app + authenticated gateway; the packaged-binary build. Docs+discovery slice design: `docs/superpowers/specs/2026-06-26-agent-readiness-design.md`.
+- **v2 strategic direction:** the major v2 themes are (1) a TWS-gated execution assistant and (2) the fib learning/confluence roadmap.
+- **Agent readiness (docs + discovery slice, branch `feature/agent-readiness`):** Applied the Forter agentic-readiness pillars to Orbit's real agent surfaces (local FastAPI backend + repo), since Orbit is a desktop app with no public website. Shipped: repo-root `llms.txt` briefing (states the never-autonomous-trading safety policy, module map, conid convention, runtime interface URLs); enriched FastAPI metadata (markdown `description`, `summary`, `contact`, `license_info`, `agent` tag) so `/openapi.json` and `/docs` are agent-comprehensible; a new `GET /.well-known/agent.json` capability + safety manifest (`backend/routers/agent.py`) derived from the live app object so it can't drift. Guard test `backend/tests/test_agent_manifest.py` protects the `autonomous_trading: false` promise. **Read-only MCP server (IMPLEMENTED on `feature/agent-readiness`, awaiting merge approval):** `fastmcp 3.4.2`, `FastMCP.from_fastapi` mounted in-process at `/mcp-server/mcp` (streamable-http), lifespan merged with the existing 8-singleton lifespan via `combine_lifespans`. Exposes decision-support reads only via a positive GET allowlist + catch-all EXCLUDE; `backend/tests/test_mcp_readonly.py` is the enforced safety boundary (empirically verified in 3.4.2: 29 non-sensitive read tools, +14 sensitive when `MCP_EXPOSE_PORTFOLIO` on — owner chose **default ON**; zero order/auth/gateway/settings/mutation tools). Loopback-only trust boundary. fastmcp telemetry is OpenTelemetry-only (no default phone-home → local-first OK). Full-MCP-with-orders rejected (rule #1). `backend/mcp_server.py`; PyInstaller bundling via `collect_all` in `parallax-backend.spec` (full bundled-binary run is the build-gate step). Design: `docs/superpowers/specs/2026-06-26-mcp-readonly-server-design.md`; plan: `docs/superpowers/plans/2026-06-26-mcp-readonly-server.md`. **Pending human verification:** live MCP client list+call against a running app + authenticated gateway; the packaged-binary build. Docs+discovery slice design: `docs/superpowers/specs/2026-06-26-agent-readiness-design.md`.
 - **Multi-agent GitHub workflow (in progress, branch `fix/agent-workflow-board-and-parity`):** The issue/Projects board automation is being made to work A-to-Z for opencode, Claude, and Codex. Fixed: `project-automation.yml` failed at startup on every push (`projects:` is not a valid permission scope) and used `GITHUB_TOKEN` (cannot write user Projects V2) — now drops the bad scope and uses `PROJECT_PAT`. Building: a shared `.github/actions/board-sync` composite action (board column + label moves via `PROJECT_PAT`) consumed by all three agent runners; `opencode.yml` migrated to it; new `claude.yml` (`anthropics/claude-code-action@v1`, trigger `@claude`/`/claude`) and `codex.yml` (`openai/codex-action@v1`, trigger `/codex`, which needs explicit git+`gh pr create` steps because the action only edits files). Human gates: add `ANTHROPIC_API_KEY` and `OPENAI_API_KEY` repo secrets, then run the live A-to-Z smoke test (issues #33/#34). Agent docs: `docs/agent-workflow.md`, `AGENTS.md`.
 
 ## Parallax v1 Shipped Checklist (2026-06-01)
@@ -93,7 +88,7 @@ flows.
 | Compare mode | POLISH OPEN | Add customizable stock/reference line colors. Current hardcoded stock white is weak in light mode. |
 | Indicator/chart accuracy | E2E OPEN | Cross-check RSI, EMA 9/21/50/200, VWAP, Bollinger, volume, and fib levels vs TradingView on 5 liquid symbols across 15m/1D/1W. |
 | Scanner/triggers live data | E2E OPEN | Validate scanner cadence, dedup, all 4 news-candle methods, watchlist move, and auto-return with IBKR watchlists. |
-| Settings + restart | E2E OPEN | Restart the app and verify theme, scan interval, model selection, watchlists, rules, locked fibs, drawings, and compare panes persist as intended. |
+| Settings + restart | E2E OPEN | Restart the app and verify theme, scan interval, watchlists, rules, locked fibs, drawings, and compare panes persist as intended. |
 | Fresh install | E2E OPEN | Clean macOS run-through and Windows run-through: gateway setup, auth, first chart, first scan, first trigger, first order preview. |
 | Build/typecheck baseline | CODE COMPLETE | `npm run build` passes on local `dev`. Current release caveat is Vite bundle-size / mixed static-dynamic import warnings, not TypeScript failure. |
 
@@ -101,8 +96,7 @@ flows.
 
 - Fib learning algorithm and price-outcome grading.
 - Dedicated news-candle fib anchor selection.
-- Cross-indicator confluence engine beyond current prompt facts.
-- Optional cloud LLM providers and hybrid local/cloud inference.
+- Cross-indicator confluence engine.
 - TWS-gated execution assistant / tiered scale-out workflow.
 - System tray scanner.
 - Inflect journal linkage.
@@ -230,7 +224,7 @@ Manual order-placement smoke test:
 
 ### Phase 4: Technical Analysis Screen
 
-> Goal: Full chart with indicators, Fibonacci, and AI panel.
+> Goal: Full chart with indicators and Fibonacci.
 
 | # | Task | Owner | Status | Notes |
 |---|---|---|---|---|
@@ -240,20 +234,12 @@ Manual order-placement smoke test:
 | 4.4 | Fibonacci retracement overlay | Ofek | DONE | Auto swing high/low detection algorithm |
 | 4.5 | Fibonacci manual adjustment | Ofek | DONE | 
 | 4.6 | Indicator pill toggles | Ofek | DONE | Per-indicator colors, glow states, wired to chart store |
-| 4.7 | AI config panel | Ofek | DONE | Timeframe/indicator multi-select, AI Assist/Manual toggle |
-| 4.8 | Action Signal card | Ofek | DONE | Direction badge, confidence, entry/stop/target, checklist |
-| 4.9 | AI chat interface | Ben | DONE | Message list + input, scrollable, streaming responses |
-| 4.10 | Ollama integration service | Ben | DONE | services/ai.py — structured JSON input, model per-request |
-| 4.11 | AI analysis router | Ben | DONE | routers/ai.py — 8 endpoints (status, models, setup-guide, analyze, chat) |
-| 4.12 | Ollama lifecycle management | Ben | DONE | services/ollama.py — detect binary, start server, list models, setup guide |
-| 4.13 | Prompt builder refactor | Ben | DONE | Extracted to `services/prompt_builder.py`. Per-indicator formatter registry (no if/elif). Dynamic system prompt with per-indicator analysis hints. Token budget (3000) with graceful truncation (drops oldest timeframes first). |
-| 4.14 | Watchlist context in /ai/analyze | Ben | DONE | Optional `watchlist` field on AnalyzeRequest (+ TS type). 6 watchlist archetypes matched by substring (RS leaders, short-term, swing, long-term, momentum, mean reversion). Unknown watchlists get generic framing mentioning the name. Wired through router → ai.analyze → build_system_prompt. |
 
 ---
 
 ### Phase 5: Screener
 
-> Goal: Filter instruments via IBKR native scanner filters, display paginated results, AI-assisted filter creation.
+> Goal: Filter instruments via IBKR native scanner filters and display paginated results.
 > Universe source: IBKR Scanner API presets (top gainers, most active, etc.).
 > Scan mode: On-demand only (user clicks Scan). Background scan is Phase 6.
 
@@ -278,15 +264,6 @@ Manual order-placement smoke test:
 | 5.10 | Pagination + uncap results | Ben | DONE | Backend paginates server-side up to 200 from IBKR. Frontend page controls (25/50/100/page) |
 | 5.11 | Scanner sort codes | Ben | DONE | IBKR server-side sort via `sort` param. Frontend sort dropdown + direction toggle in filter bar |
 | 5.12 | WSH earnings date preset | Ben | DONE | "Earnings This Week" preset with `wshEarningsDate` default filter. Added to Fundamental category |
-
-#### 5C — AI-Assisted Filters — DONE
-
-| # | Task | Owner | Status | Notes |
-|---|---|---|---|---|
-| 5.13 | AI screener side panel (UI) | Ofek | DONE | Collapsible right panel. Freeform text input + preset quick-question chips. Shows reasoning per filter. |
-| 5.14 | AI screener backend endpoint | Ben | DONE | POST `/screener/ai-filters` — query + filter catalogue → Ollama → `{filters: [{code, value, reasoning}]}` |
-| 5.15 | AI → filter bar wiring | Both | DONE | AI response auto-populates filter bar pills. User tweaks/removes before scan. |
-| 5.16 | Prompt engineering | Ben | DONE | System prompt with IBKR filter catalogue, output schema, edge case handling (ambiguous/conflicting/unknown filters) |
 
 ---
 
@@ -318,10 +295,10 @@ Manual order-placement smoke test:
 |---|---|---|---|---|
 | 7.1 | IBKR disconnect detection + re-auth | Both | DONE | Non-blocking banner + Reconnect CTA; `IBKRAuthError` / `IBKRSessionExpiredError`; retries with backoff |
 | 7.2 | Error states + toast system | Both | DONE | Skeleton loaders, error boundaries per panel, Sonner toasts for transient errors |
-| 7.3 | Settings page + theme fixes | Both | DONE | Scan interval, default timeframe, Ollama model selector, IBKR gateway URL — SQLite-persisted |
+| 7.3 | Settings page + theme fixes | Both | DONE | Scan interval, default timeframe, IBKR gateway URL — SQLite-persisted |
 | 7.4 | Performance optimization | Both | DONE | 7.4a: query dedup + `useIbkrReadyTier` stagger hook. 7.4b: React.lazy() code splitting for AnalysisPage + ScreenerPage. 7.4c: `@tanstack/react-virtual` for WatchlistSidebar |
-| 7.5 | Health status strip + diagnostics | Both | DONE | 🟢/🟡/🔴 strip in shell. Modal: IBKR Gateway, Ollama, Scanner, Database, Background Triggers — plain-English status. "Copy diagnostics" → minimal JSON to clipboard only. No log viewer |
-| 7.6 | Empty states | Both | DONE | Shared `<EmptyState>` component. Covers: empty watchlist, chart no symbol, scanner pre-run + zero results, empty trigger list, AI chat no history (prompt chips), empty alert log |
+| 7.5 | Health status strip + diagnostics | Both | DONE | 🟢/🟡/🔴 strip in shell. Modal: IBKR Gateway, Scanner, Database, Background Triggers — plain-English status. "Copy diagnostics" → minimal JSON to clipboard only. No log viewer |
+| 7.6 | Empty states | Both | DONE | Shared `<EmptyState>` component. Covers: empty watchlist, chart no symbol, scanner pre-run + zero results, empty trigger list, empty alert log |
 | 7.7 | Release packaging | Both | DONE | PyInstaller `--onefile` sidecar (run.py entry point). `scripts/build-backend.sh` + `.ps1` for local builds. macOS universal .dmg via GitHub Actions lipo (arm64 on macos-14 + x86_64 on macos-13). Windows NSIS + MSI on windows-latest. `.github/workflows/release.yml` — push `v*.*.*` tag → CI builds + draft GitHub Release. No code signing (no paid certs). CORS updated for `tauri://localhost`. `src-tauri/binaries/` gitignored. |
 
 ---
@@ -333,8 +310,7 @@ Manual order-placement smoke test:
 | # | Task | Owner | Status | Notes |
 |---|---|---|---|---|
 | 8.1 | IBKR connection lifecycle | Both | DONE* | Cold start, gateway down, session expiry, re-auth banner, reconnect success. *Code-complete incl. 8.1-F (client `navigator.onLine` fast-fail + singleton offline toast + auto-refetch on recovery, 2026-04-17). Still under ongoing manual verification — we re-exercise the login loop every session, so rows A–F stay "live" rather than locked. Brother continues E2E on his machine. |
-| 8.2 | Ollama detection walkthrough | Both | TODO | Not installed, installed but no model, model switch mid-session, Ollama crash recovery |
-| 8.3 | Scanner flow | Both | DONE | Branch `fix/scanner` merged via PR #22. Canonical IBKR filter catalogue + `/filter-catalogue` endpoint. Dynamic frontend filter bar driven off the catalogue. Preset grouping with 8 niche screens + curated 27 (Path B) + Browse-all panel (Path C) + location reset banner. AI screener: per-caller think mode, truncation/empty/markdown guards, dedupe, filters preserved on scanner change. Snapshot data-gap fixes (require 7289, two-pass retry, contract_info mc fallback, drop ticker-only rows; parallelized; mc requirement dropped + column removed). NumericFilterInput w/ thousands separators, pagination polish, IBKR `EMPTY 500` handling, baseline filters, pre-market subtitle, amber Scan CTA, S&P 500 card lock, peek panel enrichment, client-side sort + cumulative buffer + dirty indicator. Test top-up commits 5d51d13 + 980f035. |
+| 8.2 | Scanner flow | Both | DONE | Branch `fix/scanner` merged via PR #22. Canonical IBKR filter catalogue + `/filter-catalogue` endpoint. Dynamic frontend filter bar driven off the catalogue. Preset grouping with 8 niche screens + curated 27 (Path B) + Browse-all panel (Path C) + location reset banner. Snapshot data-gap fixes (require 7289, two-pass retry, contract_info mc fallback, drop ticker-only rows; parallelized; mc requirement dropped + column removed). NumericFilterInput w/ thousands separators, pagination polish, IBKR `EMPTY 500` handling, baseline filters, pre-market subtitle, amber Scan CTA, S&P 500 card lock, peek panel enrichment, client-side sort + cumulative buffer + dirty indicator. Test top-up commits 5d51d13 + 980f035. |
 | 8.4 | Trigger firing | Both | TODO | All 4 news candle methods under live data; watchlist move + return; dedup across intervals |
 | 8.5 | Chart + indicator accuracy | Both | TODO | Cross-check indicator values vs TradingView on 5 symbols across 3 timeframes |
 | 8.6 | Settings persistence | Both | TODO | All settings survive app restart; theme applies on cold launch |
@@ -433,7 +409,7 @@ The Compare button on the Analysis toolbar replaces the chart area with a stack 
 | 10.1.2 | `useCompareData` hook — per-pane data + live ticks | DONE | `b323391` |
 | 10.1.3 | `CompareChart` component — dual-axis LineSeries with crosshair sync | DONE | `75022a5`, `c1f6169` |
 | 10.1.4 | `PaneToolbar` + `ComparePane` + `CompareView` + `CompareModeHeader` | DONE | `6f26352`, `f460a4a`, `888196f`, `c176891` |
-| 10.1.5 | Wire into AnalysisPage (Compare toggle button, `C` shortcut, conditional render, AI panel auto-collapse, watchlist-click force-exit) | DONE | `db6b944`, `41c1821` |
+| 10.1.5 | Wire into AnalysisPage (Compare toggle button, `C` shortcut, conditional render, sidebar auto-collapse, watchlist-click force-exit) | DONE | `db6b944`, `41c1821` |
 | 10.1.6 | Per-pane reference symbol (each pane can compare against a different ticker) + persist migration v1→v2 | DONE | `c8a62e1` |
 | 10.1.7 | UX polish — default 15m, floating Reset Zoom, loading skeleton, layout-change black-chart fix | DONE | `22183a1`, `eaf2041` |
 | 10.1.8 | Marker tool (vertical divergence markers) — added then reverted; click-position math couldn't be pinned down to user satisfaction | REVERTED | `19f1ba4` → `7c46fcf` |
@@ -509,56 +485,6 @@ The Compare button on the Analysis toolbar replaces the chart area with a stack 
 
 ---
 
-### Phase 11: AI Prompt Fact Layer — COMPLETE
-
-> Goal: Replace the legacy string-format prompt builder with a structured, priority-sorted fact pipeline. Each market signal becomes a typed `PromptFact` with a bracketed ID the LLM can cite in its narrative (e.g. `[D.ema.stack_bullish]`), making the analysis traceable from raw data → fact → model conclusion. Dynamic per-model context budgeting replaces static tier table.
-> Branch: `feature/ai-prompt-context-facts` — merged to dev 2026-05-25.
-> Plan: [`docs/superpowers/plans/2026-05-24-ai-prompt-fact-layer.md`](docs/superpowers/plans/2026-05-24-ai-prompt-fact-layer.md)
-
-**Core fact layer (Tasks 0–17)**
-
-| # | Task | Status | Notes |
-|---|---|---|---|
-| 11.1 | `PromptFact` + `PromptContextBlock` types (`services/prompt_facts/types.py`) | DONE | `id`, `polarity`, `strength`, `priority`, `text`, `data` fields |
-| 11.2 | Threshold helpers (`thresholds.py`) | DONE | Shared RSI/EMA/ATR boundary constants |
-| 11.3 | 11 fact builders | DONE | EMA, RSI, MACD, Fibonacci, BBands, VWAP, ATR, Stochastic, OBV, ADX, Volume — each in `services/prompt_facts/` |
-| 11.4 | Dispatcher (`build_prompt_facts`) | DONE | Priority boost by `indicator_priority`; canonical sort (strength → priority → id); multi-timeframe aware |
-| 11.5 | Renderer (`render_prompt_facts`) | DONE | Deterministic text: `=== TF (close=$X) ===`, `Verified Facts:` / `Cautions:` sections |
-| 11.6 | Truncator (`truncate_by_value`) | DONE | Drops lowest-priority facts first; protects caution/high-tf facts; leaves budget headroom for system + chat history |
-| 11.7 | 109 unit tests | DONE | Full coverage of all builders, dispatcher, renderer, truncator |
-
-**Integration (Tasks 18–24)**
-
-| # | Task | Status | Notes |
-|---|---|---|---|
-| 11.8 | `OllamaLifecycle.show_model()` | DONE | Queries `/api/show`; returns `model_info` dict or `None` on failure |
-| 11.9 | `OllamaContextService` | DONE | Budget = `min(static_tier, model_max × 0.7)`, cached with `asyncio.Lock` |
-| 11.10 | `AiService` refactor | DONE | `_prepare_analysis_session` → async; `indicators_display`/`indicator_names` split; accepts `OllamaContextService` |
-| 11.11 | `prompt_builder.py` refactor | DONE | Thin orchestrator over fact pipeline; `_CANONICAL_HINT_ORDER`; legacy formatters left as dead code |
-| 11.12 | Router update (`routers/ai.py`) | DONE | Passes `indicators_display`/`indicator_names`/`indicator_priority` to both `analyze` and `analyze_stream`; dropped `context_mode`/`context_bars` |
-| 11.13 | `main.py` wiring | DONE | `OllamaContextService(ollama)` constructed and passed to `AiService` |
-| 11.14 | Frontend: ATR added | DONE | `AiIndicator` union + `INDICATORS` array + `CHART_TO_AI_INDICATOR` map in `AiConfigPanel.tsx` |
-
-**Test updates (Tasks 25–27)**
-
-| # | Task | Status | Notes |
-|---|---|---|---|
-| 11.15 | `test_ai_with_fibs.py` | DONE | Legacy `"Primary fib"`/`"Source: MANUAL"` → `D.fibonacci.*` fact-ID assertions |
-| 11.16 | `test_prompt_budget.py` | DONE | Migrated to `_static_budget_for_model` + async `OllamaContextService` tests |
-| 11.17 | Eval harness (`test_prompt_facts_eval.py`) | DONE | syrupy snapshots for TSM extension, AAPL in-swing, NVDA EMA stack; structural guards (no legacy labels, `Verified Facts` header present) |
-
-**Final count: 966 backend tests, 0 failures.**
-
-**Cross-cutting invariants introduced:**
-
-- `PromptFact.id` format is `{tf}.{indicator}.{condition}` — never change this structure; the renderer, truncator, and system prompt hint all key off it.
-- Fact builders are pure functions: `(symbol, timeframe, candles, indicator_result) → list[PromptFact]`. No I/O, no side effects.
-- `build_system_prompt` hint section must come **before** the `"Indicators provided:"` line so the canonical hint order isn't broken by an early `indicators_display` occurrence.
-- `OllamaContextService` is the single source of truth for prompt budgets in production. The static `get_budget_for_model` in `prompt_builder.py` is legacy — use `_static_budget_for_model` from `ollama_context.py` for tests.
-- To update eval snapshots after an intentional prompt change: `pytest tests/test_prompt_facts_eval.py --snapshot-update`
-
----
-
 ### Phase 12: Parallax Rules/Fib Closeout — COMPLETE
 
 > Goal: Finish the Parallax v1 user-side trigger workflow before moving to Inflect: make rules understandable, make Today actions reliable, support trigger creation from Analysis, and tie Fibonacci alerts to the visible chart fib.
@@ -577,7 +503,7 @@ The Compare button on the Analysis toolbar replaces the chart area with a stack 
 
 **Verification already run for Phase 12:**
 
-- `npm test -- src/components/ai/__tests__/FibStackPanel.test.tsx src/components/triggers/__tests__/ConditionsList.test.tsx`
+- `npm test -- src/components/fibonacci/fib/__tests__/FibStackPanel.test.tsx src/components/triggers/__tests__/ConditionsList.test.tsx`
 - `uv run pytest tests/test_trigger_conditions_eval.py -q`
 - `./node_modules/.bin/vite build`
 
@@ -607,35 +533,9 @@ but only behind explicit settings and connection gates.
    - Must have its own safety design: live-account guardrails, max order size,
      max daily loss, manual arming, kill switch, audit log, and replayable order
      intent history.
-   - Not autonomous trading: AI, scanners, and triggers cannot place, arm,
-     modify, or cancel orders. Every order must be created by, or execute
-     within, a user-reviewed and user-armed plan.
-
-2. **Cloud LLM provider support**
-   - The current cloud analysis surface uses authenticated fixed OpenRouter
-     models. Direct OpenAI, Anthropic, Gemini, and Grok controls are deferred.
-   - Local Ollama remains the default. It is used as fallback only when the user
-     enables the explicit `cloud_with_local_fallback` routing mode.
-   - API keys live only in the OS keychain and are never logged. SQLite may
-     store only an opaque `api_key_ref`; there is no encrypted SQLite fallback.
-   - Analysis owns persistent provider, model, and fallback selection. Settings
-     owns provider status and API-key save/remove only.
-   - Orbit records metadata-only usage and cost receipts. Provider accounts own
-     budgets and caps; Orbit does not enforce an aggregate monthly cap.
-
-3. **Hybrid agentic inference**
-   - Split work between local and cloud models instead of treating provider choice
-     as one global toggle.
-   - Local model handles cheap/private/repetitive tasks: summarizing cached market
-     context, extracting facts, validating schemas, ranking watchlist candidates,
-     and pre-filtering candidate plans.
-   - Frontier cloud model handles higher-value reasoning: trade thesis critique,
-     multi-step plan synthesis, disagreement resolution, and final natural-language
-     analysis.
-   - Add a router that chooses model/provider per task based on privacy, cost,
-     latency, context size, and required reasoning quality.
-   - Every cloud call must receive structured facts, not raw uncontrolled app
-     state. The prompt-fact layer remains the boundary.
+   - Not autonomous trading: scanners and triggers cannot place, arm, modify, or
+     cancel orders. Every order must be created by, or execute within, a
+     user-reviewed and user-armed plan.
 
 **Other v2 roadmap items**
 
@@ -644,10 +544,9 @@ but only behind explicit settings and connection gates.
   based on whether the user traded the setup; optional analysis feedback is a
   supplementary signal only.
 - Cross-indicator confluence engine: explicit fib/EMA/Bollinger/VWAP overlap
-  detection before the prompt layer.
+  detection.
 - News-candle-aware fib anchor selection: earnings/news candles become preferred
   swing anchors when criteria match.
-- Watchlist-aware / peer-relative AI analysis beyond the current prompt framing.
 - Multi-account support.
 - Option bracket parity after single-leg paper validation.
 - System tray mode with persistent scanning.
@@ -730,14 +629,10 @@ Parallax/MoonMarket journal hooks (`docs/architecture/modules.md`).
 
 | # | Question | Related Task | Status |
 |---|---|---|---|
-| Q1 | ~~What Ollama model for analysis?~~ | 4.10 | RESOLVED: Gemma 4 26B recommended, 4 tiers, user picks from installed |
-| Q2 | ~~How to structure AI prompt with chart data?~~ | 4.10, 4.11 | RESOLVED: Structured JSON — pre-computed indicator signals |
 | Q3 | Can Lightweight Charts support draggable Fibonacci? | 4.5 | OPEN — may need custom canvas overlay |
 | Q4 | ~~How to get full equity universe from IBKR?~~ | 5.6 | RESOLVED: Use IBKR Scanner API presets as universe source (filtered lists, not raw universe). User picks a preset → backend runs scanner → applies indicator filters on results. |
 | Q5 | ~~What defines a "news candle" for Fibonacci alerts?~~ | 6.6 | RESOLVED: Ship all 4 detection methods as user-selectable options. (A) body > 2× ATR + vol > 2× avg, (B) range > 2× ATR + vol > 1.5× avg, (C) price crosses fib + vol > 1.5× avg, (D) price within X% of fib + configurable filter. Evaluate in practice. |
 | Q6 | How to calculate Market Strength gauge composite? | 3.2 | OPEN — proposal: advance/decline + % above 200 EMA + McClellan |
 | Q7 | ~~Sector Rotation RRG calculation?~~ | 3.4 | RESOLVED: standard JdK method |
-| Q8 | ~~Can Ollama be bundled into Tauri?~~ | 4.12 | RESOLVED: detect-only, never auto-install. Guide user instead |
 | Q9 | ~~TWS API or IBKR Client Portal Web API for v1 market data/order ticket?~~ | ALL | RESOLVED: v1 stays with Client Portal Web API. TWS is not the v1 data path. |
 | Q10 | What should the TWS-gated execution assistant support first? | v2 execution assistant | DRAFTED: fourth Orbit module, exclusive TWS mode, stocks and paper first; live requires settings/session/plan arming and pauses for re-arm after restart. `ib_async` stays behind `TwsBrokerAdapter`; NautilusTrader is reference only. |
-| Q11 | How should hybrid local/cloud inference route tasks? | v2 AI | PARTLY RESOLVED: the current modes are `local_only`, `cloud_manual`, and `cloud_with_local_fallback`; automatic task-class routing remains deferred. |

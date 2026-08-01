@@ -10,7 +10,7 @@
 
 - the core sidecar request runtime: base URL, `fetch`, offline checks, response parsing, and `ApiError`
 - gateway and auth calls
-- shared market, instruments, indicators, drawings, triggers, watchlist, screener, AI, and sector calls
+- shared market, instruments, indicators, drawings, triggers, watchlist, screener, and sector calls
 - MoonMarket endpoint contracts and types
 - Inflect endpoint contracts and types
 - Parallax endpoint contracts and types
@@ -48,7 +48,7 @@ Then move product contracts into module-owned API files. Each module API owns it
 
 ## User Stories
 
-- As a developer changing MoonMarket portfolio endpoints, I can work in the MoonMarket module without scanning Parallax, Inflect, gateway, AI, or screener contracts.
+- As a developer changing MoonMarket portfolio endpoints, I can work in the MoonMarket module without scanning Parallax, Inflect, gateway, or screener contracts.
 - As a developer changing Inflect journal endpoints, I can import `inflectApi` and Inflect types from the Inflect module instead of the broad global client.
 - As a developer changing Parallax analysis or watchlist endpoints, I can keep Parallax-specific contracts in the Parallax module while still sharing the same sidecar runtime.
 - As a user, there is no behavior change. The same local sidecar, offline handling, route behavior, and UI data should continue to work.
@@ -161,17 +161,16 @@ Create `src/modules/parallax/api.ts` and move Parallax-owned contracts behind it
 - sectors and dashboard pulse feeds
 - watchlists
 - triggers, tags, templates, and watchlist config
-- AI analysis and model lifecycle where still Parallax-facing
 - fibonacci config, locks, and drawings
 - screener contracts
 
 Public behavior to prove:
 
 - Parallax hooks/components use `parallaxApi`.
-- core chart, watchlist, trigger, screener, AI, and dashboard tests keep behavior unchanged.
+- core chart, watchlist, trigger, screener, and dashboard tests keep behavior unchanged.
 - shared `conid` rules remain unchanged.
 
-This is marked `HITL` because Parallax currently owns the largest surface and includes shared-adjacent contracts such as instruments, watchlists, triggers, and AI.
+This is marked `HITL` because Parallax currently owns the largest surface and includes shared-adjacent contracts such as instruments, watchlists, and triggers.
 
 ### Slice 5: Shrink or remove `src/lib/api.ts` (`HITL`)
 
@@ -221,7 +220,7 @@ None expected. This does not change trading safety behavior, backend public cont
 ## Out Of Scope
 
 - no backend route changes
-- no IBKR or Ollama access changes
+- no IBKR access changes
 - no trading safety behavior changes
 - no database changes
 - no change to TanStack Query keys unless a migrated hook already needs that change for correctness

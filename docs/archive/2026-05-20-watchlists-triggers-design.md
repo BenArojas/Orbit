@@ -329,8 +329,6 @@ See [`2026-05-20-watchlists-triggers-recommendations.md`](./2026-05-20-watchlist
 6. Real inline mini-charts on hit cards (current spec uses cheap SVG sparklines)
 7. Per-rule health stats — fire rate / win rate / dismissal rate over time
 8. Snooze presets — 1h / EOD / tomorrow / 1 week shortcuts
-9. AI-assisted rule generation, analogous to the AI screener filter feature
-10. Watchlist-aware AI prompts on Analysis (already in `parallax-v2-roadmap`)
 
 ## 12. Task ordering (preview for plan-writing)
 

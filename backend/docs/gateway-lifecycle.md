@@ -225,8 +225,6 @@ async with lifespan:  ←── backend/main.py
    yield                  (server runs here)
    ▼ (exit __aexit__)
 await scanner.stop()
-await ai.shutdown()
-await ollama.shutdown()
 await db.close()
 await ibkr.shutdown()
 await gateway.shutdown()  ←── backend/services/gateway.py

@@ -5,7 +5,6 @@ GET /health/details — aggregated system health for the frontend health strip.
 
 Returns five named checks in plain English:
   - IBKR Gateway   (is the gateway process running + authenticated?)
-  - Ollama          (is the AI server running + a model selected?)
   - Scanner         (is the background trigger scanner active?)
   - Database        (can we issue a lightweight query?)
   - Background Triggers (are any trigger rules enabled?)
@@ -17,7 +16,7 @@ Each check has:
 
 The overall severity is:
   "ok"       — all checks pass
-  "warning"  — non-critical issues (e.g. Ollama not ready, scanner waiting)
+  "warning"  — non-critical issues (e.g. scanner waiting)
   "error"    — critical issues (gateway down, DB failure)
 
 The frontend polls this every 10 s and also exposes a "Copy diagnostics"
@@ -30,12 +29,11 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends
 
-from deps import get_db, get_gateway, get_ibkr, get_ollama, get_scanner
+from deps import get_db, get_gateway, get_ibkr, get_scanner
 from exceptions import IBKRConnectionError
 from services.db import DatabaseService
 from services.gateway import GatewayLifecycle
 from services.ibkr import IBKRService
-from services.ollama import OllamaLifecycle
 from services.scanner import ScannerService
 
 log = logging.getLogger("parallax.routers.health")
@@ -78,40 +76,6 @@ def _check_gateway(gw: GatewayLifecycle, ibkr: IBKRService) -> dict:
         "label": "IBKR Gateway",
         "message": "Connected and authenticated.",
         "severity": "ok",
-    }
-
-
-def _check_ollama(ollama: OllamaLifecycle) -> dict:
-    s = ollama.status()
-    state = s.get("state", "unknown")
-
-    if state == "ready":
-        model = s.get("selected_model") or "unknown model"
-        return {
-            "ok": True,
-            "label": "Ollama (AI)",
-            "message": f"Running — model: {model}.",
-            "severity": "ok",
-        }
-    if state in ("running", "installed"):
-        return {
-            "ok": False,
-            "label": "Ollama (AI)",
-            "message": "Ollama is running but no model is selected. AI features unavailable.",
-            "severity": "warning",
-        }
-    if state == "not_installed":
-        return {
-            "ok": False,
-            "label": "Ollama (AI)",
-            "message": "Ollama is not installed. AI features unavailable.",
-            "severity": "warning",
-        }
-    return {
-        "ok": False,
-        "label": "Ollama (AI)",
-        "message": f"Ollama state: {state}. AI features may be unavailable.",
-        "severity": "warning",
     }
 
 
@@ -215,7 +179,6 @@ async def _check_triggers(db: DatabaseService) -> dict:
 async def health_details(
     gw: GatewayLifecycle = Depends(get_gateway),
     ibkr: IBKRService = Depends(get_ibkr),
-    ollama: OllamaLifecycle = Depends(get_ollama),
     scanner: ScannerService = Depends(get_scanner),
     db: DatabaseService = Depends(get_db),
 ) -> dict:
@@ -234,7 +197,6 @@ async def health_details(
     """
     checks = [
         _check_gateway(gw, ibkr),
-        _check_ollama(ollama),
         await _check_scanner_async(scanner),
         await _check_database(db),
         await _check_triggers(db),

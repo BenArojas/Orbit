@@ -31,7 +31,6 @@ _ALLOWED_SETTINGS: frozenset[str] = frozenset({
     "default_period",       # Default chart period
     "notifications_enabled",  # Global toggle for desktop notifications
     "theme_mode",           # Phase 8.9+: 'dark' | 'light'
-    "ai_model",             # Selected Ollama model
 })
 
 

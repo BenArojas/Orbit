@@ -1,19 +1,18 @@
 /**
- * Analysis Page — Charts, indicators, Fibonacci, AI panel
+ * Analysis Page — Charts, indicators, Fibonacci, and Parallax tools
  *
  * Composes Phase 4 components:
  *   - ChartContainer (4.1) — Lightweight Charts candlestick + volume
  *   - Indicator overlays (4.2) — EMA, Bollinger, VWAP on main chart
  *   - SubChartPanel (4.3) — RSI, MACD, Stochastic, OBV, ADX below chart
  *   - IndicatorToolbar (4.6) — pill toggles in the toolbar
- *   - AiChatPanel (4.9) — full AI panel (config, signal, chat, setup guide)
- *   - FibonacciOverlay (4.4) — auto-detected fib levels on chart + FibScoreCard in AI panel
+ *   - FibonacciOverlay (4.4) — auto-detected fib levels on chart + score panel
  *   - FibDrawMode (4.5) — two-click manual fib drawing with ghost preview
  *
- * Layout from mockup: grid with chart area + 340px AI panel
+ * Layout from mockup: grid with chart area + 340px tool panel
  *   Left: toolbar (symbol input, timeframe bar, indicator pills),
  *         main chart, sub-chart panels (RSI, MACD, etc.)
- *   Right: AI panel (handles its own state via Zustand AI store)
+ *   Right: Fibonacci, Watchlists, and Triggers panel
  *
  * This page composes ChartContainer + useChartData. It owns:
  *   - Symbol search / resolution (input → conid lookup via useMutation)
@@ -25,7 +24,7 @@ import { useState, useMemo, useEffect, useRef, useCallback, type KeyboardEvent }
 import { BriefcaseBusiness, RotateCcw, ChevronLeft, GitCompare, ListTree, ShoppingCart } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { useMutation } from "@tanstack/react-query";
-import { useChartStore, useAiStore, type Timeframe, type IndicatorId } from "@/store";
+import { useChartStore, type Timeframe, type IndicatorId } from "@/store";
 import { useDrawingsStore } from "@/store/drawings";
 import { parallaxApi } from "@/modules/parallax/api";
 import { toast } from "sonner";
@@ -34,7 +33,7 @@ import { useChartData } from "@/hooks/useChartData";
 import { useInstrument } from "@/hooks/useInstrument";
 import { useLockedFibs } from "@/hooks/useLockedFibs";
 import { IndicatorToolbar } from "@/components/indicators";
-import { RightSidebar } from "@/components/ai";
+import RightSidebar from "@/components/analysis/RightSidebar";
 import { SHORTCUT_MAP } from "@/components/charts/drawingsRegistry";
 import { useCompareStore } from "@/store/compare";
 import { CompareView } from "@/components/compare";
@@ -114,25 +113,7 @@ export default function AnalysisPage() {
     }
   }, [activeSymbol, inputFocused]);
 
-  // Pre-load the AI model into memory when the user navigates here.
-  // Non-fatal: if Ollama isn't ready the warmup endpoint returns 204 silently.
-  useEffect(() => {
-    parallaxApi.aiWarmup().catch(() => {/* non-fatal */});
-  }, []);
-
-  // Reset the AI chat (signal + messages + sessionId) whenever the user
-  // switches to a different stock. We track the previous conid in a ref so
-  // we can skip the very first render (otherwise reload would wipe state).
-  const prevConidRef = useRef<number | null>(activeConid);
-  const clearAiChat = useAiStore((s) => s.clearChat);
-  useEffect(() => {
-    if (prevConidRef.current !== null && prevConidRef.current !== activeConid) {
-      clearAiChat();
-    }
-    prevConidRef.current = activeConid;
-  }, [activeConid, clearAiChat]);
-
-  // Compare entry: auto-collapse the AI panel rail (does NOT auto-re-expand on exit).
+  // Compare entry: auto-collapse the tool panel rail (does NOT auto-re-expand on exit).
   useEffect(() => {
     if (compareActive && !rightPanelCollapsed) {
       toggleRightPanel();
@@ -530,7 +511,7 @@ export default function AnalysisPage() {
         )}
       </div>
 
-      {/* ── Right: tabbed sidebar (AI / Watchlists / Triggers) ── */}
+      {/* ── Right: tabbed Parallax tools sidebar ── */}
       {rightPanelCollapsed ? (
         <div className="flex flex-col items-center border-l border-[var(--border)] bg-[var(--bg-1)] pt-2">
           <button
@@ -545,8 +526,6 @@ export default function AnalysisPage() {
         <RightSidebar
           activeConid={activeConid}
           activeSymbol={activeSymbol}
-          fibonacci={fibonacci}
-          chartIndicators={activeIndicators}
           activeTimeframe={timeframe}
           onCollapse={toggleRightPanel}
         />

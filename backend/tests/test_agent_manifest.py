@@ -4,7 +4,7 @@ Guard the agent discovery manifest's safety promise.
 The manifest at /.well-known/agent.json tells any connecting agent that Orbit
 never trades autonomously. That claim is a non-negotiable project rule — if a
 refactor ever flips it, this test fails loudly. The route is mounted on a bare
-app so the test needs no IBKR/Ollama lifespan.
+app so the test needs no IBKR lifespan.
 """
 
 from fastapi import FastAPI

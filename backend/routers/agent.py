@@ -2,8 +2,8 @@
 Agent discovery router.
 
 Serves a small machine-readable capability + safety manifest at
-``GET /.well-known/agent.json`` so any local agent (the in-app AI, an MCP
-client, or a plain HTTP caller) that connects to the backend can discover what
+``GET /.well-known/agent.json`` so any local agent (an MCP client or a plain
+HTTP caller) that connects to the backend can discover what
 Orbit is, what it can do, and — critically — that it never trades autonomously.
 
 This is the runtime counterpart to the static repo-root ``llms.txt``. Facts
@@ -36,7 +36,7 @@ async def agent_manifest(request: Request) -> dict:
             "broker_execution_requires_human": True,
             "policy": (
                 "Orbit never places or executes orders on its own. Every broker "
-                "action requires explicit human confirmation. All broker, AI, and "
+                "action requires explicit human confirmation. All broker and "
                 "persistence access flows through this backend."
             ),
         },

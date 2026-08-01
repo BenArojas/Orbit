@@ -666,8 +666,7 @@ class IndicatorService:
     # This is the core of task 4.4. The implementation is deliberately
     # self-contained — it does NOT read EMAs, watchlists, or any other
     # indicator. Cross-indicator confluence (fib level sitting on an
-    # EMA, watchlist-aware framing, etc.) happens at the LLM prompt
-    # layer in services/ai.py — see `PROJECT_PLAN.md` for the deferred scope.
+    # EMA and watchlist-aware framing are outside this indicator calculation.
     #
     # The algorithm:
     #   1. Find fractal pivot highs and lows (±PIVOT_WINDOW bars)
@@ -682,9 +681,9 @@ class IndicatorService:
     #   7. Return retracement AND extension levels from the winning swing
     #
     # Cross-timeframe fib-to-fib convergence is NOT done here (this
-    # service sees one timeframe at a time). A post-processing helper
-    # in services/ai.py can populate convergence_zones once multi-TF
-    # results are assembled.
+    # service sees one timeframe at a time). A later post-processing helper
+    # can populate convergence_zones once multi-timeframe results are
+    # assembled.
 
     def _compute_fibonacci(
         self,
@@ -946,7 +945,7 @@ class IndicatorService:
         Score a single swing candidate using fib-internal factors only.
 
         Returns a FibonacciCandidate with the composite score (0-100)
-        and each individual factor exposed for the LLM to cite.
+        and each individual factor exposed for the UI to explain.
 
         `weights` overrides DEFAULT_FIB_WEIGHTS — used by Branch 3 so
         user-edited scoring weights take effect without restarting the
@@ -1153,11 +1152,11 @@ class IndicatorService:
         current_price: float,
         tf_clarity: str,
     ) -> str:
-        """Produce an LLM-friendly explanation of why this swing was chosen.
+        """Produce a human-readable explanation of why this swing was chosen.
 
         `all_candidates` is the full ranked list including non-active
         (played_out / broken) entries. The reasoning notes how many
-        non-active candidates were discarded so the LLM understands the
+        non-active candidates were discarded so the user understands the
         primary was selected from the active subset only.
         """
         parts = [

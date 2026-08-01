@@ -6,7 +6,7 @@
  * Click anywhere on the strip to open the health detail modal.
  *
  * Modal contains 5 named checks in plain English:
- *   IBKR Gateway · Ollama (AI) · Scanner · Database · Trigger Rules
+ *   IBKR Gateway · Scanner · Database · Trigger Rules
  *
  * "Copy diagnostics" exports the raw API JSON to the clipboard — for devs only.
  * Non-technical users see only the plain-English messages.
@@ -53,7 +53,7 @@ function useHealthDetails() {
     queryKey: ["health-details"],
     queryFn: fetchHealthDetails,
     // 10 s — balances responsiveness with backend load; health checks are cheap
-    // but run multiple sub-checks (IBKR, Ollama, scanner, DB, triggers).
+    // but run multiple sub-checks (IBKR, scanner, DB, triggers).
     refetchInterval: 10_000,
     retry: 2,
     staleTime: 8_000,

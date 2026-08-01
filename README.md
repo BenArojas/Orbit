@@ -67,7 +67,6 @@ symlinks to those canonical copies rather than duplicated text.
 | Frontend | React 19 / TypeScript, Tailwind CSS, shadcn/ui, Lightweight Charts |
 | Backend sidecar | Python FastAPI (httpx + websockets for IBKR) |
 | Data | Polars, pandas-ta bridge for indicators |
-| AI | Ollama (local LLM — Gemma 4 26B recommended) |
 | Storage | SQLite |
 
 ## Architecture
@@ -76,7 +75,7 @@ symlinks to those canonical copies rather than duplicated text.
 ┌─────────────┐       ┌─────────────────────────────┐       ┌──────────────┐
 │  Tauri v2    │──HTTP──▶  Python FastAPI sidecar     │──HTTP──▶  IBKR Client │
 │  React UI    │◀──WS───│  localhost:8000              │◀──WS───│  Portal      │
-└─────────────┘       │  Indicators · AI · Triggers  │       │  Gateway     │
+└─────────────┘       │  Indicators · Triggers       │       │  Gateway     │
                       └─────────────────────────────┘       │  :5001       │
                                      │                       └──────────────┘
                                      ▼
@@ -87,7 +86,7 @@ symlinks to those canonical copies rather than duplicated text.
 ```
 
 All data flows through the Python sidecar. The frontend never talks to IBKR
-or Ollama directly.
+directly.
 
 ---
 

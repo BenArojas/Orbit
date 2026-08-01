@@ -7,17 +7,17 @@ Orbit is a local-first desktop trading decision-support platform:
 - **Inflect:** trading journal and trade review.
 
 Stack: Tauri v2, React 19/TypeScript, Tailwind/shadcn, FastAPI/Python 3.12,
-Polars with a pandas-ta bridge, SQLite, IBKR Client Portal, and Ollama.
+Polars with a pandas-ta bridge, SQLite, and IBKR Client Portal.
 
 ## Non-Negotiable Rules
 
 1. Orbit is decision support, never an autonomous trading bot.
-2. All broker, AI-provider, and persistence access flows through FastAPI.
+2. All broker and persistence access flows through FastAPI.
 3. Use `conid` across module boundaries; ticker text is display metadata.
 4. Use Polars for dataframe work; pandas is allowed only for pandas-ta bridging.
 5. Use typed errors at trust boundaries; never add a bare `except Exception`.
-6. Orbit is local-first. Cloud AI requires explicit opt-in; keys live only in
-   the OS keychain and are never stored in SQLite or logs.
+6. Orbit is local-first. Sensitive data is handled through approved local
+   boundaries and is never written to logs.
 7. Create a new branch for every feature or fix.
 8. Agents must not merge to `dev` or `main`; merging requires human approval.
 
@@ -196,7 +196,7 @@ Human approval is required for:
 - Merging any PR.
 - Issues labeled `risk:high`.
 - Database schema or migration changes.
-- Authentication, permissions, secrets, deployment, payments, broker execution, or cloud-AI policy changes.
+- Authentication, permissions, secrets, deployment, payments, broker execution, or local/cloud policy changes.
 - Large refactors that touch unrelated areas.
 
 ## Canonical Sources

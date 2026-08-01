@@ -7,7 +7,7 @@
 
 ## Goal
 
-Let a local AI agent (Claude Code, Cursor, Claude Desktop) call Orbit's
+Let a local agent (Claude Code, Cursor, Claude Desktop) call Orbit's
 decision-support **reads** natively over MCP — quotes, candles, screeners,
 sectors, options chains, watchlists, fibonacci, and the user's journal/portfolio.
 Strictly **read-only**: no order placement, no broker/process mutations, never
@@ -42,8 +42,8 @@ Endpoint: `http://localhost:8000/mcp-server/mcp`.
 
 `RouteMap` is **config, not an auth boundary**, and a bare `GET .*` filter would
 still expose *side-effecting* GETs (`/auth/status` and `/gateway/status` start the
-IBKR tickle keep-alive loop + `ensure_accounts`; `/ai/*` and `/settings/*` leak
-cloud-policy/config). Therefore:
+IBKR tickle keep-alive loop + `ensure_accounts`; `/settings/*` leaks local
+configuration). Therefore:
 
 1. **Positive prefix allowlist**, not denylist+catch-all-allow. Only named groups
    are exposed; any future router is excluded by default.
@@ -68,7 +68,7 @@ financials; default ON means the loopback-only trust boundary is the protection,
 so it is documented for the user, and the flag lets them turn it off.
 
 **Hard-excluded (even GETs):** all of `orders.py`; `trading-safety/order-action`;
-`gateway/*`; `auth/*`; `settings/*`; `ai/*`; `ws`; `health`; `triggers`,
+`gateway/*`; `auth/*`; `settings/*`; `ws`; `health`; `triggers`,
 `drawings`, `pulse_config`, `watchlist_config`, `inflect/storage|health`;
 `/.well-known/agent.json` (already its own contract); and every non-GET.
 

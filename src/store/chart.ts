@@ -68,7 +68,7 @@ export interface ActiveFib {
   colorIndex: number;
   /**
    * When true the fib stays in the list but is not painted on the chart
-   * or sent to the AI. Lets the user toggle a drawn fib off without
+   * or used for other chart calculations. Lets the user toggle a drawn fib off without
    * deleting it (e.g. to compare multi-timeframe overlap). Defaults to
    * false. Only meaningful for locked fibs — the auto primary's
    * visibility is governed by the `fibonacci` indicator pill.
@@ -329,9 +329,7 @@ export const useChartStore = create<ChartState>()((set, get) => ({
   // trader gets a clean slate. Indicators chosen for AAPL rarely
   // make sense for, say, ES futures; carrying over fib state,
   // draw mode, or candidate overrides is even more surprising.
-  // The AI chat is cleared by an effect in AnalysisPage.tsx (it
-  // owns the cross-store coordination so this slice stays self-
-  // contained). Locked fibs are conid-scoped on the server — the
+  // Locked fibs are conid-scoped on the server — the
   // useLockedFibs query refetches and repopulates `activeFibs`
   // for the new conid asynchronously.
   //

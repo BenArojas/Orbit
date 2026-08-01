@@ -250,7 +250,7 @@ def _client(
     db: DatabaseService | None = None,
 ) -> TestClient:
     # Mount the router on a bare app so the test is isolated from the full
-    # lifespan (gateway/IBKR/Ollama startup), which is unnecessary here.
+    # lifespan (gateway/IBKR startup), which is unnecessary here.
     app = FastAPI()
     app.include_router(moonmarket_router)
     if fake_ibkr is not None:

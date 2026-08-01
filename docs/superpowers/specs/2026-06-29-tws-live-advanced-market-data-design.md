@@ -104,7 +104,7 @@ The mission also covers:
 Non-goals:
 
 - Autonomous scaling.
-- AI-generated ladders.
+- Generated ladders from external tools.
 - Hidden order edits.
 - Broker behavior simulation.
 - Overnight scale-out ladders.
@@ -188,7 +188,7 @@ Human approval is required before:
 ## Deferred
 
 - Autonomous trading.
-- AI-generated orders or ladders.
+- Generated orders or ladders from external tools.
 - Subscription purchasing/account automation.
 - Overnight scale-out ladders.
 - Short scale-out ladders.

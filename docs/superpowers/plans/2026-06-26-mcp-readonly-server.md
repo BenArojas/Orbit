@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Expose Orbit's decision-support reads to local AI agents over a strictly read-only MCP server, mounted in-process on the existing FastAPI sidecar.
+**Goal:** Expose Orbit's decision-support reads to local agents over a strictly read-only MCP server, mounted in-process on the existing FastAPI sidecar.
 
 **Architecture:** `FastMCP.from_fastapi(app)` generates MCP tools from the existing FastAPI routes and mounts as an ASGI sub-app at `/mcp-server/mcp` (streamable-http). A positive path-prefix allowlist + catch-all `EXCLUDE` keeps it read-only; a tool-list assertion test is the enforced safety boundary. Sensitive portfolio/journal reads sit behind `MCP_EXPOSE_PORTFOLIO` (default ON). No new process/binary/Tauri-capability/CSP/CORS change.
 
@@ -34,7 +34,7 @@
 
 - [ ] **Step 1: Add the dependency**
 
-In `backend/pyproject.toml`, add to `dependencies` (after `"keyring>=25.0.0",`):
+In `backend/pyproject.toml`, add the MCP dependency to `dependencies`:
 
 ```toml
     "fastmcp~=3.4",
@@ -104,7 +104,7 @@ SENSITIVE_ALLOW = (
 # Paths that must NEVER appear as tools, asserted by the test even if they are GETs.
 DENYLIST = (
     "/moonmarket/orders", "/moonmarket/trading-safety", "/auth", "/gateway",
-    "/settings", "/ai/", "/ws", "/health", "/.well-known",
+    "/settings", "/ws", "/health", "/.well-known",
     "/triggers", "/drawings", "/pulse", "/watchlist-config", "/inflect/storage",
 )
 
@@ -135,7 +135,7 @@ from mcp_server import build_mcp, DENYLIST, expose_portfolio
 
 
 def _build_app():
-    # Bare app with the real routers but no IBKR/Ollama lifespan.
+    # Bare app with the real routers but no IBKR lifespan.
     from fastapi import FastAPI
     import main  # noqa: F401 — ensures routers import
     app = FastAPI(title="Orbit", version="test")
@@ -321,7 +321,7 @@ git commit -m "feat: mount read-only MCP at /mcp-server/mcp with merged lifespan
 
 - [ ] **Step 1: Add an explicit expected-tool-count / group assertion**
 
-Append a test that, with `MCP_EXPOSE_PORTFOLIO=true`, asserts at least one tool from each allowed group (`/market/`, `/screener/`, `/sectors/`, `/moonmarket/options/`, `/watchlist/`, `/fibonacci/`, `/instruments/`, `/inflect/setups`) is present, and that none of the side-effecting GETs (`/auth/status`, `/gateway/status`, `/ai/providers`, `/settings`) appear (these are already in `DENYLIST` — this widens coverage to confirm the catch-all `EXCLUDE` actually drops them, since RouteMap may have bugs).
+Append a test that, with `MCP_EXPOSE_PORTFOLIO=true`, asserts at least one tool from each allowed group (`/market/`, `/screener/`, `/sectors/`, `/moonmarket/options/`, `/watchlist/`, `/fibonacci/`, `/instruments/`, `/inflect/setups`) is present, and that none of the side-effecting GETs (`/auth/status`, `/gateway/status`, `/settings`) appear (these are already in `DENYLIST` — this widens coverage to confirm the catch-all `EXCLUDE` actually drops them, since RouteMap may have bugs).
 
 ```python
 @pytest.mark.asyncio
@@ -416,7 +416,7 @@ git commit -m "docs: document the read-only MCP server client wiring"
 - Dev uvicorn AND the packaged PyInstaller binary both start (both lifespans run) and serve `/mcp-server/mcp`.
 - A real MCP client lists the read tools and returns a quote.
 - `MCP_EXPOSE_PORTFOLIO` documented; loopback-only trust boundary documented.
-- No order/broker/process/auth/settings/ai surface reachable via MCP.
+- No order/broker/process/auth/settings surface reachable via MCP.
 
 ## Human-approval note
 

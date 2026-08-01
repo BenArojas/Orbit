@@ -2,7 +2,7 @@
  * Parallax sidecar contract.
  *
  * Owns Parallax-facing market, chart, indicator, watchlist, trigger, screener,
- * AI, drawing, and Fibonacci endpoint contracts. Transport mechanics stay in
+ * drawing and Fibonacci endpoint contracts. Transport mechanics stay in
  * "@/lib/sidecarClient".
  *
  * Keep shared-adjacent contracts here only when Parallax is the current owner
@@ -523,312 +523,6 @@ export type StockTagMap = Record<
     number,
     { rule_id: number; rule_name: string; indicators: string[]; fired_at: string }[]
 >;
-// ── AI analysis / model lifecycle ───────────────────────────
-export type AiContextMode = "none" | "summary" | "ohlcv" | "patterns";
-
-export interface AnalyzeRequest {
-    conid: number;
-    symbol: string;
-    timeframes: string[];
-    indicators: string[];
-    session_id?: string;
-    /** Originating watchlist name (if any). Adds context to the AI prompt. */
-    watchlist?: string;
-    /** Ordered indicator priority — first = most important. Omit to let AI decide. */
-    indicator_priority?: string[];
-    /**
-     * Chart context mode — controls what raw price history is appended to
-     * the indicator context for each timeframe.
-     *   "none"     — indicator values only (default, fastest)
-     *   "summary"  — compact recent-closes + direction blurb (~+5% response time)
-     *   "ohlcv"    — full OHLCV table for context_bars bars (~+25-40% response time)
-     *   "patterns" — pre-computed candlestick patterns (~+10-15% response time)
-     */
-    context_mode?: AiContextMode;
-    /** Number of bars to include when context_mode != "none" (5–30). */
-    context_bars?: number;
-    /** Active fibs currently rendered on the chart. */
-    fibs?: FibonacciSnapshot[];
-    provider_name?: AIProviderName;
-    model?: string | null;
-    task_type?: "analysis" | "execution_sensitive";
-}
-
-export interface FibonacciSnapshot {
-    source: "auto" | "manual" | "locked";
-    swing_high: number;
-    swing_low: number;
-    swing_high_time: number;
-    swing_low_time: number;
-    direction: "up" | "down";
-    score?: number;
-    is_primary: boolean;
-    timeframe: string | null;
-    note?: string;
-}
-
-export interface ChatRequest {
-    session_id: string;
-    message: string;
-}
-
-export interface SignalLevel {
-    label: string;
-    value: string; // "$123.45" or "—" when no grounded level exists
-    sub: string;
-    color?: "green" | "red";
-}
-
-export interface SignalCheck {
-    text: string;
-    type: "confirm" | "caution";
-}
-
-export interface SignalMeta {
-    label: string;
-    value: string; // e.g. "2:1" or "—" when not applicable
-}
-
-export interface SignalData {
-    direction: "STRONG LONG" | "LONG" | "NEUTRAL" | "SHORT" | "STRONG SHORT";
-    description: string;
-    confidence: number;
-    levels: SignalLevel[];
-    meta: SignalMeta[];
-    checks: SignalCheck[];
-}
-
-export type AnalysisStatus = "directional" | "neutral" | "rejected";
-
-export interface AnalyzeResponse {
-    session_id: string;
-    signal: SignalData | null;
-    status: AnalysisStatus;
-    narrative: string | null;
-    warning: string | null;
-    message: string;
-    rejected_output?: string | null;
-}
-
-export interface ChatResponse {
-    session_id: string;
-    signal: SignalData | null;
-    message: string;
-}
-
-export type AIProviderName =
-    | "ollama"
-    | "openai"
-    | "anthropic"
-    | "gemini"
-    | "grok"
-    | "openrouter";
-
-export type AIProviderKind = "local" | "cloud";
-
-export type AIRoutingMode =
-    | "local_only"
-    | "cloud_manual"
-    | "cloud_with_local_fallback";
-
-export interface AIProviderStatus {
-    provider_name: AIProviderName;
-    display_name: string;
-    kind: AIProviderKind;
-    enabled: boolean;
-    ready: boolean;
-    selected_model: string | null;
-    has_key: boolean;
-    error: string | null;
-}
-
-export interface AIProviderMetadata {
-    provider_name: AIProviderName;
-    kind: AIProviderKind;
-    model: string | null;
-    estimated_cost: number | null;
-    actual_cost: number | null;
-    fallback_used: boolean;
-    requested_model?: string;
-    resolved_model?: string;
-    provider_request_id?: string;
-    input_tokens?: number;
-    output_tokens?: number;
-    reasoning_tokens?: number;
-    cached_tokens?: number;
-    duration_ms?: number;
-    finish_reason?: string;
-}
-
-export interface AIRunAttempt {
-    provider_name: AIProviderName;
-    requested_model: string | null;
-    resolved_model: string | null;
-    status: "success" | "failed" | "fallback_success" | "blocked";
-    provider_request_id: string | null;
-    input_tokens: number | null;
-    output_tokens: number | null;
-    reasoning_tokens: number | null;
-    cached_tokens: number | null;
-    estimated_cost_usd: string | null;
-    actual_cost_usd: string | null;
-    duration_ms: number;
-    error_code: string | null;
-}
-
-export interface AIRunReceipt {
-    run_id: string;
-    requested_provider: AIProviderName;
-    requested_model: string | null;
-    executed_provider: AIProviderName | null;
-    resolved_model: string | null;
-    fallback_used: boolean;
-    fallback_reason: string | null;
-    status: "success" | "failed" | "fallback_success" | "blocked";
-    attempts: AIRunAttempt[];
-    created_at: string;
-}
-
-export interface AIQualityChecks {
-    response_completed: boolean;
-    signal_parsed: boolean;
-    entry_present: boolean;
-    stop_present: boolean;
-    target_present: boolean;
-    checks_count: number;
-    narrative_characters: number;
-}
-
-export interface AIComparisonSide {
-    receipt: AIRunReceipt;
-    message: string;
-    signal: SignalData | null;
-    quality: AIQualityChecks;
-}
-
-export interface AIComparisonResponse {
-    snapshot_id: string;
-    same_input: true;
-    local: AIComparisonSide;
-    cloud: AIComparisonSide;
-}
-
-export interface AIProvidersResponse {
-    providers: AIProviderStatus[];
-    active_provider: AIProviderName;
-    routing_mode: AIRoutingMode;
-    cloud_enabled: boolean;
-}
-
-export interface AIModelOption {
-    id: string;
-    name: string;
-    context_length: number;
-    max_completion_tokens: number;
-    prompt_price_per_token: string;
-    completion_price_per_token: string;
-    request_price: string;
-}
-
-export interface AIProviderModelsResponse {
-    provider_name: "openrouter";
-    models: AIModelOption[];
-    selected_model: string | null;
-    fetched_at: string;
-}
-
-export interface AIAnalysisPreview {
-    snapshot_id: string;
-    expires_at: string;
-    provider_name: "openrouter";
-    model: AIModelOption;
-    request_body: Record<string, unknown>;
-    disclosure: {
-        sent_to_cloud: string[];
-        kept_local: string[];
-        exact_payload_available_until: string;
-    };
-    cost: {
-        currency: "USD";
-        estimated_input_tokens: number;
-        expected_output_tokens: number;
-        max_output_tokens: number;
-        estimated_cost_usd: string;
-        maximum_cost_usd: string;
-    };
-    fallback_enabled: boolean;
-}
-
-export interface AIProviderModelUpdateRequest {
-    model: string;
-}
-
-export interface AIProviderKeySaveRequest {
-    api_key: string;
-}
-
-export interface AIRoutingPolicyResponse {
-  active_provider: AIProviderName;
-  routing_mode: AIRoutingMode;
-  local_fallback_enabled: boolean;
-}
-
-export type AIRoutingPolicyUpdate = AIRoutingPolicyResponse;
-
-export const AI_PROVIDERS_QUERY_KEY = ["ai", "providers"] as const;
-export const AI_OPENROUTER_MODELS_QUERY_KEY = [
-    "ai",
-    "providers",
-    "openrouter",
-    "models",
-] as const;
-
-export interface AiStatusResponse {
-    state:
-    | "not_installed"
-    | "installed"
-    | "starting"
-    | "running"
-    | "no_models"
-    | "ready"
-    | "error";
-    selected_model: string | null;
-    ready: boolean;
-    error: string | null;
-    platform: string;
-}
-
-export interface OllamaModelResponse {
-    name: string;
-    size_bytes: number;
-    size_gb: number;
-    family: string;
-    parameter_size: string;
-    quantization: string;
-    modified_at: string;
-}
-
-export interface RecommendedModel {
-    name: string;
-    display_name: string;
-    size_gb: number;
-    min_ram_gb: number;
-    description: string;
-    pull_command: string;
-    tier: "minimal" | "light" | "recommended" | "heavy";
-}
-
-export interface SetupGuideResponse {
-    install_url: string;
-    install_note: string;
-    models_url: string;
-    recommended_models: RecommendedModel[];
-    pull_example: string;
-}
-
-export interface ModelSelectRequest {
-    model: string;
-}
 // ── Screener ────────────────────────────────────────────────
 export interface ScannerPreset {
     instrument: string;
@@ -883,9 +577,8 @@ export interface ScannerScanType {
  * Mirrors backend FilterCatalogueEntry. The frontend fetches this once per
  * session and hydrates the filter bar + quick-pick chips.
  *
- * `description` — same short guidance string Ollama sees in its system prompt.
- * Rendered as a native `title` tooltip on the Add Filter menu items so UI
- * guidance stays consistent with what the AI screener uses.
+ * `description` — short guidance rendered as a native `title` tooltip on the
+ * Add Filter menu items.
  */
 export interface FilterCatalogueEntry {
     code: string;
@@ -982,28 +675,6 @@ export interface ScannerParamsResponse {
     scan_types: Record<string, unknown>[];
     filters: Record<string, unknown>[];
 }
-
-// ── AI Screener (Phase 5C) ────────────────────────────────────
-
-export interface AiFilterRequest {
-    query: string;
-    model: string;
-    preset_context?: string;
-}
-
-export interface AiFilterSuggestion {
-    code: string;
-    value: string;
-    display_label: string;
-    reasoning: string;
-}
-
-export interface AiFilterResponse {
-    filters: AiFilterSuggestion[];
-    summary: string;
-    raw_query: string;
-}
-
 
 // ── API functions ───────────────────────────────────────────
 
@@ -1186,63 +857,6 @@ export const parallaxApi = {
     deleteWatchlistConfig: (name: string) =>
         sidecarRequest<void>("DELETE", `/watchlist-config/${encodeURIComponent(name)}`),
 
-    // AI Analysis (Phase 4)
-    aiProviders: () =>
-        sidecarRequest<AIProvidersResponse>("GET", "/ai/providers"),
-
-    aiOpenRouterModels: () =>
-        sidecarRequest<AIProviderModelsResponse>("GET", "/ai/providers/openrouter/models"),
-
-    aiSelectOpenRouterModel: (req: AIProviderModelUpdateRequest) =>
-        sidecarRequest<AIProviderModelsResponse>("PUT", "/ai/providers/openrouter/model", req),
-
-    aiAnalysisPreview: (req: AnalyzeRequest) =>
-        sidecarRequest<AIAnalysisPreview>("POST", "/ai/analysis/preview", req),
-
-    aiAnalysisCompare: (snapshotId: string) =>
-        sidecarRequest<AIComparisonResponse>(
-            "POST", "/ai/analysis/compare", { snapshot_id: snapshotId },
-        ),
-
-    aiRoutingPolicy: () =>
-        sidecarRequest<AIRoutingPolicyResponse>("GET", "/ai/routing-policy"),
-
-    aiRuns: (limit = 50) =>
-        sidecarRequest<AIRunReceipt[]>("GET", `/ai/runs?limit=${limit}`),
-
-    aiUpdateRoutingPolicy: (req: AIRoutingPolicyUpdate) =>
-        sidecarRequest<AIRoutingPolicyResponse>("PUT", "/ai/routing-policy", req),
-
-    aiSaveProviderKey: (providerName: AIProviderName, req: AIProviderKeySaveRequest) =>
-        sidecarRequest<AIProviderStatus>("POST", `/ai/providers/${providerName}/key`, req),
-
-    aiDeleteProviderKey: (providerName: AIProviderName) =>
-        sidecarRequest<AIProviderStatus>("DELETE", `/ai/providers/${providerName}/key`),
-
-    aiStatus: () =>
-        sidecarRequest<AiStatusResponse>("GET", "/ai/status"),
-
-    aiModels: () =>
-        sidecarRequest<OllamaModelResponse[]>("GET", "/ai/models"),
-
-    aiSelectModel: (req: ModelSelectRequest) =>
-        sidecarRequest<AiStatusResponse>("POST", "/ai/models/select", req),
-
-    aiSetupGuide: () =>
-        sidecarRequest<SetupGuideResponse>("GET", "/ai/setup-guide"),
-
-    aiRefresh: () =>
-        sidecarRequest<AiStatusResponse>("POST", "/ai/refresh"),
-
-    aiWarmup: () =>
-        sidecarRequest<void>("POST", "/ai/warmup"),
-
-    aiAnalyze: (req: AnalyzeRequest) =>
-        sidecarRequest<AnalyzeResponse>("POST", "/ai/analyze", req),
-
-    aiChat: (req: ChatRequest) =>
-        sidecarRequest<ChatResponse>("POST", "/ai/chat", req),
-
     // Fibonacci Locks (Phase 4)
     lockFibonacci: (req: LockFibonacciRequest) =>
         sidecarRequest<LockedFibonacciResponse>("POST", "/fibonacci/lock", req),
@@ -1301,8 +915,6 @@ export const parallaxApi = {
     screenerContractInfo: (conid: number) =>
         sidecarRequest<ContractInfoResponse>("GET", `/screener/contract/${conid}`),
 
-    screenerAiFilters: (req: AiFilterRequest) =>
-        sidecarRequest<AiFilterResponse>("POST", "/screener/ai-filters", req),
     // Chart Drawings (drawing-tools-plan.md Branch 1)
     createDrawing: (req: CreateDrawingRequest) =>
         sidecarRequest<Drawing>("POST", "/drawings", req),

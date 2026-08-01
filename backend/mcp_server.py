@@ -2,7 +2,7 @@
 
 Generates an MCP server from the existing FastAPI app (no duplicated handlers)
 and exposes ONLY decision-support reads. Order placement, broker/process
-mutations, auth, gateway, settings, and AI-provider control can never appear —
+mutations, auth, gateway, and settings can never appear —
 enforced by a positive path-prefix allowlist plus a catch-all EXCLUDE, and
 asserted by tests/test_mcp_readonly.py (RouteMap is config, not an auth boundary).
 
@@ -41,12 +41,6 @@ DENY_NAME_TOKENS = (
     "auth",
     "gateway",
     "settings",
-    "ai_providers",
-    "ai_status",
-    "ai_routing",
-    "ai_models",
-    "ai_runs",
-    "ai_setup",
 )
 
 # Mutation method suffixes FastMCP appends to tool names. None may appear.

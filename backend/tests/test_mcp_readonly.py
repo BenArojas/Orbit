@@ -2,10 +2,10 @@
 
 RouteMap is config, not an auth boundary — so this test IS the boundary. It
 builds the mounted server in-process and asserts that no order/auth/gateway/
-settings/ai or mutation tool is ever exposed, and that the MCP_EXPOSE_PORTFOLIO
+settings or mutation tool is ever exposed, and that the MCP_EXPOSE_PORTFOLIO
 flag gates the sensitive portfolio/journal reads both ways.
 
-Uses a bare FastAPI app (the real routers, no IBKR/Ollama lifespan), so no
+Uses a bare FastAPI app (the real routers, no IBKR lifespan), so no
 gateway is required to run it.
 """
 import pytest

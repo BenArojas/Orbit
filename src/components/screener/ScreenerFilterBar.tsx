@@ -2,7 +2,7 @@
  * ScreenerFilterBar — Preset selector + IBKR native filter pills + scan button
  *
  * Layout:
- *   Row 1: [Preset Dropdown] | [Quick-pick chips] | [+ Add Filter ▾] [Clear] | [AI] [Scan]
+ *   Row 1: [Preset Dropdown] | [Quick-pick chips] | [+ Add Filter ▾] [Clear] [Scan]
  *   Filter pills appear inline after quick-picks / add button.
  *
  * Filters are IBKR native scanner filter codes (code/value pairs).
@@ -16,7 +16,7 @@
 
 import { useState, useRef, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Plus, X, Play, Loader2, ChevronDown, RotateCcw, Sparkles } from "lucide-react";
+import { Plus, X, Play, Loader2, ChevronDown, RotateCcw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { parallaxApi, type FilterCatalogueEntry, type ScannerLocation } from "@/modules/parallax/api";
 import { useScreenerStore, type ActiveFilter } from "@/store/screener";
@@ -52,7 +52,7 @@ function buildLabel(entry: FilterCatalogueEntry, value: string, direction: "abov
 // Clicking the pill opens a compact popover pre-filled with the current value,
 // so users can tweak a threshold without removing + re-adding.
 // The catalogue `entry` is looked up by the parent via filter.code and passed
-// down — when it's missing (AI-suggested code not in our catalogue, rare) the
+// down — when it's missing (a code not in our catalogue, rare) the
 // pill falls back to read-only mode with just the remove button.
 
 function FilterPill({
@@ -465,15 +465,11 @@ function AddFilterDropdown({
 
 export default function ScreenerFilterBar({
   onScan,
-  aiPanelOpen = false,
-  onToggleAiPanel,
   onClearResults,
   showClearResults = false,
   onOpenBrowseAllScans,
 }: {
   onScan: () => void;
-  aiPanelOpen?: boolean;
-  onToggleAiPanel?: () => void;
   /** Parent supplies the reset side-effects (store reset + scanMutation.reset). */
   onClearResults?: () => void;
   /** Show the Clear Results button (results exist or there is a scan error). */
@@ -720,25 +716,9 @@ export default function ScreenerFilterBar({
         </button>
       )}
 
-      {/* AI panel toggle */}
-      {onToggleAiPanel && (
-        <button
-          onClick={onToggleAiPanel}
-          title={aiPanelOpen ? "Hide AI Filters" : "AI Filters"}
-          className={`flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-[11px] font-medium transition-colors ${
-            aiPanelOpen
-              ? "border-[var(--clr-cyan)]/40 bg-[var(--clr-cyan)]/15 text-[var(--clr-cyan)]"
-              : "border-[var(--border)] text-[var(--text-3)] hover:border-[var(--clr-cyan)] hover:text-[var(--clr-cyan)]"
-          }`}
-        >
-          <Sparkles size={12} />
-          AI
-        </button>
-      )}
-
       {/* Scan button — primary CTA.
           Solid amber fill (visually distinct from all the other tinted-cyan
-          UI elements: AI button, filter pills, Apply All Filters). Slightly
+          UI elements: filter pills, Apply All Filters). Slightly
           bigger + semibold so it reads as "the action".
 
           When the user has existing results AND has since changed filters/preset

@@ -147,4 +147,4 @@ Keep the existing chain (`frontend/src/pages/StockItem/options/OptionsChain.tsx`
 
 - Inflect (Phase 4).
 - Options trading (Phase 2).
-- Cloud LLM, multi-account beyond IBKR's native selection, mobile companion.
+- Multi-account beyond IBKR's native selection, mobile companion.

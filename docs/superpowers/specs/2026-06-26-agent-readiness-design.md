@@ -15,7 +15,7 @@ SEO structured data) mostly does not apply.
 
 The five pillars *do* map onto Orbit's two real agent surfaces:
 
-- the **local FastAPI backend** (what the in-app AI / an MCP or HTTP client calls)
+- the **local FastAPI backend** (what an MCP or HTTP client calls)
 - the **repo** (what coding agents read)
 
 | Pillar | Orbit translation | Before |
@@ -53,7 +53,7 @@ No new executable surface, no auth/persistence/broker changes.
 Per `docs/testing.md` (protect critical promises, not every file): one guard
 test, `backend/tests/test_agent_manifest.py`, asserts the manifest returns 200
 and keeps `autonomous_trading: false` / `decision_support_only: true`. Mounted on
-a bare app so no IBKR/Ollama lifespan is needed. OpenAPI metadata verified to
+a bare app so no IBKR lifespan is needed. OpenAPI metadata verified to
 serialize via `app.openapi()`.
 
 ## Deferred

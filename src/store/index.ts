@@ -10,7 +10,6 @@
  *   screener   — filter criteria, sort state
  *   settings   — app config persisted to SQLite
  *   pulseConfig — user-configurable Market Pulse ticker list (SQLite)
- *   ai         — Ollama status, chat session, signal, model selection
  */
 
 export { useNavigationStore, type Screen } from "./navigation";
@@ -37,12 +36,6 @@ export {
   usePulseConfigStore,
   DEFAULT_PULSE_ITEMS,
 } from "./pulseConfig";
-export {
-  useAiStore,
-  type OllamaState,
-  type ChatMessage,
-  type ResponseTimeSample,
-} from "./ai";
 export { useCrosshairStore } from "./crosshair";
 export { useDrawingsStore, type DrawingToolId } from "./drawings";
 export {

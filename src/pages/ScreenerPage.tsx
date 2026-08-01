@@ -6,8 +6,8 @@
  *   │ Filter bar (sticky top, full width)             │
  *   ├────────────────────────────┬────────────────────┤
  *   │ Disclaimer strip           │                    │
- *   │ Results table (scrollable) │ AI panel (300px)   │
- *   │ Pagination (bottom)        │ collapsible        │
+ *   │ Results table (scrollable) │
+ *   │ Pagination (bottom)        │
  *   └────────────────────────────┴────────────────────┘
  *   + ScreenerPeekPanel (right overlay on row click)
  *
@@ -19,7 +19,7 @@
  * Flow:
  *   1. User picks a scanner preset (Most Active, Top Gainers, etc.)
  *      OR clicks a "Try this" empty-state card.
- *   2. User optionally adds IBKR native filter codes (or uses AI panel)
+ *   2. User optionally adds IBKR native filter codes
  *   3. User clicks "Scan" → POST /screener/scan (always page 1, 50 rows)
  *   4. Results render. Sorting + pagination happen client-side from the
  *      cumulative store buffer.
@@ -30,7 +30,7 @@
  *   that calls appendResults() to grow the buffer without clearing page/sort.
  */
 
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { parallaxApi, type ScanRequest, type ScannerLocation } from "@/modules/parallax/api";
 import { useScreenerStore, type ActiveFilter } from "@/store/screener";
@@ -92,7 +92,6 @@ import ScreenerFilterBar from "@/components/screener/ScreenerFilterBar";
 import ScreenerResultsTable from "@/components/screener/ScreenerResultsTable";
 import ScreenerPagination from "@/components/screener/ScreenerPagination";
 import ScreenerPeekPanel from "@/components/screener/ScreenerPeekPanel";
-import ScreenerAiPanel from "@/components/screener/ScreenerAiPanel";
 import BrowseAllScansPanel from "@/components/screener/BrowseAllScansPanel";
 import LocationResetBanner from "@/components/screener/LocationResetBanner";
 
@@ -126,8 +125,7 @@ interface CardDef {
   usOnly?: boolean;
 }
 
-// Market-cap brackets used by the cards (and mirrored in the AI prompt's
-// sensible-defaults table — see services/screener_ai.py SYSTEM_PROMPT).
+// Market-cap brackets used by the cards and the deterministic filter catalogue.
 //   Small cap:   $300M – $5B
 //   Mid cap:     $5B   – $50B
 //   Large cap:   $50B+ (anything at or above this floor)
@@ -246,12 +244,6 @@ function EmptyCard({
 // ── Page ─────────────────────────────────────────────────────
 
 export default function ScreenerPage() {
-  const [aiPanelOpen, setAiPanelOpen] = useState(false);
-
-  // Pre-load the AI model into memory when the user navigates here.
-  useEffect(() => {
-    parallaxApi.aiWarmup().catch(() => {/* non-fatal */});
-  }, []);
   // Path C — Browse all scans slide-over open state
   const [browseOpen, setBrowseOpen] = useState(false);
 
@@ -387,8 +379,6 @@ export default function ScreenerPage() {
       {/* Filter bar — sticky top, full width */}
       <ScreenerFilterBar
         onScan={handleScan}
-        aiPanelOpen={aiPanelOpen}
-        onToggleAiPanel={() => setAiPanelOpen((v) => !v)}
         showClearResults={results.length > 0 || scanMutation.isError || lastScanWasEmpty}
         onClearResults={() => {
           resetScreener();
@@ -412,7 +402,7 @@ export default function ScreenerPage() {
         </div>
       )}
 
-      {/* Main content — results left, AI panel right */}
+      {/* Main content — deterministic IBKR results */}
       <div className="flex flex-1 overflow-hidden">
         {/* Left column: results + pagination (or empty state) */}
         <div className="flex flex-1 flex-col overflow-hidden">
@@ -462,8 +452,6 @@ export default function ScreenerPage() {
           )}
         </div>
 
-        {/* Right column: AI panel (collapsible) */}
-        <ScreenerAiPanel isOpen={aiPanelOpen} />
       </div>
 
       {/* Quick-peek slide-over (overlay) */}

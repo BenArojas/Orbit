@@ -1,5 +1,5 @@
 /**
- * FibStackPanel — multi-fib container in the AI sidebar.
+ * FibStackPanel — multi-fib container in the Analysis sidebar.
  *
  * Reads `activeFibs` from the chart store and renders:
  *   - Header: count badge ("Fibs on chart: N") + "Lock this fib" button.
@@ -9,9 +9,8 @@
  *     activeFibs[0] from the store.
  *   - Locked cards: compact FibLockedCard rows for each locked fib.
  *
- * This component is the public entry the AiChatPanel renders. The old
- * FibScoreCard is still exported for tests but is no longer the
- * top-level fib UI.
+ * This component is the public entry for the Fibonacci sidebar tab. The old
+ * FibScoreCard is still exported for tests but is no longer the top-level UI.
  *
  * Branch 4 / plan item 8 of docs/fibonacci-improvements-plan.md.
  */
@@ -100,8 +99,8 @@ function buildFibTriggerRule({
 
 /**
  * No props — FibStackPanel reads everything it needs (active conid,
- * timeframe, active fibs) from the chart store. This keeps the
- * AiChatPanel callsite simple and avoids prop drilling.
+ * timeframe, active fibs) from the chart store. This keeps the sidebar
+ * callsite simple and avoids prop drilling.
  */
 export default function FibStackPanel() {
   const activeFibs = useChartStore((s) => s.activeFibs);

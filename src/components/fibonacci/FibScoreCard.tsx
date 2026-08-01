@@ -1,5 +1,5 @@
 /**
- * FibScoreCard — Fibonacci confidence panel in the AI sidebar.
+ * FibScoreCard — Fibonacci confidence panel in the Analysis sidebar.
  *
  * Branch 3 overhaul:
  *   - Per-factor glossary rows with `?` tooltips + editable weights

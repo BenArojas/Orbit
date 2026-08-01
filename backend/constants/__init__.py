@@ -5,7 +5,7 @@ Ported from MoonMarket — these are stable IBKR API constants.
 
 This package also hosts:
   - constants.ibkr_filters: canonical FILTER_CATALOGUE for the screener
-    and AI translation layer (single source of truth for filter codes).
+    and filter UI (single source of truth for filter codes).
 """
 
 # ── IBKR Snapshot Field Codes ────────────────────────────────

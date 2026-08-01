@@ -8,9 +8,8 @@
  *   - a `?` hover tooltip with the longer glossary description
  *   - (when `editable`) an inline number input for the weight
  *
- * Tooltips use the design system's CSS variables and the same pattern
- * as AiConfigPanel's chart-context info tooltip — no Radix dependency
- * to avoid pulling in shadcn dialogs just for a hover string.
+ * Tooltips use the design system's CSS variables and a lightweight hover
+ * pattern — no Radix dependency for a hover string.
  *
  * Branch 3, plan decisions 3A/3B.
  */

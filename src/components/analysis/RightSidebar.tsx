@@ -1,63 +1,38 @@
 /**
- * RightSidebar — Tabbed right-sidebar for the Analysis page.
- *
- * Three tabs:
- *   AI         — AiChatPanel (config, signal, streaming chat)
- *   Watchlists — WatchlistTab (checkbox list, add/remove conid)
- *   Triggers   — TriggersTab  (rules for this stock, enable toggle)
- *
- * The tab bar sits at the very top of the 340px sidebar column. Each tab
- * mounts its content lazily — the AI panel is visible on first load.
+ * Analysis sidebar for Fibonacci, Watchlists, and Triggers.
  */
 
 import { useState } from "react";
 import { ChevronRight } from "lucide-react";
-import type { IndicatorId } from "@/store/chart";
-import type { FibonacciResult } from "@/modules/parallax/api";
-import AiChatPanel from "./AiChatPanel";
+import FibStackPanel from "@/components/fibonacci/fib/FibStackPanel";
 import WatchlistTab from "./WatchlistTab";
 import TriggersTab from "./TriggersTab";
 
-/* ── Types ── */
-
-type Tab = "ai" | "watchlists" | "triggers";
+type Tab = "fibonacci" | "watchlists" | "triggers";
 
 const TABS: { id: Tab; label: string }[] = [
-  { id: "ai", label: "AI" },
+  { id: "fibonacci", label: "Fibonacci" },
   { id: "watchlists", label: "Watchlists" },
   { id: "triggers", label: "Triggers" },
 ];
 
 interface RightSidebarProps {
-  /** Currently active instrument conid (from chart store) */
   activeConid: number | null;
-  /** Currently active symbol string */
   activeSymbol: string;
-  /** Current Fibonacci auto-detection result */
-  fibonacci?: FibonacciResult | null;
-  /** Currently active indicators on the chart */
-  chartIndicators?: Set<IndicatorId>;
-  /** Active chart timeframe */
   activeTimeframe?: string;
-  /** Called when the user clicks the collapse chevron. */
   onCollapse?: () => void;
 }
-
-/* ── Component ── */
 
 export default function RightSidebar({
   activeConid,
   activeSymbol,
-  fibonacci,
-  chartIndicators,
   activeTimeframe,
   onCollapse,
 }: RightSidebarProps) {
-  const [activeTab, setActiveTab] = useState<Tab>("ai");
+  const [activeTab, setActiveTab] = useState<Tab>("fibonacci");
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden border-l border-[var(--border)] bg-[var(--bg-1)]">
-      {/* ── Tab bar ── */}
       <div className="flex border-b border-[var(--border)]">
         {TABS.map((tab) => (
           <button
@@ -76,7 +51,7 @@ export default function RightSidebar({
         {onCollapse && (
           <button
             onClick={onCollapse}
-            title="Collapse panel (\)"
+            title="Collapse panel (\\)"
             className="ml-auto px-2 text-[var(--text-3)] transition-colors hover:text-[var(--clr-cyan)]"
           >
             <ChevronRight size={12} />
@@ -84,22 +59,11 @@ export default function RightSidebar({
         )}
       </div>
 
-      {/* ── Tab content ── */}
-      <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-        {/* AI panel — always mounted so chat state is preserved when switching tabs */}
-        <div className={activeTab === "ai" ? "flex h-full min-h-0 flex-col overflow-hidden" : "hidden"}>
-          <AiChatPanel
-            activeConid={activeConid}
-            activeSymbol={activeSymbol}
-            fibonacci={fibonacci}
-            chartIndicators={chartIndicators}
-          />
-        </div>
-
+      <div className="min-h-0 flex-1 overflow-y-auto p-2">
+        {activeTab === "fibonacci" && <FibStackPanel />}
         {activeTab === "watchlists" && (
           <WatchlistTab activeConid={activeConid} activeSymbol={activeSymbol} />
         )}
-
         {activeTab === "triggers" && (
           <TriggersTab
             activeConid={activeConid}

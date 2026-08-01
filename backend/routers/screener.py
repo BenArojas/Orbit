@@ -17,8 +17,6 @@ from fastapi import APIRouter, Depends
 from constants.ibkr_filters import FILTER_CATALOGUE
 from deps import get_screener
 from models import (
-    AiFilterRequest,
-    AiFilterResponse,
     ContractInfoResponse,
     FilterCatalogueEntry,
     ScannerLocation,
@@ -231,8 +229,7 @@ async def filter_catalogue():
     quick-pick chips from it.
 
     The `description` field is served here too — it's shown as a `title`
-    tooltip on the Add Filter menu items (same string Ollama sees in its
-    prompt, so guidance stays consistent across surfaces).
+    tooltip on the Add Filter menu items.
     """
     return [
         FilterCatalogueEntry(
@@ -328,33 +325,3 @@ async def scanner_params(
         filters=raw.get("filter_list", []),
     )
 
-
-# ── POST /screener/ai-filters ───────────────────────────────
-
-
-@router.post("/ai-filters", response_model=AiFilterResponse)
-async def ai_generate_filters(request: AiFilterRequest):
-    """
-    Translate a natural language query into IBKR scanner filter codes using Ollama.
-
-    The AI reads the filter catalogue and returns structured filter codes
-    that can be applied directly to the filter bar.
-    """
-    from services.screener_ai import ScreenerAiService
-
-    # ScreenerAiService is stateless — create per-request (cheap, no state)
-    svc = ScreenerAiService()
-    try:
-        # think=False — thinking models burn tokens on chain-of-thought before
-        # producing structured JSON, which used to time out the request. The
-        # screener UX needs fast, deterministic filter codes; the Analysis chat
-        # is where reasoning matters.
-        result = await svc.generate_filters(
-            query=request.query,
-            model=request.model,
-            preset_context=request.preset_context or "",
-            think=False,
-        )
-        return AiFilterResponse(**result)
-    finally:
-        await svc.shutdown()

@@ -102,31 +102,7 @@ The companion design doc is [`2026-05-20-watchlists-triggers-design.md`](./2026-
 
 ---
 
-## 9. AI-assisted rule generation
-
-**What:** A text input in the rule modal: "describe the setup in plain English" → Ollama outputs a multi-condition rule. Same pattern as the AI screener filter feature (`POST /screener/ai-filters` → `POST /triggers/ai-rule`).
-
-**Motivation:** Lowers the floor for creating rules. The user describes a setup; the system encodes it. Powerful when paired with the template library — AI fills in a starter rule, user tunes from there.
-
-**Why parked:** The screener AI filter feature is the reference implementation; we want to ship the rest of v1 first, then mirror the pattern with the lessons learned.
-
-**Rough sizing:** ~2 days. Prompt builder + endpoint + UI hookup. Pattern is well-established.
-
----
-
-## 10. Watchlist-aware AI prompts on Analysis
-
-**What:** When the user opens a stock that's in a named watchlist (e.g. "Swing Setups"), the AI analysis system prompt is modified to frame the analysis through that watchlist's lens (e.g. multi-day swing trade framing for "Swing Setups", short-term framing for "Day Trade Setups").
-
-**Motivation:** Already in `parallax-v2-roadmap` under "Watchlist-aware prompts". Same idea, just listed here for completeness so it doesn't get lost when v1 is closed out.
-
-**Why parked:** Belongs to the AI prompt-builder work in v2, not the trigger overhaul.
-
-**Rough sizing:** Already specified in `parallax-v2-roadmap`.
-
----
-
-## 11. Watchlist-config expiry overrides UI
+## 9. Watchlist-config expiry overrides UI
 
 **What:** The current `<WatchlistConfigSection>` (per-watchlist auto-expire-days override) becomes much less prominent under the new tag-in-place model. v1 hides it; if a user still wants per-watchlist expiry on rules that opt into `ibkr_mirror_target`, expose this as an advanced field inside the rule modal rather than a sidebar panel.
 
