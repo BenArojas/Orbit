@@ -39,9 +39,6 @@ from services.screener import ScreenerService
 from services.sectors import SectorService
 from services.scanner import ScannerService
 from services.moonmarket import MoonMarketService
-from services.inflect.service import InflectService
-from services.inflect_sync import InflectSyncService
-from services.inflect_backfill import InflectBackfillService
 
 # ── Logging setup (must be first) ────────────────────────────
 
@@ -150,30 +147,12 @@ async def lifespan(app: FastAPI):
     scanner.on_trigger_fired = _on_trigger_fired
     scanner.start()
 
-    # Inflect background fills-sync (keeps the durable `fills` projection fresh
-    # inside IBKR's 7-day window while the app is open). Auth-gated, extended-
-    # hours-gated; modeled on the scanner's lifecycle.
-    inflect_service = InflectService(
-        ibkr=ibkr, db=db, moonmarket=MoonMarketService(ibkr)
-    )
-    inflect_sync = InflectSyncService(ibkr=ibkr, inflect=inflect_service)
-    app.state.inflect_sync = inflect_sync
-    inflect_sync.start()
-
-    inflect_backfill = InflectBackfillService(
-        ibkr=ibkr, db=db, inflect=inflect_service
-    )
-    app.state.inflect_backfill = inflect_backfill
-    inflect_backfill.start()
-
     log.info("Backend ready. Waiting for frontend connections.")
     yield
 
     # Shutdown
     log.info("Orbit backend shutting down...")
     await tws_adapter.disconnect()
-    await inflect_backfill.stop()
-    await inflect_sync.stop()
     await scanner.stop()
     await db.close()
     await ibkr.shutdown()
@@ -194,7 +173,7 @@ backend. Machine-readable policy: `GET /.well-known/agent.json`.
 **Modules**
 - **Parallax** — technical analysis, screening, watchlists, alerts.
 - **MoonMarket** — portfolio, account, options, human-confirmed order workflows.
-- **Inflect** — trading journal and trade review.
+- **TWS Assistant** — live execution planning and broker workflow support.
 
 Use `conid` across module boundaries; ticker text is display metadata only.
 Agent briefing: see `llms.txt` in the repository root.
@@ -394,9 +373,6 @@ app.include_router(trading_safety_router)
 from routers.options import router as options_router
 app.include_router(options_router)
 
-from routers.inflect import router as inflect_router
-app.include_router(inflect_router)
-
 from routers.agent import router as agent_router
 app.include_router(agent_router)
 
@@ -415,7 +391,7 @@ ALL_ROUTERS = [
     ws_router, triggers_router, fibonacci_router, screener_router,
     gateway_router, watchlist_config_router, settings_router, pulse_config_router,
     health_router, instruments_router, drawings_router, moonmarket_router,
-    orders_router, trading_safety_router, options_router, inflect_router, agent_router,
+    orders_router, trading_safety_router, options_router, agent_router,
     orbit_session_router, execution_assistant_router, tws_stream_router,
 ]
 

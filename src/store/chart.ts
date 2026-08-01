@@ -5,8 +5,6 @@
  * and which indicators are toggled on/off.
  *
  * Orbit integration: conid (IBKR contract ID) is the universal instrument key.
- * When Inflect queries /indicators for trade context, it sends the same conid
- * stored here. No special Inflect logic needed — it's a natural API consumer.
  */
 
 import { create } from "zustand";

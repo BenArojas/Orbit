@@ -184,24 +184,13 @@ class MoonMarketService:
         resolved_account_id = await self._resolve_account_id(account_id)
         bounded_days = max(1, min(int(days), 7))
         payload = await self.execution.trades(days=bounded_days)
-        trade_rows = [
-            (row, trade)
+        trades = [
+            trade
             for row in self._trade_rows(payload)
             if (trade := self._trade_from_row(row, resolved_account_id)) is not None
             and self._within_days(trade.trade_time_ms, bounded_days)
         ]
-        trades = [trade for _, trade in trade_rows]
         trades.sort(key=lambda trade: trade.trade_time_ms or 0, reverse=True)
-        if db is not None:
-            await db.upsert_fills(
-                [
-                    {
-                        **trade.model_dump(),
-                        "raw_json": row,
-                    }
-                    for row, trade in trade_rows
-                ]
-            )
         return MoonMarketTradesResponse(
             account_id=resolved_account_id,
             days=bounded_days,

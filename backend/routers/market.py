@@ -16,7 +16,7 @@ See also:
 Orbit integration:
   Both /search and /conid/{symbol} auto-populate the `instruments` cache table.
   This means every instrument Parallax touches gets cached locally.
-  MoonMarket and Inflect will read from this cache (by conid) without
+MoonMarket reads from this cache (by conid) without
   needing their own IBKR search calls.
 """
 
@@ -268,7 +268,7 @@ async def search_securities(
     Returns a list of matches with conid, symbol, company name, and type.
 
     Orbit integration: Every result is cached in the instruments table
-    so MoonMarket and Inflect can resolve conid → symbol locally.
+so MoonMarket can resolve conid → symbol locally.
     """
     results = await ibkr.search(symbol=q)
     if not results:

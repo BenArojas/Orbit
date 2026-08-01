@@ -67,7 +67,7 @@ def test_cp_auth_no_tws_yields_client_portal():
     assert r.status_code == 200
     body = r.json()
     assert body["mode"] == "client_portal"
-    assert set(body["available_modules"]) == {"parallax", "moonmarket", "inflect"}
+    assert set(body["available_modules"]) == {"parallax", "moonmarket"}
     assert "tws-execution-assistant" not in body["available_modules"]
 
 

@@ -4,7 +4,7 @@
  * Slim top bar (ORBIT wordmark + GatewayStatusPill) over four hero app tiles.
  * Tile enable/disable is driven by broker session mode from BrokerSessionContext:
  *   none           → all tiles disabled
- *   client_portal  → Parallax, MoonMarket, Inflect enabled; TWS Assistant disabled
+ *   client_portal  → Parallax and MoonMarket enabled; TWS Assistant disabled
  *   tws            → TWS Assistant enabled; Client Portal modules disabled
  */
 import { useNavigate } from "react-router-dom";

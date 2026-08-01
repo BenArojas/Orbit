@@ -17,7 +17,6 @@ original rationale behind a shipped feature.
 | MoonMarket portfolio | `2026-05-26-moonmarket-portfolio.md` | `2026-05-26-moonmarket-portfolio-design.md` |
 | MoonMarket transactions | `2026-05-26-moonmarket-transactions.md` | `2026-05-26-moonmarket-transactions-design.md` |
 | Today page / watchlists / triggers | `2026-05-20-today-page-watchlists-triggers-plan.md` | `2026-05-20-watchlists-triggers-design.md`, `2026-05-20-watchlists-triggers-recommendations.md` |
-| Inflect basis backfill / recovery | `inflect-basis-backfill-general-plan.md`, `2026-06-02-inflect-basis-recovery-implementation-plan.md` | — |
 | Budget-first AI workflow | `2026-06-20-budget-first-ai-workflow.md` | `2026-06-20-budget-first-ai-workflow-design.md` |
 | TWS Execution Assistant parent + shell/gating | `2026-06-26-tws-execution-assistant-implementation.md` | `2026-06-05-tws-execution-assistant-design.md` |
 | TWS paper order MVP | `2026-06-27-tws-paper-order-mvp-plan.md` | — |
@@ -35,7 +34,6 @@ Left in `docs/superpowers/` because v2 builds directly on them:
 - `plans/2026-05-25-orbit-foundation.md` — app foundation
 - MoonMarket **options** (foundation for the v2 dual-mode bot): the `2026-05-28-moonmarket-options*` and `2026-06-04-moonmarket-options-atm-review-fixes.md` docs
 - **OrderTicket** (the real-money order path the v2 trade-manager extends): the `2026-05-26-orbit-orderticket*` and `2026-06-03-orderticket-trailing-rr-cash*` docs
-- **Inflect** journal (the next module to build): `2026-06-01-inflect-journal-*`
 - `docs/ibkr-pacing.md` — IBKR rate/pacing limits, needed for v2 automation
 - **Budget-first AI workflow:** remaining AI references in this document are for development-agent budgeting and workflow, not an Orbit product capability.
 

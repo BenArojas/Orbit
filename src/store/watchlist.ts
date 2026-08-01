@@ -6,7 +6,7 @@
  *
  * Orbit integration: All instruments are identified by conid (IBKR contract ID).
  * The instruments table in SQLite caches conid → symbol/name lookups.
- * MoonMarket and Inflect also read from this table.
+ * MoonMarket also reads from this table.
  */
 
 import { create } from "zustand";

@@ -1,6 +1,6 @@
 # Orbit Backend Sidecar
 
-Shared Python FastAPI sidecar for Orbit. The existing routes mostly serve the Parallax module; MoonMarket and Inflect should be added to this same sidecar rather than creating separate backend services.
+Shared Python FastAPI sidecar for Orbit. Routes serve Parallax, MoonMarket, and the TWS Assistant through one backend.
 
 Python FastAPI server that sits between the Tauri frontend and external
 services (IBKR Client Portal Gateway). Runs on `localhost:8000`.

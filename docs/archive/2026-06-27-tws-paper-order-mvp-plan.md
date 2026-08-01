@@ -15,7 +15,7 @@ order to TWS/IB Gateway, and see the submitted order appear in Open Orders.
 
 - No live trading path.
 - No cancel, modify, bracket, OCA, scale-out, trailing, or conditional orders.
-- No autonomous trading, AI arming, scanner-triggered orders, or background
+- No autonomous trading, automated arming, scanner-triggered orders, or background
   execution.
 - No database persistence or audit ledger in this MVP.
 - No Level 2/depth, streaming quotes, entitlement detection, or historical quote

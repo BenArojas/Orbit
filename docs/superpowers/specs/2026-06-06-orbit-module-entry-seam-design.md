@@ -8,11 +8,9 @@
 
 Top-level module entry behavior is split across the Orbit launcher, the route table, and module-local readiness handling.
 
-The launcher disables Parallax, MoonMarket, and Inflect tiles while IBKR is unauthenticated, but direct routes such as `/moonmarket` and `/inflect` currently mount their modules without crossing the same shared route-access decision. Parallax also has an internal `AuthGuard`, but that guard only knows about Parallax's Zustand screens and cannot be the Orbit-wide module entry seam.
 
 ## Product Decision
 
-Direct module URLs should preserve location. If a user opens `/parallax`, `/moonmarket`, or `/inflect` while unauthenticated, Orbit should render a locked/connect state in place at the requested URL, not redirect the user to `/`.
 
 This avoids the feeling that Orbit kicked the user out without explaining what happened. The root launcher still keeps module tiles disabled until IBKR is authenticated.
 
@@ -39,7 +37,6 @@ Hidden implementation:
 ## User Stories
 
 - As a user opening `/moonmarket` before connecting IBKR, I stay on `/moonmarket` and see that MoonMarket is locked until IBKR is connected.
-- As a user on `/`, I cannot click into Parallax, MoonMarket, or Inflect until IBKR is authenticated.
 - As an authenticated user opening a module route directly, I see the requested module without extra navigation.
 - As a developer adding or changing an Orbit module, I update one module entry registry instead of spreading route access rules across the launcher, router, and module wrappers.
 
@@ -76,7 +73,6 @@ Prove the new seam with one end-to-end route behavior.
 Work:
 
 - add the module registry and entry wrapper
-- route `/parallax/*`, `/moonmarket/*`, and `/inflect/*` through `OrbitModuleEntry`
 - add an in-place locked/connect state for unauthenticated direct module URLs
 - keep the requested URL unchanged
 - prove authenticated route access still mounts the selected module
@@ -86,7 +82,6 @@ Public behavior to prove:
 
 - `/moonmarket` while unauthenticated renders the locked MoonMarket route state and does not mount `MoonMarketModule`
 - `/moonmarket` while authenticated mounts `MoonMarketModule`
-- `/parallax` and `/inflect` route through the same seam
 
 This is marked `HITL` because it changes top-level route access behavior and module-boundary ownership.
 
@@ -96,7 +91,6 @@ Remove duplicated module labels, descriptions, and paths from `OrbitLauncher` by
 
 ### Slice 3: Keep non-auth readiness inside module pages (`HITL decision recorded`)
 
-Decision: account readiness stays inside MoonMarket and Inflect module pages. `OrbitModuleEntry` remains responsible only for shared route-access auth gating in this branch.
 
 Implication:
 
@@ -123,7 +117,6 @@ Relevant broader checks:
 
 - Parallax: route access moves to the Orbit entry seam before `ParallaxModule` mounts. Internal Parallax navigation remains unchanged.
 - MoonMarket: direct route access becomes auth-gated before `MoonMarketModule` mounts. Account readiness stays in the existing account context path.
-- Inflect: direct route access becomes auth-gated before `InflectModule` mounts. Journal account sync behavior stays module-local.
 
 ## Policy Impact
 
@@ -136,4 +129,3 @@ None expected. This does not change trading safety behavior, local/cloud boundar
 - no account-context behavior changes in slice 1
 - no Parallax internal navigation rewrite
 - no launcher redesign
-- no Inflect availability/product-scope change

@@ -286,9 +286,9 @@ http://localhost:8000/mcp-server/mcp   (streamable-http)
 
 It generates its tools from the existing FastAPI routes and exposes **only
 decision-support reads** — market data, screeners, sectors, options chains,
-watchlists, fibonacci, the journal, and (by default) portfolio/account reads.
+watchlists, fibonacci, and (by default) portfolio/account reads.
 It can **never** place orders or mutate broker/app state: a positive GET
-allowlist plus a catch-all exclude keep order/auth/gateway/settings/AI endpoints
+allowlist plus a catch-all exclude keep order/auth/gateway/settings/product endpoints
 and every non-GET out, enforced by `backend/tests/test_mcp_readonly.py`. See
 `backend/mcp_server.py` and the design at
 `docs/superpowers/specs/2026-06-26-mcp-readonly-server-design.md`.
@@ -298,7 +298,6 @@ loopback is unsupported.
 
 **`MCP_EXPOSE_PORTFOLIO`** (default `true`): when on, the server also exposes the
 **sensitive** reads — MoonMarket balances/positions/performance/live working
-orders and the account-derived Inflect journal (realized trades, P&L, cost
 basis). These are private financials available to any local MCP client by
 default; set `MCP_EXPOSE_PORTFOLIO=false` to expose only non-sensitive market/
 analysis data.

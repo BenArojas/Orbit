@@ -56,11 +56,6 @@ class MoonMarketExecutionAdapter(Protocol):
         """Fetch the all-periods performance payload for one account."""
 
 
-class InflectExecutionAdapter(Protocol):
-    async def portfolio_positions(self, account_id: str) -> OrderResult:
-        """Fetch the aggregate current-position payload for one account."""
-
-
 class ClientPortalTransport(Protocol):
     async def _request(self, method: str, endpoint: str, **kwargs: Any) -> Any:
         """Send one raw Client Portal request."""
@@ -155,6 +150,3 @@ class ClientPortalExecutionAdapter:
             "/pa/allperiods",
             json={"acctIds": [account_id]},
         )
-
-    async def portfolio_positions(self, account_id: str) -> OrderResult:
-        return await self.ibkr._request("GET", f"/portfolio2/{account_id}/positions")

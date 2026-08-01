@@ -53,7 +53,7 @@ New router (e.g. `backend/routers/orders.py`, prefix `/moonmarket/orders`, or ex
 - **Pydantic models** for the order request (conid, side, quantity, orderType, tif, price?, auxPrice?, bracket fields?) and the IBKR responses. Strict types, no bare `Any` in the public surface.
 - **Paper detection:** add `is_paper: bool` to the account model. Primary heuristic: account id starts with `DU` (IBKR paper). The plan must also inspect a live `/iserver/accounts` (or `/portfolio/accounts`) payload for an explicit flag (e.g. a `type`/`tradingType`/`isPaper` field) and prefer it if present; fall back to the `DU` prefix.
 - **Trading Safety policy:** place, reply, cancel, and modify resolve the target account, classify paper/live account state, and evaluate the Trading Safety decision before forwarding to IBKR. The current product policy allows live mutations, with live confirmation required upstream.
-- **Fills:** placing/fetching does not change the existing `upsert_fills` path; the `fills` table continues to be populated by `/moonmarket/trades` (unchanged).
+- **Trades:** placing/fetching preserves the live `/moonmarket/trades` response; no local execution projection is involved.
 - **Tests:** `backend/tests/test_orders_router.py` with a mocked `IBKRService` — preview shape, place (single + bracket payload), confirm reply, cancel, modify, live-account allowed behavior, and Trading Safety rejection paths for place/reply/cancel/modify.
 
 ---

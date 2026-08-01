@@ -6,7 +6,6 @@
 
 ## Problem
 
-Account context is shared product state, but the current frontend seam lives under `OrderTicket`. MoonMarket and Inflect both import that store and each run their own account-list query plus hydration effect. That makes account ownership unclear and forces every account-aware module to coordinate account readiness itself.
 
 ## Solution
 
@@ -29,8 +28,6 @@ Hidden implementation:
 ## User Stories
 
 - As a MoonMarket user, I can open portfolio, transactions, or options with the same selected account behavior as before.
-- As an Inflect user, I can open the journal and reuse the same selected account without a second module-local hydration path.
-- As an OrderTicket user, the ticket reads the same selected account truth as MoonMarket and Inflect.
 
 ## Implementation Decisions
 
@@ -44,17 +41,13 @@ Hidden implementation:
 
 ### Slice 1: Shared Orbit account hydration (`AFK`)
 
-Prove MoonMarket and Inflect can consume one Orbit-level account context while preserving current visible behavior.
 
 Work:
 
 - add the Orbit account context module
 - move the account store out of `OrderTicket`
-- update MoonMarket, Inflect, and OrderTicket imports
-- remove duplicated account-query hydration from MoonMarket and Inflect
 - add tests for the account context interface and update existing module tests
 
-Status: complete in this branch. `OrbitAccountProvider` now owns account hydration, `useOrbitAccountContext()` exposes account readiness and paper/live state, and MoonMarket plus Inflect read from the shared Orbit context.
 
 ### Slice 2: OrderTicket account readiness (`HITL`)
 
@@ -68,12 +61,10 @@ Status: complete in this branch. `OrderTicket` now reads account readiness from 
 
 Move remaining account ID prop threading where it is purely mechanical and does not change page behavior.
 
-Status: complete in this branch for the layout layer. `MoonMarketLayout` and `InflectLayout` now consume the Orbit account context directly, so the module wrappers no longer thread account selector props into those layouts.
 
 ## Testing
 
 - Add a public hook/provider test for account hydration, selected-account preservation, paper/live mode, and error state.
-- Keep existing MoonMarket and Inflect page tests passing through the new provider.
 - Keep OrderTicket tests passing after import migration.
 
 ## Out Of Scope

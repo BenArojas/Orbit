@@ -8,7 +8,7 @@ if TYPE_CHECKING:
     from services.ibkr import IBKRService
     from services.tws_broker_adapter import TwsBrokerAdapter
 
-_CP_MODULES = ["parallax", "moonmarket", "inflect"]
+_CP_MODULES = ["parallax", "moonmarket"]
 _TWS_MODULES = ["tws-execution-assistant"]
 
 

@@ -8,7 +8,6 @@
 
 - Verified: Orbit is decision support, never autonomous trading; all broker and persistence access must flow through FastAPI, and `conid` is the cross-module instrument key (`AGENTS.md:12`, `docs/architecture/backend.md:6`, `docs/architecture/modules.md:21`).
 - Verified: Current Orbit execution is Client Portal only. TWS is documented as a separate gated subsystem, not a replacement for MoonMarket order endpoints (`docs/architecture/backend.md:26`).
-- Verified: The current frontend has only three module IDs: `parallax`, `moonmarket`, and `inflect`; there is no TWS module or broker-session mode yet (`src/orbit/moduleEntry/OrbitModuleEntry.tsx:10`).
 - Verified: Backend startup creates one Client Portal `IBKRService` singleton plus scanner/fill-sync services; no TWS lifecycle or exclusive `BrokerSessionService` exists (`backend/main.py:64`, `backend/main.py:84`, `backend/main.py:142`, `backend/main.py:173`).
 - Verified: TWS API order placement is callback-driven: connect, receive `nextValidId`, call `placeOrder`, then reconcile `openOrder`, `orderStatus`, `execDetails`, and commission callbacks.
 - Verified: TWS order IDs are persistent across sessions and must be greater than prior order IDs seen by the client when multiple clients/open-order requests are involved.

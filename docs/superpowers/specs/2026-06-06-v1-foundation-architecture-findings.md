@@ -47,7 +47,6 @@ Deepen the execution Adapter around mutation and account behavior first. Hide en
 
 **Problem**
 
-Frontend account context is shared, but the seam lives under OrderTicket and still requires MoonMarket and Inflect to coordinate hydration themselves.
 
 **Suggested solution**
 
@@ -58,7 +57,6 @@ Promote account context into an Orbit-level module that owns:
 - paper/live state
 - ready/error state
 
-MoonMarket, Inflect, and OrderTicket should all read the same account truth through that seam.
 
 ## 5. Orbit module entry seam
 
@@ -68,7 +66,6 @@ Top-level module entry behavior is shallow. Launcher gating, route behavior, and
 
 **Suggested solution**
 
-Create one Orbit module entry seam that owns route access, readiness checks, and module Adapter selection for Parallax, MoonMarket, and Inflect.
 
 ## 6. Sidecar client contract by module
 
@@ -78,7 +75,6 @@ Create one Orbit module entry seam that owns route access, readiness checks, and
 
 **Suggested solution**
 
-Keep one deep core request module for base URL, offline handling, and error handling, then split product contracts into module-local seams for Parallax, MoonMarket, and Inflect.
 
 ## 7. Instrument Identity module
 

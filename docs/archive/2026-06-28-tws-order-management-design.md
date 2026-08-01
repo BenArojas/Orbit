@@ -136,7 +136,7 @@ Do not add a simple accidental toggle like `ENABLE_LIVE_TWS_TRADING=true`.
 - No global cancel.
 - No bracket, OCA, trailing, GTD, MOC/LOC, conditions, or full order-workstation
   editor.
-- No persistence of AI-generated suggestions; that belongs to a later AI workflow.
+- No persistence of speculative suggestions; that belongs to a separately approved workflow.
 
 ## Verification Targets
 

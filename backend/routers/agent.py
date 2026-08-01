@@ -43,7 +43,7 @@ async def agent_manifest(request: Request) -> dict:
         "modules": [
             {"name": "Parallax", "does": "technical analysis, screening, watchlists, alerts"},
             {"name": "MoonMarket", "does": "portfolio, account, options, human-confirmed order workflows"},
-            {"name": "Inflect", "does": "trading journal and trade review"},
+            {"name": "TWS Assistant", "does": "live execution planning and broker workflow support"},
         ],
         "conventions": {
             "instrument_id": "conid",

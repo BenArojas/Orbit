@@ -4,7 +4,7 @@
 
 **Goal:** Expose Orbit's decision-support reads to local agents over a strictly read-only MCP server, mounted in-process on the existing FastAPI sidecar.
 
-**Architecture:** `FastMCP.from_fastapi(app)` generates MCP tools from the existing FastAPI routes and mounts as an ASGI sub-app at `/mcp-server/mcp` (streamable-http). A positive path-prefix allowlist + catch-all `EXCLUDE` keeps it read-only; a tool-list assertion test is the enforced safety boundary. Sensitive portfolio/journal reads sit behind `MCP_EXPOSE_PORTFOLIO` (default ON). No new process/binary/Tauri-capability/CSP/CORS change.
+**Architecture:** `FastMCP.from_fastapi(app)` generates MCP tools from the existing FastAPI routes and mounts as an ASGI sub-app at `/mcp-server/mcp` (streamable-http). A positive path-prefix allowlist + catch-all `EXCLUDE` keeps it read-only; a tool-list assertion test is the enforced safety boundary. Sensitive portfolio/account reads sit behind `MCP_EXPOSE_PORTFOLIO` (default ON). No new process/binary/Tauri-capability/CSP/CORS change.
 
 **Tech Stack:** Python 3.12, FastAPI, `fastmcp ~=3.4` (3.4.2), uv, PyInstaller (Tauri sidecar).
 
@@ -93,19 +93,16 @@ from fastmcp import FastMCP
 # (incl. every non-GET, and any future router) is EXCLUDED by the catch-all.
 BASE_ALLOW = (
     r"^/market/|^/instruments/|^/screener/|^/sectors/|"
-    r"^/moonmarket/options/|^/watchlist/|^/fibonacci/|^/inflect/setups\b"
 )
 # Sensitive (private financials), gated by MCP_EXPOSE_PORTFOLIO.
 SENSITIVE_ALLOW = (
     r"^/moonmarket/accounts\b|^/moonmarket/accounts/|^/moonmarket/portfolio\b|"
     r"^/moonmarket/performance\b|^/moonmarket/trades\b|^/moonmarket/live-orders\b|"
-    r"^/inflect/(calendar|trades|symbols|basis-lots|basis-audit|backfill-status)\b"
 )
 # Paths that must NEVER appear as tools, asserted by the test even if they are GETs.
 DENYLIST = (
     "/moonmarket/orders", "/moonmarket/trading-safety", "/auth", "/gateway",
     "/settings", "/ws", "/health", "/.well-known",
-    "/triggers", "/drawings", "/pulse", "/watchlist-config", "/inflect/storage",
 )
 
 
@@ -173,10 +170,8 @@ async def test_no_mutation_verbs_in_tools(monkeypatch):
 async def test_portfolio_flag_gates_sensitive(monkeypatch):
     monkeypatch.setenv("MCP_EXPOSE_PORTFOLIO", "false")
     blobs = await _tool_paths(_build_app())
-    assert not any("/inflect/trades" in b or "/moonmarket/portfolio" in b for b in blobs)
     monkeypatch.setenv("MCP_EXPOSE_PORTFOLIO", "true")
     blobs = await _tool_paths(_build_app())
-    assert any("/inflect/trades" in b or "/moonmarket/portfolio" in b for b in blobs)
 ```
 
 - [ ] **Step 3: Run — expect failure (NotImplementedError)**
@@ -205,10 +200,9 @@ In `backend/main.py`, after the last `app.include_router(...)`, add a module-lev
 # Routers exposed for in-process reuse (e.g. the read-only MCP server / tests).
 ALL_ROUTERS = [
     auth_router, indicators_router, market_router, sectors_router, watchlist_router,
-    ws_router, triggers_router, ai_router, fibonacci_router, screener_router,
+    ws_router, triggers_router, fibonacci_router, screener_router,
     gateway_router, watchlist_config_router, settings_router, pulse_config_router,
     health_router, instruments_router, drawings_router, moonmarket_router,
-    orders_router, trading_safety_router, options_router, inflect_router, agent_router,
 ]
 ```
 
@@ -295,7 +289,6 @@ app.mount("/mcp-server", _mcp_app)
 - [ ] **Step 2: Start the backend; verify BOTH lifespans run**
 
 Run: `cd backend && uv run uvicorn main:app --port 8000`
-Expected: the existing startup logs (gateway/ibkr/db/scanner/inflect) appear AND no MCP lifespan error. `curl -s http://localhost:8000/health` → ok. This proves the merge didn't skip the singletons (top risk).
 
 - [ ] **Step 3: Verify the MCP endpoint serves**
 
@@ -321,7 +314,6 @@ git commit -m "feat: mount read-only MCP at /mcp-server/mcp with merged lifespan
 
 - [ ] **Step 1: Add an explicit expected-tool-count / group assertion**
 
-Append a test that, with `MCP_EXPOSE_PORTFOLIO=true`, asserts at least one tool from each allowed group (`/market/`, `/screener/`, `/sectors/`, `/moonmarket/options/`, `/watchlist/`, `/fibonacci/`, `/instruments/`, `/inflect/setups`) is present, and that none of the side-effecting GETs (`/auth/status`, `/gateway/status`, `/settings`) appear (these are already in `DENYLIST` — this widens coverage to confirm the catch-all `EXCLUDE` actually drops them, since RouteMap may have bugs).
 
 ```python
 @pytest.mark.asyncio
@@ -329,7 +321,6 @@ async def test_expected_groups_present(monkeypatch):
     monkeypatch.setenv("MCP_EXPOSE_PORTFOLIO", "true")
     blobs = await _tool_paths(_build_app())
     for grp in ("/market/", "/screener/", "/sectors/", "/moonmarket/options/",
-                "/watchlist/", "/fibonacci/", "/instruments/", "/inflect/setups"):
         assert any(grp in b for b in blobs), f"expected group {grp} missing from tools"
 ```
 

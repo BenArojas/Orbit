@@ -1,10 +1,10 @@
 # Orbit — Project Plan
 
 > Last updated: 2026-08-01
-> Status: Parallax core v1 is code-complete on `dev` through the rules/fib-trigger closeout pass. Phase 8 E2E remains the v1 sign-off gate. Phase 9, Phase 10, Phase 11, and Phase 12 are merged to `dev`. Orbit consolidation Plans #1–#7 are merged to local `dev`: options chain, Inflect v1/basis recovery,OrderTicket trailing/RTH/R-R/cash-sizing and sidecar client contract refactor are now included. Live/manual IBKR paper-account smoke testing remains the release gate.
+> Status: Parallax core v1 is code-complete on `dev` through the rules/fib-trigger closeout pass. Phase 8 E2E remains the v1 sign-off gate. Phase 9, Phase 10, Phase 11, and Phase 12 are merged to `dev`. Orbit consolidation Plans #1–#7 are merged to local `dev`: options chain, OrderTicket trailing/RTH/R-R/cash-sizing, and sidecar client contract refactor are now included. Live/manual IBKR paper-account smoke testing remains the release gate.
 ---
 
-- **Parallax cleanup:** COMPLETE on `refactor/remove-ai-inflect`; deterministic analysis, screener, Fibonacci, watchlists, triggers, charts, Compare, MoonMarket, Inflect, and TWS Assistant remain the active product surfaces. Focused and final verification passed locally.
+- **Product cleanup:** COMPLETE on the current cleanup branch; deterministic Parallax analysis, screener, Fibonacci, watchlists, triggers, charts, Compare, MoonMarket, and TWS Assistant remain the active product surfaces. Focused and final verification is in progress.
 
 ## IBKR Gateway — What We Learned (2026-04-14)
 
@@ -99,7 +99,6 @@ flows.
 - Cross-indicator confluence engine.
 - TWS-gated execution assistant / tiered scale-out workflow.
 - System tray scanner.
-- Inflect journal linkage.
 
 ---
 
@@ -110,16 +109,16 @@ This section tracks the newer Orbit work that renamed the former IBKR Hub concep
 | Plan | Status | Current implementation notes |
 |---|---|---|
 | Plan #1 — Orbit foundation | DONE on `dev` | One React/Tauri app shell, route groups for `/parallax/*` and `/moonmarket/*`, Orbit launcher at `/`, shared FastAPI sidecar. Key commit: `4e55bf3`. |
-| Plan #2 — Auth + launcher polish | DONE on `dev` | Combined single-screen Orbit launcher with gateway/connect surface, hero tiles, top-bar polish, disabled modules while unauthenticated, Inflect visible as future module. Key commits: `f8be5f7`, `6e2e0a4`, `75bc72b`; docs: `025e416`, `77e0c98`. |
+| Plan #2 — Auth + launcher polish | DONE on `dev` | Combined single-screen Orbit launcher with gateway/connect surface, hero tiles, top-bar polish, disabled modules while unauthenticated. Key commits: `f8be5f7`, `6e2e0a4`, `75bc72b`; docs: `025e416`, `77e0c98`. |
 | Plan #3 — MoonMarket Portfolio | DONE on `dev` | Re-stacked MoonMarket portfolio using the Orbit visual system. Left chart area keeps graph switching, right side keeps `PerformanceCards`, bottom duplicate holdings table replaced by selected-position inspector, `HistoricalDataCard` dropped. Key commit: `d88609b`. |
 | Plan #4 — MoonMarket Transactions | DONE on `dev` | Transactions ledger, transaction charts, live orders tab, and shared account selector integration. Key commit: `18c8f61`. |
 | Plan #5 — OrderTicket + conid nav bridge | DONE on `dev` | Paper-only MoonMarket order API, shared account store, shared right-side `OrderTicket`, stock single/bracket orders, live-order cancel/modify actions, MoonMarket↔Parallax conid navigation, Parallax trade entry. Key commits: `102826e`, `b5f06cd`, `ed4115f`, `19aa10b`, `2e994e5`, `4cd45c2`, `42bc9d5`, `90952cc`, `db76757`. |
 | Plan #6 — MoonMarket Options Chain | DONE on local `dev` | Adds `/moonmarket/options/*` backend read API, option-chain client/types/hooks, MoonMarket Options route/tab, lazy per-strike call/put loading, Parallax and Portfolio options entry points, and shared OrderTicket option metadata. Single-leg option orders only; option brackets are blocked server-side and hidden in the UI. Needs IBKR paper-account smoke testing. Key commits: `4e90495`, `6841e68`, `1a923eb`, `e256554`, `782184f`, `b589364`, `7fd8c0a`, plus option-contract surface fixes in `4729648`. |
 | Plan #7 — OrderTicket trailing/RTH/R-R/cash sizing | DONE on local `dev` | Adds IBKR-native `TRAIL`/`TRAILLMT`, trailing amount/type validation, outside-RTH, plain-English labels, risk/reward readout, cash sizing, percent-of-buying-power sizing via `/moonmarket/accounts/{account_id}/funds`, and IBKR-aligned modify hydration for trailing live orders. Key commits: `dbad056` through `33a05d4`. |
-| Architecture follow-up — Orbit module entry seam | DONE on `feature/orbit-module-entry-seam` | Direct `/parallax`, `/moonmarket`, and `/inflect` routes now cross one shared Orbit auth-entry seam and stay on their URLs with a locked connect state when unauthenticated. `OrbitLauncher` reads the shared module registry for tile labels, descriptions, icons, and paths. Spec: `docs/superpowers/specs/2026-06-06-orbit-module-entry-seam-design.md`. Verified with focused Orbit route/launcher tests plus `tsc --noEmit`. |
-| Architecture follow-up — Instrument Identity module | CODE COMPLETE on `feature/instrument-identity-module` | Quote, search, `/market/conid/{symbol}`, watchlist instrument writes, `/instruments/{conid}` reads, and Inflect cached-symbol fallback now route through `InstrumentIdentityService`; `useInstrument()` consumes the unchanged API shape. Spec: `docs/superpowers/specs/2026-06-06-instrument-identity-module-design.md`. Verified with focused backend identity/watchlist/Inflect/conid-cache tests, hook test, and `tsc --noEmit`. |
-| - **Architecture follow-up — Sidecar client contracts by module:** DONE on `dev` via PR #29. Frontend sidecar access is now split by ownership: shared transport/runtime lives in `src/lib/sidecarClient.ts`, Orbit shell/gateway/auth endpoints remain in the slim `src/lib/api.ts`, and product contracts live in `src/modules/moonmarket/api.ts`, `src/modules/inflect/api.ts`, and `src/modules/parallax/api.ts`. Added direct sidecar runtime tests and moved MoonMarket endpoint contract tests into the MoonMarket module. Spec: `docs/superpowers/specs/2026-06-07-sidecar-client-contracts-design.md`.
-| - **v1 foundation review fixes (2026-06-10):** DONE on `dev` via `fix/v1-foundation-review-fixes`. Parallel-agent code review of the 7 foundation findings surfaced 8 issues, all fixed: trading safety now fails closed on unknown accounts (404 instead of silent `paper_allowed`), `TradingSafetyDecision` enforces mode/allowed/confirmation consistency, OrderTicket's live gate blocks (never falls back to invented copy) when the safety service is unreachable/rejecting/incomplete, `ApiError` re-exported from `@/lib/api`, and Inflect positions read through a new `InflectExecutionAdapter` on the Client Portal execution adapter. Backend 1143 green; frontend baseline unchanged.
+| Architecture follow-up — Orbit module entry seam | DONE on `feature/orbit-module-entry-seam` | Direct `/parallax` and `/moonmarket` routes cross one shared Orbit auth-entry seam and stay on their URLs with a locked connect state when unauthenticated. `OrbitLauncher` reads the shared module registry for tile labels, descriptions, icons, and paths. Spec: `docs/superpowers/specs/2026-06-06-orbit-module-entry-seam-design.md`. Verified with focused Orbit route/launcher tests plus `tsc --noEmit`. |
+| Architecture follow-up — Instrument Identity module | CODE COMPLETE on `feature/instrument-identity-module` | Quote, search, `/market/conid/{symbol}`, watchlist instrument writes, and `/instruments/{conid}` reads now route through `InstrumentIdentityService`; `useInstrument()` consumes the unchanged API shape. Spec: `docs/superpowers/specs/2026-06-06-instrument-identity-module-design.md`. Verified with focused backend identity/watchlist/conid-cache tests, hook test, and `tsc --noEmit`. |
+| - **Architecture follow-up — Sidecar client contracts by module:** DONE on `dev` via PR #29. Frontend sidecar access is now split by ownership: shared transport/runtime lives in `src/lib/sidecarClient.ts`, Orbit shell/gateway/auth endpoints remain in the slim `src/lib/api.ts`, and product contracts live in `src/modules/moonmarket/api.ts` and `src/modules/parallax/api.ts`. Added direct sidecar runtime tests and moved MoonMarket endpoint contract tests into the MoonMarket module. Spec: `docs/superpowers/specs/2026-06-07-sidecar-client-contracts-design.md`.
+| - **v1 foundation review fixes (2026-06-10):** DONE on `dev` via `fix/v1-foundation-review-fixes`. Parallel-agent code review of the 7 foundation findings surfaced 8 issues, all fixed: trading safety now fails closed on unknown accounts (404 instead of silent `paper_allowed`), `TradingSafetyDecision` enforces mode/allowed/confirmation consistency, OrderTicket's live gate blocks (never falls back to invented copy) when the safety service is unreachable/rejecting/incomplete, and `ApiError` is re-exported from `@/lib/api`. Backend 1143 green; frontend baseline unchanged.
 
 **Next Orbit work after current local `dev`:**
 
@@ -487,7 +486,7 @@ The Compare button on the Analysis toolbar replaces the chart area with a stack 
 
 ### Phase 12: Parallax Rules/Fib Closeout — COMPLETE
 
-> Goal: Finish the Parallax v1 user-side trigger workflow before moving to Inflect: make rules understandable, make Today actions reliable, support trigger creation from Analysis, and tie Fibonacci alerts to the visible chart fib.
+> Goal: Finish the Parallax v1 user-side trigger workflow: make rules understandable, make Today actions reliable, support trigger creation from Analysis, and tie Fibonacci alerts to the visible chart fib.
 > Merged to `dev`: `b056ef3` (`fix: clean up Parallax trigger rules UX`) and `766dbe7` (`feat: add fib chart trigger`).
 
 | # | Task | Status | Notes |
@@ -522,7 +521,7 @@ but only behind explicit settings and connection gates.
 1. **TWS-gated execution assistant**
    - Ships as a fourth Orbit module under a working name until product naming.
    - Only available when TWS is connected and explicitly selected by the user.
-   - TWS mode is exclusive: Parallax, MoonMarket, and Inflect are disabled because
+   - TWS mode is exclusive: Parallax and MoonMarket are disabled because
      their contracts depend on Client Portal data.
    - Starts in paper mode before any separately approved live path.
    - Uses `ib_async` only behind Orbit's `TwsBrokerAdapter`; third-party types do
@@ -555,76 +554,6 @@ but only behind explicit settings and connection gates.
 - Mobile companion (read-only dashboard).
 - Keyboard shortcuts.
 - Backup / restore SQLite (watchlists, triggers, settings export).
-- Read-only Parallax-analysis links from Inflect. Journal outcomes must not feed
-  the fib-learning algorithm.
-
-> **Inflect (trading journal)** is Phase 4 of the Orbit roadmap, built after Parallax and MoonMarket.
-
----
-
-## Inflect (trading journal) — v1 shipped (2026-06-02)
-
-Inflect is the third Orbit module: a Tradezella-style journal. v1 turns the
-shared `fills` projection into round-trip trades on demand, attributes realized
-P&L to a monthly calendar, and lets the user annotate each trade. It rides the
-existing FastAPI sidecar and SQLite DB — no new services and no
-Parallax/MoonMarket journal hooks (`docs/architecture/modules.md`).
-
-### v1 scope (what shipped)
-
-- **Backend** (`/inflect/*`): FIFO round-trip matcher (`services/inflect/matcher.py`),
-  on-demand trade derivation + calendar aggregation + journal CRUD
-  (`services/inflect/service.py`), extended-hours-gated background fills sync
-  (`services/inflect_sync.py`), and a thin router (`routers/inflect.py`). The
-  only persisted Inflect-owned table is `journal_entries`, keyed by a stable
-  `trade_id` so annotations survive re-derivation.
-- **Frontend** (`src/modules/inflect/`): launcher tile + `/inflect/*` route,
-  monthly P&L calendar (Sunday-start grid + weekly rail), round-trip trades
-  table with OPEN/CLOSED filter, trade-detail drawer (stats + fills), and a
-  setup/notes/tags journal editor. Zustand view store + TanStack Query hooks.
-- **Basis recovery pass**: incomplete-basis trades now surface as repairable
-  instead of becoming phantom shorts. The app can synthesize starting lots from
-  IBKR Performance & Reports data, show basis-lot status, let the user manually
-  repair basis, search trades by symbol, and clear Inflect-owned storage when a
-  reset is needed.
-- **Tests**: 50 backend (matcher, calendar, sync gate, router, DB layer) +
-  frontend coverage for the original journal, plus added basis-recovery,
-  manual-basis, symbol-search, and storage-cleanup regression coverage.
-  Latest targeted suites and frontend build are green on local `dev`.
-
-### Locked decisions (D1–D10)
-
-- **D1.** Trades derived on demand from `fills` via FIFO; never persisted in v1.
-- **D2.** Stable `trade_id` = `{account_id}:{conid}:{first_open_execution_id}`.
-- **D3.** `conid` is the instrument key throughout (`docs/architecture/modules.md`).
-- **D4.** Realized P&L net of commissions, attributed to the **close** date in
-  US/Eastern (the trading-day timezone).
-- **D5.** Commissions prorated per fill so position flips split costs correctly
-  across the closing and newly-opened trade.
-- **D6.** Background sync floors at 60s and is gated to extended hours via
-  `/trsrv/secdef/schedule` (cached once/day), with a hardcoded ~04:00–20:00 ET
-  weekday fallback; holidays authoritatively close without fallback.
-- **D7.** Setup vocabulary is a fixed list: Fib retracement, Fib extension,
-  Breakout, Mean reversion, News candle, Other.
-- **D8.** Options ride the same matcher via sec_type/conid (single-leg).
-- **D9.** R-multiple deferred to v2 (no risk/stop captured); detail view leaves a
-  slot, value always null.
-- **D10.** Incomplete basis is a first-class repair state, not evidence of a
-  short. Repairs must remain auditable because they affect derived realized P&L.
-
-### v2 follow-ups
-
-- Flex/CSV import to backfill fills beyond IBKR's ~7-day window (schema is
-  import-ready; >7-day app downtime currently loses fills).
-- R-multiple / planned-risk entry.
-- Trade screenshots + ratings.
-- Multi-leg option strategies.
-- Average-cost matcher option alongside FIFO.
-- Materialized `trades` cache (matcher recomputes per request today — fine for
-  v1 history sizes, no API change needed to add a cache).
-
----
-
 ## Open Questions
 
 | # | Question | Related Task | Status |

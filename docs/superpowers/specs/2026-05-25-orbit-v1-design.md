@@ -10,7 +10,6 @@
 
 ## Purpose
 
-Unify **Parallax** (technical analysis) and **MoonMarket** (portfolio + trading) under a single Tauri desktop binary called **Orbit**, with **Inflect** (trading journal) as a future module. Orbit authenticates with IBKR once and exposes the apps from a single launcher. This document defines the v1 scope and the key design decisions; it does not re-derive the full roadmap in `PLAN.md`.
 
 ---
 
@@ -48,7 +47,6 @@ orbit/                     ← Tauri shell + single React app
     routers (split):   /parallax/*        /moonmarket/*
     SQLite (shared):
       instruments          ← conid cache, owned by Parallax, read by all
-      fills                ← written by MoonMarket on fills (future Inflect hook)
       watchlists, trigger_rules, trigger_hits, settings   ← Parallax
 ```
 
@@ -65,7 +63,6 @@ One screen, two stacked regions:
 - **Top:** IBKR gateway status + login prompt (lifted from Parallax's existing auth flow).
 - **Below:** three app icons —
   - **Parallax** and **MoonMarket** — grayed and unclickable until `useSessionStore.authenticated === true`; on auth they colorize and become clickable.
-  - **Inflect** — grayed with a "Coming soon" tag. The icon exists in v1 so the full vision is visible, but the module is not built until Phase 4.
 
 Gating is driven entirely by the shared `useSessionStore` IBKR auth status. There is no separate post-auth launcher screen.
 
@@ -122,7 +119,6 @@ Keep the existing chain (`frontend/src/pages/StockItem/options/OptionsChain.tsx`
 - **Transactions page** — kept for v1 (includes the live-orders table).
 - **Shared OrderTicket** — stocks.
 - **Account selection.**
-- `fills` table written when fills arrive (the future Inflect hook). Inflect itself is not built.
 
 **Re-theming:** Everything that is not a chart is restyled to the Parallax theme (shadcn + Tailwind v4). Charts keep their current rendering and look.
 
@@ -138,13 +134,10 @@ Keep the existing chain (`frontend/src/pages/StockItem/options/OptionsChain.tsx`
   Options chain re-stacked and routed through the shared ticket · any remaining order-management polish.
 - **Phase 3 — Integration polish:**
   Shared component library, visual-consistency pass, Orbit settings, build + distribution.
-- **Phase 4 — Inflect:**
-  Trading journal module (reads `fills` + Parallax `/indicators`). Built last.
 
 ---
 
 ## Out of scope (v1)
 
-- Inflect (Phase 4).
 - Options trading (Phase 2).
 - Multi-account beyond IBKR's native selection, mobile companion.

@@ -6,18 +6,6 @@ The companion design doc is [`2026-05-20-watchlists-triggers-design.md`](./2026-
 
 ---
 
-## 1. Smart Screener "Add + watch" action
-
-**What:** A one-click action on Screener result rows that adds the symbol to a chosen watchlist *and* proposes a starter rule set (either a template or AI-generated based on the screener filters used).
-
-**Motivation:** Screener → Watchlist → Triggers is the project's stated core workflow. Today it's three separate steps. A combined action collapses the bridge.
-
-**Why parked:** Requires the new trigger schema to ship first, and the AI-assist piece overlaps with item 9 below. Cleanest after both are stable.
-
-**Rough sizing:** ~2 days. UI change on the Screener result row + Screener quick-peek slide-over. Backend already has watchlist add and the new rule endpoints; the AI rule-generation hook needs the work from item 9.
-
----
-
 ## 2. Analysis page "Create rule from current view"
 
 **What:** Right-click a chart level (price line, fib level, EMA touch) and get a prefilled rule modal with the threshold seeded from where you clicked, the indicator inferred from the line, and the symbol from the current chart.

@@ -14,7 +14,6 @@ The shared SQLite `instruments` table stores conid-to-display metadata, while `c
 - `routers.watchlist` repeats IBKR payload normalization and writes cache rows directly.
 - `services.db` exposes raw table operations but does not own typed cache-miss behavior.
 - `services.ibkr` owns conid-resolution candidate ranking separately from display-identity writes.
-- `services.inflect.service` has its own display fallback when a conid has no cached symbol.
 
 This creates small but persistent ownership leaks. Each caller can make a different choice about display fallback, cache-write fields, or invalid IBKR payload handling.
 
@@ -41,7 +40,6 @@ Hidden implementation:
 - normalization of IBKR display fields into one canonical internal shape
 - write rules for empty or partial display metadata
 - cache-miss exception mapping to the existing HTTP 404 response
-- display fallback rules for later Inflect/MoonMarket adoption
 
 The service does not replace `conid_cache` in this branch. `conid_cache` remains the lookup-direction cache used by `IBKRService.get_conid(symbol, sec_type)`. The new identity service owns the result-direction cache: `conid -> symbol/company/sec_type/cached_at`.
 
@@ -50,7 +48,6 @@ The service does not replace `conid_cache` in this branch. `conid_cache` remains
 - As a user who fetches a quote, Orbit stores the instrument's display identity from the quote payload so later UI surfaces can show a symbol/name for that same `conid`.
 - As a user opening a UI surface that already has a `conid`, Orbit reads display metadata from the local cache without hitting IBKR again.
 - As a user whose `conid` has not been cached yet, Orbit keeps the existing 404 behavior at `/instruments/{conid}` instead of silently inventing metadata.
-- As a developer adding MoonMarket or Inflect display behavior, I can reuse one identity module instead of copying fallback and cache-write rules.
 
 ## Implementation Decisions
 
@@ -80,7 +77,6 @@ Complexity hidden behind the service:
 Expected import direction:
 
 - routers may depend on `InstrumentIdentityService`
-- module services such as Inflect may later depend on `InstrumentIdentityService`
 - `InstrumentIdentityService` depends on `DatabaseService`
 - `InstrumentIdentityService` does not depend on route modules, frontend code, or `IBKRService`
 
@@ -125,18 +121,14 @@ Public behavior to prove:
 - valid rows still return `conid`, `symbol`, and `companyName`
 - cache writes use the same display-identity rules as quote/search
 
-### Slice 4: Inflect display fallback reads through identity service (`HITL`)
 
-Replace Inflect's local conid display fallback with the shared identity service.
 
 Public behavior to prove:
 
-- `/inflect/symbols` still returns traded conids sorted by display symbol
 - fill symbols still win when present
 - cached instrument symbols fill missing display names
 - uncached conids still use the explicit fallback format
 
-This remains `HITL` because it changes an Inflect module-service dependency.
 
 ## Testing
 
@@ -158,7 +150,6 @@ Relevant checks:
 
 - Parallax: quote/search/conid paths gradually stop owning direct instrument-cache writes. Public market API behavior stays unchanged.
 - MoonMarket: no first-slice behavior change. Later MoonMarket adoption can use the identity service for display rules without changing `conid` ownership.
-- Inflect: no first-slice behavior change. Later slice can replace local fallback code with the shared identity service.
 
 ## Policy Impact
 
@@ -171,4 +162,3 @@ None expected. This does not change trading safety behavior, local/cloud boundar
 - no direct frontend access to IBKR
 - no changes to `conid_cache` ownership
 - no full migration of all backend writers in Slice 1
-- no change to MoonMarket or Inflect behavior in Slice 1

@@ -13,7 +13,6 @@ Add the MoonMarket Transactions page to Orbit after the portfolio command deck. 
 
 - React frontend talks only to the FastAPI sidecar.
 - FastAPI sidecar talks to IBKR Client Portal through `IBKRService`.
-- SQLite stores normalized fills locally for future Inflect journaling.
 - `conid` remains the cross-module instrument key.
 
 This plan intentionally does **not** add trading actions yet. The page should display recent executions and live orders, but it should not place, modify, or cancel orders. Those mutations belong with the shared `OrderTicket` plan after the read model is stable.
@@ -27,8 +26,7 @@ This plan intentionally does **not** add trading actions yet. The page should di
 - MoonMarket local navigation between Portfolio and Transactions.
 - `GET /moonmarket/trades?account_id=<id>&days=<n>` backend endpoint.
 - `GET /moonmarket/live-orders?account_id=<id>` backend endpoint.
-- Normalized recent trades/fills response keyed by `execution_id` and `conid`.
-- Local `fills` SQLite table and idempotent upsert when trades are fetched.
+- Normalized recent trades response keyed by `execution_id` and `conid`.
 - Transactions UI with:
   - Recent trades summary strip.
   - Recent trades table with side and symbol filters.
@@ -43,7 +41,6 @@ This plan intentionally does **not** add trading actions yet. The page should di
 - Order preview, place, reply/confirm, modify, or cancel.
 - Options orders.
 - Full historical statements/imports.
-- Inflect journal UI.
 - Export/download workflow.
 - Direct frontend calls to IBKR.
 
@@ -55,7 +52,6 @@ Plan #4 should answer: "What recently happened in the account, and what orders a
 
 It should not answer: "How do I create or edit a trade?" That is Plan #5.
 
-This boundary matters because trading mutations need a separate safety pass, confirmation UX, typed backend errors, and tests around IBKR reply flows. The Transactions page can be valuable immediately as a read-only operational page and as the source of normalized fills for Inflect.
 
 ---
 
@@ -82,7 +78,7 @@ Rules:
 - `days` is bounded to `1..7` for the v1 endpoint.
 - The sidecar fetches recent trades from IBKR.
 - The sidecar normalizes trade rows into an Orbit-owned response shape.
-- The sidecar upserts normalized rows into SQLite `fills`.
+- The sidecar returns normalized rows from the live IBKR response.
 - The HTTP response returns the normalized rows and derived summary.
 
 Response shape:
@@ -158,35 +154,6 @@ Response shape:
 
 ---
 
-## SQLite Fills Table
-
-The `fills` table is the local source that Inflect will read later. Plan #4 only writes it from MoonMarket trade fetches.
-
-Columns:
-
-- `execution_id TEXT PRIMARY KEY`
-- `account_id TEXT NOT NULL`
-- `conid INTEGER NOT NULL`
-- `symbol TEXT`
-- `description TEXT`
-- `side TEXT NOT NULL`
-- `quantity REAL NOT NULL`
-- `price REAL`
-- `net_amount REAL`
-- `commission REAL`
-- `sec_type TEXT`
-- `trade_time TEXT NOT NULL`
-- `trade_time_ms INTEGER`
-- `raw_json TEXT`
-- `created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP`
-- `updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP`
-
-The upsert key is `execution_id`. If IBKR returns an amended fill row, the local row updates rather than duplicating.
-
-Future Inflect can join on `conid`, `account_id`, and `trade_time` without needing MoonMarket-specific tables.
-
----
-
 ## Frontend Shape
 
 Plan #4 should split MoonMarket into route-aware page pieces:
@@ -225,14 +192,14 @@ The page should keep the same density and visual language as the portfolio comma
 | Symbol activity chart                         | Volume by symbol   |
 +-----------------------------------------------+--------------------+
 | Recent Trades / Live Orders tabs                                   |
-| Recent Trades: filterable fills table                              |
+| Recent Trades: filterable transaction table                        |
 | Live Orders: read-only working orders table                        |
 +--------------------------------------------------------------------+
 ```
 
 Recent Trades tab:
 
-- Shows latest normalized fills.
+- Shows latest normalized trades.
 - Has side filter: All, Buys, Sells.
 - Has symbol filter/search.
 - Uses color carefully: green/teal for buy, rose/amber for sell, not a one-hue palette.
@@ -292,7 +259,7 @@ Frontend should show:
 - `/moonmarket/transactions` is reachable from the MoonMarket header.
 - `/moonmarket` still renders the Plan #3 portfolio command deck.
 - Recent trades load through FastAPI and are normalized server-side.
-- Fetched trades are idempotently upserted into the local `fills` table.
+- Fetched trades remain a live response; no local execution projection is written.
 - Live orders load through FastAPI and render read-only.
 - No trading mutation endpoint is exposed in the frontend.
 - No direct frontend IBKR access.

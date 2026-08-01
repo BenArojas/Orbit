@@ -1,11 +1,11 @@
 # Orbit Module Boundaries
 
 Orbit is one Tauri application with one FastAPI sidecar and one SQLite database.
-It contains three product modules:
+It contains two product modules and a shared execution assistant:
 
 - **Parallax:** technical analysis, screening, watchlists, and alerts.
 - **MoonMarket:** portfolio, account, options, and order workflows.
-- **Inflect:** trading journal, fills-derived trades, and annotations.
+- **TWS Assistant:** live execution planning and broker workflow support.
 
 ## Shared Orbit Ownership
 
@@ -38,9 +38,6 @@ display-identity cache.
 
 ## Module Rules
 
-- Parallax does not add journal callbacks, save-to-journal UI, or Inflect hooks.
-- Inflect derives trades from shared fills and owns only journal annotations and
-  related repair data.
 - MoonMarket owns account/portfolio/order product behavior but consumes shared
   Orbit account, identity, safety, and execution boundaries.
 - Cross-module behavior is introduced through a small Orbit-owned interface, not

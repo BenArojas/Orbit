@@ -12,7 +12,6 @@
 - gateway and auth calls
 - shared market, instruments, indicators, drawings, triggers, watchlist, screener, and sector calls
 - MoonMarket endpoint contracts and types
-- Inflect endpoint contracts and types
 - Parallax endpoint contracts and types
 
 That makes the interface wide relative to the implementation. A module importing one endpoint or type from `@/lib/api` is coupled to every other product contract in Orbit. It also makes future backend contract changes harder to reason about because `api.ts` is both the low-level transport module and the product-level API surface.
@@ -22,14 +21,12 @@ That makes the interface wide relative to the implementation. A module importing
 The final state should have module-local sidecar contracts for every product module:
 
 - `src/modules/moonmarket/api.ts`
-- `src/modules/inflect/api.ts`
 - `src/modules/parallax/api.ts`
 
 Those module files should share one deep core request module:
 
 - `src/lib/sidecarClient.ts`
 
-The migration should still happen through vertical tracer bullets. The first implementation slice should prove the full shape through one real module path before spreading the pattern across Inflect and Parallax.
 
 ## Solution
 
@@ -48,8 +45,6 @@ Then move product contracts into module-owned API files. Each module API owns it
 
 ## User Stories
 
-- As a developer changing MoonMarket portfolio endpoints, I can work in the MoonMarket module without scanning Parallax, Inflect, gateway, or screener contracts.
-- As a developer changing Inflect journal endpoints, I can import `inflectApi` and Inflect types from the Inflect module instead of the broad global client.
 - As a developer changing Parallax analysis or watchlist endpoints, I can keep Parallax-specific contracts in the Parallax module while still sharing the same sidecar runtime.
 - As a user, there is no behavior change. The same local sidecar, offline handling, route behavior, and UI data should continue to work.
 
@@ -59,7 +54,6 @@ Then move product contracts into module-owned API files. Each module API owns it
   - `ApiError`
   - `sidecarRequest<T>(method, path, body?, signal?)`
 - `src/modules/moonmarket/api.ts` is created first and owns the MoonMarket product contract.
-- `src/modules/inflect/api.ts` and `src/modules/parallax/api.ts` are part of the same architecture mission, but they follow after the first verified MoonMarket slice.
 - `src/lib/api.ts` remains during migration so unmigrated callers do not need to move in the first slice.
 - Module-local API files may import `sidecarRequest` from `@/lib/sidecarClient`; they must not call `fetch` directly.
 - Module UI and hooks should import their module API when migrated.
@@ -85,7 +79,6 @@ Product module APIs are shallow, readable contracts over endpoint paths. Their c
 Expected import direction:
 
 - `src/modules/moonmarket/*` imports from `src/modules/moonmarket/api.ts`
-- `src/modules/inflect/*` and Inflect hooks import from `src/modules/inflect/api.ts`
 - `src/modules/parallax/*` and Parallax hooks/components import from `src/modules/parallax/api.ts`
 - module API files import from `src/lib/sidecarClient.ts`
 - `src/lib/sidecarClient.ts` does not import product modules
@@ -131,24 +124,18 @@ Public behavior to prove:
 - OrderTicket flows that depend on MoonMarket order endpoints still pass or keep compatibility through `src/lib/api.ts` until their own seam is addressed.
 - options-chain tests still prove the same encoded endpoint paths.
 
-### Slice 3: Inflect endpoints move behind `inflectApi` (`AFK after slice 2 approval`)
 
-Create `src/modules/inflect/api.ts` and move Inflect endpoint contracts behind it:
 
 - setups
 - calendar
 - trades and trade detail
-- journal save
 - sync
 - backfill status
 - basis lots and basis audit
 - storage stats and cleanup
-- Inflect response/request types
 
 Public behavior to prove:
 
-- Inflect hooks call `inflectApi`, not the broad global API object.
-- Inflect module tests keep the same loading, empty, error, sync, and journal-save behavior.
 - query keys and invalidation behavior remain unchanged.
 
 ### Slice 4: Parallax endpoints move behind `parallaxApi` (`HITL`)
@@ -208,7 +195,6 @@ Later slices should add or move tests alongside the module API being migrated, t
 ## Module Impact
 
 - MoonMarket: first module to own its frontend sidecar contract. User behavior stays unchanged.
-- Inflect: planned follow-up migration to its own API seam. No first-slice behavior change.
 - Parallax: planned follow-up migration to its own API seam. No first-slice behavior change.
 - Shared shell/gateway/auth/account: not part of product-module split in Slice 1; they remain shared/Orbit-level until a smaller seam is defined.
 - Backend: no backend changes expected.

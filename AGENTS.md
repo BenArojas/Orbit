@@ -4,7 +4,7 @@ Orbit is a local-first desktop trading decision-support platform:
 
 - **Parallax:** technical analysis, screening, watchlists, and alerts.
 - **MoonMarket:** portfolio, account, options, and order workflows.
-- **Inflect:** trading journal and trade review.
+- **TWS Assistant:** live execution planning and broker workflow support.
 
 Stack: Tauri v2, React 19/TypeScript, Tailwind/shadcn, FastAPI/Python 3.12,
 Polars with a pandas-ta bridge, SQLite, and IBKR Client Portal.

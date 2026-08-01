@@ -11,15 +11,13 @@ Build the TWS Execution Assistant as a fourth Orbit module behind an exclusive b
 - No `ib_async` or `ibapi` dependency in the first slice.
 - No execution-plan persistence or migrations in the first slice.
 - No reuse of MoonMarket Client Portal order submission code for TWS.
-- No autonomous trading, AI arming, scanner-triggered orders, or background execution.
+- No autonomous trading, automated arming, scanner-triggered orders, or background execution.
 
 ## 3. Current repo baseline
 
 - `docs/archive/2026-06-05-tws-execution-assistant-design.md` defines the fourth-module, exclusive-session, adapter-bounded design.
 - `docs/research/tws-execution-assistant-research-packet.md` confirms the first slice should be non-trading boundary work.
-- `src/orbit/moduleEntry/OrbitModuleEntry.tsx` currently registers only `parallax`, `moonmarket`, and `inflect`, gated only by Gateway authentication.
 - `src/orbit/OrbitLauncher.tsx` renders all registered modules and enables them only by `isAuthenticated`.
-- `src/orbit/OrbitShell.tsx` has routes for `/parallax/*`, `/moonmarket/*`, and `/inflect/*`; there is no TWS route.
 - `src/orbit/OrbitProviders.tsx` always mounts `GatewayProvider`, `OrbitAccountProvider`, and `OrderTicket`; there is no broker-session provider.
 - `src/lib/api.ts` owns shell-level health/auth/gateway contracts; product contracts live in module-local `api.ts` files.
 - `backend/main.py` wires one Client Portal `IBKRService` and registers routers; no `BrokerSessionService`, `/orbit/session`, or `/execution-assistant` router exists.
@@ -66,7 +64,6 @@ exercised by that behavior.
 
 ### Slice 1: Broker Session Mode And Module Gating
 
-- **Behavior proven:** Orbit exposes `none | client_portal | tws`; launcher shows four modules; Parallax, MoonMarket, and Inflect are disabled in `tws`; TWS shell is disabled outside `tws`; direct disabled routes do not mount their product module.
 - **AFK or HITL:** HITL before coding because this introduces a public session contract and changes module ownership/gating.
 - **Files likely touched:** `backend/services/broker_session.py`, `backend/models/broker_session.py`, `backend/routers/orbit_session.py`, `backend/main.py`, `backend/deps.py`, `src/orbit/OrbitProviders.tsx`, `src/orbit/OrbitLauncher.tsx`, `src/orbit/OrbitShell.tsx`, `src/orbit/moduleEntry/OrbitModuleEntry.tsx`, `src/modules/tws-execution-assistant/TwsExecutionAssistantModule.tsx`, `src/modules/tws-execution-assistant/api.ts`.
 - **Public interface:** `GET /orbit/session/mode`; minimal mode switch endpoint only if needed for the shell to enter `tws`; `BrokerSessionMode = "none" | "client_portal" | "tws"`; module availability includes disabled reasons.
@@ -131,7 +128,6 @@ exercised by that behavior.
 - Durable broker-session persistence.
 - Full execution audit/event-log schema.
 - Kill switch behavior beyond read-only status.
-- AI draft generation and AI provenance.
 - Options, futures, forex, crypto, shorts, and multi-leg strategies.
 - Always-on/system-tray execution.
 - Packaging, installer, and production TWS settings.
@@ -161,6 +157,6 @@ No paper/live account-type check exists on connect. Paper is the default port co
 ## 10. Planner self-review: what was kept small, what was deliberately not planned yet
 
 - Kept small: the first slice proves only the shared broker-session mode and module gating behavior the rest of the assistant depends on.
-- Kept small: no first-slice dependency, socket, order ID, DB migration, order route, AI feature, or execution monitor.
+- Kept small: no first-slice dependency, socket, order ID, DB migration, order route, or execution monitor.
 - Kept small: tests stay at zero by default, with at most one public-boundary check when a critical promise is uncovered.
-- Not planned yet: paper order placement, bracket/OCA behavior, live mode, arming, durable audit, kill-switch enforcement, and AI draft workflows. Those need separate approval after the boundary and read-only adapter slices prove the shape.
+- Not planned yet: paper order placement, bracket/OCA behavior, live mode, arming, durable audit, and kill-switch enforcement. Those need separate approval after the boundary and read-only adapter slices prove the shape.

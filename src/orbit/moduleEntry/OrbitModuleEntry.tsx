@@ -1,10 +1,9 @@
 import type { ReactElement } from "react";
 import type { LucideIcon } from "lucide-react";
-import { Activity, Briefcase, NotebookPen, Terminal } from "lucide-react";
+import { Activity, Briefcase, Terminal } from "lucide-react";
 import { BackToOrbitButton } from "@/components/ui/BackToOrbitButton";
 import { GatewaySetup } from "@/components/gateway/GatewaySetup";
 import { useBrokerSession } from "@/context/BrokerSessionContext";
-import { InflectModule } from "@/modules/inflect/InflectModule";
 import { MoonMarketModule } from "@/modules/moonmarket/MoonMarketModule";
 import { ParallaxModule } from "@/modules/parallax/ParallaxModule";
 import { TwsExecutionAssistantModule } from "@/modules/tws-execution-assistant/TwsExecutionAssistantModule";
@@ -13,7 +12,6 @@ import type { BrokerSessionMode } from "@/modules/tws-execution-assistant/api";
 export type OrbitModuleId =
   | "parallax"
   | "moonmarket"
-  | "inflect"
   | "tws-execution-assistant";
 
 type OrbitModuleDefinition = {
@@ -41,14 +39,6 @@ export const orbitModules: Record<OrbitModuleId, OrbitModuleDefinition> = {
     path: "/moonmarket",
     icon: Briefcase,
     render: () => <MoonMarketModule />,
-  },
-  inflect: {
-    id: "inflect",
-    label: "Inflect",
-    description: "Trading journal",
-    path: "/inflect",
-    icon: NotebookPen,
-    render: () => <InflectModule />,
   },
   "tws-execution-assistant": {
     id: "tws-execution-assistant",

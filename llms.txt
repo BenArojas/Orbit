@@ -1,7 +1,7 @@
 # Orbit
 
 > Orbit is a local-first desktop trading decision-support platform. It helps a
-> human analyze markets, manage a portfolio, and journal trades. It is NOT an
+> human analyze markets and manage trading workflows. It is NOT an
 > autonomous trading bot and never places or executes orders on its own — every
 > broker action requires explicit human confirmation.
 
@@ -24,7 +24,7 @@ or transact with. Agents interact with Orbit in two ways:
 
 - **Parallax**: technical analysis, screening, watchlists, and alerts.
 - **MoonMarket**: portfolio, account, options, and order workflows (human-confirmed).
-- **Inflect**: trading journal and trade review.
+- **TWS Assistant**: live execution planning and broker workflow support.
 
 Cross-module identity uses `conid` (IBKR contract id); ticker text is display metadata only.
 

@@ -1,7 +1,7 @@
 """
 Pydantic models for all request/response types in the Orbit sidecar API.
 
-Most contracts currently serve the Parallax module; MoonMarket and Inflect
+Most contracts currently serve the Parallax module; MoonMarket
 should add their contracts here as they join the shared sidecar.
 
 These models are "contracts" — they define the exact shape of data
@@ -115,7 +115,7 @@ class ConidResponse(BaseModel):
 #
 #  Orbit integration: This is the shared instrument lookup table.
 #  Parallax writes to it (via market search/conid resolution).
-#  MoonMarket and Inflect read from it to resolve conid → symbol.
+#  MoonMarket reads from it to resolve conid → symbol.
 # ═══════════════════════════════════════════════════════════════
 
 

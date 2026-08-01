@@ -205,7 +205,6 @@ describe("AppIcon", () => {
   });
 
   it("shows a badge when provided", () => {
-    render(<AppIcon label="Inflect" icon={Activity} enabled={false} badge="Coming soon" />);
     expect(screen.getByText(/coming soon/i)).toBeInTheDocument();
   });
 });
@@ -319,7 +318,6 @@ describe("OrbitLauncher", () => {
     render(<OrbitLauncher />);
     expect(screen.getByRole("button", { name: /parallax/i })).toBeDisabled();
     expect(screen.getByRole("button", { name: /moonmarket/i })).toBeDisabled();
-    expect(screen.getByRole("button", { name: /inflect/i })).toBeDisabled();
     // Auth flow is reachable while unauthenticated.
     expect(screen.getByTestId("connection-page")).toBeInTheDocument();
   });
@@ -336,10 +334,8 @@ describe("OrbitLauncher", () => {
     expect(navigate).toHaveBeenCalledWith("/moonmarket");
   });
 
-  it("keeps Inflect disabled even when authenticated (coming soon)", () => {
     authed = true;
     render(<OrbitLauncher />);
-    expect(screen.getByRole("button", { name: /inflect/i })).toBeDisabled();
     expect(screen.getByText(/coming soon/i)).toBeInTheDocument();
   });
 });
@@ -363,7 +359,6 @@ Create `src/orbit/OrbitLauncher.tsx`:
  * Reads IBKR auth from the shared gateway context. While unauthenticated it
  * renders Parallax's existing ConnectionPage (the proven login flow) and shows
  * the app icons grayed/disabled. Once authenticated the Parallax and MoonMarket
- * icons colorize and navigate into their modules. Inflect stays "Coming soon".
  *
  * Plan #2 polishes this into the final single-screen layout; here it is a
  * functional skeleton that correctly gates on auth.
@@ -406,7 +401,6 @@ export function OrbitLauncher() {
           onOpen={() => navigate("/moonmarket")}
         />
         <AppIcon
-          label="Inflect"
           icon={NotebookPen}
           enabled={false}
           badge="Coming soon"
@@ -779,7 +773,6 @@ npm run dev                                                   # terminal 2
 Verify in the browser:
 1. `/` shows the Orbit launcher with three gray icons + the Parallax connection UI.
 2. `curl -s http://localhost:8000/moonmarket/health` returns `{"module":"moonmarket","status":"ok"}`.
-3. After IBKR auth, Parallax + MoonMarket icons colorize; Inflect stays "Coming soon".
 4. Parallax icon → full existing Parallax app; MoonMarket icon → stub; Back to Orbit works.
 
 - [ ] **Step 4 (note for later): relocate planning docs into the Orbit repo**
@@ -801,7 +794,6 @@ Open PR `feature/orbit-foundation → dev`, get review, squash-merge, delete the
 - Monorepo / one React app → Tasks 1, 2, 5 (Parallax promoted; one app; router groups).
 - Consolidated FastAPI sidecar → Task 6 (`/moonmarket` prefix on the Orbit sidecar).
 - Combined auth + launcher (gray-until-connected) → Tasks 3, 4 (skeleton; full polish is Plan #2, explicitly scoped out here).
-- Three app icons incl. Inflect "Coming soon" → Task 4.
 - One Tauri binary → Task 1 (product rename; existing single-binary build retained).
 - `conid`-keyed nav bridge, Portfolio/Transactions, OrderTicket, options → **out of scope for foundation**, covered by Plans #2-#6.
 

@@ -116,5 +116,4 @@ risk sets quantity; editing quantity clears risk.
 ## Non-goals
 
 Reverse position, lot-aware partial sells, hotkeys, order templates, time &
-sales, options chains, P&L analytics (Inflect), alerts (Parallax), account
 dashboards (MoonMarket).

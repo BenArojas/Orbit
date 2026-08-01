@@ -1,8 +1,8 @@
 # Orbit
 
 Local desktop trading decision-support platform. Orbit unifies Parallax
-(technical analysis), MoonMarket (portfolio/trading), and Inflect (future
-trading journal) in one Tauri app with one Python sidecar and one SQLite
+(technical analysis), MoonMarket (portfolio/trading), and the TWS Assistant
+in one Tauri app with one Python sidecar and one SQLite
 database.
 
 Orbit was previously called **IBKR Hub** during planning. That name is kept

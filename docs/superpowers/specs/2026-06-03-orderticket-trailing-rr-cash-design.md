@@ -43,7 +43,6 @@ All five ship together on one branch.
 | Labels | Display-only plain-English labels; **wire values stay the IBKR codes** (`MKT`, `GTC`, `TRAIL`, etc.). One shared label map, defined once. |
 | R/R readout | Shown only in bracket mode when both TP and SL are set. **Read-only / informational — never blocks the order.** Includes a one-line plain-English explainer. |
 | Cash sizing | **Size by: Shares / Cash / % of Buying Power**. Cash = dollar amount; % of Buying Power = percent of the account's IBKR buying power. Computes a share quantity; IBKR still receives shares. **Buying power is fetched from IBKR `GET /portfolio/{accountId}/summary`** (margin buying power, which can exceed cash) via a new read-only Orbit funds endpoint. |
-| Branch base | New branch cut **from `dev`** (per parallax-git naming), not from `feature/inflect-journal`. |
 
 ---
 

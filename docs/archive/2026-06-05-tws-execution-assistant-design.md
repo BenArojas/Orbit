@@ -48,12 +48,9 @@ following modules are now in place on `dev` and inform this design:
 ## Approved Policy
 
 - No autonomous trading.
-- AI, scanners, and triggers cannot place, arm, modify, or cancel orders.
+- Scanners and triggers cannot place, arm, modify, or cancel orders.
 - Every order must be created by, or execute within, a user-reviewed and
   user-armed plan.
-- AI may draft trade ideas, trade-management ideas, and risk/reward variants.
-- AI output is always draft-only until deterministic backend validation and user
-  arming.
 - TWS v1 starts with stocks only.
 - TWS v1 is paper-first.
 - Live mode comes later behind explicit settings enable, per-session arming, and
@@ -69,7 +66,6 @@ following modules are now in place on `dev` and inform this design:
 **Autonomous trading** means Orbit chooses or changes trade intent without user
 approval. Forbidden examples:
 
-- AI submits an order.
 - Scanner finds a stock and opens a position.
 - Trigger fires and places an order.
 - Orbit increases size or averages down unless that exact rule was armed.
@@ -124,14 +120,12 @@ TWS Execution Assistant v1 includes:
 
 - A fourth Orbit launcher module/tile using the working label `TWS Execution
   Assistant`.
-- Exclusive TWS session mode that disables Parallax, MoonMarket, and Inflect.
 - Stocks only (`secType=STK`).
 - Paper mode first.
 - Existing open position management.
 - New trade setup planning before entry.
 - Broker-native orders where possible.
 - Orbit-managed plan monitoring where broker-native orders are insufficient.
-- AI draft ideas for risk/reward, entries, stops, targets, and trim ladders.
 - Deterministic backend validation before arming.
 - Audit log for every plan lifecycle event and order intent.
 - Kill switch.
@@ -141,24 +135,19 @@ Out of scope for v1:
 
 - Options, futures, forex, crypto, and multi-leg strategies.
 - Fully autonomous entry.
-- AI order placement.
 - Trigger/scanner order placement.
 - Live execution without separate approval and gating.
 - Learning from trade outcomes. Parallax fib learning remains separate.
 - System tray always-on execution.
-- Embedding this workflow inside Parallax, MoonMarket, or Inflect.
 - Mixing TWS and Client Portal session assumptions in the same active module.
 
 ## Orbit Module Boundary and Session Modes
 
 The TWS assistant is its own Orbit module. It does not live inside MoonMarket,
-Parallax, or Inflect. The launcher owns a single broker session mode:
 
 - `none`: no broker session is active; all broker-backed modules are disabled.
-- `client_portal`: Parallax, MoonMarket, and Inflect are enabled according to
   their normal auth/build state. TWS Execution Assistant is disabled.
 - `tws`: only TWS Execution Assistant is enabled. Parallax, MoonMarket, and
-  Inflect are disabled with a clear "Client Portal mode required" message.
 
 Backend state uses the same single-mode contract. `BrokerSessionService` owns
 mode transitions and prevents both broker adapters from being active at the same
@@ -344,36 +333,7 @@ Required fields:
 - `mode`
 - `status`
 
-Both plan types support notes, AI draft provenance, validation results, and audit
-references.
-
-## AI Role
-
-AI can draft:
-
-- entry thesis
-- entry zone
-- stop
-- targets
-- trim ladder
-- risk/reward alternatives
-- "move stop to breakeven after target 1" ideas
-- trailing-after-target ideas
-- management suggestions for existing positions
-
-AI cannot:
-
-- arm a plan
-- submit orders
-- modify orders
-- cancel orders
-- increase plan risk
-- choose account or live mode
-- bypass validation
-
-All AI drafts must be converted into structured plan drafts. The backend must
-validate all prices, quantities, account constraints, max risk, and allowed
-instrument type before the user can arm the plan.
+Both plan types support notes, validation results, and audit references.
 
 ## Execution Modes
 
@@ -483,14 +443,12 @@ Orbit shell:
 - Orbit module entry seam (`src/orbit/moduleEntry/` + `orbitModules` registry)
   - already owns module registration, readiness, and route gating on `dev`
   - the TWS assistant registers here with mode-gating logic: available only
-    when broker session mode is `tws`; Parallax, MoonMarket, and Inflect stay
     gated to `client_portal`
 - `OrbitAccountProvider` (`src/orbit/accountContext/`)
   - already owns account selection on `dev` via `useOrbitAccountContext()`
   - the TWS assistant consumes the same context; account switching is read-only
     while a TWS session is active
 - `OrbitLauncher`
-  - shows Parallax, MoonMarket, Inflect, and the working-label TWS assistant tile
   - explains why disabled modules are unavailable in the current mode
 
 Backend services:
@@ -501,7 +459,6 @@ Backend services:
 - `ClientPortalExecutionAdapter` (`backend/services/client_portal_execution.py`, already on `dev`)
   - Client Portal-specific implementation of the execution interface
   - owns endpoint paths, HTTP verbs, payload quirks, and pacing rules
-  - called by MoonMarket order routes/services and Inflect position reads
   - `TwsBrokerAdapter` is the TWS-mode equivalent behind the same intent-level
     interface style; no broker-specific types leak into services, API models,
     or UI in either mode
@@ -548,7 +505,6 @@ Frontend surfaces:
 - execution-assistant settings
 - plan builder for `EntryPlan`
 - plan builder for `ManagementPlan`
-- AI draft review panel
 - plan validation summary
 - arming dialog
 - active plans table
@@ -685,7 +641,6 @@ Frontend API contracts are split by responsibility (already on `dev`):
 - `src/lib/api.ts` — Orbit-level shell seam: health, auth, gateway lifecycle
 - `src/modules/moonmarket/api.ts` — MoonMarket product contract
 - `src/modules/parallax/api.ts` — Parallax product contract
-- `src/modules/inflect/api.ts` — Inflect product contract
 - **`src/modules/tws-execution-assistant/api.ts`** — TWS assistant contract (to
   be created with the module)
 
@@ -774,7 +729,6 @@ Required coverage:
 - live gate enforcement
 - restart behavior for paper vs live plans
 - kill switch blocks monitor actions and new order submissions
-- AI draft cannot arm or submit
 - compiler output for broker-native bracket/OCA/trailing groups
 - Orbit-managed trim ladder idempotency
 - partial fill reconciliation
@@ -816,6 +770,4 @@ testing uses an IBKR paper account first.
 - Short selling unless separately approved.
 - Live implementation beyond spec-level gates.
 - System tray/background execution while app is closed.
-- AI tool access to execution APIs.
 - Fully automatic strategy generation.
-- Inflect analytics and R-multiple integration.

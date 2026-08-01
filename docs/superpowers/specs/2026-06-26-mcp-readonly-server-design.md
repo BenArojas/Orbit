@@ -9,7 +9,7 @@
 
 Let a local agent (Claude Code, Cursor, Claude Desktop) call Orbit's
 decision-support **reads** natively over MCP — quotes, candles, screeners,
-sectors, options chains, watchlists, fibonacci, and the user's journal/portfolio.
+sectors, options chains, watchlists, and the user's portfolio.
 Strictly **read-only**: no order placement, no broker/process mutations, never
 autonomous trading.
 
@@ -57,19 +57,16 @@ configuration). Therefore:
 
 **Always on (non-sensitive, 29 GETs):** `market` (6), `instruments` (1),
 `screener` (5), `sectors` (5), `moonmarket/options` (4), `watchlist` (4),
-`fibonacci` (2), `inflect/setups` (1, static taxonomy).
 
 **Gated by `MCP_EXPOSE_PORTFOLIO` (default ON per owner decision, 14 GETs):**
 MoonMarket portfolio/account reads (`/accounts`, `/funds`, `/portfolio`,
 `/performance`, `/trades`, `/live-orders`, `order-rules`) and account-derived
-Inflect journal reads (`/calendar`, `/trades`, `/trades/{id}`, `/symbols`,
 `/basis-lots`, `/basis-audit`, `/backfill-status`). These expose private
 financials; default ON means the loopback-only trust boundary is the protection,
 so it is documented for the user, and the flag lets them turn it off.
 
 **Hard-excluded (even GETs):** all of `orders.py`; `trading-safety/order-action`;
 `gateway/*`; `auth/*`; `settings/*`; `ws`; `health`; `triggers`,
-`drawings`, `pulse_config`, `watchlist_config`, `inflect/storage|health`;
 `/.well-known/agent.json` (already its own contract); and every non-GET.
 
 ## Lifecycle / packaging

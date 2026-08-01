@@ -19,15 +19,14 @@ from fastmcp.server.providers.openapi import MCPType, RouteMap
 # here (every non-GET, and any future router) is dropped by the catch-all EXCLUDE.
 BASE_ALLOW = (
     r"^/market/|^/instruments/|^/screener/|^/sectors/|"
-    r"^/moonmarket/options/|^/watchlist/|^/fibonacci/|^/inflect/setups"
+    r"^/moonmarket/options/|^/watchlist/|^/fibonacci/"
 )
 
 # Sensitive private-financial reads (balances, positions, P&L, cost basis),
 # gated by MCP_EXPOSE_PORTFOLIO. Pure GETs, but they expose account data.
 SENSITIVE_ALLOW = (
     r"^/moonmarket/accounts|^/moonmarket/portfolio|^/moonmarket/performance|"
-    r"^/moonmarket/trades|^/moonmarket/live-orders|"
-    r"^/inflect/(calendar|trades|symbols|basis-lots|basis-audit|backfill-status)"
+    r"^/moonmarket/trades|^/moonmarket/live-orders"
 )
 
 # Substrings that must NEVER appear in a generated tool's name (path-encoded with
@@ -48,7 +47,7 @@ DENY_NAME_SUFFIXES = ("_post", "_put", "_patch", "_delete")
 
 
 def expose_portfolio() -> bool:
-    """Whether the sensitive portfolio/journal reads are exposed (default ON)."""
+    """Whether the sensitive portfolio reads are exposed (default ON)."""
     return os.getenv("MCP_EXPOSE_PORTFOLIO", "true").strip().lower() not in (
         "0",
         "false",
