@@ -1,1 +1,0 @@
-../../../.agents/skills/orbit-ai-workflow/SKILL.md
