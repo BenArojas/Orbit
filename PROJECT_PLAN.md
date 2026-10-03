@@ -1,7 +1,7 @@
 # Orbit — Active Project Plan
 
-Updated: 2026-10-03. This file tracks active work and unresolved follow-ups, not shipped history.
-Product baseline: `refactor/remove-ai-inflect`, which removes AI analysis and Inflect. This documentation cleanup does not merge that branch or change application code.
+Updated: 2026-10-04. This file tracks active work and unresolved follow-ups, not shipped history.
+Product baseline: `refactor/remove-ai-inflect`, which removes AI analysis and Inflect.
 
 ## Active product
 
@@ -10,20 +10,20 @@ Product baseline: `refactor/remove-ai-inflect`, which removes AI analysis and In
 - TWS Assistant: user-controlled execution planning and broker workflows, with its existing exclusive session mode.
 - Shared Orbit boundaries: local FastAPI data/persistence access, conid identity, account context and Trading Safety. Current architecture documents remain authoritative.
 
-## Parallax redesign — approved, not implemented
+## Parallax redesign — first Market slice implemented; review pending
 
 [Approved design](docs/superpowers/specs/2026-10-03-parallax-redesign-design.md) · [First coder brief](docs/superpowers/plans/2026-10-03-parallax-market-first-handoff.md)
 
-- Flow: market status → RS names and sectors → tactics. Use Cool Mineral, a compact interface and progressive disclosure.
-- First slice: market-first entry, real SPY/QQQ/IWM evidence, eleven-sector participation, live WebSocket prices and automatic daily assessment reconciliation.
-- Daily rules: EMA21/SMA50 classification, sector SMA50 participation, SMA200 as index context, regular-session history and local exchange calendar.
-- Missing evidence: classify only when unknown values cannot change the conclusion; otherwise show incomplete state with previous dated assessment when available.
-- Preserve Compare, current chart tools and saved work. Add a separate read-only assessment interface; preserve the existing EMA50 sector feed.
-- All first-slice product decisions are approved. The separate coder implements; the orchestrator reviews. No application code has been changed by this planning/cleanup work.
+- Flow remains market status → RS names and sectors → tactics. Market is now the authenticated Parallax landing view with the approved compact Cool Mineral treatment.
+- Implemented the first slice: regular-session SPY/QQQ/IWM evidence, eleven-sector SMA50 participation, shared WebSocket prices and feed availability, and automatic completed-session reconciliation.
+- The backend uses the local XNYS calendar and the approved EMA21/SMA50 classification. SMA200 is index context only. Missing evidence remains explicit and only supports a posture when every possible completion agrees.
+- Added read-only `GET /market/assessment`; the existing EMA50 `/sectors/breadth` feed is unchanged. Compare, chart tools, saved settings, watchlists, broker execution and TWS Assistant remain in their existing workflows.
+- Focused fixture regressions, Market-page retry/error-state checks, frontend typecheck and build pass. Reconciliation bypasses cached history while preserving pacing; mounted assessments revalidate every five minutes, failed requests clear tactic priorities, and shared calculations isolate caller cancellation. No five-minute buffer is treated as proof of provider finalization. Live IBKR checks remain for corrected/final daily bars, entitlement codes, real prices and reconnect recovery. Stop for orchestrator review before merging.
 
 ## Later Parallax slices
 
-- Manual watchlist additions and scanner suggestions; users choose what to monitor. Lock the scanner universe and RS calculation before implementation.
+- RS/watchlist slice implemented with the six orchestrator findings fixed on `feature/parallax-redesign-spec`; review pending. [Coder brief](docs/superpowers/plans/2026-10-03-parallax-rs-watchlist-handoff.md) and [public sidecar contracts](docs/superpowers/specs/2026-06-07-sidecar-client-contracts-design.md) cover the read-only Fred snapshot/ratings API and Names surface. Same-revision refresh retries unresolved IBKR identities using fresh searches/details while reusing validated CSV records, and warnings clear only when identities resolve. Leader and rating joins require exact contract identity plus verified US listing; rating responses distinguish missing source rows, unverifiable listings and unavailable source. Watchlist retains dated freshness/query state; Custom scan enriches visible rows without Leader filters; explicit membership mutations target and invalidate the captured list/conid caches. Names and Discover use a scoped Cool Mineral palette. Backend fixture tests passed (20); Names and Market component tests passed (5); typecheck, production build and diff check passed. The build retains existing chart import and large-chunk warnings, and the backend test emitted a pandas_ta deprecation warning. The last public-source review recorded in this workspace found the CSV reachable with expected fields but its latest visible update on Aug 14, 2026; that evidence was stale at the time and does not prove the source's state now. Price-session evidence remains absent. Fixtures do not verify live Fred ingestion, IBKR contract resolution, watchlist mutations, streamed prices or reconnect recovery.
+- Astra review follow-up fixed on the same uncommitted slice: Names context survives Analysis/Compare navigation; watchlist/search states are explicit and stale search responses are ignored; Leaders require explicit destination selection; broker membership query keys are session-scoped and cleared on authentication loss; abandoned frontend requests are aborted; `/rs/ratings` cancels identity and contract work on disconnect; `RB` is decoded as real-time; and Market muted text now measures 5.35:1 on the Cool Mineral background and 5.80:1 on its surface. Leaders/Custom selection, the Fred-published-percentile heading and Market's “Explore strong names” route are included. Focused automated checks passed: 14 frontend tests across Names, Market and GatewayContext; 6 backend tests across RS leaders and disconnect cancellation; typecheck, production build and `git diff --check`. The build retains existing chart-import and large-chunk warnings. No live Fred/IBKR validation or small-laptop browser walkthrough was performed; provider and visual gaps remain as listed in the handoff.
 - Stock review and pullback, breakout and breakout-retest monitoring. Lock pullback boundaries/buffer and the breakout/retest rules before implementation.
 - Chart-tool improvements: lines, indicators and Fibonacci. Preserve existing functionality while designing the later interaction.
 

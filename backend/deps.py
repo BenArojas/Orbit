@@ -17,9 +17,11 @@ from services.db import DatabaseService
 from services.ibkr import IBKRService
 from services.screener import ScreenerService
 from services.sectors import SectorService
+from services.market_assessment import MarketAssessmentService
 from services.gateway import GatewayLifecycle
 from services.instrument_identity import InstrumentIdentityService
 from services.scanner import ScannerService
+from services.rs_leaders import RSLeadersService
 
 
 def get_ibkr(request: Request) -> IBKRService:
@@ -44,9 +46,19 @@ def get_sectors(request: Request) -> SectorService:
     return request.app.state.sectors
 
 
+def get_market_assessment(request: Request) -> MarketAssessmentService:
+    """Get the Parallax completed-session assessment service."""
+    return request.app.state.market_assessment
+
+
 def get_screener(request: Request) -> ScreenerService:
     """Get the screener service singleton stashed on app.state during lifespan."""
     return request.app.state.screener
+
+
+def get_rs_leaders(request: Request) -> RSLeadersService:
+    """Get the published Parallax RS snapshot service."""
+    return request.app.state.rs_leaders
 
 
 def get_gateway(request: Request) -> GatewayLifecycle:

@@ -55,8 +55,85 @@ export interface SearchResult {
   secType: string;
 }
 
+export interface RSLeader {
+  conid: number | null;
+  symbol: string;
+  sector: string | null;
+  raw_strength: number | null;
+  published_percentile: number | null;
+  source_price: number | null;
+  avg_volume_50: number | null;
+  source_rank: number;
+}
+
+export interface RSLeadersResponse {
+  status: "available" | "stale" | "unavailable";
+  source_revision: string | null;
+  source_published_at: string | null;
+  fetched_at: string | null;
+  evidence_session: string | null;
+  freshness: "stale" | "unknown";
+  eligible_count: number;
+  items: RSLeader[];
+  issues: string[];
+}
+
+export interface RSRating extends Omit<RSLeader, "conid" | "source_rank"> {
+  conid: number;
+  status: "rated" | "not_published" | "unverified" | "source_unavailable";
+}
+
+export interface RSRatingsResponse {
+  status: "available" | "stale" | "unavailable";
+  source_revision: string | null;
+  source_published_at: string | null;
+  evidence_session: string | null;
+  freshness: "stale" | "unknown";
+  items: RSRating[];
+}
+
 export interface QuotesBundledResponse {
     items: QuoteResponse[];
+}
+
+export interface MarketInstrumentEvidence {
+    symbol: string;
+    name: string | null;
+    conid: number | null;
+    session_date: string | null;
+    close: number | null;
+    ema21: number | null;
+    sma50: number | null;
+    sma200: number | null;
+    trend: "constructive" | "weak" | "mixed" | null;
+    above_sma50: boolean | null;
+    unavailable_reason: string | null;
+}
+
+export interface MarketAssessmentResponse {
+    status: "complete" | "partial" | "incomplete";
+    posture: "broad" | "selective" | "defensive" | null;
+    expected_session: string | null;
+    evidence_session: string | null;
+    calculated_at: string;
+    indices: MarketInstrumentEvidence[];
+    sectors: MarketInstrumentEvidence[];
+    participation: {
+        total: 11;
+        available: number;
+        missing: number;
+        confirmed_above: number;
+        possible_above_min: number;
+        possible_above_max: number;
+    };
+    issues: string[];
+    previous_assessment: {
+        posture: "broad" | "selective" | "defensive";
+        evidence_session: string;
+        calculated_at: string;
+    } | null;
+    next_reconcile_at: string | null;
+    market_open: boolean;
 }
 // ── Candles / indicators ────────────────────────────────────
 export interface CandleData {
@@ -680,6 +757,17 @@ export interface ScannerParamsResponse {
 
 export const parallaxApi = {
     // Market Data
+    rsLeaders: (signal?: AbortSignal) =>
+        sidecarRequest<RSLeadersResponse>("GET", "/rs/leaders", undefined, signal),
+
+    refreshRSLeaders: (signal?: AbortSignal) =>
+        sidecarRequest<RSLeadersResponse>("POST", "/rs/leaders/refresh", undefined, signal),
+
+    rsRatings: (conids: number[], signal?: AbortSignal) =>
+        sidecarRequest<RSRatingsResponse>("POST", "/rs/ratings", { conids }, signal),
+
+    marketAssessment: (signal?: AbortSignal) =>
+        sidecarRequest<MarketAssessmentResponse>("GET", "/market/assessment", undefined, signal),
       quote: (conid: number, signal?: AbortSignal) =>
         sidecarRequest<QuoteResponse>("GET", `/market/quote/${conid}`, undefined, signal),
 
@@ -769,17 +857,20 @@ export const parallaxApi = {
             signal,
         ),
 
-    watchlistAddInstrument: (watchlistId: string, conid: number) =>
+    watchlistAddInstrument: (watchlistId: string, conid: number, signal?: AbortSignal) =>
         sidecarRequest<{ added: boolean; conid: number }>(
             "POST",
             `/watchlist/${encodeURIComponent(watchlistId)}/instruments`,
             { conid },
+            signal,
         ),
 
-    watchlistRemoveInstrument: (watchlistId: string, conid: number) =>
+    watchlistRemoveInstrument: (watchlistId: string, conid: number, signal?: AbortSignal) =>
         sidecarRequest<{ removed: boolean; conid: number }>(
             "DELETE",
             `/watchlist/${encodeURIComponent(watchlistId)}/instruments/${conid}`,
+            undefined,
+            signal,
         ),
 
     watchlistMembership: (conid: number) =>

@@ -37,8 +37,11 @@ from services.gateway import GatewayLifecycle
 from services.ibkr import IBKRService
 from services.screener import ScreenerService
 from services.sectors import SectorService
+from services.market_assessment import MarketAssessmentService
 from services.scanner import ScannerService
 from services.moonmarket import MoonMarketService
+from services.rs_leaders import RSLeadersService
+from services.instrument_identity import InstrumentIdentityService
 
 # ── Logging setup (must be first) ────────────────────────────
 
@@ -112,6 +115,8 @@ async def lifespan(app: FastAPI):
     # Create the sector service singleton (Step 3.3–3.4)
     # Must be a singleton so the conid cache persists across requests
     app.state.sectors = SectorService(ibkr)
+    app.state.market_assessment = MarketAssessmentService(ibkr)
+    app.state.rs_leaders = RSLeadersService(ibkr, InstrumentIdentityService(db))
 
     # Screener service (Phase 5)
     app.state.screener = ScreenerService(ibkr)
@@ -319,6 +324,7 @@ from routers.indicators import router as indicators_router
 from routers.market import router as market_router
 from routers.sectors import router as sectors_router
 from routers.watchlist import router as watchlist_router
+from routers.rs import router as rs_router
 from routers.ws import router as ws_router
 
 app.include_router(auth_router)
@@ -326,6 +332,7 @@ app.include_router(indicators_router)
 app.include_router(market_router)
 app.include_router(sectors_router)
 app.include_router(watchlist_router)
+app.include_router(rs_router)
 app.include_router(ws_router)
 
 from routers.triggers import router as triggers_router

@@ -1,7 +1,7 @@
 # Parallax redesign
 
-Date: 2026-10-03. Owner: Parallax. Status: design and initial market rules approved; implementation has not started.
-Next action: give the locked first-slice brief directly to the separate coder. The orchestrator plans and reviews; implementation has not started.
+Date: 2026-10-03. Owner: Parallax. Status: Market implemented with live verification pending; RS/watchlist product decisions approved, implementation not started.
+Next action: implement the [RS/watchlist brief](../plans/2026-10-03-parallax-rs-watchlist-handoff.md), preserving the uncommitted Market work. The orchestrator plans and reviews; the separate coder implements.
 
 ## What we are changing
 
@@ -39,10 +39,14 @@ Approved initial rules:
 
 - The next view shows stocks, their sectors when available, relative strength, the chosen setup and what is being monitored.
 - The user can add stocks manually or review scanner suggestions. Suggestions join the watchlist only when the user chooses them.
-- The IBKR scanner supplies candidates; Parallax evaluates available candidates for strength and setup suitability. It is not a guaranteed scan of every stock.
+- Automatic Leaders uses Fred6725's published broad stock-ranking dataset. User-run Custom scan uses the existing IBKR scanner; its limited candidate batch is not a guaranteed scan of every stock.
 - Keep candidate discovery separate from the user's monitored watchlist. Monitoring follows the selected setup locally; setup progress must not automatically move broker watchlist entries.
-- Start with a clearly labelled comparison against SPY over an explicit period. Percentage-point outperformance is not an RS percentile rating.
-- A true percentile rating needs a defined comparison universe and sufficient data. Do not imply one from a small candidate list.
+- Use Fred's published weighted RS method and broad-universe ratings, replacing the previously proposed single-period SPY outperformance default. Do not recompute percentiles within a watchlist or scanner batch. Verify the distinction between published percentiles and TradingView's displayed rating; do not claim exact agreement without evidence.
+- IBKR remains the source of truth for watchlist membership. Users select their list and explicitly add/remove stocks. Setup states remain separate from broker membership.
+- Entering Discover automatically loads Leaders. Show the latest saved results immediately, then check for newer source data when the saved snapshot is from an earlier trading session. Source publication time, fetch time and underlying price session are different facts; unknown evidence dates remain unknown.
+- Keep Leaders and Custom scan separate. Scan again is available; custom scans do not overwrite Leaders. Live prices use the shared WebSocket independently of daily ratings.
+- Automatic Leaders requires a finite price of at least $10 and 50-session average volume of at least 500,000 shares/day. Missing eligibility fields do not qualify. Show up to 30 names ordered by Fred's raw strength score; never pad the list. These limits do not restrict watchlists or custom scans.
+- Watchlists retain weaker names; sorting or filtering never changes membership. Missing ratings remain unavailable. Source failure retains the last valid snapshot with a visible freshness limitation rather than inventing current leaders.
 - Sector metadata can be unavailable. Display that honestly; stock logos are not required.
 - Prefer leaders close to meaningful levels. Consider how much resistance sits overhead and whether price is approaching or exceeding prior highs.
 - “ATH leads to ATH” is a selection idea, not a promise. A stock at a high can still fall; limited history cannot establish a lifetime high.
@@ -87,7 +91,7 @@ Breakout and breakout retest:
 
 The first redesign keeps TWS Assistant independent. Parallax uses the existing Client Portal path; it does not gain a seamless Gateway handoff or broker execution action through this spec.
 Follow the canonical [module and safety rules](../../architecture/modules.md) and [frontend architecture](../../architecture/frontend.md). No new broker, cloud or autonomous trading behavior is approved here.
-First-slice market decisions are locked. Before later slices, settle: scanner universe and available data; strength calculation periods; pullback boundaries and stop buffer; breakout / retest rules; overhead resistance measurement; setup-monitoring cadence and alert behavior.
+Market and RS/watchlist product decisions are locked. Validate Fred's source freshness and rating semantics during the RS slice. Before tactic slices, settle: pullback boundaries and stop buffer; breakout / retest rules; overhead resistance measurement; setup-monitoring cadence and alert behavior.
 Data availability and IBKR pacing must be checked against the real implementation. Unavailable metrics should be omitted or marked unavailable, never filled with invented values.
 
 ## How we proceed and verify

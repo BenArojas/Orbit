@@ -38,6 +38,8 @@ import {
   SCREENER_PAGE_SIZE,
   type SortDir,
 } from "@/store/screener";
+import { useRSRatings } from "@/hooks/useRSRatings";
+import { PublishedRating, PublishedSourceNotice } from "@/components/parallax/PublishedRating";
 import { TableSkeleton } from "./ScreenerSkeleton";
 import { useStockTags } from "@/hooks/useStockTags";
 import { StockTagDots } from "@/components/tags/StockTagDots";
@@ -299,6 +301,9 @@ export default function ScreenerResultsTable() {
     return sorted.slice(start, start + SCREENER_PAGE_SIZE);
   }, [results, sortBy, sortDir, page]);
 
+  const ratingLookup = useRSRatings(isScanning ? [] : pageRows.map((row) => row.conid));
+  const ratingByConid = new Map(ratingLookup.items.map((rating) => [rating.conid, rating]));
+
   // Tag dots for visible page (shows which results are firing watchlist rules)
   const tagConids = pageRows.map((r) => r.conid);
   const { data: stockTags } = useStockTags(tagConids);
@@ -326,6 +331,13 @@ export default function ScreenerResultsTable() {
 
   return (
     <div className="flex flex-1 flex-col overflow-hidden">
+      <PublishedSourceNotice
+        sourceStatus={ratingLookup.sourceStatus}
+        freshness={ratingLookup.freshness}
+        publishedAt={ratingLookup.sourcePublishedAt}
+        isLoading={ratingLookup.isLoading}
+        isError={ratingLookup.isError}
+      />
       {/* Disclaimer strip — top/bottom cap messaging */}
       <DisclaimerStrip total={results.length} lastBatchSize={lastBatchSize} />
 
@@ -351,6 +363,9 @@ export default function ScreenerResultsTable() {
                   </div>
                 </TableHead>
               ))}
+              <TableHead className="px-3 py-2">
+                <div className="text-[10px] font-semibold uppercase tracking-wider text-[var(--text-3)]">Fred published RS percentile</div>
+              </TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -381,6 +396,13 @@ export default function ScreenerResultsTable() {
                     )}
                   </TableCell>
                 ))}
+                <TableCell className="px-3 py-2 font-data text-[11px]">
+                  <PublishedRating
+                    rating={ratingByConid.get(row.conid)}
+                    loading={ratingLookup.isLoading}
+                    lookupFailed={ratingLookup.isError}
+                  />
+                </TableCell>
               </TableRow>
             ))}
           </TableBody>

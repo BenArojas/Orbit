@@ -17,6 +17,7 @@ dependencies = [
     "psutil>=6.0.0",
     "fastmcp~=3.4",
     "ib-async>=1.0.1",
+    "exchange-calendars>=4.6.0",
 ]
 
 [dependency-groups]

@@ -23,17 +23,35 @@ MoonMarket reads from this cache (by conid) without
 import datetime
 import logging
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from constants import DEFAULT_QUOTE_FIELDS_STR, PERIOD_BAR
-from deps import get_ibkr, get_instrument_identity
+from deps import get_ibkr, get_instrument_identity, get_market_assessment, require_ibkr_auth
 from exceptions import IBKRError, SymbolNotFoundError
 from services.ibkr import IBKRService, _safe_float
 from services.instrument_identity import InstrumentIdentityService
+from services.market_assessment import MarketAssessmentService
+from models.market_assessment import MarketAssessmentResponse
+from request_cancellation import ClientDisconnected, run_cancelling_on_disconnect
 
 log = logging.getLogger("parallax.routers.market")
 
 router = APIRouter(prefix="/market", tags=["market"])
+
+
+@router.get("/assessment", response_model=MarketAssessmentResponse)
+async def get_market_assessment_view(
+    request: Request,
+    _ibkr: IBKRService = Depends(require_ibkr_auth),
+    service: MarketAssessmentService = Depends(get_market_assessment),
+) -> MarketAssessmentResponse:
+    """Read the current completed-session Parallax market assessment."""
+    try:
+        return await run_cancelling_on_disconnect(
+            request, service.get_assessment(), label="market/assessment"
+        )
+    except ClientDisconnected:
+        raise HTTPException(status_code=499, detail="client disconnected")
 
 
 # ── GET /market/quote/{conid} ────────────────────────────────

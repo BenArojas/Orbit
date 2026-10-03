@@ -13,7 +13,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { renderHook, act } from "@testing-library/react";
+import { renderHook, act, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider, useQueryClient } from "@tanstack/react-query";
 import React from "react";
 
@@ -21,6 +21,7 @@ import React from "react";
 
 // We'll capture the addHandler callback so tests can fire messages manually.
 let capturedHandler: ((msg: Record<string, unknown>) => void) | null = null;
+let mockGatewayAuthenticated = true;
 
 vi.mock("@/hooks/useWebSocket", () => ({
   useWebSocket: () => ({
@@ -46,7 +47,7 @@ vi.mock("@/hooks/useGateway", () => ({
   useGateway: () => ({
     status: RUNNING_AUTH,
     isRunning: true,
-    isAuthenticated: true,
+    isAuthenticated: mockGatewayAuthenticated,
     needsLogin: false,
     isProvisioning: false,
     sessionDropped: false,
@@ -64,6 +65,7 @@ vi.mock("@/hooks/useGateway", () => ({
 
 import { GatewayProvider } from "@/context/GatewayContext";
 import type { GatewayStatusResponse } from "@/lib/api";
+import { useNavigationStore } from "@/store/navigation";
 
 // ── Fixtures ───────────────────────────────────────────────────────────────
 
@@ -104,6 +106,8 @@ function makeWrapper(qc: QueryClient) {
 describe("GatewayProvider — Task 3.7 WS auth_state subscription", () => {
   beforeEach(() => {
     capturedHandler = null;
+    mockGatewayAuthenticated = true;
+    useNavigationStore.setState({ namesContext: { ...useNavigationStore.getState().namesContext, selectedWatchlistId: "", watchlistFilter: "", brokerSessionEpoch: 0 } });
   });
 
   afterEach(() => {
@@ -112,10 +116,18 @@ describe("GatewayProvider — Task 3.7 WS auth_state subscription", () => {
 
   it("auth_state push (authenticated: false) sets authenticated=false in cache", async () => {
     const qc = freshClient();
+    const membershipKey = ["watchlist-instruments", "same-id", "parallax", 0];
+    const sharedMembershipKey = ["watchlist-membership", 1];
+    const publicRatingsKey = ["parallax", "rs-ratings", 1];
+    qc.setQueryData(["watchlists", "parallax", 0], [{ id: "same-id" }]);
+    qc.setQueryData(membershipKey, [{ conid: 1 }]);
+    qc.setQueryData(sharedMembershipKey, { inWatchlist: true });
+    qc.setQueryData(publicRatingsKey, { status: "stale" });
+    useNavigationStore.setState({ namesContext: { ...useNavigationStore.getState().namesContext, selectedWatchlistId: "same-id", watchlistFilter: "A" } });
     // Seed the cache with a running+authenticated state.
     qc.setQueryData<GatewayStatusResponse>(GATEWAY_QUERY_KEY, RUNNING_AUTH);
 
-    const { result } = renderHook(() => useQueryClient(), {
+    const { result, rerender } = renderHook(() => useQueryClient(), {
       wrapper: makeWrapper(qc),
     });
 
@@ -128,11 +140,18 @@ describe("GatewayProvider — Task 3.7 WS auth_state subscription", () => {
         authenticated: false,
         session_dropped: true,
       });
+      mockGatewayAuthenticated = false;
+      rerender();
     });
 
     const cached = result.current.getQueryData<GatewayStatusResponse>(GATEWAY_QUERY_KEY);
     expect(cached?.authenticated).toBe(false);
     expect(cached?.session_dropped).toBe(true);
+    await waitFor(() => expect(qc.getQueryData(membershipKey)).toBeUndefined());
+    expect(qc.getQueryData(["watchlists", "parallax", 0])).toBeUndefined();
+    expect(qc.getQueryData(sharedMembershipKey)).toBeUndefined();
+    expect(qc.getQueryData(publicRatingsKey)).toEqual({ status: "stale" });
+    expect(useNavigationStore.getState().namesContext).toMatchObject({ selectedWatchlistId: "", watchlistFilter: "", brokerSessionEpoch: 1 });
   });
 
   it("auth_state push (authenticated: true) clears session_dropped and auth_required", async () => {

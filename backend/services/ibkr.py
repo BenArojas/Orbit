@@ -126,7 +126,7 @@ class IBKRService:
         #              fetches via the new `get_snapshot()` wrapper
         #              (Layer 1 of Task 1.6). Used by routes that
         #              fetch one conid at a time.
-        #   * history — keyed by (conid, period, bar). Coalesces
+        #   * history — keyed by (conid, period, bar, outside_rth, fresh). Coalesces
         #              concurrent history fetches that miss the
         #              `@cached(ttl=300)` decorator (cold cache or
         #              first call after expiry).
@@ -137,7 +137,7 @@ class IBKRService:
             tuple[int, str], asyncio.Future
         ] = {}
         self._history_futures: dict[
-            tuple[int, str, str], asyncio.Future
+            tuple[int, str, str, bool, bool], asyncio.Future
         ] = {}
 
         # Phase 8 / Task 2.2: concurrency semaphore for history_bundled.
@@ -664,6 +664,12 @@ class IBKRService:
         Search for securities by symbol.
         Returns a list of matches with conid, symbol, companyHeader, secType.
         """
+        return await self._search(symbol, sec_type)
+
+    async def search_fresh(self, symbol: str, sec_type: str = "") -> list[dict]:
+        return await self._search(symbol, sec_type)
+
+    async def _search(self, symbol: str, sec_type: str) -> list[dict]:
         params: dict[str, str] = {"symbol": symbol}
         if sec_type:
             params["secType"] = sec_type
@@ -1327,17 +1333,40 @@ class IBKRService:
         conid: int,
         period: str = "1m",
         bar: str = "30min",
+        outside_rth: bool = True,
+    ) -> dict:
+        return await self._history_request(conid, period, bar, outside_rth)
+
+    async def history_fresh(
+        self,
+        conid: int,
+        period: str = "1m",
+        bar: str = "30min",
+        outside_rth: bool = True,
+    ) -> dict:
+        """Fetch history without the shared TTL cache (still paced/coalesced)."""
+        return await self._history_request(conid, period, bar, outside_rth, fresh=True)
+
+    async def _history_request(
+        self,
+        conid: int,
+        period: str,
+        bar: str,
+        outside_rth: bool,
+        *,
+        fresh: bool = False,
     ) -> dict:
         """Get historical OHLCV candle data.
 
         Returns raw IBKR response with 'data' list of bars.
+        Set outside_rth=False for regular-session-only history.
 
         Phase 8 / Task 1.6 — request coalescing layered with `@cached`:
 
           1. The outer `@cached(ttl=300)` decorator handles warm-cache
              hits: the second call within 5 minutes returns instantly.
           2. On cache MISS, the body below coalesces concurrent first
-             callers via a `(conid, period, bar)` future. 5 simultaneous
+             callers via a `(conid, period, bar, outside_rth)` future. 5 simultaneous
              callers for the same fresh `(conid, "5d", "5min")` issue
              ONE IBKR call; the other 4 await the shared future and
              receive the same response.
@@ -1350,7 +1379,9 @@ class IBKRService:
         await self.ensure_accounts()
         self._ensure_coalescing_dicts()
 
-        history_key = (conid, period, bar)
+        # Fresh reconciliation calls share work with one another, but cannot
+        # join a regular cached-history miss that may have started pre-close.
+        history_key = (conid, period, bar, outside_rth, fresh)
         existing_fut = self._history_futures.get(history_key)
         if existing_fut is not None:
             return await existing_fut
@@ -1364,7 +1395,7 @@ class IBKRService:
                 "conid": conid,
                 "period": period,
                 "bar": bar,
-                "outsideRth": "true",
+                "outsideRth": "true" if outside_rth else "false",
             }
             # Share the same concurrency cap as history_bundled. Per IBKR
             # docs only 5 concurrent /iserver/marketdata/history requests
@@ -1529,6 +1560,12 @@ class IBKRService:
           - Not every instrument has `marketCap` (indices, some ETFs, futures).
             Missing value ⇒ `_safe_float` returns None ⇒ row just keeps None.
         """
+        return await self._fetch_contract_info(conid)
+
+    async def contract_info_fresh(self, conid: int) -> dict:
+        return await self._fetch_contract_info(conid)
+
+    async def _fetch_contract_info(self, conid: int) -> dict:
         await self.ensure_accounts()
         result = await self._request("GET", f"/iserver/contract/{conid}/info")
         dump_if_first("contract_info", result)
@@ -1982,6 +2019,18 @@ class IBKRService:
         """Set the callback that sends data to all connected frontend clients."""
         self._broadcast = callback
 
+    async def _broadcast_ws_status(self, ready: bool) -> None:
+        if not self._broadcast:
+            return
+        try:
+            await self._broadcast({
+                "type": "connection_status",
+                "ibkr_connected": self.state.authenticated,
+                "ws_ready": ready,
+            })
+        except (OSError, ConnectionError) as exc:
+            log.warning("Failed to broadcast IBKR WebSocket status: %s", exc)
+
     async def start_ibkr_websocket(self) -> None:
         """Start the background IBKR WebSocket connection loop."""
         if self._ws_task and not self._ws_task.done():
@@ -2130,6 +2179,7 @@ class IBKRService:
                     # All initial subscribes are queued — signal readiness so the
                     # FE WS endpoint can accept the browser connection.
                     self.state.ws_ready_event.set()
+                    await self._broadcast_ws_status(True)
 
                     # Main receive loop
                     async for raw_msg in ws:
@@ -2143,6 +2193,7 @@ class IBKRService:
                 self.state.ws_connected = False
                 self.state.ibkr_ws = None
                 self.state.ws_ready_event.clear()
+                await self._broadcast_ws_status(False)
                 if heartbeat_task and not heartbeat_task.done():
                     heartbeat_task.cancel()
                 if refresh_task and not refresh_task.done():
@@ -2302,8 +2353,9 @@ class IBKRService:
 
         # Extract price fields — IBKR uses string field codes as keys
         last_price = msg.get("31")
-        if last_price is None:
-            return  # No price update in this message
+        availability = msg.get("6509")
+        if last_price is None and availability is None:
+            return  # No price or feed-availability update in this message
 
         # Build a clean update payload for the frontend
         update: dict[str, Any] = {
@@ -2311,6 +2363,7 @@ class IBKRService:
             "conid": conid,
             "timestamp": int(time.time()),
             "last": _safe_float(last_price),
+            "availability": str(availability) if availability is not None else None,
             "bid": _safe_float(msg.get("84")),
             "ask": _safe_float(msg.get("86")),
             "bidSize": _safe_float(msg.get("88")),

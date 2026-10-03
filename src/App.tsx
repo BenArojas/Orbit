@@ -38,10 +38,10 @@ import ConnectionPage from "@/pages/ConnectionPage";
 // Today and Market are lazy — they'll grow as Tasks 2/9 land.
 const TodayPage = lazy(() => import("@/pages/TodayPage"));
 const MarketPage = lazy(() => import("@/pages/MarketPage"));
-// Analysis and Screener are heavy (TradingView charts, screener logic).
+// Analysis and Names are heavy (TradingView charts, names and scanner views).
 // Lazy-load so their JS is only parsed when the user first navigates there.
 const AnalysisPage = lazy(() => import("@/pages/AnalysisPage"));
-const ScreenerPage = lazy(() => import("@/pages/ScreenerPage"));
+const NamesPage = lazy(() => import("@/pages/NamesPage"));
 import "./styles.css";
 
 /** Minimal full-screen skeleton shown while a lazy page chunk loads. */
@@ -103,10 +103,10 @@ function useGlobalEffects() {
 // The "connection" screen is intentionally absent from this list — it's
 // surfaced by <AuthGuard> when the IBKR session is missing, not via a tab.
 const NAV_ITEMS: { id: Screen; label: string }[] = [
-  { id: "today", label: "Today" },
   { id: "market", label: "Market" },
+  { id: "screener", label: "Names" },
+  { id: "today", label: "Today" },
   { id: "analysis", label: "Analysis" },
-  { id: "screener", label: "Screener" },
   { id: "settings", label: "Settings" },
 ];
 
@@ -137,7 +137,7 @@ function ActivePage() {
     case "screener":
       return (
         <Suspense fallback={<PageSkeleton />}>
-          <ScreenerPage />
+          <NamesPage />
         </Suspense>
       );
     case "settings":
