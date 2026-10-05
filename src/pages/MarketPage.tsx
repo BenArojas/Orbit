@@ -22,63 +22,96 @@ function price(value: number | null | undefined): string {
   return value == null ? "—" : `$${numberFormat.format(value)}`;
 }
 
-function postureCopy(assessment: MarketAssessmentResponse | undefined) {
+function joinNames(names: string[]): string {
+  if (names.length < 2) return names[0] ?? "";
+  return `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
+}
+
+function evidenceSummary(assessment: MarketAssessmentResponse | undefined, currentSession: boolean): string {
+  if (!assessment) return "Completed-session evidence is loading.";
+  const indexText = ["constructive", "weak", "mixed"].flatMap((trend) => {
+    const names = assessment.indices.filter((item) => item.trend === trend).map((item) => item.symbol);
+    return names.length ? [`${joinNames(names)} ${names.length === 1 ? "is" : "are"} ${trend}`] : [];
+  });
+  const unconfirmedIndices = assessment.indices.filter((item) => item.trend == null).map((item) => item.symbol);
+  if (unconfirmedIndices.length) indexText.push(`${joinNames(unconfirmedIndices)} trend evidence is unavailable`);
+  const indexSummary = indexText.length ? `${indexText.join("; ")}.` : "Index trend evidence is unavailable.";
+  const participation = assessment.participation;
+  const sectorSummary = participation.missing === 0
+    ? `Only ${participation.confirmed_above} of 11 sector ETFs are above SMA50.`
+    : `${participation.available} of 11 sector readings are available; ${participation.possible_above_min}–${participation.possible_above_max} could be above SMA50.`;
+  const session = assessment.evidence_session;
+  if (currentSession && session && assessment.status === "complete") {
+    return `Completed session ${session}: ${indexSummary} ${sectorSummary}`;
+  }
+  if (currentSession && session) return `Partial evidence for ${session}: ${indexSummary} ${sectorSummary}`;
+  if (session) return `Dated evidence from ${session}; current session ${assessment.expected_session ?? "unconfirmed"} is not confirmed. ${indexSummary} ${sectorSummary}`;
+  return `Session date unconfirmed. ${indexSummary} ${sectorSummary}`;
+}
+
+function postureCopy(assessment: MarketAssessmentResponse | undefined, currentSession: boolean) {
+  const detail = evidenceSummary(assessment, currentSession);
   if (!assessment?.posture) {
     return {
       title: "Current assessment incomplete",
-      detail: "The available data cannot yet determine today’s market posture.",
+      detail,
       priority: "Waiting for complete evidence",
     };
   }
-  if (assessment.posture === "broad") {
+  if (!currentSession) {
+    const lastPosture = assessment.posture === "broad" ? "Broad strength" : assessment.posture === "defensive" ? "Defensive conditions" : "Selective strength";
     return {
-      title: "Broad strength",
-      detail: "SPY, QQQ and IWM are constructive, with broad sector participation.",
-      priority: "Breakouts and retests have priority",
+      title: `Previous assessment · ${lastPosture}`,
+      detail,
+      priority: "Current market priority is unconfirmed",
     };
+  }
+  if (assessment.posture === "broad") {
+    return { title: "Broad strength", detail, priority: "Breakouts and retests have priority" };
   }
   if (assessment.posture === "defensive") {
-    return {
-      title: "Defensive conditions",
-      detail: "At least two indices are weak and sector participation is weak.",
-      priority: "Preserve capital; waiting is valid",
-    };
+    return { title: "Defensive conditions", detail, priority: "Preserve capital; waiting is valid" };
   }
-  return {
-    title: "Selective strength",
-    detail: "Conditions are mixed; the evidence does not support a broad or defensive reading.",
-    priority: "Favor strong names near support and selected retests",
-  };
+  return { title: "Selective strength", detail, priority: "Favor strong names near support and selected retests" };
 }
 
-function feedLabel(
-  status: string,
-  upstream: { ibkrConnected: boolean; wsReady: boolean } | null,
-  availability: string[],
-  total: number,
-): string {
-  if (status === "connecting") return "Connecting to market feed";
-  if (status !== "connected") return "Market feed disconnected";
-  if (!upstream) return "Checking IBKR market stream";
+function transportLabel(status: string, upstream: { ibkrConnected: boolean; wsReady: boolean } | null): string {
+  if (status === "connecting") return "IBKR transport connecting";
+  if (status !== "connected") return "IBKR transport disconnected";
+  if (!upstream) return "IBKR session status unconfirmed";
   if (!upstream.ibkrConnected) return "IBKR session disconnected";
-  if (!upstream.wsReady) return "IBKR market stream disconnected";
-  const types = availability.map((value) => value[0]).filter(Boolean);
-  if (types.some((value) => value === "D" || value === "Y")) return "Delayed quote data";
-  if (types.some((value) => value === "N")) return "Some market data not subscribed";
-  if (types.some((value) => value === "Z")) return "Frozen quote data";
-  if (types.length > 0 && types.every((value) => value === "R")) {
-    return types.length === total ? "Live data confirmed" : `Live quotes confirmed for ${types.length} of ${total}`;
+  if (!upstream.wsReady) return "IBKR market transport disconnected";
+  return "IBKR transport connected";
+}
+
+function quoteState(availability?: string): "Live" | "Delayed" | "Frozen" | "Unavailable" | "Unconfirmed" {
+  switch (availability?.[0]) {
+    case "R": return "Live";
+    case "D":
+    case "Y": return "Delayed";
+    case "Z": return "Frozen";
+    case "N": return "Unavailable";
+    default: return "Unconfirmed";
   }
-  return "Feed connected · entitlement unconfirmed";
+}
+
+function quoteSummary(quotes: Map<number, { availability?: string }>, conids: number[]) {
+  const counts = { Live: 0, Delayed: 0, Frozen: 0, Unavailable: 0, Unconfirmed: 0 };
+  for (const conid of conids) counts[quoteState(quotes.get(conid)?.availability)] += 1;
+  if (conids.length > 0 && counts.Live === conids.length) return { label: "Live quote data confirmed", kind: "live" };
+  const labels = Object.entries(counts).filter(([, count]) => count > 0).map(([name, count]) => `${name} ${count}`);
+  return { label: labels.length ? `${labels.join(" · ")} · quote availability` : "Quote availability unconfirmed", kind: "uncertain" };
 }
 
 function EvidenceRow({
   item,
   livePrice,
+  availability,
   onOpen,
 }: {
   item: MarketInstrumentEvidence;
   livePrice?: number;
+  availability?: string;
   onOpen: (conid: number, symbol: string) => void;
 }) {
   const classification = item.trend ?? (item.above_sma50 == null ? "Unavailable" : item.above_sma50 ? "Above SMA50" : "Below SMA50");
@@ -90,7 +123,10 @@ function EvidenceRow({
           <span className="truncate">{label}</span><ArrowUpRight size={13} aria-hidden="true" />
         </button>
       ) : <span className="truncate text-sm font-semibold" style={{ color: COLORS.ink }}>{label}</span>}
-      <span className="font-mono text-sm tabular-nums" style={{ color: COLORS.ink }}>{price(livePrice)}</span>
+      <span className="text-right">
+        <span className="block font-mono text-sm tabular-nums" style={{ color: COLORS.ink }}>{price(livePrice)}</span>
+        <span className="block text-[10px]" style={{ color: COLORS.muted }}>{quoteState(availability)} quote</span>
+      </span>
       <span className="min-w-[92px] text-right text-xs capitalize" style={{ color: item.unavailable_reason ? COLORS.muted : COLORS.accent }} title={item.unavailable_reason ?? undefined}>{classification}</span>
     </div>
   );
@@ -154,23 +190,24 @@ export default function MarketPage() {
     return () => window.clearTimeout(timer);
   }, [authenticated, query.data?.next_reconcile_at, query.refetch]);
 
-  const currentPosture = requestFailed ? null : query.data?.posture ?? null;
+  const currentSession = !!query.data?.evidence_session
+    && query.data.evidence_session === query.data.expected_session;
+  const currentPosture = requestFailed || !currentSession ? null : query.data?.posture ?? null;
   const posture = requestFailed ? {
       title: "Current assessment unavailable",
       detail: "The latest assessment request failed. Any dated evidence below is the last successful result.",
       priority: "Market priority is unconfirmed",
     }
-    : postureCopy(query.data);
-  const availability = [...liveQuotes.values()]
-    .map((tick) => tick.availability)
-    .filter((value): value is string => value != null);
-  const status = feedLabel(feedStatus, upstreamStatus, availability, conids.length);
+    : postureCopy(query.data, currentSession);
+  const transport = transportLabel(feedStatus, upstreamStatus);
+  const quoteEvidence = quoteSummary(liveQuotes, conids);
   const participation = query.data?.participation;
   const range = participation
     ? participation.missing === 0
       ? `${participation.confirmed_above} of 11`
-      : `${participation.possible_above_min}–${participation.possible_above_max} of 11`
+      : `${participation.possible_above_min}–${participation.possible_above_max} possible of 11`
     : "—";
+  const rangeDate = query.data?.evidence_session ?? "session date unconfirmed";
 
   return (
     <div className="h-full overflow-y-auto p-4 sm:p-6" style={{ background: COLORS.background, color: COLORS.ink }}>
@@ -179,11 +216,13 @@ export default function MarketPage() {
           <div>
             <p className="text-[11px] font-semibold uppercase tracking-[0.18em]" style={{ color: COLORS.accent }}>Parallax · Market first</p>
             <h1 className="mt-1 text-2xl font-semibold tracking-tight">Market</h1>
-            <p className="mt-1 text-sm" style={{ color: COLORS.muted }}>Completed regular-session evidence, with current prices streamed separately.</p>
+            <p className="mt-1 text-sm" style={{ color: COLORS.muted }}>Completed-session evidence, with current prices streamed separately.</p>
           </div>
-          <div className="flex items-center gap-2 text-xs" style={{ color: COLORS.muted }} role="status" aria-live="polite">
-            <span className={`h-2 w-2 rounded-full ${feedStatus === "connected" ? "bg-emerald-600" : feedStatus === "connecting" ? "bg-amber-500" : "bg-rose-600"}`} />
-            {status}
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs" style={{ color: COLORS.muted }} role="status" aria-live="polite">
+            <span>{transport}</span>
+            <span aria-hidden="true">·</span>
+            <span className={`h-2 w-2 rounded-full ${quoteEvidence.kind === "live" ? "bg-emerald-600" : "bg-amber-500"}`} aria-hidden="true" />
+            <span>{quoteEvidence.label}</span>
           </div>
         </header>
 
@@ -203,6 +242,7 @@ export default function MarketPage() {
             <div className="min-w-36 rounded-lg px-4 py-3" style={{ background: COLORS.background }}>
               <p className="text-[11px] uppercase tracking-wide" style={{ color: COLORS.muted }}>Sector ETF proxy</p>
               <p className="mt-1 text-lg font-semibold tabular-nums">{range} above SMA50</p>
+              <p className="mt-1 text-[11px]" style={{ color: COLORS.muted }}>{rangeDate}</p>
               <p className="mt-1 text-[11px]" style={{ color: COLORS.muted }}>Not individual-stock breadth</p>
             </div>
           </div>
@@ -218,7 +258,10 @@ export default function MarketPage() {
             <article key={item.symbol} className="rounded-xl border px-4 py-3" style={{ background: COLORS.surface, borderColor: COLORS.line }}>
               <div className="flex items-baseline justify-between gap-2">
                 {item.conid ? <button type="button" onClick={() => navigateToAnalysis(item.conid!, item.symbol)} className="text-sm font-semibold hover:underline">{item.symbol}</button> : <span className="text-sm font-semibold">{item.symbol}</span>}
-                <span className="font-mono text-lg font-semibold tabular-nums">{price(item.conid ? liveQuotes.get(item.conid)?.last : null)}</span>
+                <span className="text-right">
+                  <span className="block font-mono text-lg font-semibold tabular-nums">{price(item.conid ? liveQuotes.get(item.conid)?.last : null)}</span>
+                  <span className="block text-[10px]" style={{ color: COLORS.muted }}>{quoteState(item.conid ? liveQuotes.get(item.conid)?.availability : undefined)} quote</span>
+                </span>
               </div>
               <p className="mt-1 text-xs capitalize" style={{ color: COLORS.muted }}>{item.trend ?? item.unavailable_reason ?? "Waiting for evidence"}</p>
               <p className="mt-1 text-[11px]" style={{ color: COLORS.muted }}>SMA200 context {price(item.sma200)}</p>
@@ -243,13 +286,13 @@ export default function MarketPage() {
           <div className="mb-2 flex flex-wrap items-baseline justify-between gap-2">
             <div>
               <h2 className="text-sm font-semibold">Sector participation</h2>
-              <p className="mt-0.5 text-xs" style={{ color: COLORS.muted }}>Eleven sector ETFs · above their 50-day simple average</p>
+              <p className="mt-0.5 text-xs" style={{ color: COLORS.muted }}>Eleven sector ETFs · above their 50-day simple average · {rangeDate}</p>
             </div>
             <span className="text-xs tabular-nums" style={{ color: COLORS.muted }}>{participation ? `${participation.available} available · ${participation.missing} missing` : "Loading"}</span>
           </div>
           <div className="grid gap-x-6 sm:grid-cols-2 lg:grid-cols-3">
-            {query.data?.sectors.map((item) => (
-              <EvidenceRow key={item.symbol} item={item} livePrice={item.conid ? liveQuotes.get(item.conid)?.last : undefined} onOpen={navigateToAnalysis} />
+              {query.data?.sectors.map((item) => (
+              <EvidenceRow key={item.symbol} item={item} livePrice={item.conid ? liveQuotes.get(item.conid)?.last : undefined} availability={item.conid ? liveQuotes.get(item.conid)?.availability : undefined} onOpen={navigateToAnalysis} />
             ))}
           </div>
         </section>

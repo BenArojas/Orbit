@@ -2,11 +2,11 @@
  * Analysis sidebar for Fibonacci, Watchlists, and Triggers.
  */
 
-import { useState } from "react";
 import { ChevronRight } from "lucide-react";
 import FibStackPanel from "@/components/fibonacci/fib/FibStackPanel";
 import WatchlistTab from "./WatchlistTab";
 import TriggersTab from "./TriggersTab";
+import { useChartStore } from "@/store/chart";
 
 type Tab = "fibonacci" | "watchlists" | "triggers";
 
@@ -29,7 +29,8 @@ export default function RightSidebar({
   activeTimeframe,
   onCollapse,
 }: RightSidebarProps) {
-  const [activeTab, setActiveTab] = useState<Tab>("fibonacci");
+  const activeTab = useChartStore((state) => state.rightPanelActiveTab);
+  const setActiveTab = useChartStore((state) => state.setRightPanelActiveTab);
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden border-l border-[var(--border)] bg-[var(--bg-1)]">

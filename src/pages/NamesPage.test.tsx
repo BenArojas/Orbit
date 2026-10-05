@@ -2,6 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import NamesPage from "./NamesPage";
+import ScreenerFilterBar from "@/components/screener/ScreenerFilterBar";
 import ScreenerResultsTable from "@/components/screener/ScreenerResultsTable";
 import { useScreenerStore } from "@/store/screener";
 import { useNavigationStore } from "@/store/navigation";
@@ -16,6 +17,9 @@ const api = vi.hoisted(() => ({
   search: vi.fn(),
   watchlistAddInstrument: vi.fn(),
   watchlistRemoveInstrument: vi.fn(),
+  screenerPresets: vi.fn(),
+  screenerFilterCatalogue: vi.fn(),
+  screenerLocations: vi.fn(),
 }));
 const gateway = vi.hoisted(() => ({ ready: true }));
 
@@ -50,6 +54,9 @@ const leaders = {
 beforeEach(() => {
   gateway.ready = true;
   api.getWatchlists.mockResolvedValue([]);
+  api.screenerPresets.mockResolvedValue([]);
+  api.screenerFilterCatalogue.mockResolvedValue([]);
+  api.screenerLocations.mockResolvedValue([]);
   api.rsLeaders.mockResolvedValue(leaders);
   api.refreshRSLeaders.mockResolvedValue(leaders);
   api.rsRatings.mockResolvedValue({ status: "unavailable", source_revision: null, source_published_at: null, evidence_session: null, freshness: "unknown", items: [] });
@@ -132,14 +139,17 @@ describe("NamesPage", () => {
     expect(screen.getByRole("button", { name: "UNRATED" })).toBeInTheDocument();
     expect(screen.getByLabelText("Fred published RS percentile: 0")).toBeInTheDocument();
     expect(screen.getByText(/Fred publication is stale.*published/)).toBeInTheDocument();
-    expect(screen.getByText("Unavailable in Fred dataset")).toBeInTheDocument();
+    expect(screen.getByText("RS rating unavailable")).toBeInTheDocument();
+    fireEvent.click(screen.getByLabelText("Why is the RS rating unavailable?"));
+    expect(screen.getByText(/Fred's published dataset has no rating for this verified listing/)).toBeInTheDocument();
+    expect(screen.getByText(/does not automatically mean the IBKR price or existing chart is unavailable/)).toBeInTheDocument();
     expect(api.watchlistRemoveInstrument).not.toHaveBeenCalled();
 
     api.rsRatings.mockRejectedValueOnce(new Error("rating endpoint unavailable"));
     await act(async () => { await client.invalidateQueries({ queryKey: ["parallax", "rs-ratings"] }); });
-    expect(await screen.findByText(/Fred rating lookup failed/)).toBeInTheDocument();
-    expect(screen.getAllByText("Lookup failed")).toHaveLength(2);
-    expect(screen.getByText(/Fred publication is stale.*published/)).toBeInTheDocument();
+    expect(await screen.findByText(/Fred rating lookup failed; retained ratings are stale.*published/)).toBeInTheDocument();
+    expect(screen.getAllByText("RS rating unavailable")).toHaveLength(2);
+    expect(screen.getByText(/Fred rating lookup failed; retained ratings are stale.*published/)).toBeInTheDocument();
 
     fireEvent.click(screen.getByText("Add a stock to this watchlist"));
     fireEvent.change(screen.getByRole("textbox", { name: "Search stocks to add" }), { target: { value: "ADDED" } });
@@ -197,10 +207,19 @@ describe("NamesPage", () => {
       { conid: 402, symbol: "MISSING", company_name: "No ranking", sec_type: "STK", last_price: 2, change_percent: 0, volume: 10, scan_data: null, scan_data_label: null },
     ], 2);
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    render(<QueryClientProvider client={client}><div className="names-mineral"><ScreenerResultsTable /></div></QueryClientProvider>);
+    render(<QueryClientProvider client={client}><div className="names-mineral"><ScreenerFilterBar onScan={vi.fn()} /><ScreenerResultsTable /></div></QueryClientProvider>);
 
+    expect(await screen.findByRole("combobox", { name: "Scanner preset" })).toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: "Location" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Scan" })).toBeDisabled();
+    const advancedFilters = screen.getByText("Advanced filters").closest("details");
+    expect(advancedFilters).not.toHaveAttribute("open");
+    fireEvent.click(screen.getByText("Advanced filters"));
+    expect(advancedFilters).toHaveAttribute("open");
     expect(await screen.findByLabelText("Fred published RS percentile: 0")).toBeInTheDocument();
-    expect(screen.getByText("Unavailable in Fred dataset")).toBeInTheDocument();
+    expect(screen.getByText("RS rating unavailable")).toBeInTheDocument();
+    fireEvent.click(screen.getByLabelText("Fred published RS percentile details"));
+    expect(screen.getByText(/This does not claim exact TradingView parity/)).toBeInTheDocument();
     expect(screen.getByText(/Fred publication is stale.*published/)).toBeInTheDocument();
     expect(screen.getByText("LOW")).toBeInTheDocument();
     expect(screen.getByText("MISSING")).toBeInTheDocument();
@@ -256,6 +275,49 @@ describe("NamesPage", () => {
     fireEvent.click(screen.getByRole("button", { name: "Retry" }));
     expect(await screen.findByText("RETRY · Retry result")).toBeInTheDocument();
     client.clear();
+  });
+
+  it("distinguishes unavailable and valid-empty Discover snapshots while retaining saved rows during a failed check", async () => {
+    const unavailable = { ...leaders, status: "unavailable" as const, source_revision: null, eligible_count: 0, items: [] };
+    const validEmpty = { ...leaders, eligible_count: 0, items: [] };
+    let finishInitial!: (value: typeof unavailable) => void;
+    let failSavedRefresh!: (reason: Error) => void;
+    api.rsLeaders.mockImplementationOnce(() => new Promise((resolve) => { finishInitial = resolve; }));
+    api.refreshRSLeaders.mockRejectedValueOnce(new Error("Fred unavailable"));
+    const unavailableClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const unavailableView = render(<QueryClientProvider client={unavailableClient}><NamesNavigationHarness /></QueryClientProvider>);
+
+    expect(await screen.findByText("Loading a published Leaders snapshot…")).toBeInTheDocument();
+    expect(screen.queryByText(/\d+ eligible/)).not.toBeInTheDocument();
+    await waitFor(() => expect(api.rsLeaders).toHaveBeenCalled());
+    await act(async () => finishInitial(unavailable));
+    expect(await screen.findByText(/Published Fred Leader evidence is unavailable/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Open Watchlist" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Use Custom scan" })).toBeInTheDocument();
+    expect(screen.queryByText(/\d+ eligible/)).not.toBeInTheDocument();
+    unavailableView.unmount();
+    unavailableClient.clear();
+
+    api.rsLeaders.mockResolvedValueOnce(leaders);
+    api.refreshRSLeaders.mockImplementationOnce(() => new Promise((_resolve, reject) => { failSavedRefresh = reject; }));
+    const savedClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(<QueryClientProvider client={savedClient}><NamesNavigationHarness /></QueryClientProvider>);
+    expect(await screen.findByRole("button", { name: "LEAD" })).toBeInTheDocument();
+    await waitFor(() => expect(api.refreshRSLeaders).toHaveBeenCalledTimes(2));
+    expect(screen.getByText(/Checking for updates; saved results remain visible/)).toBeInTheDocument();
+
+    act(() => savedClient.setQueryData(["parallax", "rs-leaders"], validEmpty));
+    expect(await screen.findByText("This published snapshot has no names meeting the Leader criteria.")).toBeInTheDocument();
+    expect(screen.getByText(/0 verified leaders · 0 eligible/)).toBeInTheDocument();
+    expect(screen.getByText(/Checking for updates; saved results remain visible/)).toBeInTheDocument();
+
+    act(() => savedClient.setQueryData(["parallax", "rs-leaders"], leaders));
+    expect(await screen.findByRole("button", { name: "LEAD" })).toBeInTheDocument();
+    await act(async () => failSavedRefresh(new Error("Fred unavailable")));
+    expect(await screen.findByText(/Fred’s update is unavailable/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "LEAD" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Open Watchlist" })).toBeInTheDocument();
+    savedClient.clear();
   });
 
   it("requires a destination before adding a Leader and cancels refresh when Names unmounts", async () => {

@@ -21,7 +21,7 @@
  */
 
 import { useState, useMemo, useEffect, useRef, useCallback, type KeyboardEvent } from "react";
-import { BriefcaseBusiness, RotateCcw, ChevronLeft, GitCompare, ListTree, ShoppingCart } from "lucide-react";
+import { BriefcaseBusiness, ChevronLeft, GitCompare, ListTree, RotateCcw, ShoppingCart } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { useMutation } from "@tanstack/react-query";
 import { useChartStore, type Timeframe, type IndicatorId } from "@/store";
@@ -38,6 +38,7 @@ import { SHORTCUT_MAP } from "@/components/charts/drawingsRegistry";
 import { useCompareStore } from "@/store/compare";
 import { CompareView } from "@/components/compare";
 import { useOrderTicketStore } from "@/orbit/OrderTicket";
+import { useNavigationStore } from "@/store/navigation";
 
 // ── Constants ────────────────────────────────────────────────
 
@@ -76,8 +77,11 @@ export default function AnalysisPage() {
     toggleIndicator,
     requestResetZoom,
     rightPanelCollapsed,
+    rightPanelVisibilityExplicit,
+    setRightPanelActiveTab,
     toggleRightPanel,
   } = useChartStore();
+  const navigateToNames = useNavigationStore((state) => state.navigate);
 
   const compareActive = useCompareStore((s) => s.active);
   const enterCompare = useCompareStore((s) => s.enter);
@@ -104,6 +108,11 @@ export default function AnalysisPage() {
     navigate(`/moonmarket/options?conid=${activeConid}&symbol=${encodeURIComponent(activeSymbol)}`);
   };
 
+  const handleOpenWatchlists = () => {
+    setRightPanelActiveTab("watchlists");
+    if (useChartStore.getState().rightPanelCollapsed) toggleRightPanel();
+  };
+
   // Sync symbol input whenever the store's activeSymbol changes externally
   // (e.g. navigateToAnalysis called from watchlist or screener).
   // Skip sync while the user is actively typing in the input.
@@ -113,13 +122,13 @@ export default function AnalysisPage() {
     }
   }, [activeSymbol, inputFocused]);
 
-  // Compare entry: auto-collapse the tool panel rail (does NOT auto-re-expand on exit).
+  // Keep an explicitly chosen panel visibility when entering Compare.
   useEffect(() => {
-    if (compareActive && !rightPanelCollapsed) {
+    if (compareActive && !rightPanelCollapsed && !rightPanelVisibilityExplicit) {
       toggleRightPanel();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [compareActive]);
+  }, [compareActive, rightPanelVisibilityExplicit]);
 
   // Force-exit compare mode when the primary stock changes.
   const prevCompareConidRef = useRef<number | null>(activeConid);
@@ -288,134 +297,71 @@ export default function AnalysisPage() {
   };
 
   return (
-    <div className={`grid h-full min-h-0 ${rightPanelCollapsed ? "grid-cols-[32px_1fr_32px]" : "grid-cols-[32px_1fr_340px]"}`}>
-      {/* ── Drawing toolbar — left vertical rail (hidden in compare mode) ── */}
-      {compareActive ? <div className="border-r border-[var(--border)] bg-[var(--bg-1)]" /> : <DrawingToolbar conid={activeConid} />}
-
+    <div className={`grid h-full min-h-0 ${rightPanelCollapsed ? "grid-cols-[minmax(0,1fr)_32px]" : "grid-cols-[minmax(0,1fr)_340px]"}`}>
       {/* ── Center: Chart area ── */}
-      <div className="flex min-h-0 flex-col overflow-hidden">
+      <div className="relative flex min-h-0 flex-col overflow-visible">
         {/* Toolbar — hidden in compare mode (CompareView has its own header).
             shrink-0 so it stays at its natural height when sub-panels
             are added below; otherwise flex squeezes it and only the bottom row
             of indicator/timeframe pills remains visible. */}
         {!compareActive && (
-          <div className="flex shrink-0 flex-wrap items-center gap-2.5 border-b border-border bg-[var(--bg-1)] px-3.5 py-2">
-            {/* Symbol input — shows activeSymbol when blurred, raw input when focused */}
+          <div className="relative z-30 flex shrink-0 flex-nowrap items-center gap-2 border-b border-border bg-[var(--bg-1)] px-3 py-1.5">
+            <button type="button" onClick={() => navigateToNames("screener")} className="shrink-0 rounded border border-[var(--border)] px-2.5 py-1.5 text-[11px] font-medium text-[var(--text-2)] hover:text-[var(--text-1)]">Back to Names</button>
             <input
               type="text"
+              aria-label="Symbol"
               placeholder="AAPL"
               value={inputFocused ? symbolInput : (symbolInput || activeSymbol)}
               onChange={(e) => setSymbolInput(e.target.value.toUpperCase())}
               onKeyDown={handleSymbolKeyDown}
               onFocus={() => setInputFocused(true)}
               onBlur={() => { setInputFocused(false); resolveSymbol(); }}
-              className={`w-[90px] rounded-md border border-border bg-[var(--bg-0)] px-2.5 py-1.5 text-center text-sm font-bold text-foreground outline-none transition-all focus:border-[var(--clr-cyan)] focus:shadow-[0_0_12px_var(--glow-cyan)] ${
-                resolveConidMutation.isPending ? "animate-pulse" : ""
-              }`}
+              className={`w-[76px] shrink-0 rounded-md border border-border bg-[var(--bg-0)] px-2 py-1.5 text-center text-sm font-bold text-foreground outline-none transition-all focus:border-[var(--clr-cyan)] focus:shadow-[0_0_12px_var(--glow-cyan)] ${resolveConidMutation.isPending ? "animate-pulse" : ""}`}
             />
-
-            {/* Timeframe bar */}
-            <div className="flex gap-px rounded-md border border-border bg-[var(--bg-0)] p-0.5">
+            <div className="flex shrink-0 gap-px rounded-md border border-border bg-[var(--bg-0)] p-0.5">
               {TIMEFRAMES.map((tf) => (
-                <button
-                  key={tf}
-                  onClick={() => setTimeframe(tf)}
-                  className={`rounded px-2.5 py-1 font-data text-[10px] font-medium transition-all ${
-                    tf === timeframe
-                      ? "bg-[var(--bg-4)] text-foreground shadow-[inset_0_0_8px_var(--glow-cyan)]"
-                      : "text-[var(--text-3)] hover:text-[var(--text-2)]"
-                  }`}
-                >
+                <button key={tf} onClick={() => setTimeframe(tf)} className={`rounded px-2 py-1 font-data text-[10px] font-medium transition-all ${tf === timeframe ? "bg-[var(--bg-4)] text-foreground shadow-[inset_0_0_8px_var(--glow-cyan)]" : "text-[var(--text-3)] hover:text-[var(--text-2)]"}`}>
                   {tf}
                 </button>
               ))}
             </div>
-
-            {/* Company name badge — shown after the timeframe bar */}
-            {companyName && (
-              <span className="max-w-[240px] truncate text-[10px] text-[var(--text-3)]">
-                {companyName}
-              </span>
-            )}
-
-            <div className="mx-1 h-5 w-px bg-[var(--border)]" />
-            <button
-              type="button"
-              onClick={handleTrade}
-              disabled={!activeConid}
-              className="flex items-center gap-1 rounded-full border border-[var(--clr-cyan)]/60 px-2.5 py-1 font-data text-[10px] font-medium text-[var(--clr-cyan)] transition-all hover:bg-[var(--clr-cyan)]/10 disabled:opacity-40"
-            >
-              <ShoppingCart size={12} /> Trade
-            </button>
-            <button
-              type="button"
-              onClick={handleViewPortfolio}
-              className="flex items-center gap-1 rounded-full border border-[var(--border)] px-2.5 py-1 font-data text-[10px] font-medium text-[var(--text-3)] transition-all hover:border-[var(--clr-green)] hover:text-[var(--clr-green)]"
-            >
-              <BriefcaseBusiness size={12} /> View Portfolio
-            </button>
-            <button
-              type="button"
-              onClick={handleOptions}
-              disabled={!activeConid || !activeSymbol}
-              className="flex items-center gap-1 rounded-full border border-[var(--border)] px-2.5 py-1 font-data text-[10px] font-medium text-[var(--text-3)] transition-all hover:border-[var(--clr-cyan)] hover:text-[var(--clr-cyan)] disabled:opacity-40"
-            >
-              <ListTree size={12} /> Options
-            </button>
-
-            {/* Indicator pills (task 4.6 — Ofek's IndicatorToolbar) */}
-            <IndicatorToolbar />
-
-            {/* ATR value badge — shown inline when ATR is toggled on */}
-            {activeIndicators.has("atr") && (
-              <AtrBadge indicators={indicators} />
-            )}
-
-            {/* Fib draw mode buttons (task 4.5) */}
-            <div className="mx-1 h-5 w-px bg-[var(--border)]" />
-            {fibDrawMode ? (
+            {companyName && <span className="min-w-0 flex-1 truncate text-[10px] text-[var(--text-3)]">{companyName}</span>}
+            <div className="ml-auto flex shrink-0 items-center gap-1.5">
+              <button type="button" onClick={handleOpenWatchlists} className="rounded border border-[var(--border)] px-2.5 py-1.5 text-[11px] font-medium text-[var(--text-2)] hover:text-[var(--text-1)]">Watchlists</button>
               <button
-                onClick={exitFibDrawMode}
-                className="rounded-full border border-[var(--clr-red)] bg-[rgba(255,68,102,0.1)] px-2.5 py-1 font-data text-[10px] font-medium text-[var(--clr-red)] transition-all hover:bg-[rgba(255,68,102,0.2)]"
+                onClick={() => compareActive ? exitCompare() : enterCompare(timeframe)}
+                title={compareActive ? "Exit Compare mode (C)" : "Enter Compare mode (C)"}
+                className={`flex shrink-0 items-center gap-1 rounded border px-2.5 py-1.5 text-[11px] font-medium transition-all ${compareActive ? "border-[var(--clr-cyan)] bg-[rgba(0,212,255,0.1)] text-[var(--clr-cyan)]" : "border-[var(--border)] text-[var(--text-3)] hover:border-[var(--clr-cyan)] hover:text-[var(--clr-cyan)]"}`}
               >
-                Cancel Draw
+                <GitCompare size={13} /> Compare
               </button>
-            ) : (
-              <>
-                <button
-                  onClick={() => enterFibDrawMode("retracement")}
-                  className="rounded-full border border-[var(--border)] px-2.5 py-1 font-data text-[10px] font-medium text-[var(--text-3)] transition-all hover:border-[var(--clr-green)] hover:text-[var(--clr-green)]"
-                  title="Draw Fibonacci retracement — click two points on the chart"
-                >
-                  Draw Fib
-                </button>
-                <button
-                  onClick={() => enterFibDrawMode("extension")}
-                  className="rounded-full border border-[var(--border)] px-2.5 py-1 font-data text-[10px] font-medium text-[var(--text-3)] transition-all hover:border-[var(--clr-purple)] hover:text-[var(--clr-purple)]"
-                  title="Draw Fibonacci extension — click two points on the chart"
-                >
-                  Draw Ext
-                </button>
-              </>
-            )}
-
-            {/* Compare Mode toggle */}
-            <div className="mx-1 h-5 w-px bg-[var(--border)]" />
-            <button
-              onClick={() =>
-                compareActive
-                  ? exitCompare()
-                  : enterCompare(timeframe)
-              }
-              title={compareActive ? "Exit Compare mode (C)" : "Enter Compare mode (C)"}
-              className={`flex items-center gap-1 rounded-full border px-2.5 py-1 font-data text-[10px] font-medium transition-all ${
-                compareActive
-                  ? "border-[var(--clr-cyan)] bg-[rgba(0,212,255,0.1)] text-[var(--clr-cyan)]"
-                  : "border-[var(--border)] text-[var(--text-3)] hover:border-[var(--clr-cyan)] hover:text-[var(--clr-cyan)]"
-              }`}
-            >
-              <GitCompare size={12} /> Compare
-            </button>
+              <details className="relative shrink-0">
+                <summary className="cursor-pointer list-none rounded border border-[var(--border)] px-2.5 py-1.5 text-[11px] font-medium text-[var(--text-2)] hover:text-[var(--text-1)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--clr-cyan)]">Tools</summary>
+                <div className="absolute right-0 top-full z-[100] mt-1 flex max-h-[min(620px,calc(100vh-72px))] max-w-[calc(100vw-24px)] overflow-auto rounded-lg border border-[var(--border)] bg-[var(--bg-1)] p-3 shadow-xl">
+                  <div className="min-w-[250px] flex-1 pr-3">
+                    <h2 className="text-[10px] font-semibold uppercase tracking-wider text-[var(--text-3)]">Trading and indicators</h2>
+                    <div className="mt-2 flex flex-wrap gap-1.5">
+                      <button type="button" onClick={handleTrade} disabled={!activeConid} className="flex items-center gap-1 rounded-full border border-[var(--clr-cyan)]/60 px-2.5 py-1 font-data text-[10px] font-medium text-[var(--clr-cyan)] transition-all hover:bg-[var(--clr-cyan)]/10 disabled:opacity-40"><ShoppingCart size={12} /> Trade</button>
+                      <button type="button" onClick={handleViewPortfolio} className="flex items-center gap-1 rounded-full border border-[var(--border)] px-2.5 py-1 font-data text-[10px] font-medium text-[var(--text-3)] transition-all hover:border-[var(--clr-green)] hover:text-[var(--clr-green)]"><BriefcaseBusiness size={12} /> View Portfolio</button>
+                      <button type="button" onClick={handleOptions} disabled={!activeConid || !activeSymbol} className="flex items-center gap-1 rounded-full border border-[var(--border)] px-2.5 py-1 font-data text-[10px] font-medium text-[var(--text-3)] transition-all hover:border-[var(--clr-cyan)] hover:text-[var(--clr-cyan)] disabled:opacity-40"><ListTree size={12} /> Options</button>
+                    </div>
+                    <div className="mt-3"><IndicatorToolbar /></div>
+                    {activeIndicators.has("atr") && <div className="mt-2"><AtrBadge indicators={indicators} /></div>}
+                    <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-[var(--border)] pt-3">
+                      {fibDrawMode ? (
+                        <button onClick={exitFibDrawMode} className="rounded-full border border-[var(--clr-red)] bg-[rgba(255,68,102,0.1)] px-2.5 py-1 font-data text-[10px] font-medium text-[var(--clr-red)] transition-all hover:bg-[rgba(255,68,102,0.2)]">Cancel Draw</button>
+                      ) : (
+                        <>
+                          <button onClick={() => enterFibDrawMode("retracement")} className="rounded-full border border-[var(--border)] px-2.5 py-1 font-data text-[10px] font-medium text-[var(--text-3)] transition-all hover:border-[var(--clr-green)] hover:text-[var(--clr-green)]" title="Draw Fibonacci retracement — click two points on the chart">Draw Fib</button>
+                          <button onClick={() => enterFibDrawMode("extension")} className="rounded-full border border-[var(--border)] px-2.5 py-1 font-data text-[10px] font-medium text-[var(--text-3)] transition-all hover:border-[var(--clr-purple)] hover:text-[var(--clr-purple)]" title="Draw Fibonacci extension — click two points on the chart">Draw Ext</button>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                  <div className="h-[min(520px,calc(100vh-92px))] shrink-0 border-l border-[var(--border)] pl-3" aria-label="Drawing tools"><DrawingToolbar conid={activeConid} /></div>
+                </div>
+              </details>
+            </div>
           </div>
         )}
 
@@ -516,6 +462,7 @@ export default function AnalysisPage() {
         <div className="flex flex-col items-center border-l border-[var(--border)] bg-[var(--bg-1)] pt-2">
           <button
             onClick={toggleRightPanel}
+            aria-label="Open analysis panel"
             title="Expand panel (\)"
             className="flex h-7 w-7 items-center justify-center rounded text-[var(--text-3)] transition-colors hover:text-[var(--clr-cyan)]"
           >

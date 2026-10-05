@@ -540,12 +540,7 @@ export default function ScreenerFilterBar({
   };
 
   return (
-    <div className="flex flex-wrap items-center gap-2 border-b border-border bg-[var(--bg-1)] px-4 py-2.5">
-      {/* Section label */}
-      <span className="text-[10px] font-semibold uppercase tracking-wider text-[var(--text-3)]">
-        Screener
-      </span>
-
+    <div className="relative flex flex-wrap items-center gap-2 border-b border-border bg-[var(--bg-1)] px-3 py-1.5">
       {/* Grouped preset selector */}
       {presetsLoading ? (
         <PresetSkeleton />
@@ -598,7 +593,7 @@ export default function ScreenerFilterBar({
       {selectedPreset?.subtitle && (
         <span
           data-testid="preset-subtitle"
-          className="rounded-full bg-[var(--bg-2)] border border-[var(--border)] px-2 py-0.5 text-[10px] italic text-[var(--text-3)]"
+          className="max-w-[180px] truncate rounded-full border border-[var(--border)] bg-[var(--bg-2)] px-2 py-0.5 text-[10px] italic text-[var(--text-3)]"
         >
           {selectedPreset.subtitle}
         </span>
@@ -664,42 +659,36 @@ export default function ScreenerFilterBar({
         );
       })()}
 
-      {/* Separator */}
-      <div className="h-4 w-px bg-[var(--border)]" />
-
-      {/* Quick-pick chips (popular catalogue entries) */}
-      {popularChips.map((entry) => (
-        <QuickPickChip key={entry.code} entry={entry} onAdd={addFilter} />
-      ))}
-
-      {/* Separator */}
-      {popularChips.length > 0 && <div className="h-4 w-px bg-[var(--border)]" />}
-
-      {/* Add filter dropdown (full catalogue) */}
-      <AddFilterDropdown catalogue={catalogue} onAdd={addFilter} />
-
-      {/* Active filter pills */}
-      {filters.map((f) => (
-        <FilterPill
-          key={f.id}
-          filter={f}
-          entry={catalogue.find((e) => e.code === f.code)}
-          onRemove={() => removeFilter(f.id)}
-          onUpdate={(value, display_label) => updateFilter(f.id, value, display_label)}
-        />
-      ))}
-
-      {/* Clear filters (in-place — keeps results visible) */}
-      {filters.length > 0 && (
-        <button
-          onClick={clearFilters}
-          title="Remove all filters (keeps current results)"
-          className="flex items-center gap-1 text-[10px] text-[var(--text-3)] transition-colors hover:text-[var(--clr-red)]"
-        >
-          <RotateCcw size={10} />
-          Clear
-        </button>
-      )}
+      <details className="relative">
+        <summary className="cursor-pointer list-none rounded-md border border-[var(--border)] px-2.5 py-1 font-data text-[11px] text-[var(--text-2)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--clr-cyan)]">
+          Advanced filters{filters.length ? ` · ${filters.length} active` : ""}
+        </summary>
+        <div className="absolute left-0 top-full z-30 mt-1 flex max-h-[min(60vh,440px)] max-w-[calc(100vw-24px)] flex-wrap items-center gap-2 overflow-auto rounded-lg border border-[var(--border)] bg-[var(--bg-1)] p-3 shadow-lg">
+          {popularChips.map((entry) => (
+            <QuickPickChip key={entry.code} entry={entry} onAdd={addFilter} />
+          ))}
+          <AddFilterDropdown catalogue={catalogue} onAdd={addFilter} />
+          {filters.map((f) => (
+            <FilterPill
+              key={f.id}
+              filter={f}
+              entry={catalogue.find((e) => e.code === f.code)}
+              onRemove={() => removeFilter(f.id)}
+              onUpdate={(value, display_label) => updateFilter(f.id, value, display_label)}
+            />
+          ))}
+          {filters.length > 0 && (
+            <button
+              onClick={clearFilters}
+              title="Remove all filters (keeps current results)"
+              className="flex items-center gap-1 text-[10px] text-[var(--text-3)] transition-colors hover:text-[var(--clr-red)]"
+            >
+              <RotateCcw size={10} />
+              Clear filters
+            </button>
+          )}
+        </div>
+      </details>
 
       {/* Spacer */}
       <div className="flex-1" />

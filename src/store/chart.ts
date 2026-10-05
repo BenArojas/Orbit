@@ -9,6 +9,36 @@
 
 import { create } from "zustand";
 
+export type AnalysisPanelTab = "fibonacci" | "watchlists" | "triggers";
+
+const PANEL_PREFERENCE_KEY = "orbit.parallax.analysis-panel";
+
+function readPanelPreferences(): { collapsed: boolean; activeTab: AnalysisPanelTab; visibilityExplicit: boolean } {
+  try {
+    const saved = typeof localStorage === "undefined" ? null : localStorage.getItem(PANEL_PREFERENCE_KEY);
+    const value = saved ? JSON.parse(saved) as { collapsed?: unknown; activeTab?: unknown } : null;
+    const collapsed = typeof value?.collapsed === "boolean" ? value.collapsed : true;
+    const activeTab: AnalysisPanelTab = value?.activeTab === "watchlists" || value?.activeTab === "triggers" || value?.activeTab === "fibonacci"
+      ? value.activeTab
+      : "fibonacci";
+    return { collapsed, activeTab, visibilityExplicit: typeof value?.collapsed === "boolean" };
+  } catch {
+    return { collapsed: true, activeTab: "fibonacci" as AnalysisPanelTab, visibilityExplicit: false };
+  }
+}
+
+function savePanelPreferences(preferences: { collapsed?: boolean; activeTab?: AnalysisPanelTab }) {
+  try {
+    const saved = typeof localStorage === "undefined" ? null : localStorage.getItem(PANEL_PREFERENCE_KEY);
+    const previous = saved ? JSON.parse(saved) as Record<string, unknown> : {};
+    if (typeof localStorage !== "undefined") {
+      localStorage.setItem(PANEL_PREFERENCE_KEY, JSON.stringify({ ...previous, ...preferences }));
+    }
+  } catch {
+    // Keep the in-memory preference if browser storage is unavailable.
+  }
+}
+
 import type { FibonacciCandidate, FibonacciResult } from "@/modules/parallax/api";
 import { useDrawingsStore } from "@/store/drawings";
 
@@ -242,8 +272,12 @@ interface ChartState {
   resetZoomRequestId: number;
   requestResetZoom: () => void;
 
-  /** True when the right sidebar is collapsed to a 32px icon rail. In-memory only — resets on reload. */
+  /** True when the right sidebar is collapsed to its compact rail. */
   rightPanelCollapsed: boolean;
+  /** Whether visibility came from an explicit saved or in-session user choice. */
+  rightPanelVisibilityExplicit: boolean;
+  rightPanelActiveTab: AnalysisPanelTab;
+  setRightPanelActiveTab: (tab: AnalysisPanelTab) => void;
   /** Toggle the right panel between expanded (340px) and collapsed (32px rail). */
   toggleRightPanel: () => void;
 
@@ -308,6 +342,8 @@ interface ChartState {
  */
 const DEFAULT_INDICATORS: IndicatorId[] = [];
 
+const initialPanelPreferences = readPanelPreferences();
+
 export const useChartStore = create<ChartState>()((set, get) => ({
   activeConid: null,
   activeSymbol: "",
@@ -320,7 +356,9 @@ export const useChartStore = create<ChartState>()((set, get) => ({
   fibCleared: false,
   activeFibs: [],
   resetZoomRequestId: 0,
-  rightPanelCollapsed: false,
+  rightPanelCollapsed: initialPanelPreferences.collapsed,
+  rightPanelVisibilityExplicit: initialPanelPreferences.visibilityExplicit,
+  rightPanelActiveTab: initialPanelPreferences.activeTab,
 
   // Branch 7 / plan decisions 10A + 10B:
   // Switching to a new instrument resets the whole chart so the
@@ -544,5 +582,13 @@ export const useChartStore = create<ChartState>()((set, get) => ({
 
   requestResetZoom: () => set((s) => ({ resetZoomRequestId: s.resetZoomRequestId + 1 })),
 
-  toggleRightPanel: () => set((s) => ({ rightPanelCollapsed: !s.rightPanelCollapsed })),
+  setRightPanelActiveTab: (tab) => {
+    savePanelPreferences({ activeTab: tab });
+    set({ rightPanelActiveTab: tab });
+  },
+  toggleRightPanel: () => set((s) => {
+    const collapsed = !s.rightPanelCollapsed;
+    savePanelPreferences({ collapsed });
+    return { rightPanelCollapsed: collapsed, rightPanelVisibilityExplicit: true };
+  }),
 }));

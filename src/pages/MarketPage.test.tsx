@@ -17,7 +17,10 @@ vi.mock("@/hooks/useWebSocket", () => ({
   }),
 }));
 vi.mock("@/hooks/useLiveQuotes", () => ({
-  useLiveQuotes: () => new Map([[1, { last: 500, availability: "R" }]]),
+  useLiveQuotes: () => new Map([
+    [1, { last: 500, availability: "RB" }],
+    [2, { last: 400, availability: "Z" }],
+  ]),
 }));
 
 const sectors = ["XLK", "XLV", "XLF", "XLE", "XLI", "XLY", "XLP", "XLU", "XLRE", "XLC", "XLB"];
@@ -60,10 +63,26 @@ describe("MarketPage", () => {
     render(<QueryClientProvider client={queryClient}><MarketPage /></QueryClientProvider>);
 
     expect(await screen.findByRole("heading", { name: "Broad strength" })).toBeInTheDocument();
-    expect(screen.getByText("Live quotes confirmed for 1 of 14")).toBeInTheDocument();
+    expect(screen.getByText("Completed session 2026-10-02: SPY, QQQ and IWM are constructive. Only 8 of 11 sector ETFs are above SMA50.")).toBeInTheDocument();
+    expect(screen.getByText(/IBKR transport connected/)).toBeInTheDocument();
+    expect(screen.getByText(/Live 1 · Frozen 1 · Unconfirmed 12 · quote availability/)).toBeInTheDocument();
+    const feedStatus = screen.getByText(/IBKR transport connected/).closest('[role="status"]');
+    expect(feedStatus?.querySelector(".bg-emerald-600")).toBeNull();
+    expect(feedStatus?.querySelector(".bg-amber-500")).toBeInTheDocument();
+    expect(screen.getAllByText("Live quote").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Frozen quote").length).toBeGreaterThan(0);
     expect(screen.getByText("$500")).toBeInTheDocument();
     expect(screen.getByText("Not individual-stock breadth")).toBeInTheDocument();
     for (const symbol of sectors) expect(screen.getAllByText(new RegExp(symbol)).length).toBeGreaterThan(0);
+
+    act(() => queryClient.setQueryData(["parallax", "market-assessment"], {
+      ...assessmentFixture(), expected_session: "2026-10-05",
+    }));
+    expect(await screen.findByRole("heading", { name: "Previous assessment · Broad strength" })).toBeInTheDocument();
+    expect(screen.getByText(/Dated evidence from 2026-10-02; current session 2026-10-05 is not confirmed/)).toBeInTheDocument();
+    expect(screen.getAllByText("Available; market priority unknown")).toHaveLength(3);
+
+    act(() => queryClient.setQueryData(["parallax", "market-assessment"], assessmentFixture()));
 
     marketAssessment.mockRejectedValueOnce(new Error("sidecar unavailable"));
     await act(async () => {

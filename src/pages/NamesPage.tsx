@@ -69,6 +69,14 @@ function money(value: number | undefined): string {
   return value == null || !Number.isFinite(value) ? "—" : `$${value.toFixed(2)}`;
 }
 
+function transportLabel(status: string, upstreamStatus: { ibkrConnected?: boolean; wsReady: boolean } | null): string {
+  if (status === "connecting") return "IBKR transport connecting";
+  if (status !== "connected") return "IBKR transport disconnected";
+  if (upstreamStatus?.ibkrConnected === false) return "IBKR session disconnected";
+  if (upstreamStatus?.wsReady === false) return "IBKR transport disconnected";
+  return "IBKR transport connected";
+}
+
 function NamesTable({
   rows,
   ratings,
@@ -172,29 +180,43 @@ function Leaders({
   const membership = useWatchlistMembership(isAuthenticated, sessionEpoch);
   const [candidate, setCandidate] = useState<(RSLeader & { conid: number }) | null>(null);
   const [destinationId, setDestinationId] = useState("");
+  const setNamesContext = useNavigationStore((state) => state.setNamesContext);
   useEffect(() => {
     setCandidate(null);
     setDestinationId("");
   }, [sessionEpoch]);
 
-  const rows = (data?.items ?? []).filter((item): item is RSLeader & { conid: number } => item.conid != null);
+  const snapshotUsable = !!data && data.status !== "unavailable" && !!data.source_revision;
+  const rows = (snapshotUsable ? data.items : []).filter((item): item is RSLeader & { conid: number } => item.conid != null);
   const quotes = useLiveQuotes(rows.map((row) => row.conid));
   const navigateToAnalysis = useNavigationStore((state) => state.navigateToAnalysis);
   const destination = lists.find((list) => list.id === destinationId);
   const mutationForCandidate = membership.variables?.conid === candidate?.conid;
   const refreshError = refresh.isError && refresh.error?.name !== "AbortError";
+  const queryError = !!error && error.name !== "AbortError";
+  const sourceCheckIssue = data?.issues.find((issue) => issue.startsWith("Fred source check failed"));
+  const updateFailure = refreshError || queryError || !!sourceCheckIssue;
+  const loadingSnapshot = !snapshotUsable && isAuthenticated && (isLoading || refresh.isPending);
+  const sourceFailure = !isAuthenticated && !snapshotUsable || !loadingSnapshot && (updateFailure || data?.status === "unavailable");
+  const showRecoveryActions = sourceFailure && (!snapshotUsable || updateFailure);
 
   return <section className="space-y-3">
-    {data && <PublishedSourceNotice freshness={data.freshness} publishedAt={data.source_published_at} sourceStatus={data.status} />}
-    {(error && error.name !== "AbortError" || refreshError) && <p role="alert" className="text-xs text-[var(--clr-orange)]">Fred’s source could not be checked. The saved snapshot remains available when present.</p>}
-    {data?.issues.map((issue) => <p key={issue} className="text-xs text-[var(--text-3)]">{issue}</p>)}
+    {snapshotUsable && <PublishedSourceNotice freshness={data.freshness} publishedAt={data.source_published_at} sourceStatus={data.status} />}
+    {snapshotUsable && updateFailure && <div role="alert" className="text-xs text-[var(--clr-orange)]">Fred’s update is unavailable. Showing the saved Leader results.{sourceCheckIssue && <details className="ml-1 inline"><summary className="inline cursor-pointer underline">Details</summary><span className="ml-1">{sourceCheckIssue}</span></details>}</div>}
+    {snapshotUsable && data.issues.filter((issue) => issue !== sourceCheckIssue).map((issue) => <p key={issue} className="text-xs text-[var(--text-3)]">{issue}</p>)}
     <div className="flex items-center justify-between text-xs text-[var(--text-3)]">
-      <span>{isLoading ? "Loading saved snapshot…" : `${rows.length} resolved leaders · ${data?.eligible_count ?? 0} eligible`}</span>
+      <span>{snapshotUsable ? `${rows.length} verified leaders · ${data.eligible_count} eligible` : ""}</span>
       <button className="rounded border border-[var(--border-1)] px-2.5 py-1.5 text-[var(--text-1)] disabled:opacity-50" onClick={runRefresh} disabled={!isAuthenticated || refresh.isPending}>{refresh.isPending ? "Checking source…" : "Scan again"}</button>
     </div>
-    {isLoading && !data && <p role="status" className="text-xs text-[var(--text-3)]">Loading published leaders…</p>}
-    {error && !data && error.name !== "AbortError" && <p role="alert" className="text-xs text-[var(--clr-orange)]">Published leaders could not be loaded.</p>}
-    {data && rows.length === 0 && <p role="status" className="text-xs text-[var(--text-3)]">{data.eligible_count ? "No leaders currently have a verified US listing." : "No eligible leaders in this published snapshot."}</p>}
+    {loadingSnapshot && <p role="status" className="text-xs text-[var(--text-3)]">{isLoading ? "Loading a published Leaders snapshot…" : "Checking the published Leaders source…"}</p>}
+    {!isAuthenticated && !snapshotUsable && <p role="status" className="text-xs text-[var(--text-3)]">Connect to IBKR to resolve published Leader candidates.</p>}
+    {!snapshotUsable && !loadingSnapshot && (queryError || refreshError || data?.status === "unavailable") && <p role="alert" className="text-xs text-[var(--clr-orange)]">Published Fred Leader evidence is unavailable. There is no valid snapshot to show.</p>}
+    {refresh.isPending && snapshotUsable && <p role="status" className="text-[10px] text-[var(--text-3)]">Checking for updates; saved results remain visible.</p>}
+    {snapshotUsable && rows.length === 0 && <p role="status" className="text-xs text-[var(--text-3)]">{data.eligible_count ? "No candidates in this snapshot have a verified US listing." : "This published snapshot has no names meeting the Leader criteria."}</p>}
+    {showRecoveryActions && <div className="flex flex-wrap items-center gap-2 text-xs">
+      <button className="rounded border border-[var(--border-1)] px-2.5 py-1.5 text-[var(--text-1)]" onClick={() => setNamesContext({ mainTab: "watchlist" })}>Open Watchlist</button>
+      <button className="rounded border border-[var(--border-1)] px-2.5 py-1.5 text-[var(--text-1)]" onClick={() => setNamesContext({ mainTab: "discover", discoverTab: "custom" })}>Use Custom scan</button>
+    </div>}
     {rows.length > 0 && <NamesTable
       rows={rows.map((row) => ({ conid: row.conid, symbol: row.symbol, sector: row.sector }))}
       ratings={rows}
@@ -329,6 +351,7 @@ export default function NamesPage() {
   const discoverTab = useNavigationStore((state) => state.namesContext.discoverTab);
   const sessionEpoch = useNavigationStore((state) => state.namesContext.brokerSessionEpoch);
   const setNamesContext = useNavigationStore((state) => state.setNamesContext);
+  const customScan = mainTab === "discover" && discoverTab === "custom";
   const isAuthenticated = useIbkrReady();
   const scrollContainer = useRef<HTMLElement>(null);
   const listsQuery = useQuery({
@@ -349,14 +372,14 @@ export default function NamesPage() {
   return <main
     ref={scrollContainer}
     onScroll={(event) => useNavigationStore.getState().setNamesContext({ scrollTop: event.currentTarget.scrollTop })}
-    className="names-mineral h-full overflow-y-auto px-4 py-4 md:px-6"
+    className={`names-mineral h-full ${customScan ? "overflow-hidden px-2 py-2 md:px-3" : "overflow-y-auto px-4 py-4 md:px-6"}`}
   >
-    <div className="mx-auto flex h-full max-w-6xl flex-col space-y-4">
-      <header className="flex flex-wrap items-end justify-between gap-3">
-        <div><p className="font-data text-[10px] uppercase tracking-[0.16em] text-[var(--clr-cyan)]">Parallax · relative strength</p><h1 className="mt-1 text-xl font-semibold">Names</h1></div>
-        <span className="text-[11px] text-[var(--text-3)]">Live IBKR quotes: {status === "connected" && upstreamStatus?.wsReady ? "connected" : "waiting"}</span>
+    <div className={`mx-auto flex flex-col ${customScan ? "h-full min-h-0 w-full max-w-none gap-1" : "min-h-full max-w-6xl space-y-4"}`}>
+      <header className={`flex flex-wrap justify-between ${customScan ? "items-center gap-2" : "items-end gap-3"}`}>
+        <div><p className="font-data text-[10px] uppercase tracking-[0.16em] text-[var(--clr-cyan)]">Parallax · relative strength</p><h1 className={`${customScan ? "text-lg" : "mt-1 text-xl"} font-semibold`}>Names</h1></div>
+        <span className="text-[11px] text-[var(--text-3)]">{transportLabel(status, upstreamStatus)}</span>
       </header>
-      <nav aria-label="Names views" className="flex gap-1 border-b border-[var(--border-1)]">
+      <nav aria-label="Names views" className={`flex gap-1 border-b border-[var(--border-1)] ${customScan ? "-mb-1" : ""}`}>
         {(["watchlist", "discover"] as const).map((tab) => <button key={tab} aria-pressed={mainTab === tab} className={`px-3 py-2 text-xs ${mainTab === tab ? "border-b-2 border-[var(--clr-cyan)] text-[var(--text-1)]" : "text-[var(--text-3)]"}`} onClick={() => setNamesContext({ mainTab: tab })}>{tab === "watchlist" ? "Watchlist" : "Discover"}</button>)}
       </nav>
       {mainTab === "watchlist" && (!isAuthenticated
@@ -367,9 +390,9 @@ export default function NamesPage() {
             ? <p role="alert" className="text-sm text-[var(--clr-orange)]">Watchlists could not be loaded.</p>
             : <Watchlists lists={lists} isAuthenticated={isAuthenticated} sessionEpoch={sessionEpoch} listsReady={listsReady} />)}
       {mainTab === "discover" && <>
-        <nav aria-label="Discover views" className="flex gap-4">
-          <button aria-pressed={discoverTab === "leaders"} className={`rounded-md px-3 py-2 text-xs ${discoverTab === "leaders" ? "bg-[var(--surface-2)] font-semibold text-[var(--text-1)]" : "text-[var(--text-3)] hover:text-[var(--text-1)]"}`} onClick={() => setNamesContext({ discoverTab: "leaders" })}>Leaders</button>
-          <button aria-pressed={discoverTab === "custom"} className={`rounded-md px-3 py-2 text-xs ${discoverTab === "custom" ? "bg-[var(--surface-2)] font-semibold text-[var(--text-1)]" : "text-[var(--text-3)] hover:text-[var(--text-1)]"}`} onClick={() => setNamesContext({ discoverTab: "custom" })}>Custom scan</button>
+        <nav aria-label="Discover views" className={`flex gap-2 ${customScan ? "pb-0" : "gap-4"}`}>
+          <button aria-pressed={discoverTab === "leaders"} className={`rounded-md px-3 ${customScan ? "py-1" : "py-2"} text-xs ${discoverTab === "leaders" ? "bg-[var(--surface-2)] font-semibold text-[var(--text-1)]" : "text-[var(--text-3)] hover:text-[var(--text-1)]"}`} onClick={() => setNamesContext({ discoverTab: "leaders" })}>Leaders</button>
+          <button aria-pressed={discoverTab === "custom"} className={`rounded-md px-3 ${customScan ? "py-1" : "py-2"} text-xs ${discoverTab === "custom" ? "bg-[var(--surface-2)] font-semibold text-[var(--text-1)]" : "text-[var(--text-3)] hover:text-[var(--text-1)]"}`} onClick={() => setNamesContext({ discoverTab: "custom" })}>Custom scan</button>
         </nav>
         {discoverTab === "leaders"
           ? <Leaders lists={lists} listsReady={listsReady} listsError={listsQuery.isError} isAuthenticated={isAuthenticated} sessionEpoch={sessionEpoch} />
