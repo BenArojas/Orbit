@@ -13,6 +13,8 @@ class MarketInstrumentEvidence(BaseModel):
     close: float | None = None
     ema21: float | None = None
     sma50: float | None = None
+    ema21_distance_pct: float | None = None
+    sma50_distance_pct: float | None = None
     sma200: float | None = None
     trend: Literal["constructive", "weak", "mixed"] | None = None
     above_sma50: bool | None = None

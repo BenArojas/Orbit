@@ -2,6 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import MarketPage from "./MarketPage";
+import type { MarketAssessmentResponse } from "@/modules/parallax/api";
 import { useNavigationStore } from "@/store/navigation";
 
 const marketAssessment = vi.hoisted(() => vi.fn());
@@ -25,7 +26,7 @@ vi.mock("@/hooks/useLiveQuotes", () => ({
 
 const sectors = ["XLK", "XLV", "XLF", "XLE", "XLI", "XLY", "XLP", "XLU", "XLRE", "XLC", "XLB"];
 
-function assessmentFixture(indexClose = 500) {
+function assessmentFixture(indexClose = 500): MarketAssessmentResponse {
   return {
     status: "complete" as const,
     posture: "broad" as const,
@@ -35,11 +36,14 @@ function assessmentFixture(indexClose = 500) {
     indices: ["SPY", "QQQ", "IWM"].map((symbol, index) => ({
       symbol, name: null, conid: index + 1, session_date: "2026-10-02",
       close: indexClose, ema21: 490, sma50: 480, sma200: 450,
+      ema21_distance_pct: (indexClose / 490 - 1) * 100,
+      sma50_distance_pct: (indexClose / 480 - 1) * 100,
       trend: "constructive" as const, above_sma50: null, unavailable_reason: null,
     })),
     sectors: sectors.map((symbol, index) => ({
       symbol, name: symbol, conid: index + 4, session_date: "2026-10-02",
       close: 100, ema21: null, sma50: 99, sma200: null, trend: null,
+      ema21_distance_pct: null, sma50_distance_pct: null,
       above_sma50: index < 8, unavailable_reason: null,
     })),
     participation: {
@@ -63,16 +67,16 @@ describe("MarketPage", () => {
     render(<QueryClientProvider client={queryClient}><MarketPage /></QueryClientProvider>);
 
     expect(await screen.findByRole("heading", { name: "Broad strength" })).toBeInTheDocument();
-    expect(screen.getByText("Completed session 2026-10-02: SPY, QQQ and IWM are constructive. Only 8 of 11 sector ETFs are above SMA50.")).toBeInTheDocument();
+    expect(screen.getByText("2026-10-02 completed · SPY, QQQ and IWM are constructive. Only 8 of 11 sector ETFs are above SMA50.")).toBeInTheDocument();
     expect(screen.getByText(/IBKR transport connected/)).toBeInTheDocument();
     expect(screen.getByText(/Live 1 · Frozen 1 · Unconfirmed 12 · quote availability/)).toBeInTheDocument();
     const feedStatus = screen.getByText(/IBKR transport connected/).closest('[role="status"]');
     expect(feedStatus?.querySelector(".bg-emerald-600")).toBeNull();
     expect(feedStatus?.querySelector(".bg-amber-500")).toBeInTheDocument();
-    expect(screen.getAllByText("Live quote").length).toBeGreaterThan(0);
-    expect(screen.getAllByText("Frozen quote").length).toBeGreaterThan(0);
-    expect(screen.getByText("$500")).toBeInTheDocument();
-    expect(screen.getByText("Not individual-stock breadth")).toBeInTheDocument();
+    expect(screen.getByRole("img", { name: /SPY: EMA21/ })).toBeInTheDocument();
+    expect(screen.getByText(/\$400 · Frozen/)).toBeInTheDocument();
+    expect(screen.getByText(/\$500 · Live/)).toBeInTheDocument();
+    expect(screen.getByText(/not individual-stock breadth/)).toBeInTheDocument();
     for (const symbol of sectors) expect(screen.getAllByText(new RegExp(symbol)).length).toBeGreaterThan(0);
 
     act(() => queryClient.setQueryData(["parallax", "market-assessment"], {
@@ -90,7 +94,7 @@ describe("MarketPage", () => {
     });
     expect(marketAssessment).toHaveBeenCalledTimes(2);
     expect(await screen.findByRole("heading", { name: "Current assessment unavailable" })).toBeInTheDocument();
-    expect(screen.getByText("Market evidence could not be loaded. The feed remains available independently.")).toBeInTheDocument();
+    expect(screen.getByText("The latest assessment request failed. Any dated evidence below is the last successful result.")).toBeInTheDocument();
     for (const tactic of ["Pullbacks", "Breakouts", "Breakout retests"]) {
       expect(screen.getByRole("heading", { name: tactic })).toBeInTheDocument();
     }
@@ -98,6 +102,23 @@ describe("MarketPage", () => {
     expect(screen.queryByText("Priority in broad strength")).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Explore strong names" }));
     expect(useNavigationStore.getState().activeScreen).toBe("screener");
+  });
+
+  it("scales the evidence map to actual outliers and leaves missing averages unplotted", async () => {
+    const fixture = assessmentFixture();
+    fixture.indices[0]!.ema21_distance_pct = 18.75;
+    fixture.indices[0]!.sma50_distance_pct = null;
+    fixture.indices[1]!.ema21_distance_pct = null;
+    fixture.indices[1]!.sma50_distance_pct = -7.25;
+    marketAssessment.mockResolvedValue(fixture);
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(<QueryClientProvider client={queryClient}><MarketPage /></QueryClientProvider>);
+
+    expect(await screen.findByRole("img", { name: "SPY: EMA21 +18.75%, SMA50 —" })).toBeInTheDocument();
+    expect(screen.getByRole("img", { name: "QQQ: EMA21 —, SMA50 -7.25%" })).toBeInTheDocument();
+    expect(screen.getByText("+20.50%", { selector: "span" })).toBeInTheDocument();
+    expect(screen.getByText("-20.50%", { selector: "span" })).toBeInTheDocument();
+    queryClient.clear();
   });
 
   it("retries identical incomplete assessments every five minutes outside market hours", async () => {

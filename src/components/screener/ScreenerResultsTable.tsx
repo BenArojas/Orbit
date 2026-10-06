@@ -23,7 +23,7 @@
  */
 
 import { useMemo } from "react";
-import { ArrowUpDown, ArrowUp, ArrowDown, TrendingUp, Info } from "lucide-react";
+import { ArrowUpDown, ArrowUp, ArrowDown, TrendingUp } from "lucide-react";
 import {
   Table,
   TableHeader,
@@ -248,9 +248,8 @@ function DisclaimerStrip({
   }
 
   return (
-    <div className="flex items-center gap-2 border-b border-border bg-[var(--bg-1)]/50 px-4 py-1.5">
-      <Info size={11} className="text-[var(--text-3)]" />
-      <span className="font-data text-[10px] text-[var(--text-3)]">{text}</span>
+    <div className="flex items-center border-b border-border bg-[var(--bg-1)]/50 px-3 py-1.5">
+      <span className="font-data text-xs text-[var(--text-3)]">{text}</span>
     </div>
   );
 }
@@ -354,7 +353,7 @@ export default function ScreenerResultsTable() {
                   className="cursor-pointer select-none px-3 py-1.5"
                 >
                   <div
-                    className={`flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wider text-[var(--text-3)] ${
+                    className={`flex items-center gap-1 text-xs font-semibold uppercase tracking-wider text-[var(--text-3)] ${
                       col.align === "right" ? "justify-end" : ""
                     }`}
                   >
@@ -364,9 +363,9 @@ export default function ScreenerResultsTable() {
                 </TableHead>
               ))}
               <TableHead className="px-3 py-1.5">
-                <details className="text-[10px] font-semibold uppercase tracking-wider text-[var(--text-3)]">
+                <details className="relative inline-block text-[10px] font-semibold uppercase tracking-wider text-[var(--text-3)]">
                   <summary aria-label="Fred published RS percentile details" className="cursor-pointer">RS</summary>
-                  <p role="note" className="mt-1 max-w-64 rounded border border-[var(--border)] bg-[var(--bg-1)] p-2 font-normal normal-case tracking-normal text-[var(--text-2)]">
+                  <p role="note" className="absolute right-0 top-full z-30 mt-1 w-64 rounded border border-[var(--border)] bg-[var(--bg-1)] p-2 font-normal normal-case tracking-normal text-[var(--text-2)] shadow-md">
                     Fred published RS percentile. This does not claim exact TradingView parity; unavailable RS evidence does not automatically mean the price or chart is unavailable.
                   </p>
                 </details>
@@ -384,7 +383,7 @@ export default function ScreenerResultsTable() {
                   <TableCell
                     key={col.key}
                     data-testid={col.key === "symbol" ? "screener-tag-cell" : undefined}
-                    className={`px-3 py-1.5 font-data text-xs ${
+                    className={`px-3 py-1.5 font-data text-[13px] ${
                       col.align === "right" ? "text-right" : ""
                     }`}
                   >

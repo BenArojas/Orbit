@@ -85,6 +85,8 @@ async def test_assessment_classifies_and_keeps_prior_posture_when_missing_data_c
 
     first = await service.get_assessment()
     assert (first.status, first.posture) == ("complete", "broad")
+    assert first.indices[0].ema21_distance_pct == pytest.approx((first.indices[0].close / first.indices[0].ema21 - 1) * 100)
+    assert first.indices[0].sma50_distance_pct == pytest.approx((first.indices[0].close / first.indices[0].sma50 - 1) * 100)
     assert all(item.sma200 is None for item in first.indices)
     assert first.participation.confirmed_above == 8
     assert ibkr.regular_hours and all(value is False for value in ibkr.regular_hours)
@@ -121,6 +123,7 @@ async def test_reconciliation_replaces_cached_preclose_close_with_corrected_prov
 
     assert corrected.expected_session == before_correction.expected_session
     assert corrected.indices[0].close == 99.0
+    assert corrected.indices[0].ema21_distance_pct == pytest.approx((99 / corrected.indices[0].ema21 - 1) * 100)
     assert ibkr.cached_daily[1]["data"][-1]["c"] == 101.0
 
 

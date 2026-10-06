@@ -28,6 +28,7 @@ import { useSidecar } from "@/hooks/useSidecar";
 import { useWebSocket } from "@/hooks/useWebSocket";
 import { useTriggerAlerts } from "@/hooks/useTriggerAlerts";
 import { useGatewayContext } from "@/context/GatewayContext";
+import { useRSLeaders } from "@/hooks/useRSLeaders";
 import { IbkrReconnectBanner } from "@/components/gateway/IbkrReconnectBanner";
 import { HealthStrip } from "@/components/ui/HealthStrip";
 import { ThemeToggle } from "@/components/ui/ThemeToggle";
@@ -205,7 +206,9 @@ function NavLogoutButton() {
  */
 function AppShell() {
   const { activeScreen, navigate } = useNavigationStore();
+  const gateway = useGatewayContext();
   const { addHandler } = useGlobalEffects();
+  useRSLeaders(gateway.isRunning && gateway.isAuthenticated, true);
 
   return (
     <div className="flex h-screen flex-col overflow-hidden">

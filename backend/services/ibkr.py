@@ -675,6 +675,21 @@ class IBKRService:
             params["secType"] = sec_type
         return await self._request("GET", "/iserver/secdef/search", params=params)
 
+    @cached(ttl=3600)
+    async def security_definitions(self, conids: tuple[int, ...]) -> list[dict]:
+        return await self._fetch_security_definitions(conids)
+
+    async def security_definitions_fresh(self, conids: tuple[int, ...]) -> list[dict]:
+        return await self._fetch_security_definitions(conids)
+
+    async def _fetch_security_definitions(self, conids: tuple[int, ...]) -> list[dict]:
+        await self.ensure_accounts()
+        result = await self._request(
+            "GET", "/trsrv/secdef", params={"conids": ",".join(map(str, conids))},
+        )
+        rows = result.get("secdef") if isinstance(result, dict) else None
+        return [row for row in rows if isinstance(row, dict)] if isinstance(rows, list) else []
+
     async def option_expirations(self, symbol: str, underlying_conid: int) -> list[str]:
         """Return available IBKR option months for an underlying conid."""
         rows = await self.search(symbol=symbol, sec_type="STK")

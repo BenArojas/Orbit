@@ -3,13 +3,43 @@
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from deps import get_instrument_identity, get_rs_leaders, require_ibkr_auth
-from models.rs import RSLeadersResponse, RSRatingRequest, RSRatingsResponse
+from models.rs import RSLeadersResponse, RSLeadersSourceResponse, RSRatingRequest, RSRatingsResponse
 from request_cancellation import ClientDisconnected, run_cancelling_on_disconnect
 from services.ibkr import IBKRService
 from services.instrument_identity import InstrumentIdentityService
 from services.rs_leaders import RSLeadersService
 
 router = APIRouter(prefix="/rs", tags=["relative-strength"])
+
+
+@router.post("/leaders/refresh/source", response_model=RSLeadersSourceResponse)
+async def refresh_leader_source(
+    request: Request,
+    _ibkr: IBKRService = Depends(require_ibkr_auth),
+    service: RSLeadersService = Depends(get_rs_leaders),
+) -> RSLeadersSourceResponse:
+    """Validate and persist the public source before checking IBKR identities."""
+    try:
+        return await run_cancelling_on_disconnect(
+            request, service.refresh_source(), label="rs/leaders/refresh/source"
+        )
+    except ClientDisconnected:
+        raise HTTPException(status_code=499, detail="client disconnected")
+
+
+@router.post("/leaders/refresh/resolve", response_model=RSLeadersResponse)
+async def resolve_leaders(
+    request: Request,
+    _ibkr: IBKRService = Depends(require_ibkr_auth),
+    service: RSLeadersService = Depends(get_rs_leaders),
+) -> RSLeadersResponse:
+    """Resolve saved, validated Fred candidates through the IBKR identity boundary."""
+    try:
+        return await run_cancelling_on_disconnect(
+            request, service.resolve_leaders(), label="rs/leaders/refresh/resolve"
+        )
+    except ClientDisconnected:
+        raise HTTPException(status_code=499, detail="client disconnected")
 
 
 @router.get("/leaders", response_model=RSLeadersResponse)

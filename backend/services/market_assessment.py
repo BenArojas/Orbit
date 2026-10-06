@@ -374,6 +374,8 @@ class MarketAssessmentService:
             close=close if current else None,
             ema21=ema21 if is_index else None,
             sma50=sma50,
+            ema21_distance_pct=(close / ema21 - 1) * 100 if is_index and close is not None and ema21 else None,
+            sma50_distance_pct=(close / sma50 - 1) * 100 if is_index and close is not None and sma50 else None,
             sma200=sma200 if is_index else None,
             trend=trend if is_index else None,
             above_sma50=above_sma50 if not is_index else None,

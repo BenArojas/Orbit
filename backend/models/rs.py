@@ -18,7 +18,7 @@ class RSItem(BaseModel):
 
 
 class RSLeadersResponse(BaseModel):
-    status: Literal["available", "stale", "unavailable"]
+    status: Literal["available", "stale", "unavailable", "verifying"]
     source_revision: str | None = None
     source_published_at: datetime | None = None
     fetched_at: datetime | None = None
@@ -26,6 +26,16 @@ class RSLeadersResponse(BaseModel):
     freshness: Literal["stale", "unknown"]
     eligible_count: int = 0
     items: list[RSItem] = Field(default_factory=list)
+    issues: list[str] = Field(default_factory=list)
+
+
+class RSLeadersSourceResponse(BaseModel):
+    phase: Literal["verifying", "unavailable"]
+    source_revision: str | None = None
+    source_published_at: datetime | None = None
+    fetched_at: datetime | None = None
+    freshness: Literal["stale", "unknown"] = "unknown"
+    eligible_count: int = 0
     issues: list[str] = Field(default_factory=list)
 
 

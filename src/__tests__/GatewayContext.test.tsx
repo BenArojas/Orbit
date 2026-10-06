@@ -154,6 +154,38 @@ describe("GatewayProvider — Task 3.7 WS auth_state subscription", () => {
     expect(useNavigationStore.getState().namesContext).toMatchObject({ selectedWatchlistId: "", watchlistFilter: "", brokerSessionEpoch: 1 });
   });
 
+  it("cancels session-owned RS refresh work on logout and ignores a late result", async () => {
+    const qc = freshClient();
+    let refreshSignal: AbortSignal | undefined;
+    let finishRefresh!: (value: { items: string[] }) => void;
+    const refreshKey = ["parallax", "rs-leaders-refresh", 0];
+    const refresh = qc.fetchQuery({
+      queryKey: refreshKey,
+      queryFn: ({ signal }) => {
+        refreshSignal = signal;
+        return new Promise<{ items: string[] }>((resolve) => { finishRefresh = resolve; });
+      },
+    });
+    void refresh.catch(() => undefined);
+    await Promise.resolve();
+    qc.setQueryData(["parallax", "rs-leaders", 0], { status: "available" });
+    qc.setQueryData(["parallax", "rs-leaders-progress", 0], { phase: "verifying" });
+
+    const { rerender } = renderHook(() => useQueryClient(), { wrapper: makeWrapper(qc) });
+    await act(async () => {
+      capturedHandler!({ type: "auth_state", authenticated: false, session_dropped: true });
+      mockGatewayAuthenticated = false;
+      rerender();
+    });
+
+    await waitFor(() => expect(refreshSignal?.aborted).toBe(true));
+    finishRefresh({ items: ["OLD SESSION"] });
+    await act(async () => { await Promise.resolve(); });
+    await waitFor(() => expect(qc.getQueryData(refreshKey)).toBeUndefined());
+    expect(qc.getQueryData(["parallax", "rs-leaders", 0])).toBeUndefined();
+    expect(qc.getQueryData(["parallax", "rs-leaders-progress", 0])).toBeUndefined();
+  });
+
   it("auth_state push (authenticated: true) clears session_dropped and auth_required", async () => {
     const qc = freshClient();
     qc.setQueryData<GatewayStatusResponse>(GATEWAY_QUERY_KEY, {

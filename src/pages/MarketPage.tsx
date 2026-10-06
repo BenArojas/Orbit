@@ -39,12 +39,12 @@ function evidenceSummary(assessment: MarketAssessmentResponse | undefined, curre
   const participation = assessment.participation;
   const sectorSummary = participation.missing === 0
     ? `Only ${participation.confirmed_above} of 11 sector ETFs are above SMA50.`
-    : `${participation.available} of 11 sector readings are available; ${participation.possible_above_min}–${participation.possible_above_max} could be above SMA50.`;
+    : `${participation.available} of 11 sector readings; ${participation.possible_above_min}–${participation.possible_above_max} could be above SMA50.`;
   const session = assessment.evidence_session;
   if (currentSession && session && assessment.status === "complete") {
-    return `Completed session ${session}: ${indexSummary} ${sectorSummary}`;
+    return `${session} completed · ${indexSummary} ${sectorSummary}`;
   }
-  if (currentSession && session) return `Partial evidence for ${session}: ${indexSummary} ${sectorSummary}`;
+  if (currentSession && session) return `Partial ${session} · ${indexSummary} ${sectorSummary}`;
   if (session) return `Dated evidence from ${session}; current session ${assessment.expected_session ?? "unconfirmed"} is not confirmed. ${indexSummary} ${sectorSummary}`;
   return `Session date unconfirmed. ${indexSummary} ${sectorSummary}`;
 }
@@ -103,33 +103,94 @@ function quoteSummary(quotes: Map<number, { availability?: string }>, conids: nu
   return { label: labels.length ? `${labels.join(" · ")} · quote availability` : "Quote availability unconfirmed", kind: "uncertain" };
 }
 
-function EvidenceRow({
-  item,
-  livePrice,
-  availability,
+function distance(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(value)) return "—";
+  return `${value > 0 ? "+" : ""}${value.toFixed(2)}%`;
+}
+
+function EvidenceMap({
+  items,
+  quotes,
   onOpen,
 }: {
-  item: MarketInstrumentEvidence;
-  livePrice?: number;
-  availability?: string;
+  items: MarketInstrumentEvidence[];
+  quotes: Map<number, { last: number; availability?: string }>;
   onOpen: (conid: number, symbol: string) => void;
 }) {
-  const classification = item.trend ?? (item.above_sma50 == null ? "Unavailable" : item.above_sma50 ? "Above SMA50" : "Below SMA50");
-  const label = item.name ? `${item.symbol} · ${item.name}` : item.symbol;
-  return (
-    <div className="grid grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-3 border-b py-2 last:border-b-0" style={{ borderColor: COLORS.line }}>
-      {item.conid ? (
-        <button type="button" onClick={() => onOpen(item.conid!, item.symbol)} className="flex min-w-0 items-center gap-1 text-left text-sm font-semibold hover:underline" style={{ color: COLORS.ink }}>
-          <span className="truncate">{label}</span><ArrowUpRight size={13} aria-hidden="true" />
-        </button>
-      ) : <span className="truncate text-sm font-semibold" style={{ color: COLORS.ink }}>{label}</span>}
-      <span className="text-right">
-        <span className="block font-mono text-sm tabular-nums" style={{ color: COLORS.ink }}>{price(livePrice)}</span>
-        <span className="block text-[10px]" style={{ color: COLORS.muted }}>{quoteState(availability)} quote</span>
-      </span>
-      <span className="min-w-[92px] text-right text-xs capitalize" style={{ color: item.unavailable_reason ? COLORS.muted : COLORS.accent }} title={item.unavailable_reason ?? undefined}>{classification}</span>
+  const distances = items.flatMap((item) => [item.ema21_distance_pct, item.sma50_distance_pct])
+    .filter((value): value is number => value != null && Number.isFinite(value));
+  const maxDistance = Math.max(0, ...distances.map(Math.abs));
+  const extent = maxDistance === 0 ? 1 : Math.ceil(maxDistance * 1.08 * 2) / 2;
+  const position = (value: number) => `${((value + extent) / (2 * extent)) * 100}%`;
+  return <section className="border-y py-3" style={{ borderColor: COLORS.line }} aria-label="Index evidence map">
+    <div className="mb-2 flex flex-wrap items-end justify-between gap-2">
+      <div>
+        <h2 className="text-sm font-semibold">Index evidence map</h2>
+        <p className="text-[13px]" style={{ color: COLORS.muted }}>Completed daily close relative to EMA21 and SMA50 · {items[0]?.session_date ?? "session date unconfirmed"}</p>
+      </div>
+      <div className="flex items-center gap-3 text-[11px]" style={{ color: COLORS.muted }} aria-label="Evidence map legend">
+        <span className="inline-flex items-center gap-1"><i className="h-2.5 w-2.5 rounded-full" style={{ background: COLORS.accent }} />EMA21</span>
+        <span className="inline-flex items-center gap-1"><i className="h-2.5 w-2.5 border-2" style={{ borderColor: COLORS.accent }} />SMA50</span>
+        <span>0% close equals average</span>
+      </div>
     </div>
-  );
+    {distances.length > 0 && <div className="mb-0.5 grid grid-cols-[minmax(82px,112px)_minmax(90px,1fr)_minmax(116px,170px)] items-center gap-3 text-xs tabular-nums sm:grid-cols-[minmax(110px,150px)_minmax(100px,1fr)_minmax(150px,210px)]">
+      <span />
+      <div className="flex justify-between" style={{ color: COLORS.muted }}><span>{distance(-extent)}</span><span>0%</span><span>{distance(extent)}</span></div>
+      <span className="text-right" style={{ color: COLORS.muted }}>EMA21 · SMA50</span>
+    </div>}
+    {items.map((item) => {
+      const ema = item.ema21_distance_pct;
+      const sma = item.sma50_distance_pct;
+      const quote = item.conid == null ? undefined : quotes.get(item.conid);
+      const mapLabel = `${item.symbol}: EMA21 ${distance(ema)}, SMA50 ${distance(sma)}`;
+      return <div key={item.symbol} className="grid grid-cols-[minmax(82px,112px)_minmax(90px,1fr)_minmax(116px,170px)] items-center gap-3 border-t py-1 sm:grid-cols-[minmax(110px,150px)_minmax(100px,1fr)_minmax(150px,210px)]" style={{ borderColor: COLORS.line }}>
+        <div className="min-w-0">
+          {item.conid ? <button type="button" onClick={() => onOpen(item.conid!, item.symbol)} className="font-semibold hover:underline">{item.symbol}<ArrowUpRight className="ml-0.5 inline" size={12} aria-hidden="true" /></button> : <span className="font-semibold">{item.symbol}</span>}
+          <span className="block truncate text-xs tabular-nums" style={{ color: COLORS.muted }}>{price(quote?.last)} · {quoteState(quote?.availability)}</span>
+        </div>
+        {distances.length > 0 ? <div role="img" aria-label={mapLabel} className="relative h-7">
+          <span className="absolute inset-x-0 top-1/2 border-t" style={{ borderColor: COLORS.line }} aria-hidden="true" />
+          <span className="absolute inset-y-1 left-1/2 border-l" style={{ borderColor: COLORS.line }} aria-hidden="true" />
+          {ema != null && Number.isFinite(ema) && <span title={`${item.symbol} EMA21 ${distance(ema)}`} className="absolute top-1/2 h-3 w-3 -translate-x-1/2 -translate-y-1/2 rounded-full" style={{ left: position(ema), background: COLORS.accent }} aria-hidden="true" />}
+          {sma != null && Number.isFinite(sma) && <span title={`${item.symbol} SMA50 ${distance(sma)}`} className="absolute top-1/2 h-3 w-3 -translate-x-1/2 -translate-y-1/2 border-2 bg-white" style={{ left: position(sma), borderColor: COLORS.accent }} aria-hidden="true" />}
+        </div> : <span className="text-xs" style={{ color: COLORS.muted }}>{item.unavailable_reason ?? "Average distance unavailable"}</span>}
+        <span className="text-right font-mono text-xs tabular-nums" style={{ color: COLORS.ink }}>● {distance(ema)} <span aria-hidden="true">·</span> □ {distance(sma)}</span>
+      </div>;
+    })}
+  </section>;
+}
+
+function SectorParticipation({
+  items,
+  participation,
+  session,
+  onOpen,
+}: {
+  items: MarketInstrumentEvidence[];
+  participation?: MarketAssessmentResponse["participation"];
+  session?: string | null;
+  onOpen: (conid: number, symbol: string) => void;
+}) {
+  const possible = participation && participation.missing > 0
+    ? `${participation.possible_above_min}–${participation.possible_above_max} of 11 possible above SMA50`
+    : participation ? `${participation.confirmed_above} of 11 above SMA50` : "Participation unavailable";
+  return <section className="border-b pb-3" style={{ borderColor: COLORS.line }} aria-label="Sector ETF participation">
+    <div className="mb-2 flex flex-wrap items-baseline justify-between gap-2">
+      <h2 className="text-sm font-semibold">Sector participation <span className="ml-1 text-xs font-normal" style={{ color: COLORS.muted }}>11 ETF proxies · not individual-stock breadth · {session ?? "date unconfirmed"}</span></h2>
+      <span className="text-xs tabular-nums" style={{ color: COLORS.accent }}>{possible} · {participation?.missing ?? 11} missing</span>
+    </div>
+    <div className="flex flex-wrap gap-1.5">
+      {items.map((item) => {
+        const state = item.above_sma50 == null ? "Missing" : item.above_sma50 ? "Above SMA50" : "At/below SMA50";
+        const className = `min-h-8 rounded border px-2 text-xs ${item.above_sma50 == null ? "" : item.above_sma50 ? "font-semibold" : ""}`;
+        const style = { color: item.above_sma50 ? COLORS.accent : COLORS.muted, borderColor: COLORS.line, background: item.above_sma50 ? "#E8EFF2" : COLORS.surface };
+        return item.conid
+          ? <button key={item.symbol} type="button" title={`${item.symbol}: ${state}`} aria-label={`${item.symbol}: ${state}`} className={className} style={style} onClick={() => onOpen(item.conid!, item.symbol)}>{item.symbol}</button>
+          : <span key={item.symbol} title={`${item.symbol}: ${state}`} className={className} style={style}>{item.symbol}</span>;
+      })}
+    </div>
+  </section>;
 }
 
 export default function MarketPage() {
@@ -210,15 +271,14 @@ export default function MarketPage() {
   const rangeDate = query.data?.evidence_session ?? "session date unconfirmed";
 
   return (
-    <div className="h-full overflow-y-auto p-4 sm:p-6" style={{ background: COLORS.background, color: COLORS.ink }}>
-      <div className="mx-auto flex max-w-6xl flex-col gap-4">
+    <div className="h-full overflow-y-auto p-4 sm:p-5" style={{ background: COLORS.background, color: COLORS.ink }}>
+      <div className="mx-auto flex max-w-6xl flex-col gap-3">
         <header className="flex flex-wrap items-end justify-between gap-3">
           <div>
-            <p className="text-[11px] font-semibold uppercase tracking-[0.18em]" style={{ color: COLORS.accent }}>Parallax · Market first</p>
-            <h1 className="mt-1 text-2xl font-semibold tracking-tight">Market</h1>
-            <p className="mt-1 text-sm" style={{ color: COLORS.muted }}>Completed-session evidence, with current prices streamed separately.</p>
+           <p className="text-xs font-semibold uppercase tracking-[0.14em]" style={{ color: COLORS.accent }}>Market assessment</p>
+            <h1 className="mt-1 text-[30px] font-semibold leading-tight tracking-tight">Market</h1>
           </div>
-          <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs" style={{ color: COLORS.muted }} role="status" aria-live="polite">
+       <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs" style={{ color: COLORS.muted }} role="status" aria-live="polite">
             <span>{transport}</span>
             <span aria-hidden="true">·</span>
             <span className={`h-2 w-2 rounded-full ${quoteEvidence.kind === "live" ? "bg-emerald-600" : "bg-amber-500"}`} aria-hidden="true" />
@@ -226,78 +286,58 @@ export default function MarketPage() {
           </div>
         </header>
 
-        <section className="rounded-xl border p-5 sm:p-6" style={{ background: COLORS.surface, borderColor: COLORS.line }} aria-labelledby="market-posture">
+        <section className="border-y py-3" style={{ borderColor: COLORS.line }} aria-labelledby="market-posture">
           <div className="flex flex-wrap items-start justify-between gap-4">
             <div className="max-w-3xl">
               <div className="flex items-center gap-2">
-                <h2 id="market-posture" className="text-xl font-semibold">{posture.title}</h2>
+                <h2 id="market-posture" className="text-[30px] font-semibold leading-tight tracking-tight">{posture.title}</h2>
                 {query.data?.status === "partial" && <span className="rounded-full px-2 py-1 text-[11px]" style={{ background: COLORS.background, color: COLORS.accent }}>Partial evidence</span>}
               </div>
-              <p className="mt-2 text-sm" style={{ color: COLORS.muted }}>{posture.detail}</p>
-              <p className="mt-3 text-sm font-semibold" style={{ color: COLORS.accent }}>{posture.priority}</p>
-              <button type="button" onClick={() => navigate("screener")} className="mt-3 inline-flex min-h-10 items-center gap-1 rounded-md border px-3 py-2 text-xs font-semibold hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2" style={{ color: COLORS.accent, borderColor: COLORS.line, background: COLORS.surface }}>
-                Explore strong names <ArrowUpRight size={13} aria-hidden="true" />
-              </button>
+              <p className="mt-1 text-sm" style={{ color: COLORS.muted }}>{posture.detail}</p>
+              <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2">
+                <p className="text-sm font-semibold" style={{ color: COLORS.accent }}>{posture.priority}</p>
+                <button type="button" onClick={() => navigate("screener")} className="parallax-press inline-flex min-h-8 items-center gap-1 text-xs font-semibold underline decoration-dotted underline-offset-4 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2" style={{ color: COLORS.accent }}>
+                  Explore strong names <ArrowUpRight size={13} aria-hidden="true" />
+                </button>
+              </div>
             </div>
-            <div className="min-w-36 rounded-lg px-4 py-3" style={{ background: COLORS.background }}>
+            <div className="min-w-36 px-1 py-1 text-right">
               <p className="text-[11px] uppercase tracking-wide" style={{ color: COLORS.muted }}>Sector ETF proxy</p>
-              <p className="mt-1 text-lg font-semibold tabular-nums">{range} above SMA50</p>
-              <p className="mt-1 text-[11px]" style={{ color: COLORS.muted }}>{rangeDate}</p>
-              <p className="mt-1 text-[11px]" style={{ color: COLORS.muted }}>Not individual-stock breadth</p>
+              <p className="mt-1 text-xl font-semibold tabular-nums">{range}</p>
+              <p className="text-[11px]" style={{ color: COLORS.muted }}>above SMA50 · {rangeDate}</p>
             </div>
           </div>
-          {(requestFailed || (query.data?.issues.length ?? 0) > 0) && (
-            <div className="mt-4 rounded-lg border px-3 py-2 text-xs" style={{ borderColor: COLORS.line, color: COLORS.muted }}>
-              {requestFailed ? "Market evidence could not be loaded. The feed remains available independently." : query.data?.issues.join(" · ")}
+          {!requestFailed && (query.data?.issues.length ?? 0) > 0 && (
+            <div className="mt-2 flex flex-wrap items-center gap-x-2 border-y py-2 text-xs" style={{ borderColor: COLORS.line, color: COLORS.muted }} role="status">
+              <span>{participation?.missing ? `${participation.missing} sector readings unavailable; the participation range is retained.` : "Some assessment evidence is unavailable."}</span>
+              <details>
+                <summary className="cursor-pointer underline decoration-dotted underline-offset-2">Data notes</summary>
+                <ul className="mt-1 list-inside list-disc">{query.data?.issues.map((issue) => <li key={issue}>{issue}</li>)}</ul>
+              </details>
             </div>
           )}
         </section>
 
-        <section className="grid gap-3 sm:grid-cols-3" aria-label="Major indices">
-          {query.data?.indices.map((item) => (
-            <article key={item.symbol} className="rounded-xl border px-4 py-3" style={{ background: COLORS.surface, borderColor: COLORS.line }}>
-              <div className="flex items-baseline justify-between gap-2">
-                {item.conid ? <button type="button" onClick={() => navigateToAnalysis(item.conid!, item.symbol)} className="text-sm font-semibold hover:underline">{item.symbol}</button> : <span className="text-sm font-semibold">{item.symbol}</span>}
-                <span className="text-right">
-                  <span className="block font-mono text-lg font-semibold tabular-nums">{price(item.conid ? liveQuotes.get(item.conid)?.last : null)}</span>
-                  <span className="block text-[10px]" style={{ color: COLORS.muted }}>{quoteState(item.conid ? liveQuotes.get(item.conid)?.availability : undefined)} quote</span>
-                </span>
-              </div>
-              <p className="mt-1 text-xs capitalize" style={{ color: COLORS.muted }}>{item.trend ?? item.unavailable_reason ?? "Waiting for evidence"}</p>
-              <p className="mt-1 text-[11px]" style={{ color: COLORS.muted }}>SMA200 context {price(item.sma200)}</p>
-            </article>
-          )) ?? <article className="rounded-xl border p-4 text-sm sm:col-span-3" style={{ background: COLORS.surface, borderColor: COLORS.line, color: COLORS.muted }}>{query.isLoading ? "Loading completed-session evidence…" : "Connect to IBKR to load market evidence."}</article>}
-        </section>
+         {query.data?.indices
+           ? <EvidenceMap items={query.data.indices} quotes={liveQuotes} onOpen={navigateToAnalysis} />
+           : <section className="border-y py-4 text-sm" style={{ borderColor: COLORS.line, color: COLORS.muted }}>{query.isLoading ? "Loading completed-session evidence…" : "Connect to IBKR to load market evidence."}</section>}
 
-        <section className="grid gap-2 sm:grid-cols-3" aria-label="Available tactics">
+        <SectorParticipation items={query.data?.sectors ?? []} participation={participation} session={query.data?.evidence_session} onOpen={navigateToAnalysis} />
+
+        <section className="grid gap-x-6 gap-y-2 border-b py-3 sm:grid-cols-3" style={{ borderColor: COLORS.line }} aria-label="Available tactics">
           {[
             ["Pullbacks", currentPosture === "defensive" ? "Wait for support; waiting is valid" : currentPosture === "broad" ? "Available" : currentPosture === "selective" ? "Priority: strong names near support" : "Available; market priority unknown"],
             ["Breakouts", currentPosture === "broad" ? "Priority in broad strength" : currentPosture === "defensive" ? "Stay selective" : currentPosture === "selective" ? "Available with selection" : "Available; market priority unknown"],
             ["Breakout retests", currentPosture === "broad" ? "Priority in broad strength" : currentPosture === "defensive" ? "Wait for conditions to improve" : currentPosture === "selective" ? "Available with selection" : "Available; market priority unknown"],
           ].map(([name, note]) => (
-            <article key={name} className="rounded-lg border px-3 py-2" style={{ background: COLORS.surface, borderColor: COLORS.line }}>
-              <h2 className="text-xs font-semibold">{name}</h2>
-              <p className="mt-1 text-[11px]" style={{ color: COLORS.muted }}>{note}</p>
+            <article key={name} className="px-1 py-1">
+              <h2 className="text-[13px] font-semibold">{name}</h2>
+              <p className="mt-1 text-xs" style={{ color: COLORS.muted }}>{note}</p>
             </article>
           ))}
         </section>
 
-        <section className="rounded-xl border px-4 py-3" style={{ background: COLORS.surface, borderColor: COLORS.line }}>
-          <div className="mb-2 flex flex-wrap items-baseline justify-between gap-2">
-            <div>
-              <h2 className="text-sm font-semibold">Sector participation</h2>
-              <p className="mt-0.5 text-xs" style={{ color: COLORS.muted }}>Eleven sector ETFs · above their 50-day simple average · {rangeDate}</p>
-            </div>
-            <span className="text-xs tabular-nums" style={{ color: COLORS.muted }}>{participation ? `${participation.available} available · ${participation.missing} missing` : "Loading"}</span>
-          </div>
-          <div className="grid gap-x-6 sm:grid-cols-2 lg:grid-cols-3">
-              {query.data?.sectors.map((item) => (
-              <EvidenceRow key={item.symbol} item={item} livePrice={item.conid ? liveQuotes.get(item.conid)?.last : undefined} availability={item.conid ? liveQuotes.get(item.conid)?.availability : undefined} onOpen={navigateToAnalysis} />
-            ))}
-          </div>
-        </section>
-
-        <details className="rounded-xl border px-4 py-3" style={{ background: COLORS.surface, borderColor: COLORS.line }}>
+        <details className="border-y py-3">
           <summary className="cursor-pointer text-sm font-semibold">Assessment evidence and update times</summary>
           <div className="mt-3 grid gap-2 text-xs sm:grid-cols-2" style={{ color: COLORS.muted }}>
             <p>Expected completed session: {query.data?.expected_session ?? "Unavailable"}</p>
@@ -309,8 +349,8 @@ export default function MarketPage() {
             <div>
               <h3 className="text-xs font-semibold" style={{ color: COLORS.ink }}>Index averages</h3>
               {query.data?.indices.map((item) => (
-                <p key={item.symbol} className="mt-2 text-[11px] tabular-nums" style={{ color: COLORS.muted }}>
-                  <span className="font-semibold" style={{ color: COLORS.ink }}>{item.symbol}</span> · Close {price(item.close)} · EMA21 {price(item.ema21)} · SMA50 {price(item.sma50)} · SMA200 {price(item.sma200)}
+                <p key={item.symbol} className="mt-2 text-xs tabular-nums" style={{ color: COLORS.muted }}>
+                  <span className="font-semibold" style={{ color: COLORS.ink }}>{item.symbol}</span> · Close {price(item.close)} · EMA21 {price(item.ema21)} ({distance(item.ema21_distance_pct)}) · SMA50 {price(item.sma50)} ({distance(item.sma50_distance_pct)}) · SMA200 context {price(item.sma200)}
                 </p>
               ))}
             </div>
@@ -318,7 +358,7 @@ export default function MarketPage() {
               <h3 className="text-xs font-semibold" style={{ color: COLORS.ink }}>Sector ETF SMA50 evidence</h3>
               <div className="mt-1 grid gap-x-4 sm:grid-cols-2">
                 {query.data?.sectors.map((item) => (
-                  <p key={item.symbol} className="mt-1 text-[11px] tabular-nums" style={{ color: COLORS.muted }}>
+                  <p key={item.symbol} className="mt-1 text-xs tabular-nums" style={{ color: COLORS.muted }}>
                     <span className="font-semibold" style={{ color: COLORS.ink }}>{item.symbol}</span> · Close {price(item.close)} · SMA50 {price(item.sma50)}{item.unavailable_reason ? ` · ${item.unavailable_reason}` : ""}
                   </p>
                 ))}

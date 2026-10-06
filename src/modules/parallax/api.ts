@@ -67,7 +67,7 @@ export interface RSLeader {
 }
 
 export interface RSLeadersResponse {
-  status: "available" | "stale" | "unavailable";
+  status: "available" | "stale" | "unavailable" | "verifying";
   source_revision: string | null;
   source_published_at: string | null;
   fetched_at: string | null;
@@ -75,6 +75,16 @@ export interface RSLeadersResponse {
   freshness: "stale" | "unknown";
   eligible_count: number;
   items: RSLeader[];
+  issues: string[];
+}
+
+export interface RSLeadersSourceResponse {
+  phase: "verifying" | "unavailable";
+  source_revision: string | null;
+  source_published_at: string | null;
+  fetched_at: string | null;
+  freshness: "stale" | "unknown";
+  eligible_count: number;
   issues: string[];
 }
 
@@ -104,6 +114,8 @@ export interface MarketInstrumentEvidence {
     close: number | null;
     ema21: number | null;
     sma50: number | null;
+    ema21_distance_pct: number | null;
+    sma50_distance_pct: number | null;
     sma200: number | null;
     trend: "constructive" | "weak" | "mixed" | null;
     above_sma50: boolean | null;
@@ -762,6 +774,12 @@ export const parallaxApi = {
 
     refreshRSLeaders: (signal?: AbortSignal) =>
         sidecarRequest<RSLeadersResponse>("POST", "/rs/leaders/refresh", undefined, signal),
+
+    refreshRSLeadersSource: (signal?: AbortSignal) =>
+        sidecarRequest<RSLeadersSourceResponse>("POST", "/rs/leaders/refresh/source", undefined, signal),
+
+    resolveRSLeaders: (signal?: AbortSignal) =>
+        sidecarRequest<RSLeadersResponse>("POST", "/rs/leaders/refresh/resolve", undefined, signal),
 
     rsRatings: (conids: number[], signal?: AbortSignal) =>
         sidecarRequest<RSRatingsResponse>("POST", "/rs/ratings", { conids }, signal),

@@ -77,6 +77,14 @@ def _make_svc(
             if secdef_error is not None:
                 raise secdef_error
             return []
+        if endpoint == "/trsrv/secdef":
+            return {"secdef": [
+                {
+                    "conid": 265598, "ticker": "AAPL", "assetClass": "STK",
+                    "listingExchange": "NASDAQ", "countryCode": "US",
+                    "currency": "USD", "isUS": True,
+                },
+            ]}
         if endpoint == "/iserver/marketdata/snapshot":
             conids = [int(c) for c in str(params.get("conids", "")).split(",") if c]
             return [{"conid": c, "31": "100.00"} for c in conids]
@@ -142,6 +150,22 @@ async def test_stk_class_does_not_issue_secdef():
         snap_calls = [c for c in calls if c[1] == "/iserver/marketdata/snapshot"]
         assert len(snap_calls) == 2
         assert 265598 not in svc.state.secdef_warmed
+    finally:
+        _restore_delay(svc)
+
+
+@pytest.mark.asyncio
+async def test_security_definition_lookup_uses_contract_id_endpoint():
+    svc, calls = _make_svc()
+    try:
+        result = await svc.security_definitions_fresh((265598,))
+
+        assert calls == [("GET", "/trsrv/secdef", {"conids": "265598"})]
+        assert result == [{
+            "conid": 265598, "ticker": "AAPL", "assetClass": "STK",
+            "listingExchange": "NASDAQ", "countryCode": "US",
+            "currency": "USD", "isUS": True,
+        }]
     finally:
         _restore_delay(svc)
 

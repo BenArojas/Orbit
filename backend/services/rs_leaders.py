@@ -13,12 +13,12 @@ import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Awaitable, Callable
 
 import httpx
 
 from exceptions import IBKRAuthError, IBKRError
-from models.rs import RSItem, RSLeadersResponse, RSRatingItem, RSRatingsResponse
+from models.rs import RSItem, RSLeadersResponse, RSLeadersSourceResponse, RSRatingItem, RSRatingsResponse
 from services.ibkr import IBKRService
 from services.instrument_identity import InstrumentIdentityService
 
@@ -45,7 +45,7 @@ US_LISTING_EXCHANGES = {
 
 @dataclass
 class _RefreshFlight:
-    task: asyncio.Task[RSLeadersResponse]
+    task: asyncio.Task[Any]
     callers: int = 0
 
 
@@ -145,15 +145,30 @@ def _is_verified_us_stock(contract: Any, conid: int, symbol: str) -> bool | None
         actual_conid = int(contract.get("conid"))
     except (TypeError, ValueError):
         return None
-    actual_symbol = str(contract.get("symbol") or "").strip().upper()
-    instrument_type = str(contract.get("instrument_type") or contract.get("secType") or "").strip().upper()
-    exchange = str(contract.get("listing_exchange") or "").strip().upper()
+    actual_symbol = str(contract.get("ticker") or "").strip().upper()
+    instrument_type = str(contract.get("assetClass") or "").strip().upper()
+    exchange = str(contract.get("listingExchange") or "").strip().upper()
+    country = str(contract.get("countryCode") or "").strip().upper()
     currency = str(contract.get("currency") or "").strip().upper()
-    if not actual_symbol or not instrument_type or not exchange or not currency:
+    is_us = contract.get("isUS")
+    if not actual_symbol or not instrument_type or not exchange or not country or not currency or not isinstance(is_us, bool):
         return None
     if actual_conid != conid or actual_symbol != symbol.upper() or instrument_type != "STK":
         return False
-    return currency == "USD" and exchange in US_LISTING_EXCHANGES
+    return country == "US" and is_us and currency == "USD" and exchange in US_LISTING_EXCHANGES
+
+
+def _definitions_by_conid(definitions: Any) -> dict[int, dict[str, Any]]:
+    result = {}
+    for definition in definitions if isinstance(definitions, list) else []:
+        if not isinstance(definition, dict):
+            continue
+        try:
+            conid = int(definition.get("conid"))
+        except (TypeError, ValueError):
+            continue
+        result[conid] = definition
+    return result
 
 
 class RSLeadersService:
@@ -173,11 +188,24 @@ class RSLeadersService:
         self._now = now
         self._snapshot: RSLeadersResponse | None = None
         self._records: list[dict[str, Any]] = []
+        self._source_revision: str | None = None
+        self._source_published_at: dt.datetime | None = None
+        self._source_fetched_at: dt.datetime | None = None
+        self._source_issue: str | None = None
         self._loaded = False
-        self._flight: _RefreshFlight | None = None
+        self._flights: dict[str, _RefreshFlight] = {}
 
     def get_snapshot(self) -> RSLeadersResponse:
         self._load_cache()
+        if self._records and (self._snapshot is None or self._snapshot.source_revision != self._source_revision):
+            return RSLeadersResponse(
+                status="verifying", source_revision=self._source_revision,
+                source_published_at=self._source_published_at,
+                fetched_at=self._source_fetched_at,
+                freshness=self._freshness(self._source_published_at, self._now().astimezone(dt.UTC)) if self._source_published_at else "unknown",
+                eligible_count=sum(_qualifies(row) for row in self._records),
+                issues=[self._source_issue or "Verifying US listings for the saved published ranking."],
+            )
         if self._snapshot is None:
             return RSLeadersResponse(
                 status="unavailable", freshness="unknown",
@@ -186,20 +214,31 @@ class RSLeadersService:
         return self._with_current_freshness(self._snapshot)
 
     async def refresh(self) -> RSLeadersResponse:
+        await self.refresh_source()
+        return await self.resolve_leaders()
+
+    async def refresh_source(self) -> RSLeadersSourceResponse:
         self._load_cache()
-        flight = self._flight
+        return await self._run_shared("source", self._refresh_source)
+
+    async def resolve_leaders(self) -> RSLeadersResponse:
+        self._load_cache()
+        return await self._run_shared("resolution", self._resolve_leaders)
+
+    async def _run_shared(self, key: str, operation: Callable[[], Awaitable[Any]]) -> Any:
+        flight = self._flights.get(key)
         if flight is None or flight.task.done():
-            task = asyncio.create_task(self._refresh_source())
+            task = asyncio.create_task(operation())
             flight = _RefreshFlight(task)
-            self._flight = flight
-            task.add_done_callback(lambda completed, current=flight: self._finish_refresh(current, completed))
+            self._flights[key] = flight
+            task.add_done_callback(lambda completed, name=key, current=flight: self._finish_refresh(name, current, completed))
         flight.callers += 1
         try:
             return await asyncio.shield(flight.task)
         finally:
             flight.callers -= 1
-            if flight.callers == 0 and self._flight is flight:
-                self._flight = None
+            if flight.callers == 0 and self._flights.get(key) is flight:
+                self._flights.pop(key, None)
                 if not flight.task.done():
                     flight.task.cancel()
 
@@ -208,25 +247,45 @@ class RSLeadersService:
         by_symbol = {row["symbol"]: row for row in self._records}
         identity_by_conid = {int(row["conid"]): row for row in identities}
         snapshot = self.get_snapshot()
-        source_available = bool(self._records) and snapshot.status != "unavailable"
+        source_available = bool(self._records) and self._source_revision is not None
+        source_freshness = self._freshness(self._source_published_at, self._now().astimezone(dt.UTC)) if self._source_published_at else "unknown"
+        source_status = "unavailable" if not source_available else "stale" if source_freshness == "stale" or self._source_issue else "available"
         items: list[RSRatingItem] = []
+        stock_conids = tuple(sorted({
+            conid for conid in conids
+            if (identity := identity_by_conid.get(conid))
+            and str(identity.get("symbol", "")).strip()
+            and str(identity.get("sec_type", "")).upper() == "STK"
+        }))
+        definitions_by_conid: dict[int, dict[str, Any]] = {}
+        if stock_conids:
+            try:
+                definitions_by_conid = _definitions_by_conid(
+                    await self.ibkr.security_definitions(stock_conids)
+                )
+                missing = tuple(
+                    conid for conid in stock_conids
+                    if _is_verified_us_stock(
+                        definitions_by_conid.get(conid), conid,
+                        str(identity_by_conid[conid].get("symbol", "")).strip().upper(),
+                    ) is None
+                )
+                if missing:
+                    definitions_by_conid.update(_definitions_by_conid(
+                        await self.ibkr.security_definitions_fresh(missing)
+                    ))
+            except IBKRAuthError:
+                raise
+            except IBKRError as exc:
+                log.warning("Could not verify US stock listings for ratings: %s", exc)
         for conid in conids:
             identity = identity_by_conid.get(conid)
             symbol = str(identity.get("symbol", "")).strip().upper() if identity else ""
             sec_type = str(identity.get("sec_type", "")).upper() if identity else ""
-            verified = False
-            if identity and symbol and sec_type == "STK":
-                try:
-                    contract = await self.ibkr.contract_info(conid)
-                    verified = _is_verified_us_stock(contract, conid, symbol)
-                    if verified is None:
-                        contract = await self.ibkr.contract_info_fresh(conid)
-                        verified = _is_verified_us_stock(contract, conid, symbol)
-                    verified = verified is True
-                except IBKRAuthError:
-                    raise
-                except IBKRError as exc:
-                    log.warning("Could not verify US listing for conid %s: %s", conid, exc)
+            verified = bool(
+                identity and symbol and sec_type == "STK"
+                and _is_verified_us_stock(definitions_by_conid.get(conid), conid, symbol) is True
+            )
             record = by_symbol.get(symbol) if verified else None
             items.append(RSRatingItem(
                 conid=conid,
@@ -239,139 +298,198 @@ class RSLeadersService:
                 avg_volume_50=record["avg_volume_50"] if record else None,
             ))
         return RSRatingsResponse(
-            status=snapshot.status,
-            source_revision=snapshot.source_revision,
-            source_published_at=snapshot.source_published_at,
+            status=source_status,
+            source_revision=self._source_revision or snapshot.source_revision,
+            source_published_at=self._source_published_at or snapshot.source_published_at,
             evidence_session=None,
-            freshness=snapshot.freshness,
+            freshness=source_freshness,
             items=items,
         )
 
-    async def _refresh_source(self) -> RSLeadersResponse:
+    async def _refresh_source(self) -> RSLeadersSourceResponse:
         try:
             metadata, csv_text = await self._fetch_pinned_csv()
             revision, published_at = metadata
             records = _parse_csv(csv_text) if csv_text is not None else self._records
             if not records:
                 raise ValueError("Fred source CSV is unavailable for its published revision")
-            eligible = sorted(
-                (row for row in records if _qualifies(row)),
-                key=lambda row: (-row["raw_strength"], row["source_rank"], row["symbol"]),
-            )
-            eligible_count = len(eligible)
-            selected: list[RSItem] = []
-            issues: list[str] = []
-            unresolved: list[str] = []
-            cached_items = {
-                item.symbol: item for item in (self._snapshot.items if self._snapshot else [])
-                if item.conid is not None
-            }
-            retry_symbols = set()
-            for issue in self._snapshot.issues if self._snapshot else []:
-                if issue.startswith(RESOLUTION_ISSUE_PREFIX):
-                    retry_symbols.update(issue[len(RESOLUTION_ISSUE_PREFIX):].rstrip(".").split(", "))
-            attempts = 0
-            for record in eligible:
-                if len(selected) >= MAX_LEADERS:
-                    break
-                cached = cached_items.get(record["symbol"])
-                if cached is not None:
-                    selected.append(RSItem(conid=cached.conid, **record))
-                    continue
-                if attempts >= MAX_RESOLUTION_ATTEMPTS:
-                    issues.append(f"Stopped after {MAX_RESOLUTION_ATTEMPTS} stock identity checks to keep IBKR resolution bounded.")
-                    break
-                attempts += 1
-                try:
-                    if record["symbol"] in retry_symbols:
-                        matches = await self.ibkr.search_fresh(record["symbol"], sec_type="STK")
-                    else:
-                        matches = await self.ibkr.search(record["symbol"], sec_type="STK")
-                except IBKRAuthError:
-                    raise
-                except IBKRError as exc:
-                    log.warning("IBKR could not resolve Fred ticker %s: %s", record["symbol"], exc)
-                    unresolved.append(record["symbol"])
-                    continue
-
-                exact: dict[int, dict[str, Any]] = {}
-                for match in matches if isinstance(matches, list) else []:
-                    if not isinstance(match, dict):
-                        continue
-                    if str(match.get("symbol") or "").strip().upper() != record["symbol"]:
-                        continue
-                    if "STK" not in _security_types(match):
-                        continue
-                    try:
-                        conid = int(match.get("conid"))
-                    except (TypeError, ValueError):
-                        continue
-                    if conid > 0:
-                        exact[conid] = match
-                if len(exact) != 1:
-                    unresolved.append(record["symbol"])
-                    continue
-                conid, match = next(iter(exact.items()))
-                try:
-                    if record["symbol"] in retry_symbols:
-                        contract = await self.ibkr.contract_info_fresh(conid)
-                    else:
-                        contract = await self.ibkr.contract_info(conid)
-                    verified = _is_verified_us_stock(contract, conid, record["symbol"])
-                    if verified is None and record["symbol"] not in retry_symbols:
-                        contract = await self.ibkr.contract_info_fresh(conid)
-                        verified = _is_verified_us_stock(contract, conid, record["symbol"])
-                except IBKRAuthError:
-                    raise
-                except IBKRError as exc:
-                    log.warning("IBKR could not verify Fred ticker %s: %s", record["symbol"], exc)
-                    verified = None
-                if verified is not True:
-                    unresolved.append(record["symbol"])
-                    continue
-                await self.identity.cache_resolved_identity(
-                    conid=conid,
-                    symbol=record["symbol"],
-                    company_name=str(match.get("companyHeader") or match.get("companyName") or ""),
-                    sec_type="STK",
-                )
-                selected.append(RSItem(conid=conid, **record))
-
-            if unresolved:
-                issues.append(f"{RESOLUTION_ISSUE_PREFIX}{', '.join(unresolved)}.")
-            expected = min(MAX_LEADERS, eligible_count)
-            if len(selected) < expected:
-                issues.append(f"{len(selected)} of {expected} eligible leaders currently have verified US listings.")
-            fetched_at = self._now().astimezone(dt.UTC)
-            freshness = self._freshness(published_at, fetched_at)
             self._records = records
-            self._snapshot = RSLeadersResponse(
-                status="stale" if freshness == "stale" else "available",
-                source_revision=revision,
-                source_published_at=published_at,
-                fetched_at=fetched_at,
-                evidence_session=None,
-                freshness=freshness,
-                eligible_count=eligible_count,
-                items=selected,
-                issues=issues,
-            )
+            self._source_revision = revision
+            self._source_published_at = published_at
+            if csv_text is not None:
+                self._source_fetched_at = self._now().astimezone(dt.UTC)
+            self._source_issue = None
+            if self._snapshot is not None:
+                cleaned_issues = [issue for issue in self._snapshot.issues if not issue.startswith("Fred source check failed")]
+                status = "stale" if self._freshness(published_at, self._now().astimezone(dt.UTC)) == "stale" else "available"
+                self._snapshot = self._snapshot.model_copy(update={"issues": cleaned_issues, "status": status})
             self._persist_cache()
-            return self._snapshot
+            issues = []
         except (httpx.HTTPError, ValueError, csv.Error, OSError, KeyError, TypeError) as exc:
-            log.warning("Fred RS refresh failed; retaining the last valid snapshot: %s", exc)
-            if self._snapshot is None:
-                self._snapshot = RSLeadersResponse(
-                    status="unavailable", freshness="unknown",
-                    issues=[f"Fred RS source unavailable: {exc}"],
-                )
+            self._source_issue = f"Fred source check failed; retaining the last validated revision: {exc}"
+            log.warning("Fred source metadata/download/validation failed: %s", exc)
+            issues = [self._source_issue]
+            if not self._records:
+                return RSLeadersSourceResponse(phase="unavailable", issues=issues)
+        return RSLeadersSourceResponse(
+            phase="verifying", source_revision=self._source_revision,
+            source_published_at=self._source_published_at,
+            fetched_at=self._source_fetched_at,
+            freshness=self._freshness(self._source_published_at, self._now().astimezone(dt.UTC)) if self._source_published_at else "unknown",
+            eligible_count=sum(_qualifies(row) for row in self._records),
+            issues=issues,
+        )
+
+    async def _resolve_leaders(self) -> RSLeadersResponse:
+        if not self._records:
+            if self._snapshot is not None:
                 return self._snapshot
-            self._snapshot = self._snapshot.model_copy(update={
-                "status": "stale",
-                "issues": [*self._snapshot.issues, f"Fred source check failed; showing the last valid snapshot: {exc}"],
-            })
-            self._persist_cache()
-            return self._snapshot
+            return RSLeadersResponse(
+                status="unavailable", freshness="unknown",
+                issues=[self._source_issue or "No validated Fred RS source data is available."],
+            )
+
+        revision = self._source_revision
+        published_at = self._source_published_at
+        records = self._records
+        eligible = sorted(
+            (row for row in records if _qualifies(row)),
+            key=lambda row: (-row["raw_strength"], row["source_rank"], row["symbol"]),
+        )
+        selected: list[RSItem] = []
+        issues: list[str] = [self._source_issue] if self._source_issue else []
+        unresolved: list[str] = []
+        cached_items = {
+            item.symbol: item for item in (self._snapshot.items if self._snapshot else [])
+            if item.conid is not None
+        }
+        retry_symbols = set()
+        for issue in self._snapshot.issues if self._snapshot else []:
+            if issue.startswith(RESOLUTION_ISSUE_PREFIX):
+                retry_symbols.update(issue[len(RESOLUTION_ISSUE_PREFIX):].rstrip(".").split(", "))
+        attempts = 0
+        search_errors = 0
+        search_no_matches = 0
+        search_ambiguous = 0
+        contract_errors = 0
+        contract_unconfirmed = 0
+        contract_rejected = 0
+        for record in eligible:
+            if len(selected) >= MAX_LEADERS:
+                break
+            cached = cached_items.get(record["symbol"])
+            if cached is not None:
+                selected.append(RSItem(conid=cached.conid, **record))
+                continue
+            if attempts >= MAX_RESOLUTION_ATTEMPTS:
+                issues.append(f"Stopped after {MAX_RESOLUTION_ATTEMPTS} stock identity checks to keep IBKR resolution bounded.")
+                break
+            attempts += 1
+            try:
+                if record["symbol"] in retry_symbols:
+                    matches = await self.ibkr.search_fresh(record["symbol"], sec_type="STK")
+                else:
+                    matches = await self.ibkr.search(record["symbol"], sec_type="STK")
+            except IBKRAuthError:
+                raise
+            except IBKRError as exc:
+                search_errors += 1
+                log.warning("IBKR identity lookup failed for Fred ticker %s: %s", record["symbol"], exc)
+                unresolved.append(record["symbol"])
+                continue
+
+            exact: dict[int, dict[str, Any]] = {}
+            for match in matches if isinstance(matches, list) else []:
+                if not isinstance(match, dict):
+                    continue
+                if str(match.get("symbol") or "").strip().upper() != record["symbol"]:
+                    continue
+                if "STK" not in _security_types(match):
+                    continue
+                try:
+                    conid = int(match.get("conid"))
+                except (TypeError, ValueError):
+                    continue
+                if conid > 0:
+                    exact[conid] = match
+            if not exact:
+                search_no_matches += 1
+                unresolved.append(record["symbol"])
+                continue
+            contract_error = False
+            try:
+                if record["symbol"] in retry_symbols:
+                    definitions = await self.ibkr.security_definitions_fresh(tuple(sorted(exact)))
+                else:
+                    definitions = await self.ibkr.security_definitions(tuple(sorted(exact)))
+                definitions_by_conid = _definitions_by_conid(definitions)
+                verification = {
+                    conid: _is_verified_us_stock(definitions_by_conid.get(conid), conid, record["symbol"])
+                    for conid in exact
+                }
+                if record["symbol"] not in retry_symbols and None in verification.values():
+                    definitions = await self.ibkr.security_definitions_fresh(tuple(sorted(exact)))
+                    definitions_by_conid = _definitions_by_conid(definitions)
+                    verification = {
+                        conid: _is_verified_us_stock(definitions_by_conid.get(conid), conid, record["symbol"])
+                        for conid in exact
+                    }
+            except IBKRAuthError:
+                raise
+            except IBKRError as exc:
+                contract_error = True
+                contract_errors += 1
+                log.warning("IBKR contract verification failed for Fred ticker %s: %s", record["symbol"], exc)
+                verification = {}
+            verified_conids = [candidate for candidate, result in verification.items() if result is True]
+            if len(verified_conids) != 1 or any(result is None for result in verification.values()):
+                if len(verified_conids) > 1:
+                    search_ambiguous += 1
+                elif not contract_error and any(result is None for result in verification.values()):
+                    contract_unconfirmed += 1
+                elif not contract_error and verification:
+                    contract_rejected += 1
+                unresolved.append(record["symbol"])
+                continue
+            conid = verified_conids[0]
+            match = exact[conid]
+            await self.identity.cache_resolved_identity(
+                conid=conid,
+                symbol=record["symbol"],
+                company_name=str(match.get("companyHeader") or match.get("companyName") or ""),
+                sec_type="STK",
+            )
+            selected.append(RSItem(conid=conid, **record))
+
+        if unresolved:
+            expected = min(MAX_LEADERS, len(eligible))
+            log.warning(
+                "Fred leader listing resolution incomplete: %d of %d eligible leaders verified after %d IBKR candidates "
+                "(search errors %d, no exact matches %d, ambiguous matches %d, contract request errors %d, "
+                "unconfirmed contract identities %d, rejected contracts %d)",
+                len(selected), expected, attempts, search_errors, search_no_matches, search_ambiguous,
+                contract_errors, contract_unconfirmed, contract_rejected,
+            )
+            issues.append(f"{RESOLUTION_ISSUE_PREFIX}{', '.join(unresolved)}.")
+        eligible_count = len(eligible)
+        expected = min(MAX_LEADERS, eligible_count)
+        if len(selected) < expected:
+            issues.append(f"{len(selected)} of {expected} eligible leaders currently have verified US listings.")
+        fetched_at = self._source_fetched_at or (self._now().astimezone(dt.UTC) if published_at else None)
+        freshness = self._freshness(published_at, self._now().astimezone(dt.UTC)) if published_at else "unknown"
+        self._snapshot = RSLeadersResponse(
+            status="stale" if freshness == "stale" or self._source_issue else "available",
+            source_revision=revision,
+            source_published_at=published_at,
+            fetched_at=fetched_at,
+            evidence_session=None,
+            freshness=freshness,
+            eligible_count=eligible_count,
+            items=selected,
+            issues=issues,
+        )
+        self._persist_cache()
+        return self._snapshot
 
     async def _fetch_pinned_csv(self) -> tuple[tuple[str, dt.datetime], str | None]:
         headers = {"Accept": "application/vnd.github+json", "User-Agent": "Orbit-Parallax"}
@@ -393,7 +511,7 @@ class RSLeadersService:
             if not isinstance(committer, dict):
                 raise ValueError("Fred source commit metadata is invalid")
             published_at = _parse_time(committer.get("date"))
-            if self._snapshot and self._snapshot.source_revision == revision:
+            if self._source_revision == revision:
                 return (revision, published_at), None
             csv_response = await client.get(RAW_URL.format(revision=revision))
             csv_response.raise_for_status()
@@ -403,10 +521,15 @@ class RSLeadersService:
         if snapshot.source_published_at is None:
             return snapshot
         freshness = self._freshness(snapshot.source_published_at, self._now().astimezone(dt.UTC))
-        source_failed = any(issue.startswith("Fred source check failed") for issue in snapshot.issues)
+        issues = list(snapshot.issues)
+        source_issue = self._source_issue or next((issue for issue in issues if issue.startswith("Fred source check failed")), None)
+        if source_issue and source_issue not in issues:
+            issues.append(source_issue)
+        source_failed = source_issue is not None
         return snapshot.model_copy(update={
             "freshness": freshness,
-            "status": "stale" if freshness == "stale" or source_failed else ("unavailable" if snapshot.status == "unavailable" else "available"),
+            "status": "stale" if freshness == "stale" or source_failed else snapshot.status if snapshot.status in {"unavailable", "verifying"} else "available",
+            "issues": issues,
         })
 
     @staticmethod
@@ -423,16 +546,32 @@ class RSLeadersService:
                 return
             snapshot_data = envelope.get("snapshot")
             records = envelope.get("records")
-            if not isinstance(snapshot_data, dict) or not isinstance(records, list):
+            if snapshot_data is not None and not isinstance(snapshot_data, dict) or not isinstance(records, list):
                 return
-            snapshot = RSLeadersResponse.model_validate(snapshot_data)
             validated_records = [self._validate_cached_record(row) for row in records]
-            self._snapshot = self._with_current_freshness(snapshot)
+            snapshot = RSLeadersResponse.model_validate(snapshot_data) if isinstance(snapshot_data, dict) else None
+            self._snapshot = self._with_current_freshness(snapshot) if snapshot else None
             self._records = validated_records
+            fallback_revision = snapshot.source_revision if snapshot else None
+            cached_revision = envelope.get("source_revision")
+            self._source_revision = cached_revision if isinstance(cached_revision, str) and re.fullmatch(r"[0-9a-fA-F]{40}", cached_revision) else fallback_revision
+            self._source_published_at = self._cached_time(envelope.get("source_published_at")) or (snapshot.source_published_at if snapshot else None)
+            self._source_fetched_at = self._cached_time(envelope.get("source_fetched_at")) or (snapshot.fetched_at if snapshot else None)
+            source_issue = envelope.get("source_issue")
+            self._source_issue = source_issue if isinstance(source_issue, str) and source_issue else None
         except FileNotFoundError:
             return
         except (OSError, ValueError, TypeError, KeyError) as exc:
             log.warning("Ignoring invalid saved Fred RS snapshot: %s", exc)
+
+    @staticmethod
+    def _cached_time(value: Any) -> dt.datetime | None:
+        if not isinstance(value, str):
+            return None
+        try:
+            return _parse_time(value)
+        except ValueError:
+            return None
 
     @staticmethod
     def _validate_cached_record(value: Any) -> dict[str, Any]:
@@ -470,13 +609,17 @@ class RSLeadersService:
         return record
 
     def _persist_cache(self) -> None:
-        if self._snapshot is None:
+        if self._snapshot is None and not self._records:
             return
         try:
             self.cache_path.parent.mkdir(parents=True, exist_ok=True)
             envelope = {
                 "schema_version": SCHEMA_VERSION,
-                "snapshot": self._snapshot.model_dump(mode="json"),
+                "snapshot": self._snapshot.model_dump(mode="json") if self._snapshot else None,
+                "source_revision": self._source_revision,
+                "source_published_at": self._source_published_at.isoformat() if self._source_published_at else None,
+                "source_fetched_at": self._source_fetched_at.isoformat() if self._source_fetched_at else None,
+                "source_issue": self._source_issue,
                 "records": self._records,
             }
             temp_path = self.cache_path.with_suffix(self.cache_path.suffix + ".tmp")
@@ -488,9 +631,9 @@ class RSLeadersService:
         except OSError as exc:
             log.warning("Could not persist Fred RS snapshot: %s", exc)
 
-    def _finish_refresh(self, flight: _RefreshFlight, task: asyncio.Task[RSLeadersResponse]) -> None:
-        if self._flight is flight:
-            self._flight = None
+    def _finish_refresh(self, key: str, flight: _RefreshFlight, task: asyncio.Task[Any]) -> None:
+        if self._flights.get(key) is flight:
+            self._flights.pop(key, None)
         try:
             task.exception()
         except asyncio.CancelledError:

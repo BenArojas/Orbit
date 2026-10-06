@@ -223,7 +223,7 @@ function EmptyCard({
           </span>
         )}
       </span>
-      <span className="text-[10px] text-[var(--text-3)] leading-relaxed">
+          <span className="text-xs text-[var(--text-3)] leading-relaxed">
         {card.description}
       </span>
       {/* Filter pills preview */}
@@ -395,7 +395,7 @@ export default function ScreenerPage() {
 
       {/* Error state */}
       {scanMutation.isError && (
-        <div className="border-b border-[var(--clr-red)]/20 bg-[var(--clr-red)]/5 px-4 py-2 text-[11px] text-[var(--clr-red)]">
+        <div className="border-b border-[var(--clr-red)]/20 bg-[var(--clr-red)]/5 px-4 py-2 text-xs text-[var(--clr-red)]">
           {scanMutation.error instanceof Error
             ? scanMutation.error.message
             : "Scan failed — check IBKR connection"}
@@ -414,7 +414,7 @@ export default function ScreenerPage() {
                     <p className="text-[13px] font-semibold text-[var(--text-1)]">
                       No matches for this preset right now
                     </p>
-                    <p className="mt-1 text-[11px] text-[var(--text-3)]">
+                    <p className="mt-1 text-xs text-[var(--text-3)]">
                       {selectedPreset?.subtitle
                         ? `${selectedPreset.subtitle} — try again during its window, or pick a different preset below.`
                         : "Try a different preset, or pick a quick scan card below."}
@@ -425,7 +425,7 @@ export default function ScreenerPage() {
                     <p className="text-[13px] font-semibold text-[var(--text-1)]">
                       Pick a preset or try a quick scan
                     </p>
-                    <p className="mt-1 text-[11px] text-[var(--text-3)]">
+                    <p className="mt-1 text-xs text-[var(--text-3)]">
                       Select a scanner preset above, or click a card to run a pre-built screen
                     </p>
                   </>

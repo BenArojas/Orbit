@@ -6,13 +6,15 @@ import ScreenerFilterBar from "@/components/screener/ScreenerFilterBar";
 import ScreenerResultsTable from "@/components/screener/ScreenerResultsTable";
 import { useScreenerStore } from "@/store/screener";
 import { useNavigationStore } from "@/store/navigation";
+import { useRSLeaders } from "@/hooks/useRSLeaders";
 import type { SearchResult } from "@/modules/parallax/api";
 
 const api = vi.hoisted(() => ({
   getWatchlists: vi.fn(),
   getWatchlistInstruments: vi.fn(),
   rsLeaders: vi.fn(),
-  refreshRSLeaders: vi.fn(),
+  refreshRSLeadersSource: vi.fn(),
+  resolveRSLeaders: vi.fn(),
   rsRatings: vi.fn(),
   search: vi.fn(),
   watchlistAddInstrument: vi.fn(),
@@ -37,6 +39,11 @@ vi.mock("./ScreenerPage", async () => {
 });
 vi.mock("@/hooks/useStockTags", () => ({ useStockTags: () => ({ data: {} }) }));
 
+function AuthenticatedRSOwner() {
+  useRSLeaders(gateway.ready, true);
+  return null;
+}
+
 const leaders = {
   status: "available" as const,
   source_revision: "a".repeat(40),
@@ -58,7 +65,8 @@ beforeEach(() => {
   api.screenerFilterCatalogue.mockResolvedValue([]);
   api.screenerLocations.mockResolvedValue([]);
   api.rsLeaders.mockResolvedValue(leaders);
-  api.refreshRSLeaders.mockResolvedValue(leaders);
+  api.refreshRSLeadersSource.mockResolvedValue({ phase: "verifying", source_revision: leaders.source_revision, issues: [] });
+  api.resolveRSLeaders.mockResolvedValue(leaders);
   api.rsRatings.mockResolvedValue({ status: "unavailable", source_revision: null, source_published_at: null, evidence_session: null, freshness: "unknown", items: [] });
 });
 
@@ -75,9 +83,9 @@ afterEach(() => {
 
 function NamesNavigationHarness() {
   const activeScreen = useNavigationStore((state) => state.activeScreen);
-  return activeScreen === "screener"
+  return <><AuthenticatedRSOwner />{activeScreen === "screener"
     ? <NamesPage />
-    : <section><h1>Analysis / Compare</h1><button onClick={() => useNavigationStore.getState().navigate("screener")}>Return to Names</button></section>;
+    : <section><h1>Analysis / Compare</h1><button onClick={() => useNavigationStore.getState().navigate("screener")}>Return to Names</button></section>}</>;
 }
 
 describe("NamesPage", () => {
@@ -90,7 +98,8 @@ describe("NamesPage", () => {
       ] : [{ conid: 301, symbol: "SECOND", companyName: "Secondary Co" }],
     }));
     api.rsLeaders.mockResolvedValue(leaders);
-    api.refreshRSLeaders.mockResolvedValue(leaders);
+    api.refreshRSLeadersSource.mockResolvedValue({ phase: "verifying", source_revision: leaders.source_revision, issues: [] });
+    api.resolveRSLeaders.mockResolvedValue(leaders);
     api.rsRatings.mockImplementation((conids: number[]) => Promise.resolve({
       status: "stale",
       source_revision: leaders.source_revision, source_published_at: "2026-08-14T23:30:00Z",
@@ -112,10 +121,11 @@ describe("NamesPage", () => {
     render(<QueryClientProvider client={client}><NamesNavigationHarness /></QueryClientProvider>);
 
     expect(await screen.findByText(/Fred published snapshot.*price-session date unconfirmed/)).toBeInTheDocument();
-    expect(screen.getByRole("columnheader", { name: "Fred published RS percentile" })).toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: /RS percentile/ })).toBeInTheDocument();
     expect(screen.getByLabelText("Fred published RS percentile: 0")).toBeInTheDocument();
     expect(screen.getByLabelText("Real-time IBKR quote")).toHaveTextContent("$101.25");
-    expect(api.refreshRSLeaders).toHaveBeenCalledWith(expect.any(AbortSignal));
+    await waitFor(() => expect(api.refreshRSLeadersSource).toHaveBeenCalledWith(expect.any(AbortSignal)));
+    expect(api.resolveRSLeaders).toHaveBeenCalledWith(expect.any(AbortSignal));
     await waitFor(() => expect(invalidate).toHaveBeenCalledWith({ queryKey: ["parallax", "rs-ratings"] }));
     fireEvent.click(screen.getByRole("button", { name: "LEAD" }));
     expect(screen.getByRole("heading", { name: "Analysis / Compare" })).toBeInTheDocument();
@@ -140,9 +150,14 @@ describe("NamesPage", () => {
     expect(screen.getByLabelText("Fred published RS percentile: 0")).toBeInTheDocument();
     expect(screen.getByText(/Fred publication is stale.*published/)).toBeInTheDocument();
     expect(screen.getByText("RS rating unavailable")).toBeInTheDocument();
-    fireEvent.click(screen.getByLabelText("Why is the RS rating unavailable?"));
-    expect(screen.getByText(/Fred's published dataset has no rating for this verified listing/)).toBeInTheDocument();
-    expect(screen.getByText(/does not automatically mean the IBKR price or existing chart is unavailable/)).toBeInTheDocument();
+    const namesTable = screen.getByRole("button", { name: "UNRATED" }).closest("table");
+    const headerCount = namesTable?.querySelectorAll("thead th").length;
+    fireEvent.click(screen.getByRole("button", { name: "RS rating details" }));
+    const ratingExplanation = screen.getByText(/verified listing is absent from Fred’s published dataset/);
+    expect(ratingExplanation).toBeInTheDocument();
+    expect(screen.getByText(/Prices and existing charts may still be available/)).toBeInTheDocument();
+    expect(ratingExplanation.closest("td")).toHaveAttribute("colspan", String(headerCount));
+    expect(namesTable?.querySelectorAll("thead th").length).toBe(headerCount);
     expect(api.watchlistRemoveInstrument).not.toHaveBeenCalled();
 
     api.rsRatings.mockRejectedValueOnce(new Error("rating endpoint unavailable"));
@@ -151,7 +166,7 @@ describe("NamesPage", () => {
     expect(screen.getAllByText("RS rating unavailable")).toHaveLength(2);
     expect(screen.getByText(/Fred rating lookup failed; retained ratings are stale.*published/)).toBeInTheDocument();
 
-    fireEvent.click(screen.getByText("Add a stock to this watchlist"));
+    fireEvent.click(screen.getByText("Add stock"));
     fireEvent.change(screen.getByRole("textbox", { name: "Search stocks to add" }), { target: { value: "ADDED" } });
     fireEvent.click(screen.getByRole("button", { name: "Search" }));
     expect(await screen.findByText("ADDED · Added Co")).toBeInTheDocument();
@@ -218,8 +233,8 @@ describe("NamesPage", () => {
     expect(advancedFilters).toHaveAttribute("open");
     expect(await screen.findByLabelText("Fred published RS percentile: 0")).toBeInTheDocument();
     expect(screen.getByText("RS rating unavailable")).toBeInTheDocument();
-    fireEvent.click(screen.getByLabelText("Fred published RS percentile details"));
-    expect(screen.getByText(/This does not claim exact TradingView parity/)).toBeInTheDocument();
+    fireEvent.click(screen.getByLabelText("RS rating details"));
+    expect(screen.getByText(/absent from Fred’s published dataset/)).toBeInTheDocument();
     expect(screen.getByText(/Fred publication is stale.*published/)).toBeInTheDocument();
     expect(screen.getByText("LOW")).toBeInTheDocument();
     expect(screen.getByText("MISSING")).toBeInTheDocument();
@@ -252,10 +267,11 @@ describe("NamesPage", () => {
     ] });
     await act(async () => { await client.invalidateQueries({ queryKey: ["watchlist-instruments", "primary"] }); });
     expect(await screen.findByRole("button", { name: "HELD" })).toBeInTheDocument();
+    expect(screen.queryByRole("columnheader", { name: "Sector" })).not.toBeInTheDocument();
     fireEvent.change(screen.getByRole("textbox", { name: "Filter watchlist" }), { target: { value: "absent" } });
     expect(screen.getByText("No watchlist names match this filter.")).toBeInTheDocument();
 
-    fireEvent.click(screen.getByText("Add a stock to this watchlist"));
+    fireEvent.click(screen.getByText("Add stock"));
     const searchInput = screen.getByRole("textbox", { name: "Search stocks to add" });
     fireEvent.change(searchInput, { target: { value: "OLD" } });
     fireEvent.click(screen.getByRole("button", { name: "Search" }));
@@ -283,15 +299,15 @@ describe("NamesPage", () => {
     let finishInitial!: (value: typeof unavailable) => void;
     let failSavedRefresh!: (reason: Error) => void;
     api.rsLeaders.mockImplementationOnce(() => new Promise((resolve) => { finishInitial = resolve; }));
-    api.refreshRSLeaders.mockRejectedValueOnce(new Error("Fred unavailable"));
+    api.refreshRSLeadersSource.mockRejectedValueOnce(new Error("Fred unavailable"));
     const unavailableClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     const unavailableView = render(<QueryClientProvider client={unavailableClient}><NamesNavigationHarness /></QueryClientProvider>);
 
-    expect(await screen.findByText("Loading a published Leaders snapshot…")).toBeInTheDocument();
+    expect(await screen.findByText("Loading saved Leader results…")).toBeInTheDocument();
     expect(screen.queryByText(/\d+ eligible/)).not.toBeInTheDocument();
     await waitFor(() => expect(api.rsLeaders).toHaveBeenCalled());
     await act(async () => finishInitial(unavailable));
-    expect(await screen.findByText(/Published Fred Leader evidence is unavailable/)).toBeInTheDocument();
+    expect(await screen.findByText(/Published Leader results are unavailable/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Open Watchlist" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Use Custom scan" })).toBeInTheDocument();
     expect(screen.queryByText(/\d+ eligible/)).not.toBeInTheDocument();
@@ -299,49 +315,64 @@ describe("NamesPage", () => {
     unavailableClient.clear();
 
     api.rsLeaders.mockResolvedValueOnce(leaders);
-    api.refreshRSLeaders.mockImplementationOnce(() => new Promise((_resolve, reject) => { failSavedRefresh = reject; }));
+    api.refreshRSLeadersSource.mockImplementationOnce(() => new Promise((_resolve, reject) => { failSavedRefresh = reject; }));
     const savedClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     render(<QueryClientProvider client={savedClient}><NamesNavigationHarness /></QueryClientProvider>);
     expect(await screen.findByRole("button", { name: "LEAD" })).toBeInTheDocument();
-    await waitFor(() => expect(api.refreshRSLeaders).toHaveBeenCalledTimes(2));
-    expect(screen.getByText(/Checking for updates; saved results remain visible/)).toBeInTheDocument();
+    await waitFor(() => expect(api.refreshRSLeadersSource).toHaveBeenCalledTimes(2));
+    expect(screen.getByText(/Checking the published ranking source; saved results remain visible/)).toBeInTheDocument();
 
-    act(() => savedClient.setQueryData(["parallax", "rs-leaders"], validEmpty));
+    act(() => savedClient.setQueryData(["parallax", "rs-leaders", 0], validEmpty));
     expect(await screen.findByText("This published snapshot has no names meeting the Leader criteria.")).toBeInTheDocument();
     expect(screen.getByText(/0 verified leaders · 0 eligible/)).toBeInTheDocument();
-    expect(screen.getByText(/Checking for updates; saved results remain visible/)).toBeInTheDocument();
+    expect(screen.getByText(/Checking the published ranking source; saved results remain visible/)).toBeInTheDocument();
 
-    act(() => savedClient.setQueryData(["parallax", "rs-leaders"], leaders));
+    act(() => savedClient.setQueryData(["parallax", "rs-leaders", 0], leaders));
     expect(await screen.findByRole("button", { name: "LEAD" })).toBeInTheDocument();
     await act(async () => failSavedRefresh(new Error("Fred unavailable")));
-    expect(await screen.findByText(/Fred’s update is unavailable/)).toBeInTheDocument();
+    expect(await screen.findByText(/Leader update could not complete/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "LEAD" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Open Watchlist" })).toBeInTheDocument();
     savedClient.clear();
   });
 
-  it("requires a destination before adding a Leader and cancels refresh when Names unmounts", async () => {
+  it("requires a destination before adding a Leader and keeps authenticated refresh alive across navigation", async () => {
     api.getWatchlists.mockResolvedValue([{ id: "primary", name: "Primary" }, { id: "secondary", name: "Secondary" }]);
     api.rsLeaders.mockResolvedValue(leaders);
-    api.refreshRSLeaders.mockResolvedValue(leaders);
+    api.refreshRSLeadersSource.mockResolvedValue({ phase: "verifying", source_revision: leaders.source_revision, issues: [] });
+    api.resolveRSLeaders.mockResolvedValue(leaders);
     api.watchlistAddInstrument.mockResolvedValue({ added: true, conid: 101 });
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     const invalidate = vi.spyOn(client, "invalidateQueries");
-    render(<QueryClientProvider client={client}><NamesNavigationHarness /></QueryClientProvider>);
+    const view = render(<QueryClientProvider client={client}><NamesNavigationHarness /></QueryClientProvider>);
     expect(await screen.findByRole("button", { name: "Add to IBKR watchlist" })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Add to IBKR watchlist" }));
+    await waitFor(() => expect(api.resolveRSLeaders).toHaveBeenCalledTimes(1));
+    const openPicker = screen.getByRole("button", { name: "Add to IBKR watchlist" });
+    fireEvent.keyDown(openPicker, { key: "Enter" });
+    fireEvent.click(openPicker);
+    const picker = document.getElementById("leader-picker-101");
+    expect(picker).toBeInTheDocument();
+    expect(picker?.parentElement).not.toHaveAttribute("data-pointer-open", "true");
+    fireEvent.keyDown(picker!, { key: "Escape" });
+    expect(openPicker).toHaveFocus();
+    fireEvent.keyDown(openPicker, { key: "Enter" });
+    fireEvent.click(openPicker);
     const destination = screen.getByRole("combobox", { name: "Destination watchlist" });
-    const unselectedAddButtons = screen.getAllByRole("button", { name: "Add to IBKR watchlist" });
-    expect(unselectedAddButtons[unselectedAddButtons.length - 1]).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Confirm add" })).toBeDisabled();
     expect(api.watchlistAddInstrument).not.toHaveBeenCalled();
     fireEvent.change(destination, { target: { value: "secondary" } });
-    const addButtons = screen.getAllByRole("button", { name: "Add to IBKR watchlist" });
-    const confirmedAdd = addButtons[addButtons.length - 1];
-    fireEvent.click(confirmedAdd);
+    fireEvent.click(screen.getByRole("button", { name: "Confirm add" }));
     expect(await screen.findByText("Added LEAD to Secondary.")).toBeInTheDocument();
     expect(api.watchlistAddInstrument).toHaveBeenCalledWith("secondary", 101, expect.any(AbortSignal));
     expect(invalidate).toHaveBeenCalledWith({ queryKey: ["watchlist-instruments", "secondary"] });
     expect(invalidate).toHaveBeenCalledWith({ queryKey: ["watchlist-membership", 101] });
+    expect(api.refreshRSLeadersSource).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByRole("button", { name: "LEAD" }));
+    expect(screen.getByRole("heading", { name: "Analysis / Compare" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Return to Names" }));
+    expect(await screen.findByRole("button", { name: "LEAD" })).toBeInTheDocument();
+    expect(api.refreshRSLeadersSource).toHaveBeenCalledTimes(1);
+    view.unmount();
     client.clear();
   });
 
@@ -384,20 +415,26 @@ describe("NamesPage", () => {
     client.clear();
   });
 
-  it("aborts the automatic refresh when navigating from Leaders to Analysis", async () => {
+  it("keeps authenticated Leader refresh alive while Names is unmounted for Analysis", async () => {
     api.getWatchlists.mockResolvedValue([]);
     api.rsLeaders.mockResolvedValue(leaders);
     let refreshSignal: AbortSignal | undefined;
-    api.refreshRSLeaders.mockImplementation((_signal: AbortSignal) => new Promise((_resolve, reject) => {
-      refreshSignal = _signal;
-      _signal.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")), { once: true });
+    let finishSource!: (value: { phase: "verifying"; source_revision: string; issues: string[] }) => void;
+    api.refreshRSLeadersSource.mockImplementation((signal: AbortSignal) => new Promise((resolve) => {
+      refreshSignal = signal;
+      finishSource = resolve;
     }));
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     render(<QueryClientProvider client={client}><NamesNavigationHarness /></QueryClientProvider>);
     await waitFor(() => expect(refreshSignal).toBeInstanceOf(AbortSignal));
     fireEvent.click(await screen.findByRole("button", { name: "LEAD" }));
-    expect(refreshSignal?.aborted).toBe(true);
+    expect(refreshSignal?.aborted).toBe(false);
     expect(screen.getByRole("heading", { name: "Analysis / Compare" })).toBeInTheDocument();
+    await act(async () => finishSource({ phase: "verifying", source_revision: leaders.source_revision, issues: [] }));
+    await waitFor(() => expect(api.resolveRSLeaders).toHaveBeenCalledTimes(1));
+    fireEvent.click(screen.getByRole("button", { name: "Return to Names" }));
+    expect(await screen.findByRole("button", { name: "LEAD" })).toBeInTheDocument();
+    expect(refreshSignal?.aborted).toBe(false);
     client.clear();
   });
 });
