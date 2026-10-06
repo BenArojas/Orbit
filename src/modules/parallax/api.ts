@@ -58,6 +58,7 @@ export interface SearchResult {
 export interface RSLeader {
   conid: number | null;
   symbol: string;
+  company_name?: string | null;
   sector: string | null;
   raw_strength: number | null;
   published_percentile: number | null;

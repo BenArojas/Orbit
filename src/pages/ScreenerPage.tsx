@@ -207,7 +207,7 @@ function EmptyCard({
     <button
       onClick={onClick}
       disabled={disabled}
-      className="group flex flex-col gap-1 rounded-xl border border-[var(--border)] bg-[var(--bg-2)] p-4 text-left transition-all hover:border-[var(--clr-cyan)]/50 hover:bg-[var(--bg-3)] disabled:opacity-40 disabled:cursor-not-allowed"
+      className="group flex flex-col gap-1 rounded-xl border border-[var(--border)] bg-[var(--bg-2)] p-4 text-left transition-colors hover:border-[var(--clr-cyan)]/70 hover:bg-[var(--bg-3)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--clr-cyan)] active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-40"
     >
       <span className="flex items-center gap-2">
         <span className="text-[12px] font-semibold text-[var(--text-1)] group-hover:text-[var(--clr-cyan)] transition-colors">
@@ -407,8 +407,8 @@ export default function ScreenerPage() {
         {/* Left column: results + pagination (or empty state) */}
         <div className="flex flex-1 flex-col overflow-hidden">
           {showEmptyState ? (
-            <div className="flex flex-1 flex-col items-center justify-center gap-6 p-8">
-              <div className="text-center">
+            <div className="flex flex-1 flex-col items-start justify-start gap-3 overflow-y-auto p-4">
+              <div className="text-left">
                 {lastScanWasEmpty ? (
                   <>
                     <p className="text-[13px] font-semibold text-[var(--text-1)]">

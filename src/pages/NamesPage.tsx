@@ -7,6 +7,7 @@ import { useRSRatings } from "@/hooks/useRSRatings";
 import { useRSLeaders } from "@/hooks/useRSLeaders";
 import { useWebSocket } from "@/hooks/useWebSocket";
 import { useNavigationStore } from "@/store/navigation";
+import { Popover } from "@base-ui/react/popover";
 import { PublishedRating, PublishedSourceNotice } from "@/components/parallax/PublishedRating";
 import ScreenerPage from "./ScreenerPage";
 import "./NamesPage.css";
@@ -87,8 +88,9 @@ function NamesTable({
   action,
   detailsFor,
   details,
-  detailsAnimated = false,
-  detailsClosing = false,
+  onDetailsOpen,
+  onDetailsClose,
+  selectedConid,
 }: {
   rows: { conid: number; symbol: string; companyName?: string; sector?: string | null }[];
   ratings: (RSRating | RSLeader)[];
@@ -99,9 +101,22 @@ function NamesTable({
   action?: (row: { conid: number; symbol: string; companyName?: string; sector?: string | null }) => React.ReactNode;
   detailsFor?: number | null;
   details?: (row: { conid: number; symbol: string; companyName?: string; sector?: string | null }) => React.ReactNode;
-  detailsAnimated?: boolean;
-  detailsClosing?: boolean;
+  onDetailsOpen?: (row: { conid: number; symbol: string; companyName?: string; sector?: string | null }) => void;
+  onDetailsClose?: (row: { conid: number; symbol: string; companyName?: string; sector?: string | null }) => void;
+  selectedConid?: number | null;
 }) {
+  const [narrow, setNarrow] = useState(false);
+  useEffect(() => {
+    const media = window.matchMedia?.("(max-width: 767px)");
+    if (!media) {
+      setNarrow(window.innerWidth <= 767);
+      return;
+    }
+    const update = () => setNarrow(media.matches);
+    update();
+    media.addEventListener?.("change", update);
+    return () => media.removeEventListener?.("change", update);
+  }, []);
   const [inspectedConid, setInspectedConid] = useState<number | null>(null);
   const ratingMap = new Map(ratings.map((rating) => [rating.conid, rating]));
   const showSector = rows.some((row) => row.sector || ratingMap.get(row.conid)?.sector);
@@ -126,9 +141,9 @@ function NamesTable({
           {rows.map((row) => {
             const rating = ratingMap.get(row.conid);
             const quote = quotes.get(row.conid);
-            return <Fragment key={row.conid}><tr className="border-t border-[var(--border-1)] hover:bg-[var(--surface-2)]">
+            return <Fragment key={row.conid}><tr className={`border-t border-[var(--border-1)] hover:bg-[var(--surface-2)] ${selectedConid === row.conid || narrow && detailsFor === row.conid ? "bg-[#E8EFF2]" : ""}`}>
               <td className="px-3 py-2">
-                <button className="font-semibold text-[var(--text-1)] hover:text-[var(--clr-cyan)]" onClick={() => onOpen(row.conid, row.symbol)}>{row.symbol}</button>
+                <button aria-label={`Open ${row.symbol} in Analysis`} title="Open in Analysis" className="font-semibold text-[var(--text-1)] underline decoration-dotted underline-offset-2 hover:text-[var(--clr-cyan)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#436782]" onClick={() => onOpen(row.conid, row.symbol)}>{row.symbol}</button>
                 {row.companyName && <div className="mt-0.5 text-[var(--text-3)]">{row.companyName}</div>}
               </td>
               {showSector && <td className="px-3 py-2 text-[var(--text-2)]">{row.sector || rating?.sector || "—"}</td>}
@@ -140,8 +155,11 @@ function NamesTable({
                   : quote?.availability?.[0] === "N" ? "Unavailable" : "Feed unconfirmed"}
               </td>
               <td className="px-3 py-2"><PublishedRating rating={rating} loading={ratingsLoading} lookupFailed={ratingsError} onInspect={() => setInspectedConid(inspectedConid === row.conid ? null : row.conid)} /></td>
-              <td className="px-3 py-2 text-right">{action?.(row)}</td>
-            </tr>{inspectedConid === row.conid && <tr className="border-b border-[var(--border-1)] bg-[var(--surface-2)]"><td colSpan={columnCount} className="px-3 py-2 text-xs text-[var(--text-2)]">{explanationFor(rating, ratingsError)} <button type="button" className="ml-2 underline" onClick={() => setInspectedConid(null)}>Close</button></td></tr>}{detailsFor === row.conid && details && <tr className="border-b border-[var(--border-1)]"><td colSpan={columnCount} className="px-3 pb-2"><div className="ml-auto w-fit max-w-full"><div className="names-picker-panel rounded-md border border-[var(--border-1)] bg-[var(--surface-1)] p-3 text-xs shadow-sm" data-pointer-open={detailsAnimated ? "true" : undefined} data-closing={detailsClosing ? "true" : undefined}>{details(row)}</div></div></td></tr>}</Fragment>;
+              <td className="px-3 py-2 text-right">{details ? <Popover.Root open={detailsFor === row.conid} onOpenChange={(open) => open ? onDetailsOpen?.(row) : onDetailsClose?.(row)}>
+                <Popover.Trigger render={action?.(row) as React.ReactElement} />
+                {!narrow && detailsFor === row.conid && <Popover.Portal><Popover.Positioner side="bottom" align="end" className="z-50"><Popover.Popup aria-label={`Add ${row.symbol} to an IBKR watchlist`} initialFocus finalFocus className="names-mineral w-[min(24rem,calc(100vw-2rem))] rounded-md border border-[var(--border-1)] bg-[var(--surface-1)] p-3 text-xs shadow-lg" style={{ backgroundColor: "var(--surface-1)", color: "var(--text-1)", borderColor: "var(--border-1)" }}>{details(row)}</Popover.Popup></Popover.Positioner></Popover.Portal>}
+              </Popover.Root> : action?.(row)}</td>
+            </tr>{inspectedConid === row.conid && <tr className="border-b border-[var(--border-1)] bg-[var(--surface-2)]"><td colSpan={columnCount} className="px-3 py-2 text-xs text-[var(--text-2)]">{explanationFor(rating, ratingsError)} <button type="button" className="ml-2 underline" onClick={() => setInspectedConid(null)}>Close</button></td></tr>}{narrow && detailsFor === row.conid && details && <tr id={`leader-picker-${row.conid}`} className="border-b border-[var(--border-1)] bg-[#E8EFF2]" onKeyDown={(event) => { if (event.key === "Escape") onDetailsClose?.(row); }}><td colSpan={columnCount} className="px-3 pb-2"><div className="rounded-md border border-[#CCD7DC] bg-[#FCFDFD] p-3 text-xs">{details(row)}</div></td></tr>}</Fragment>;
           })}
         </tbody>
       </table>
@@ -169,45 +187,24 @@ function Leaders({
   const membership = useWatchlistMembership(isAuthenticated, sessionEpoch);
   const [candidate, setCandidate] = useState<(RSLeader & { conid: number }) | null>(null);
   const [destinationId, setDestinationId] = useState("");
-  const pickerOpenedByPointer = useRef(false);
-  const [animatePicker, setAnimatePicker] = useState(false);
-  const [pickerClosing, setPickerClosing] = useState(false);
-  const pickerCloseTimer = useRef<number | null>(null);
   const candidateTrigger = useRef<HTMLButtonElement | null>(null);
   const setNamesContext = useNavigationStore((state) => state.setNamesContext);
+  const page = useNavigationStore((state) => state.namesContext.leadersPage);
+  const selectedLeaderConid = useNavigationStore((state) => state.namesContext.selectedLeaderConid);
   useEffect(() => {
     setCandidate(null);
     setDestinationId("");
-    setAnimatePicker(false);
-    setPickerClosing(false);
-    if (pickerCloseTimer.current != null) window.clearTimeout(pickerCloseTimer.current);
   }, [sessionEpoch]);
-  useEffect(() => () => {
-    if (pickerCloseTimer.current != null) window.clearTimeout(pickerCloseTimer.current);
-  }, []);
-
-  const closePicker = (animate = false) => {
-    if (pickerCloseTimer.current != null) window.clearTimeout(pickerCloseTimer.current);
-    if (!animate) {
-      setCandidate(null);
-      setAnimatePicker(false);
-      setPickerClosing(false);
-      candidateTrigger.current?.focus();
-      return;
-    }
-    setPickerClosing(true);
-    pickerCloseTimer.current = window.setTimeout(() => {
-      setCandidate(null);
-      setAnimatePicker(false);
-      setPickerClosing(false);
-      candidateTrigger.current?.focus();
-      pickerCloseTimer.current = null;
-    }, 100);
-  };
 
   const snapshotUsable = !!data && (data.status === "available" || data.status === "stale") && !!data.source_revision;
   const sourceStatus = data?.status === "available" || data?.status === "stale" || data?.status === "unavailable" ? data.status : undefined;
   const rows = (snapshotUsable ? data.items : []).filter((item): item is RSLeader & { conid: number } => item.conid != null);
+  const pageCount = Math.max(1, Math.ceil(rows.length / 10));
+  const visiblePage = Math.min(page, pageCount - 1);
+  const visibleRows = rows.slice(visiblePage * 10, visiblePage * 10 + 10);
+  useEffect(() => {
+    if (snapshotUsable && page !== visiblePage) setNamesContext({ leadersPage: visiblePage });
+  }, [page, setNamesContext, snapshotUsable, visiblePage]);
   const quotes = useLiveQuotes(rows.map((row) => row.conid));
   const navigateToAnalysis = useNavigationStore((state) => state.navigateToAnalysis);
   const destination = lists.find((list) => list.id === destinationId);
@@ -249,52 +246,55 @@ function Leaders({
       <button className="rounded border border-[var(--border-1)] px-2.5 py-1.5 text-[var(--text-1)]" onClick={() => setNamesContext({ mainTab: "watchlist" })}>Open Watchlist</button>
       <button className="rounded border border-[var(--border-1)] px-2.5 py-1.5 text-[var(--text-1)]" onClick={() => setNamesContext({ mainTab: "discover", discoverTab: "custom" })}>Use Custom scan</button>
     </div>}
-    {rows.length > 0 && <NamesTable
-      rows={rows.map((row) => ({ conid: row.conid, symbol: row.symbol, sector: row.sector }))}
+    {rows.length > 0 && <>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-xs text-[var(--text-2)]">Open a name to analyze it. Add it to an IBKR watchlist to follow it.</p>
+        <div className="flex items-center gap-2 text-xs tabular-nums text-[var(--text-2)]">
+          <span>{visiblePage * 10 + 1}–{Math.min(rows.length, visiblePage * 10 + 10)} of {rows.length}</span>
+          <button type="button" className="rounded border border-[var(--border-1)] px-2 py-1 hover:bg-[var(--surface-2)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#436782] disabled:opacity-50" disabled={visiblePage === 0} onClick={() => setNamesContext({ leadersPage: visiblePage - 1 })}>Previous</button>
+          <button type="button" className="rounded border border-[var(--border-1)] px-2 py-1 hover:bg-[var(--surface-2)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#436782] disabled:opacity-50" disabled={visiblePage >= pageCount - 1} onClick={() => setNamesContext({ leadersPage: visiblePage + 1 })}>Next</button>
+        </div>
+      </div>
+      <NamesTable
+      rows={visibleRows.map((row) => ({ conid: row.conid, symbol: row.symbol, companyName: row.company_name ?? undefined, sector: row.sector }))}
       ratings={rows}
       quotes={quotes}
-      onOpen={(conid, symbol) => navigateToAnalysis(conid, symbol)}
+      onOpen={(conid, symbol) => { setNamesContext({ selectedLeaderConid: conid }); navigateToAnalysis(conid, symbol); }}
       detailsFor={candidate?.conid}
-      detailsAnimated={animatePicker}
-      detailsClosing={pickerClosing}
-      action={(row) => <button className="parallax-press text-[var(--clr-cyan)]" aria-expanded={candidate?.conid === row.conid} aria-controls={`leader-picker-${row.conid}`} onPointerDown={() => { pickerOpenedByPointer.current = true; }} onKeyDown={() => { pickerOpenedByPointer.current = false; }} onClick={(event) => {
-        if (candidate?.conid === row.conid) {
-          closePicker(pickerOpenedByPointer.current);
-          pickerOpenedByPointer.current = false;
-          return;
-        }
-        if (pickerCloseTimer.current != null) window.clearTimeout(pickerCloseTimer.current);
-        setPickerClosing(false);
-        candidateTrigger.current = event.currentTarget;
+      selectedConid={selectedLeaderConid}
+      onDetailsOpen={(row) => {
         setCandidate(rows.find((item) => item.conid === row.conid) ?? null);
         setDestinationId("");
-        setAnimatePicker(pickerOpenedByPointer.current);
-        pickerOpenedByPointer.current = false;
         membership.reset();
-       }}>Add to IBKR watchlist</button>}
-      details={(row) => <div id={`leader-picker-${row.conid}`} onKeyDown={(event) => { if (event.key === "Escape") closePicker(); }}>
+      }}
+      onDetailsClose={() => { setCandidate(null); setDestinationId(""); candidateTrigger.current?.focus(); }}
+      action={(row) => <button type="button" className="parallax-press rounded border border-[#9FB1BB] px-2 py-1 text-xs font-medium text-[#25313A] transition-colors hover:border-[#436782] hover:bg-[#E8EFF2] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#436782] active:scale-[0.98]" aria-label={`Add ${row.symbol} to IBKR watchlist`} aria-expanded={candidate?.conid === row.conid} aria-controls={`leader-picker-${row.conid}`} onClick={(event) => { candidateTrigger.current = event.currentTarget; }} disabled={!isAuthenticated}>+ Add…</button>}
+      details={(row) => <div id={`leader-picker-${row.conid}`}>
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <span className="font-semibold">Add {row.symbol} to an IBKR watchlist</span>
-          <button type="button" className="text-[var(--text-2)] underline" onPointerDown={() => { pickerOpenedByPointer.current = true; }} onKeyDown={() => { pickerOpenedByPointer.current = false; }} onClick={() => { closePicker(pickerOpenedByPointer.current); pickerOpenedByPointer.current = false; }}>Close</button>
+          <span className="font-semibold">Add {row.symbol}</span>
+          <button type="button" className="rounded px-2 py-1 text-[var(--text-2)] underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#436782]" onClick={() => { setCandidate(null); setDestinationId(""); candidateTrigger.current?.focus(); }}>Cancel</button>
         </div>
         {!listsReady && !listsError && <p role="status" className="mt-2">Loading watchlists…</p>}
         {listsError && <p role="alert" className="mt-2 text-[var(--clr-red)]">Watchlists could not be loaded.</p>}
         {listsReady && lists.length === 0 && <p role="status" className="mt-2">No saved IBKR watchlists are available.</p>}
-        {listsReady && lists.length > 0 && <div className="mt-2 flex flex-wrap items-center gap-2">
-          <label className="sr-only" htmlFor={`leader-destination-${row.conid}`}>Destination watchlist</label>
-          <select id={`leader-destination-${row.conid}`} aria-label="Destination watchlist" className="rounded border border-[var(--border-1)] bg-[var(--surface-1)] px-2 py-1.5" value={destinationId} disabled={membership.isPending} onChange={(event) => { setDestinationId(event.target.value); membership.reset(); }}>
+        {listsReady && lists.length > 0 && <div className="mt-2 flex flex-wrap items-end gap-2">
+          <div className="flex flex-col gap-1">
+          <label htmlFor={`leader-destination-${row.conid}`} className="text-[11px] text-[var(--text-2)]">IBKR watchlist:</label>
+          <select id={`leader-destination-${row.conid}`} aria-label="IBKR watchlist" className="rounded border border-[var(--border-1)] bg-[var(--surface-1)] px-2 py-1.5" value={destinationId} disabled={membership.isPending} onChange={(event) => { setDestinationId(event.target.value); membership.reset(); }}>
             <option value="">Choose a watchlist</option>
             {lists.map((list) => <option key={list.id} value={list.id}>{list.name}</option>)}
           </select>
-          <button className="parallax-press rounded border border-[var(--border-1)] px-2.5 py-1.5 disabled:opacity-50" disabled={!isAuthenticated || !listsReady || !destination || membership.isPending} onClick={() => destination && membership.change("add", destination.id, row.conid)}>
-            {membership.isPending && mutationForCandidate ? "Adding…" : "Confirm add"}
+          </div>
+          <button className="parallax-press rounded bg-[#436782] px-2.5 py-1.5 font-medium text-white transition-colors hover:bg-[#34566F] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#25313A] active:scale-[0.98] disabled:opacity-50" disabled={!isAuthenticated || !listsReady || !destination || membership.isPending} onClick={() => destination && membership.change("add", destination.id, row.conid)}>
+            {membership.isPending && mutationForCandidate ? "Adding…" : "Add to watchlist"}
           </button>
         </div>}
         {membership.isPending && mutationForCandidate && <p role="status" className="mt-2">Adding {row.symbol}…</p>}
         {membership.isSuccess && mutationForCandidate && membership.data && <p role="status" className="names-membership-success mt-2">{"added" in membership.data && membership.data.added ? `Added ${row.symbol} to ${destination?.name ?? "watchlist"}.` : `${row.symbol} is already in that watchlist.`}</p>}
         {membership.isError && mutationForCandidate && membership.error.name !== "AbortError" && <p role="alert" className="mt-2 text-[var(--clr-red)]">Watchlist update failed: {membership.error.message}</p>}
       </div>}
-    />}
+      />
+    </>}
   </section>;
 }
 
@@ -428,15 +428,19 @@ export default function NamesPage() {
   return <main
     ref={scrollContainer}
     onScroll={(event) => useNavigationStore.getState().setNamesContext({ scrollTop: event.currentTarget.scrollTop })}
-    className={`names-mineral h-full ${customScan ? "overflow-hidden px-2 py-2 md:px-3" : "overflow-y-auto px-4 py-4 md:px-6"}`}
+    className={`names-mineral h-full ${customScan ? "overflow-hidden" : "overflow-y-auto"} px-4 py-4 md:px-6`}
   >
-    <div className={`mx-auto flex flex-col ${customScan ? "h-full min-h-0 w-full max-w-none gap-1" : "min-h-full max-w-6xl space-y-4"}`}>
-      <header className={`flex flex-wrap justify-between ${customScan ? "items-center gap-2" : "items-end gap-3"}`}>
-       <h1 className={`${customScan ? "text-xl" : "text-2xl"} font-semibold`}>Names</h1>
+    <div className={`mx-auto flex max-w-6xl flex-col gap-4 ${customScan ? "h-full min-h-0" : "min-h-full"}`}>
+      <header className="flex flex-wrap items-end justify-between gap-3">
+       <h1 className="text-2xl font-semibold">Names</h1>
         <span className="text-[11px] text-[var(--text-3)]">{transportLabel(status, upstreamStatus)}</span>
       </header>
-       <nav aria-label="Names views" className={`flex gap-1 border-b border-[var(--border-1)] ${customScan ? "-mb-1" : ""}`}>
-         {(["watchlist", "discover"] as const).map((tab) => <button key={tab} aria-pressed={mainTab === tab} className={`px-3 py-2 text-[13px] ${mainTab === tab ? "border-b-2 border-[var(--clr-cyan)] text-[var(--text-1)]" : "text-[var(--text-3)]"}`} onClick={() => setNamesContext({ mainTab: tab })}>{tab === "watchlist" ? "Watchlist" : "Discover"}</button>)}
+      <nav aria-label="Names views" className="flex gap-1 border-b border-[var(--border-1)]">
+        {([
+          { label: "Watchlist", active: mainTab === "watchlist", select: () => setNamesContext({ mainTab: "watchlist" }) },
+          { label: "Leaders", active: mainTab === "discover" && discoverTab === "leaders", select: () => setNamesContext({ mainTab: "discover", discoverTab: "leaders" }) },
+          { label: "Custom scan", active: mainTab === "discover" && discoverTab === "custom", select: () => setNamesContext({ mainTab: "discover", discoverTab: "custom" }) },
+        ]).map((view) => <button key={view.label} aria-pressed={view.active} className={`min-h-10 border-b-2 px-3 text-[13px] transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#436782] ${view.active ? "border-[var(--clr-cyan)] font-semibold text-[var(--text-1)]" : "border-transparent text-[var(--text-3)] hover:text-[var(--text-1)]"}`} onClick={view.select}>{view.label}</button>)}
       </nav>
       {mainTab === "watchlist" && (!isAuthenticated
         ? <p role="status" className="text-sm text-[var(--text-3)]">Connect to IBKR to view watchlists.</p>
@@ -445,15 +449,9 @@ export default function NamesPage() {
           : listsQuery.isError && !listsQuery.data
             ? <p role="alert" className="text-sm text-[var(--clr-orange)]">Watchlists could not be loaded.</p>
             : <Watchlists lists={lists} isAuthenticated={isAuthenticated} sessionEpoch={sessionEpoch} listsReady={listsReady} />)}
-      {mainTab === "discover" && <>
-        <nav aria-label="Discover views" className={`flex gap-2 ${customScan ? "pb-0" : "gap-4"}`}>
-           <button aria-pressed={discoverTab === "leaders"} className={`rounded-md px-3 ${customScan ? "py-1" : "py-2"} text-[13px] ${discoverTab === "leaders" ? "bg-[var(--surface-2)] font-semibold text-[var(--text-1)]" : "text-[var(--text-3)] hover:text-[var(--text-1)]"}`} onClick={() => setNamesContext({ discoverTab: "leaders" })}>Leaders</button>
-           <button aria-pressed={discoverTab === "custom"} className={`rounded-md px-3 ${customScan ? "py-1" : "py-2"} text-[13px] ${discoverTab === "custom" ? "bg-[var(--surface-2)] font-semibold text-[var(--text-1)]" : "text-[var(--text-3)] hover:text-[var(--text-1)]"}`} onClick={() => setNamesContext({ discoverTab: "custom" })}>Custom scan</button>
-        </nav>
-        {discoverTab === "leaders"
-          ? <Leaders lists={lists} listsReady={listsReady} listsError={listsQuery.isError} isAuthenticated={isAuthenticated} sessionEpoch={sessionEpoch} />
-          : <div className="names-custom-scan flex min-h-0 flex-1 flex-col overflow-hidden"><ScreenerPage /></div>}
-      </>}
+      {mainTab === "discover" && (discoverTab === "leaders"
+        ? <Leaders lists={lists} listsReady={listsReady} listsError={listsQuery.isError} isAuthenticated={isAuthenticated} sessionEpoch={sessionEpoch} />
+        : <div className="names-custom-scan flex min-h-0 flex-1 flex-col overflow-hidden"><ScreenerPage /></div>)}
     </div>
   </main>;
 }

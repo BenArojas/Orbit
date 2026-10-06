@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field, PositiveInt
 class RSItem(BaseModel):
     conid: int | None = None
     symbol: str
+    company_name: str | None = None
     sector: str | None = None
     raw_strength: float | None = None
     published_percentile: int | None = None

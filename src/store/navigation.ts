@@ -24,6 +24,8 @@ export interface NamesContext {
   selectedWatchlistId: string;
   watchlistFilter: string;
   scrollTop: number;
+  leadersPage: number;
+  selectedLeaderConid: number | null;
   brokerSessionEpoch: number;
 }
 
@@ -33,6 +35,8 @@ const INITIAL_NAMES_CONTEXT: NamesContext = {
   selectedWatchlistId: "",
   watchlistFilter: "",
   scrollTop: 0,
+  leadersPage: 0,
+  selectedLeaderConid: null,
   brokerSessionEpoch: 0,
 };
 
@@ -61,6 +65,7 @@ export const useNavigationStore = create<NavigationState>()((set) => ({
       ...state.namesContext,
       selectedWatchlistId: "",
       watchlistFilter: "",
+      selectedLeaderConid: null,
       brokerSessionEpoch: state.namesContext.brokerSessionEpoch + 1,
     },
   })),

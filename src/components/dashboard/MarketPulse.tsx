@@ -36,11 +36,11 @@ import { Pulse } from "./skeletons";
 
 // ── Per-ticker skeleton ──────────────────────────────────────
 
-function PulseItemSkeleton({ label }: { label: string }) {
+function PulseItemSkeleton({ label, variant }: { label: string; variant: "today" | "market" }) {
   return (
-    <div className="flex min-w-[115px] flex-col gap-1 px-[18px] py-2">
+    <div className={`flex min-w-[115px] flex-col gap-1 px-[18px] py-2 ${variant === "market" ? "border-r border-[#E6ECEE] last:border-r-0" : ""}`}>
       <div className="flex items-center justify-between gap-2">
-        <span className="text-[10px] font-semibold text-[var(--text-3)]">
+        <span className={`${variant === "market" ? "text-[11px] text-[#59666E]" : "text-[11px] text-[var(--text-3)]"} font-semibold`}>
           {label}
         </span>
         <Pulse className="h-3 w-[44px]" />
@@ -67,6 +67,7 @@ function PulseItem({
   quote,
   liveTick,
   loaded,
+  variant,
 }: {
   label: string;
   conid: number | undefined;
@@ -74,12 +75,13 @@ function PulseItem({
   liveTick: LiveQuoteTick | undefined;
   /** True once the bundled quote response has arrived for the first time. */
   loaded: boolean;
+  variant: "today" | "market";
 }) {
   const navigateToAnalysis = useNavigationStore((s) => s.navigateToAnalysis);
 
   // Show skeleton until we have at least a conid and the first quote fetch landed.
   if (!loaded || !conid) {
-    return <PulseItemSkeleton label={label} />;
+    return <PulseItemSkeleton label={label} variant={variant} />;
   }
 
   // Live tick overrides snapshot. Both can have stale fields, so we
@@ -87,39 +89,47 @@ function PulseItem({
   const price = liveTick?.last ?? quote?.lastPrice;
   const changePct = liveTick?.changePct ?? quote?.changePercent;
   const isUp = (changePct ?? 0) >= 0;
+  const availability = liveTick?.availability?.[0];
+  const quoteState = availability === "R" ? "Live"
+    : availability === "D" || availability === "Y" ? "Delayed"
+      : availability === "Z" ? "Frozen"
+        : availability === "N" ? "Unavailable" : "Unconfirmed";
+  const mineral = variant === "market";
 
   return (
     <button
       onClick={() => navigateToAnalysis(conid, quote?.symbol || label)}
-      className="group relative flex min-w-[115px] flex-col gap-0.5 px-[18px] py-2 transition-colors hover:bg-[var(--bg-2)]"
+      aria-label={`${label}, ${quoteState} IBKR quote`}
+      className={`group relative flex min-w-[115px] flex-col gap-0.5 px-[18px] py-2 transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-[#436782] active:scale-[0.98] ${mineral ? "border-r border-[#E6ECEE] last:border-r-0 hover:bg-[#F1F4F5]" : "hover:bg-[var(--bg-2)]"}`}
     >
       {/* Glow underline on hover */}
       <div
         className="absolute bottom-0 left-2 right-2 h-[2px] rounded-full opacity-0 transition-opacity group-hover:opacity-100"
         style={{
-          backgroundColor: isUp ? "var(--clr-green)" : "var(--clr-red)",
-          boxShadow: `0 0 8px ${isUp ? "var(--clr-green)" : "var(--clr-red)"}`,
+          backgroundColor: mineral ? (isUp ? "#2F684D" : "#923E3E") : isUp ? "var(--clr-green)" : "var(--clr-red)",
+          boxShadow: mineral ? "none" : `0 0 8px ${isUp ? "var(--clr-green)" : "var(--clr-red)"}`,
         }}
       />
 
       {/* Top row: label + price */}
       <div className="flex items-center justify-between gap-2">
-        <span className="text-[10px] font-semibold text-[var(--text-3)]">
+        <span className={mineral ? "text-[11px] font-semibold text-[#59666E]" : "text-[11px] font-semibold text-[var(--text-3)]"}>
           {label}
         </span>
-        <span className="font-data text-[13px] font-bold text-[var(--text-1)]">
+        <span className={mineral ? "font-data text-[13px] font-bold tabular-nums text-[#25313A]" : "font-data text-[13px] font-bold tabular-nums text-[var(--text-1)]"}>
           {price != null ? formatPrice(price) : "--"}
         </span>
       </div>
 
-      {/* Bottom row: change % */}
+      {/* Signed movement and feed availability remain distinct. */}
       <div className="flex items-center justify-between gap-2">
-        <span
-          className={`font-data text-[10px] ${isUp ? "text-up" : "text-down"}`}
-        >
+        <span className={`font-data text-[11px] tabular-nums ${mineral ? "" : isUp ? "text-up" : "text-down"}`} style={mineral ? { color: changePct == null ? "#59666E" : isUp ? "#2F684D" : "#923E3E" } : undefined}>
           {changePct != null
             ? `${isUp ? "+" : ""}${changePct.toFixed(2)}%`
             : "--"}
+        </span>
+        <span className="text-[11px]" style={{ color: quoteState === "Live" ? mineral ? "#2F684D" : "var(--clr-green)" : quoteState === "Unavailable" ? mineral ? "#59666E" : "var(--text-3)" : mineral ? "#76500B" : "var(--clr-orange)" }}>
+          {quoteState}
         </span>
       </div>
     </button>
@@ -139,7 +149,7 @@ function formatPrice(price: number): string {
 
 // ── Main bar ─────────────────────────────────────────────────
 
-export default function MarketPulse() {
+export default function MarketPulse({ variant = "today" }: { variant?: "today" | "market" }) {
   const ibkrReady = useIbkrReady();
   // Tier 1 in the dashboard cascade — fires at t=0 as soon as IBKR connects.
   const tierReady = useIbkrReadyTier(1);
@@ -209,7 +219,9 @@ export default function MarketPulse() {
   }
 
   return (
-    <div className="col-span-2 flex items-center justify-center overflow-x-auto scrollbar-hidden border-b border-border bg-[var(--bg-1)] px-2 py-1">
+    <div role={variant === "market" ? "group" : undefined} aria-label={variant === "market" ? "Configured current prices" : undefined} className={variant === "market"
+      ? "flex min-w-0 items-center justify-start overflow-x-auto rounded-md bg-[#FCFDFD] px-1 py-1"
+      : "col-span-2 flex items-center justify-center overflow-x-auto scrollbar-hidden border-b border-border bg-[var(--bg-1)] px-2 py-1"}>
       {items.map((item, i) => {
         const conid = resolvedConids[i];
         return (
@@ -220,6 +232,7 @@ export default function MarketPulse() {
             quote={conid != null ? quoteByConid.get(conid) : undefined}
             liveTick={conid != null ? liveTicks.get(conid) : undefined}
             loaded={quotesLoaded && conid != null}
+            variant={variant}
           />
         );
       })}

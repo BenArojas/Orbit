@@ -660,7 +660,7 @@ export default function ScreenerFilterBar({
       })()}
 
       <details className="relative">
-        <summary className="cursor-pointer list-none rounded-md border border-[var(--border)] px-2.5 py-1 font-data text-xs text-[var(--text-2)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--clr-cyan)]">
+        <summary className="cursor-pointer list-none rounded-md border border-[var(--border)] px-2.5 py-1 font-data text-xs text-[var(--text-2)] transition-colors hover:border-[var(--clr-cyan)] hover:bg-[var(--bg-2)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--clr-cyan)] active:scale-[0.99]">
           Advanced filters{filters.length ? ` · ${filters.length} active` : ""}
         </summary>
         <div className="absolute left-0 top-full z-30 mt-1 flex max-h-[min(60vh,440px)] max-w-[calc(100vw-24px)] flex-wrap items-center gap-2 overflow-auto rounded-lg border border-[var(--border)] bg-[var(--bg-1)] p-3 shadow-lg">
@@ -719,7 +719,7 @@ export default function ScreenerFilterBar({
               ? "Filters changed — press Scan to refresh results"
               : undefined
           }
-          className="gap-1.5 px-3.5 py-1.5 border-[var(--clr-cyan)] bg-[var(--clr-cyan)] text-[var(--surface-1)] font-semibold hover:bg-[var(--clr-cyan)]/90 hover:text-[var(--surface-1)] disabled:opacity-40"
+          className="gap-1.5 px-3.5 py-1.5 border-[var(--clr-cyan)] bg-[var(--clr-cyan)] text-[var(--surface-1)] font-semibold hover:bg-[var(--clr-cyan)]/90 hover:text-[var(--surface-1)] active:scale-[0.98] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--clr-cyan)] disabled:opacity-40"
         >
           {isScanning ? (
             <>

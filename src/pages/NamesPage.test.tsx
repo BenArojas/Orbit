@@ -76,7 +76,7 @@ afterEach(() => {
   gateway.ready = true;
   useNavigationStore.setState({
     activeScreen: "screener",
-    namesContext: { mainTab: "discover", discoverTab: "leaders", selectedWatchlistId: "", watchlistFilter: "", scrollTop: 0, brokerSessionEpoch: 0 },
+    namesContext: { mainTab: "discover", discoverTab: "leaders", selectedWatchlistId: "", watchlistFilter: "", scrollTop: 0, leadersPage: 0, selectedLeaderConid: null, brokerSessionEpoch: 0 },
   });
   useScreenerStore.setState({ results: [], totalScanned: 0, lastBatchSize: 0 });
 });
@@ -127,10 +127,10 @@ describe("NamesPage", () => {
     await waitFor(() => expect(api.refreshRSLeadersSource).toHaveBeenCalledWith(expect.any(AbortSignal)));
     expect(api.resolveRSLeaders).toHaveBeenCalledWith(expect.any(AbortSignal));
     await waitFor(() => expect(invalidate).toHaveBeenCalledWith({ queryKey: ["parallax", "rs-ratings"] }));
-    fireEvent.click(screen.getByRole("button", { name: "LEAD" }));
+    fireEvent.click(screen.getByRole("button", { name: "Open LEAD in Analysis" }));
     expect(screen.getByRole("heading", { name: "Analysis / Compare" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Return to Names" }));
-    expect(await screen.findByRole("button", { name: "LEAD" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Open LEAD in Analysis" })).toBeInTheDocument();
 
     useScreenerStore.getState().replaceResults([
       { conid: 401, symbol: "SCAN", company_name: "Scanner result", sec_type: "STK", last_price: 5, change_percent: 2, volume: 1000, scan_data: null, scan_data_label: null },
@@ -145,12 +145,12 @@ describe("NamesPage", () => {
     expect(useScreenerStore.getState().results[0]?.symbol).toBe("SCAN");
     fireEvent.click(screen.getByRole("button", { name: "Watchlist" }));
 
-    expect(await screen.findByRole("button", { name: "WEAK" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "UNRATED" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Open WEAK in Analysis" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Open UNRATED in Analysis" })).toBeInTheDocument();
     expect(screen.getByLabelText("Fred published RS percentile: 0")).toBeInTheDocument();
     expect(screen.getByText(/Fred publication is stale.*published/)).toBeInTheDocument();
     expect(screen.getByText("RS rating unavailable")).toBeInTheDocument();
-    const namesTable = screen.getByRole("button", { name: "UNRATED" }).closest("table");
+    const namesTable = screen.getByRole("button", { name: "Open UNRATED in Analysis" }).closest("table");
     const headerCount = namesTable?.querySelectorAll("thead th").length;
     fireEvent.click(screen.getByRole("button", { name: "RS rating details" }));
     const ratingExplanation = screen.getByText(/verified listing is absent from Fred’s published dataset/);
@@ -177,7 +177,7 @@ describe("NamesPage", () => {
     fireEvent.click(addButton);
     expect(api.watchlistAddInstrument).toHaveBeenCalledTimes(1);
     fireEvent.change(screen.getByRole("combobox", { name: "Watchlist" }), { target: { value: "secondary" } });
-    await screen.findByRole("button", { name: "SECOND" });
+    await screen.findByRole("button", { name: "Open SECOND in Analysis" });
     await act(async () => { finishAdd({ added: true, conid: 203 }); });
     expect(invalidate).toHaveBeenCalledWith({ queryKey: ["watchlist-instruments", "primary"] });
     expect(invalidate).toHaveBeenCalledWith({ queryKey: ["watchlist-quotes", "primary"] });
@@ -189,19 +189,19 @@ describe("NamesPage", () => {
     await waitFor(() => expect(api.watchlistRemoveInstrument).toHaveBeenCalledWith("secondary", 301, expect.any(AbortSignal)));
 
     fireEvent.change(screen.getByRole("combobox", { name: "Watchlist" }), { target: { value: "primary" } });
-    await screen.findByRole("button", { name: "WEAK" });
+    await screen.findByRole("button", { name: "Open WEAK in Analysis" });
     fireEvent.change(screen.getByRole("textbox", { name: "Filter watchlist" }), { target: { value: "WEAK" } });
     const namesRoot = screen.getByRole("main");
     namesRoot.scrollTop = 180;
     fireEvent.scroll(namesRoot);
-    fireEvent.click(screen.getByRole("button", { name: "WEAK" }));
+    fireEvent.click(screen.getByRole("button", { name: "Open WEAK in Analysis" }));
     fireEvent.click(screen.getByRole("button", { name: "Return to Names" }));
     const restoredRoot = await screen.findByRole("main");
     expect(screen.getByRole("button", { name: "Watchlist" })).toHaveAttribute("aria-pressed", "true");
     expect(screen.getByRole("combobox", { name: "Watchlist" })).toHaveValue("primary");
     expect(screen.getByRole("textbox", { name: "Filter watchlist" })).toHaveValue("WEAK");
-    expect(screen.getByRole("button", { name: "WEAK" })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "UNRATED" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Open WEAK in Analysis" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Open UNRATED in Analysis" })).not.toBeInTheDocument();
     expect(restoredRoot.scrollTop).toBe(180);
 
     client.clear();
@@ -266,7 +266,7 @@ describe("NamesPage", () => {
       { conid: 502, symbol: "HELD", companyName: "Held name" },
     ] });
     await act(async () => { await client.invalidateQueries({ queryKey: ["watchlist-instruments", "primary"] }); });
-    expect(await screen.findByRole("button", { name: "HELD" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Open HELD in Analysis" })).toBeInTheDocument();
     expect(screen.queryByRole("columnheader", { name: "Sector" })).not.toBeInTheDocument();
     fireEvent.change(screen.getByRole("textbox", { name: "Filter watchlist" }), { target: { value: "absent" } });
     expect(screen.getByText("No watchlist names match this filter.")).toBeInTheDocument();
@@ -318,7 +318,7 @@ describe("NamesPage", () => {
     api.refreshRSLeadersSource.mockImplementationOnce(() => new Promise((_resolve, reject) => { failSavedRefresh = reject; }));
     const savedClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     render(<QueryClientProvider client={savedClient}><NamesNavigationHarness /></QueryClientProvider>);
-    expect(await screen.findByRole("button", { name: "LEAD" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Open LEAD in Analysis" })).toBeInTheDocument();
     await waitFor(() => expect(api.refreshRSLeadersSource).toHaveBeenCalledTimes(2));
     expect(screen.getByText(/Checking the published ranking source; saved results remain visible/)).toBeInTheDocument();
 
@@ -328,10 +328,10 @@ describe("NamesPage", () => {
     expect(screen.getByText(/Checking the published ranking source; saved results remain visible/)).toBeInTheDocument();
 
     act(() => savedClient.setQueryData(["parallax", "rs-leaders", 0], leaders));
-    expect(await screen.findByRole("button", { name: "LEAD" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Open LEAD in Analysis" })).toBeInTheDocument();
     await act(async () => failSavedRefresh(new Error("Fred unavailable")));
     expect(await screen.findByText(/Leader update could not complete/)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "LEAD" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Open LEAD in Analysis" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Open Watchlist" })).toBeInTheDocument();
     savedClient.clear();
   });
@@ -345,32 +345,32 @@ describe("NamesPage", () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     const invalidate = vi.spyOn(client, "invalidateQueries");
     const view = render(<QueryClientProvider client={client}><NamesNavigationHarness /></QueryClientProvider>);
-    expect(await screen.findByRole("button", { name: "Add to IBKR watchlist" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Add LEAD to IBKR watchlist" })).toBeInTheDocument();
     await waitFor(() => expect(api.resolveRSLeaders).toHaveBeenCalledTimes(1));
-    const openPicker = screen.getByRole("button", { name: "Add to IBKR watchlist" });
+    const openPicker = screen.getByRole("button", { name: "Add LEAD to IBKR watchlist" });
     fireEvent.keyDown(openPicker, { key: "Enter" });
     fireEvent.click(openPicker);
     const picker = document.getElementById("leader-picker-101");
     expect(picker).toBeInTheDocument();
-    expect(picker?.parentElement).not.toHaveAttribute("data-pointer-open", "true");
+    expect(picker?.closest('[aria-label="Add LEAD to an IBKR watchlist"]')).toHaveClass("names-mineral");
     fireEvent.keyDown(picker!, { key: "Escape" });
     expect(openPicker).toHaveFocus();
     fireEvent.keyDown(openPicker, { key: "Enter" });
     fireEvent.click(openPicker);
-    const destination = screen.getByRole("combobox", { name: "Destination watchlist" });
-    expect(screen.getByRole("button", { name: "Confirm add" })).toBeDisabled();
+    const destination = screen.getByRole("combobox", { name: "IBKR watchlist" });
+    expect(screen.getByRole("button", { name: "Add to watchlist" })).toBeDisabled();
     expect(api.watchlistAddInstrument).not.toHaveBeenCalled();
     fireEvent.change(destination, { target: { value: "secondary" } });
-    fireEvent.click(screen.getByRole("button", { name: "Confirm add" }));
+    fireEvent.click(screen.getByRole("button", { name: "Add to watchlist" }));
     expect(await screen.findByText("Added LEAD to Secondary.")).toBeInTheDocument();
     expect(api.watchlistAddInstrument).toHaveBeenCalledWith("secondary", 101, expect.any(AbortSignal));
     expect(invalidate).toHaveBeenCalledWith({ queryKey: ["watchlist-instruments", "secondary"] });
     expect(invalidate).toHaveBeenCalledWith({ queryKey: ["watchlist-membership", 101] });
     expect(api.refreshRSLeadersSource).toHaveBeenCalledTimes(1);
-    fireEvent.click(screen.getByRole("button", { name: "LEAD" }));
+    fireEvent.click(screen.getByRole("button", { name: "Open LEAD in Analysis" }));
     expect(screen.getByRole("heading", { name: "Analysis / Compare" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Return to Names" }));
-    expect(await screen.findByRole("button", { name: "LEAD" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Open LEAD in Analysis" })).toBeInTheDocument();
     expect(api.refreshRSLeadersSource).toHaveBeenCalledTimes(1);
     view.unmount();
     client.clear();
@@ -391,13 +391,13 @@ describe("NamesPage", () => {
     act(() => useNavigationStore.getState().resetNamesBrokerContext());
     view.rerender(<QueryClientProvider client={client}><NamesNavigationHarness /></QueryClientProvider>);
     expect(screen.getByText("Connect to IBKR to view watchlists.")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "OLD SESSION" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Open OLD SESSION in Analysis" })).not.toBeInTheDocument();
 
     gateway.ready = true;
     view.rerender(<QueryClientProvider client={client}><NamesNavigationHarness /></QueryClientProvider>);
-    expect(await screen.findByRole("button", { name: "CURRENT" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Open CURRENT in Analysis" })).toBeInTheDocument();
     await act(async () => finishOldMembership({ id: "same-id", name: "Primary", items: [{ conid: 601, symbol: "OLD SESSION", companyName: "Previous account" }] }));
-    expect(screen.queryByRole("button", { name: "OLD SESSION" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Open OLD SESSION in Analysis" })).not.toBeInTheDocument();
     await waitFor(() => expect(screen.getByRole("button", { name: "Remove" })).not.toBeDisabled());
     let oldMutationSignal: AbortSignal | undefined;
     api.watchlistRemoveInstrument.mockImplementation((_id: string, _conid: number, signal: AbortSignal) => new Promise((_resolve, reject) => {
@@ -427,14 +427,69 @@ describe("NamesPage", () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     render(<QueryClientProvider client={client}><NamesNavigationHarness /></QueryClientProvider>);
     await waitFor(() => expect(refreshSignal).toBeInstanceOf(AbortSignal));
-    fireEvent.click(await screen.findByRole("button", { name: "LEAD" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Open LEAD in Analysis" }));
     expect(refreshSignal?.aborted).toBe(false);
     expect(screen.getByRole("heading", { name: "Analysis / Compare" })).toBeInTheDocument();
     await act(async () => finishSource({ phase: "verifying", source_revision: leaders.source_revision, issues: [] }));
     await waitFor(() => expect(api.resolveRSLeaders).toHaveBeenCalledTimes(1));
     fireEvent.click(screen.getByRole("button", { name: "Return to Names" }));
-    expect(await screen.findByRole("button", { name: "LEAD" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Open LEAD in Analysis" })).toBeInTheDocument();
     expect(refreshSignal?.aborted).toBe(false);
+    client.clear();
+  });
+
+  it("preserves the Leaders page and return position and adds only after explicit submission", async () => {
+    const snapshot = {
+      ...leaders,
+      eligible_count: 12,
+      items: Array.from({ length: 12 }, (_, index) => ({
+        ...leaders.items[0]!, conid: 101 + index, symbol: `LEAD${index + 1}`,
+        company_name: `Leader Company ${index + 1}`, source_rank: index + 1,
+      })),
+    };
+    api.getWatchlists.mockResolvedValue([{ id: "favorites", name: "Favorites" }]);
+    api.rsLeaders.mockResolvedValue(snapshot);
+    api.resolveRSLeaders.mockResolvedValue(snapshot);
+    let failAdd!: (error: Error) => void;
+    api.watchlistAddInstrument
+      .mockImplementationOnce(() => new Promise((_resolve, reject) => { failAdd = reject; }))
+      .mockResolvedValueOnce({ added: true, conid: 111 });
+    act(() => useNavigationStore.setState({ activeScreen: "screener" }));
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const view = render(<QueryClientProvider client={client}><NamesNavigationHarness /></QueryClientProvider>);
+
+    expect(await screen.findByText("1–10 of 12")).toBeInTheDocument();
+    expect(screen.getByText("Leader Company 1")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    expect(screen.getByText("11–12 of 12")).toBeInTheDocument();
+    const main = view.container.querySelector("main")!;
+    main.scrollTop = 240;
+    fireEvent.scroll(main);
+    fireEvent.click(screen.getByRole("button", { name: "Open LEAD11 in Analysis" }));
+    expect(useNavigationStore.getState().namesContext).toMatchObject({ leadersPage: 1, selectedLeaderConid: 111, scrollTop: 240 });
+    fireEvent.click(screen.getByRole("button", { name: "Return to Names" }));
+    expect(await screen.findByText("11–12 of 12")).toBeInTheDocument();
+    const leaderLink = screen.getByRole("button", { name: "Open LEAD11 in Analysis" });
+    expect(leaderLink.closest("tr")).toHaveClass("bg-[#E8EFF2]");
+    expect(view.container.querySelector("main")?.scrollTop).toBe(240);
+
+    const add = screen.getByRole("button", { name: "Add LEAD11 to IBKR watchlist" });
+    fireEvent.click(add);
+    expect(screen.getByText("Add LEAD11")).toBeInTheDocument();
+    fireEvent.change(screen.getByRole("combobox", { name: "IBKR watchlist" }), { target: { value: "favorites" } });
+    expect(api.watchlistAddInstrument).not.toHaveBeenCalled();
+    fireEvent.keyDown(document, { key: "Escape" });
+    await waitFor(() => expect(add).toHaveFocus());
+    fireEvent.click(add);
+    fireEvent.change(screen.getByRole("combobox", { name: "IBKR watchlist" }), { target: { value: "favorites" } });
+    fireEvent.click(screen.getByRole("button", { name: "Add to watchlist" }));
+    expect(await screen.findByText("Adding LEAD11…")).toBeInTheDocument();
+    await act(async () => failAdd(new Error("gateway unavailable")));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Watchlist update failed: gateway unavailable");
+    fireEvent.click(screen.getByRole("button", { name: "Add to watchlist" }));
+    expect(await screen.findByText("Added LEAD11 to Favorites.")).toBeInTheDocument();
+    expect(api.watchlistAddInstrument).toHaveBeenCalledWith("favorites", 111, expect.any(AbortSignal));
+    expect(api.watchlistAddInstrument).toHaveBeenCalledTimes(2);
     client.clear();
   });
 });

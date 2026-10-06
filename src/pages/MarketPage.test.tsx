@@ -1,16 +1,19 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, fireEvent, render, screen } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import MarketPage from "./MarketPage";
 import type { MarketAssessmentResponse } from "@/modules/parallax/api";
 import { useNavigationStore } from "@/store/navigation";
+import { DEFAULT_PULSE_ITEMS, usePulseConfigStore } from "@/store/pulseConfig";
 
 const marketAssessment = vi.hoisted(() => vi.fn());
+const pulseApi = vi.hoisted(() => ({ resolveConid: vi.fn(), quotesBundled: vi.fn() }));
 
 vi.mock("@/modules/parallax/api", () => ({
-  parallaxApi: { marketAssessment },
+  parallaxApi: { marketAssessment, ...pulseApi },
 }));
 vi.mock("@/context/GatewayContext", () => ({ useIbkrReady: () => true }));
+vi.mock("@/hooks/useIbkrReadyTier", () => ({ useIbkrReadyTier: () => true }));
 vi.mock("@/hooks/useWebSocket", () => ({
   useWebSocket: () => ({
     status: "connected",
@@ -57,7 +60,22 @@ function assessmentFixture(indexClose = 500): MarketAssessmentResponse {
 
 afterEach(() => {
   marketAssessment.mockReset();
+  pulseApi.resolveConid.mockReset();
+  pulseApi.quotesBundled.mockReset();
+  usePulseConfigStore.setState({ items: [...DEFAULT_PULSE_ITEMS] });
   vi.useRealTimers();
+});
+
+beforeEach(() => {
+  usePulseConfigStore.setState({ items: [
+    { label: "SPY", resolve: "SPY", sec_type: "" },
+    { label: "QQQ", resolve: "QQQ", sec_type: "" },
+  ] });
+  pulseApi.resolveConid.mockImplementation((symbol: string) => Promise.resolve({ conid: symbol === "SPY" ? 1 : 2, symbol }));
+  pulseApi.quotesBundled.mockResolvedValue({ items: [
+    { conid: 1, symbol: "SPY", lastPrice: 500, changePercent: 1 },
+    { conid: 2, symbol: "QQQ", lastPrice: 400, changePercent: -1 },
+  ] });
 });
 
 describe("MarketPage", () => {
@@ -69,13 +87,14 @@ describe("MarketPage", () => {
     expect(await screen.findByRole("heading", { name: "Broad strength" })).toBeInTheDocument();
     expect(screen.getByText("2026-10-02 completed · SPY, QQQ and IWM are constructive. Only 8 of 11 sector ETFs are above SMA50.")).toBeInTheDocument();
     expect(screen.getByText(/IBKR transport connected/)).toBeInTheDocument();
-    expect(screen.getByText(/Live 1 · Frozen 1 · Unconfirmed 12 · quote availability/)).toBeInTheDocument();
     const feedStatus = screen.getByText(/IBKR transport connected/).closest('[role="status"]');
     expect(feedStatus?.querySelector(".bg-emerald-600")).toBeNull();
-    expect(feedStatus?.querySelector(".bg-amber-500")).toBeInTheDocument();
+    expect(feedStatus?.querySelector(".bg-amber-500")).toBeNull();
+    expect(screen.getByRole("group", { name: "Configured current prices" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "SPY, Live IBKR quote" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "QQQ, Frozen IBKR quote" })).toBeInTheDocument();
     expect(screen.getByRole("img", { name: /SPY: EMA21/ })).toBeInTheDocument();
-    expect(screen.getByText(/\$400 · Frozen/)).toBeInTheDocument();
-    expect(screen.getByText(/\$500 · Live/)).toBeInTheDocument();
+    expect(screen.getAllByText("$500 · completed close")).toHaveLength(3);
     expect(screen.getByText(/not individual-stock breadth/)).toBeInTheDocument();
     for (const symbol of sectors) expect(screen.getAllByText(new RegExp(symbol)).length).toBeGreaterThan(0);
 
@@ -166,7 +185,7 @@ describe("MarketPage", () => {
     });
     expect(screen.getByRole("heading", { name: "Broad strength" })).toBeInTheDocument();
     expect(marketAssessment).toHaveBeenCalledTimes(1);
-    const summary = screen.getByText("Assessment evidence and update times");
+    const summary = screen.getByText("Methodology and evidence details");
     const details = summary.closest("details");
     expect(details).not.toBeNull();
     fireEvent.click(summary);

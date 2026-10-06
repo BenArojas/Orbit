@@ -379,7 +379,7 @@ class RSLeadersService:
                 break
             cached = cached_items.get(record["symbol"])
             if cached is not None:
-                selected.append(RSItem(conid=cached.conid, **record))
+                selected.append(RSItem(conid=cached.conid, company_name=cached.company_name, **record))
                 continue
             if attempts >= MAX_RESOLUTION_ATTEMPTS:
                 issues.append(f"Stopped after {MAX_RESOLUTION_ATTEMPTS} stock identity checks to keep IBKR resolution bounded.")
@@ -453,13 +453,14 @@ class RSLeadersService:
                 continue
             conid = verified_conids[0]
             match = exact[conid]
+            company_name = str(match.get("companyName") or match.get("companyHeader") or "").strip() or None
             await self.identity.cache_resolved_identity(
                 conid=conid,
                 symbol=record["symbol"],
-                company_name=str(match.get("companyHeader") or match.get("companyName") or ""),
+                company_name=company_name or "",
                 sec_type="STK",
             )
-            selected.append(RSItem(conid=conid, **record))
+            selected.append(RSItem(conid=conid, company_name=company_name, **record))
 
         if unresolved:
             expected = min(MAX_LEADERS, len(eligible))
