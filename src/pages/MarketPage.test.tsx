@@ -86,6 +86,7 @@ describe("MarketPage", () => {
 
     expect(await screen.findByRole("heading", { name: "Broad strength" })).toBeInTheDocument();
     expect(screen.getByText("2026-10-02 completed · SPY, QQQ and IWM are constructive. Only 8 of 11 sector ETFs are above SMA50.")).toBeInTheDocument();
+    expect(screen.getByText("Give breakouts and retests priority; all setup types remain available.")).toBeInTheDocument();
     expect(screen.getByText(/IBKR transport connected/)).toBeInTheDocument();
     const feedStatus = screen.getByText(/IBKR transport connected/).closest('[role="status"]');
     expect(feedStatus?.querySelector(".bg-emerald-600")).toBeNull();
@@ -103,7 +104,7 @@ describe("MarketPage", () => {
     }));
     expect(await screen.findByRole("heading", { name: "Previous assessment · Broad strength" })).toBeInTheDocument();
     expect(screen.getByText(/Dated evidence from 2026-10-02; current session 2026-10-05 is not confirmed/)).toBeInTheDocument();
-    expect(screen.getAllByText("Available; market priority unknown")).toHaveLength(3);
+    expect(screen.getByText("Current tactic priorities are unconfirmed; all setup types remain available.")).toBeInTheDocument();
 
     act(() => queryClient.setQueryData(["parallax", "market-assessment"], assessmentFixture()));
 
@@ -114,13 +115,35 @@ describe("MarketPage", () => {
     expect(marketAssessment).toHaveBeenCalledTimes(2);
     expect(await screen.findByRole("heading", { name: "Current assessment unavailable" })).toBeInTheDocument();
     expect(screen.getByText("The latest assessment request failed. Any dated evidence below is the last successful result.")).toBeInTheDocument();
+    expect(screen.getByText("Current tactic priorities are unavailable; all setup types remain available.")).toBeInTheDocument();
     for (const tactic of ["Pullbacks", "Breakouts", "Breakout retests"]) {
-      expect(screen.getByRole("heading", { name: tactic })).toBeInTheDocument();
+      expect(screen.queryByRole("heading", { name: tactic })).not.toBeInTheDocument();
     }
-    expect(screen.getAllByText("Available; market priority unknown")).toHaveLength(3);
-    expect(screen.queryByText("Priority in broad strength")).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Explore strong names" }));
     expect(useNavigationStore.getState().activeScreen).toBe("screener");
+  });
+
+  it("keeps setup guidance concise across posture and incomplete evidence", async () => {
+    marketAssessment.mockResolvedValue(assessmentFixture());
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(<QueryClientProvider client={queryClient}><MarketPage /></QueryClientProvider>);
+
+    expect(await screen.findByRole("heading", { name: "Broad strength" })).toBeInTheDocument();
+    for (const [posture, title, guidance] of [
+      ["selective", "Selective strength", "Favor strong names near support; other setup types remain available with selectivity."],
+      ["defensive", "Defensive conditions", "Favor patience and stronger confirmation; all setup types remain available."],
+    ] as const) {
+      act(() => queryClient.setQueryData(["parallax", "market-assessment"], { ...assessmentFixture(), posture }));
+      expect(await screen.findByRole("heading", { name: title })).toBeInTheDocument();
+      expect(screen.getByText(guidance)).toBeInTheDocument();
+    }
+
+    act(() => queryClient.setQueryData(["parallax", "market-assessment"], {
+      ...assessmentFixture(), status: "partial", posture: null,
+    }));
+    expect(await screen.findByRole("heading", { name: "Current assessment incomplete" })).toBeInTheDocument();
+    expect(screen.getByText("Evidence is incomplete, so tactic priorities are unknown; all setup types remain available.")).toBeInTheDocument();
+    queryClient.clear();
   });
 
   it("scales the evidence map to actual outliers and leaves missing averages unplotted", async () => {

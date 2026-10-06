@@ -55,7 +55,7 @@ function postureCopy(assessment: MarketAssessmentResponse | undefined, currentSe
     return {
       title: "Current assessment incomplete",
       detail,
-      priority: "Waiting for complete evidence",
+      guidance: "Evidence is incomplete, so tactic priorities are unknown; all setup types remain available.",
     };
   }
   if (!currentSession) {
@@ -63,16 +63,16 @@ function postureCopy(assessment: MarketAssessmentResponse | undefined, currentSe
     return {
       title: `Previous assessment · ${lastPosture}`,
       detail,
-      priority: "Current market priority is unconfirmed",
+      guidance: "Current tactic priorities are unconfirmed; all setup types remain available.",
     };
   }
   if (assessment.posture === "broad") {
-    return { title: "Broad strength", detail, priority: "Breakouts and retests have priority" };
+    return { title: "Broad strength", detail, guidance: "Give breakouts and retests priority; all setup types remain available." };
   }
   if (assessment.posture === "defensive") {
-    return { title: "Defensive conditions", detail, priority: "Preserve capital; waiting is valid" };
+    return { title: "Defensive conditions", detail, guidance: "Favor patience and stronger confirmation; all setup types remain available." };
   }
-  return { title: "Selective strength", detail, priority: "Favor strong names near support and selected retests" };
+  return { title: "Selective strength", detail, guidance: "Favor strong names near support; other setup types remain available with selectivity." };
 }
 
 function transportLabel(status: string, upstream: { ibkrConnected: boolean; wsReady: boolean } | null): string {
@@ -222,11 +222,10 @@ export default function MarketPage() {
 
   const currentSession = !!query.data?.evidence_session
     && query.data.evidence_session === query.data.expected_session;
-  const currentPosture = requestFailed || !currentSession ? null : query.data?.posture ?? null;
   const posture = requestFailed ? {
       title: "Current assessment unavailable",
       detail: "The latest assessment request failed. Any dated evidence below is the last successful result.",
-      priority: "Market priority is unconfirmed",
+      guidance: "Current tactic priorities are unavailable; all setup types remain available.",
     }
     : postureCopy(query.data, currentSession);
   const transport = transportLabel(feedStatus, upstreamStatus);
@@ -257,9 +256,9 @@ export default function MarketPage() {
                 {query.data?.status === "partial" && <span className="rounded-full px-2 py-1 text-[11px]" style={{ background: COLORS.background, color: COLORS.accent }}>Partial evidence</span>}
               </div>
               <p className="mt-1 text-sm" style={{ color: COLORS.muted }}>{posture.detail}</p>
-              <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2">
-                <p className="text-sm font-semibold" style={{ color: COLORS.accent }}>{posture.priority}</p>
-                <button type="button" onClick={() => navigate("screener")} className="parallax-press inline-flex min-h-9 items-center gap-1 rounded-md bg-[#436782] px-3 text-xs font-semibold text-white transition-colors hover:bg-[#34566F] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#25313A] active:scale-[0.98]">
+              <div className="mt-3">
+                <p className="text-sm font-semibold" style={{ color: COLORS.accent }}>{posture.guidance}</p>
+                <button type="button" onClick={() => navigate("screener")} className="parallax-press mt-3 inline-flex min-h-9 items-center gap-1 rounded-md bg-[#436782] px-3 text-xs font-semibold text-white transition-colors hover:bg-[#34566F] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#25313A] active:scale-[0.98]">
                   Explore strong names <ArrowUpRight size={13} aria-hidden="true" />
                 </button>
               </div>
@@ -316,19 +315,6 @@ export default function MarketPage() {
             {query.data?.previous_assessment && query.data.posture == null && <p className="mt-3 border-t pt-3 text-xs" style={{ borderColor: COLORS.line, color: COLORS.muted }}>Previous assessment · {query.data.previous_assessment.posture} · {query.data.previous_assessment.evidence_session}</p>}
             <div className="mt-3 flex items-center gap-2 text-[11px]" style={{ color: COLORS.muted }}><RefreshCw size={12} aria-hidden="true" /> Updates automatically after the regular-session close and when the feed reconnects.</div>
           </details>
-        </section>
-
-        <section className="grid gap-x-6 gap-y-2 border-b py-3 sm:grid-cols-3" style={{ borderColor: COLORS.line }} aria-label="Available tactics">
-          {[
-            ["Pullbacks", currentPosture === "defensive" ? "Wait for support; waiting is valid" : currentPosture === "broad" ? "Available" : currentPosture === "selective" ? "Priority: strong names near support" : "Available; market priority unknown"],
-            ["Breakouts", currentPosture === "broad" ? "Priority in broad strength" : currentPosture === "defensive" ? "Stay selective" : currentPosture === "selective" ? "Available with selection" : "Available; market priority unknown"],
-            ["Breakout retests", currentPosture === "broad" ? "Priority in broad strength" : currentPosture === "defensive" ? "Wait for conditions to improve" : currentPosture === "selective" ? "Available with selection" : "Available; market priority unknown"],
-          ].map(([name, note]) => (
-            <article key={name} className="px-1 py-1">
-              <h2 className="text-[13px] font-semibold">{name}</h2>
-              <p className="mt-1 text-xs" style={{ color: COLORS.muted }}>{note}</p>
-            </article>
-          ))}
         </section>
 
       </div>

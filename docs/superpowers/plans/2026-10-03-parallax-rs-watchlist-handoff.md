@@ -135,3 +135,9 @@ Market reuses the configured shared MarketPulse strip and displays per-symbol Li
 Automated fixture verification: focused NamesPage, MarketPage and existing `useLiveQuotes` subscription tests passed (12); `npm run typecheck`, `npm run build` and `git diff --check` passed. Market fixtures cover multi-character `RB` as real-time and `Z` as frozen; the Names workflow covers pagination, preserved page/selected-name/scroll context, explicit destination selection, Escape focus return and successful submission. The production build retains its existing mixed chart-store import and large-bundle warnings.
 
 Browser/provider verification remains open. Chrome contained no running Orbit page, so 1366×768/narrow visual review and browser keyboard walkthrough were not performed; no dev server was started. These checks use fixtures and do not establish live Fred freshness, IBKR quote entitlement, watchlist mutation behavior or WebSocket lifecycle under a live session. Stop for orchestrator review; leave changes uncommitted and do not merge or push.
+
+## Market posture guidance simplification — 2026-10-07
+
+Removed the separate Pullbacks/Breakouts/Breakout retests strip and put one posture-based guidance sentence beneath the conclusion. It emphasizes current broad/selective/defensive posture while keeping all setup types available and identifying incomplete, stale or failed priorities as unknown, unconfirmed or unavailable. The dated evidence, MarketPulse, methodology and Explore strong names action remain. Analysis, Today, monitoring and database behavior were not changed.
+
+Automated verification: `npm test -- src/pages/MarketPage.test.tsx` passed (5 tests), `npm run typecheck` passed, and `git diff --check` passed. Browser and live-provider behavior were not rechecked. Stop for orchestrator review; leave changes uncommitted and do not merge or push.
