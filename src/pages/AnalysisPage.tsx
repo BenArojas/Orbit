@@ -34,6 +34,7 @@ import { useInstrument } from "@/hooks/useInstrument";
 import { useLockedFibs } from "@/hooks/useLockedFibs";
 import { IndicatorToolbar } from "@/components/indicators";
 import RightSidebar from "@/components/analysis/RightSidebar";
+import { useSetupPlanEditor } from "@/components/analysis/SetupPlanPanel";
 import { SHORTCUT_MAP } from "@/components/charts/drawingsRegistry";
 import { useCompareStore } from "@/store/compare";
 import { CompareView } from "@/components/compare";
@@ -68,8 +69,6 @@ export default function AnalysisPage() {
     activeSymbol,
     timeframe,
     activeIndicators,
-    setActiveConid,
-    setActiveSymbol,
     setTimeframe,
     fibDrawMode,
     enterFibDrawMode,
@@ -82,6 +81,8 @@ export default function AnalysisPage() {
     toggleRightPanel,
   } = useChartStore();
   const navigateToNames = useNavigationStore((state) => state.navigate);
+  const analysisContext = useNavigationStore((state) => state.analysisContext);
+  const setupPlanEditor = useSetupPlanEditor(activeConid);
 
   const compareActive = useCompareStore((s) => s.active);
   const enterCompare = useCompareStore((s) => s.enter);
@@ -110,6 +111,11 @@ export default function AnalysisPage() {
 
   const handleOpenWatchlists = () => {
     setRightPanelActiveTab("watchlists");
+    if (useChartStore.getState().rightPanelCollapsed) toggleRightPanel();
+  };
+
+  const handleOpenSetup = () => {
+    setRightPanelActiveTab("setup");
     if (useChartStore.getState().rightPanelCollapsed) toggleRightPanel();
   };
 
@@ -278,17 +284,26 @@ export default function AnalysisPage() {
   const resolveConidMutation = useMutation({
     mutationFn: (sym: string) => parallaxApi.resolveConid(sym),
     onSuccess: (result) => {
-      setActiveConid(result.conid);
-      setActiveSymbol(result.symbol);
+      const moved = useNavigationStore.getState().navigateToAnalysis(result.conid, result.symbol);
+      if (!moved) {
+        setSymbolInput(useChartStore.getState().activeSymbol);
+        return;
+      }
       setSymbolInput(result.symbol);
     },
   });
 
   const resolveSymbol = () => {
     const sym = symbolInput.trim().toUpperCase();
-    if (!sym || sym === activeSymbol) return;
+    if (!sym || sym === activeSymbol || analysisContext.setupPlanId != null) return;
     resolveConidMutation.mutate(sym);
   };
+
+  const returnLabel = analysisContext.returnTo === "screener" ? "Back to Names"
+    : analysisContext.returnTo === "today" ? "Back to Today"
+    : analysisContext.returnTo === "market" ? "Back to Market"
+    : analysisContext.returnTo === "settings" ? "Back to Settings"
+    : "Back";
 
   const handleSymbolKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
     if (e.key === "Enter") {
@@ -306,7 +321,7 @@ export default function AnalysisPage() {
             of indicator/timeframe pills remains visible. */}
         {!compareActive && (
           <div className="relative z-30 flex shrink-0 flex-nowrap items-center gap-2 border-b border-border bg-[var(--bg-1)] px-3 py-1.5">
-            <button type="button" onClick={() => navigateToNames("screener")} className="shrink-0 rounded border border-[var(--border)] px-2.5 py-1.5 text-[11px] font-medium text-[var(--text-2)] hover:text-[var(--text-1)]">Back to Names</button>
+            <button type="button" onClick={() => navigateToNames(analysisContext.returnTo)} className="shrink-0 rounded border border-[var(--border)] px-2.5 py-1.5 text-[11px] font-medium text-[var(--text-2)] hover:text-[var(--text-1)]">{returnLabel}</button>
             <input
               type="text"
               aria-label="Symbol"
@@ -316,7 +331,9 @@ export default function AnalysisPage() {
               onKeyDown={handleSymbolKeyDown}
               onFocus={() => setInputFocused(true)}
               onBlur={() => { setInputFocused(false); resolveSymbol(); }}
-              className={`w-[76px] shrink-0 rounded-md border border-border bg-[var(--bg-0)] px-2 py-1.5 text-center text-sm font-bold text-foreground outline-none transition-all focus:border-[var(--clr-cyan)] focus:shadow-[0_0_12px_var(--glow-cyan)] ${resolveConidMutation.isPending ? "animate-pulse" : ""}`}
+              disabled={analysisContext.setupPlanId != null}
+              title={analysisContext.setupPlanId != null ? "This chart is tied to the open setup plan." : undefined}
+              className={`w-[76px] shrink-0 rounded-md border border-border bg-[var(--bg-0)] px-2 py-1.5 text-center text-sm font-bold text-foreground outline-none transition-all focus:border-[var(--clr-cyan)] focus:shadow-[0_0_12px_var(--glow-cyan)] disabled:opacity-60 ${resolveConidMutation.isPending ? "animate-pulse" : ""}`}
             />
             <div className="flex shrink-0 gap-px rounded-md border border-border bg-[var(--bg-0)] p-0.5">
               {TIMEFRAMES.map((tf) => (
@@ -327,6 +344,7 @@ export default function AnalysisPage() {
             </div>
             {companyName && <span className="min-w-0 flex-1 truncate text-[10px] text-[var(--text-3)]">{companyName}</span>}
             <div className="ml-auto flex shrink-0 items-center gap-1.5">
+              <button type="button" onClick={handleOpenSetup} className="rounded border border-[var(--border)] px-2.5 py-1.5 text-[11px] font-medium text-[var(--text-2)] hover:border-[var(--clr-cyan)] hover:text-[var(--text-1)]">Setup</button>
               <button type="button" onClick={handleOpenWatchlists} className="rounded border border-[var(--border)] px-2.5 py-1.5 text-[11px] font-medium text-[var(--text-2)] hover:text-[var(--text-1)]">Watchlists</button>
               <button
                 onClick={() => compareActive ? exitCompare() : enterCompare(timeframe)}
@@ -474,6 +492,7 @@ export default function AnalysisPage() {
           activeConid={activeConid}
           activeSymbol={activeSymbol}
           activeTimeframe={timeframe}
+          setupPlanEditor={setupPlanEditor}
           onCollapse={toggleRightPanel}
         />
       )}

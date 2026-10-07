@@ -16,6 +16,7 @@
 import { MarketPulse } from "@/components/dashboard";
 import {
   TodayHits,
+  TodaySetupPlans,
   TodayTimeline,
   TodayRulesPanel,
 } from "@/components/today";
@@ -32,6 +33,7 @@ export default function TodayPage() {
       <MarketPulse />
       <div className="grid min-h-0 flex-1 grid-cols-[1fr_280px] overflow-hidden">
         <div className="flex flex-col gap-3 overflow-y-auto p-4">
+          <TodaySetupPlans />
           <TodayHits />
           <TodayTimeline />
         </div>

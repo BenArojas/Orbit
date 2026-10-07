@@ -9,7 +9,7 @@
 
 import { create } from "zustand";
 
-export type AnalysisPanelTab = "fibonacci" | "watchlists" | "triggers";
+export type AnalysisPanelTab = "fibonacci" | "watchlists" | "triggers" | "setup";
 
 const PANEL_PREFERENCE_KEY = "orbit.parallax.analysis-panel";
 
@@ -18,7 +18,7 @@ function readPanelPreferences(): { collapsed: boolean; activeTab: AnalysisPanelT
     const saved = typeof localStorage === "undefined" ? null : localStorage.getItem(PANEL_PREFERENCE_KEY);
     const value = saved ? JSON.parse(saved) as { collapsed?: unknown; activeTab?: unknown } : null;
     const collapsed = typeof value?.collapsed === "boolean" ? value.collapsed : true;
-    const activeTab: AnalysisPanelTab = value?.activeTab === "watchlists" || value?.activeTab === "triggers" || value?.activeTab === "fibonacci"
+    const activeTab: AnalysisPanelTab = value?.activeTab === "watchlists" || value?.activeTab === "triggers" || value?.activeTab === "fibonacci" || value?.activeTab === "setup"
       ? value.activeTab
       : "fibonacci";
     return { collapsed, activeTab, visibilityExplicit: typeof value?.collapsed === "boolean" };

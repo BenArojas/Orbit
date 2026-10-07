@@ -7,19 +7,22 @@ import FibStackPanel from "@/components/fibonacci/fib/FibStackPanel";
 import WatchlistTab from "./WatchlistTab";
 import TriggersTab from "./TriggersTab";
 import { useChartStore } from "@/store/chart";
+import { SetupPlanPanel, type SetupPlanEditor } from "./SetupPlanPanel";
 
-type Tab = "fibonacci" | "watchlists" | "triggers";
+type Tab = "fibonacci" | "watchlists" | "triggers" | "setup";
 
 const TABS: { id: Tab; label: string }[] = [
   { id: "fibonacci", label: "Fibonacci" },
   { id: "watchlists", label: "Watchlists" },
   { id: "triggers", label: "Triggers" },
+  { id: "setup", label: "Setup" },
 ];
 
 interface RightSidebarProps {
   activeConid: number | null;
   activeSymbol: string;
   activeTimeframe?: string;
+  setupPlanEditor: SetupPlanEditor;
   onCollapse?: () => void;
 }
 
@@ -27,6 +30,7 @@ export default function RightSidebar({
   activeConid,
   activeSymbol,
   activeTimeframe,
+  setupPlanEditor,
   onCollapse,
 }: RightSidebarProps) {
   const activeTab = useChartStore((state) => state.rightPanelActiveTab);
@@ -72,6 +76,7 @@ export default function RightSidebar({
             activeTimeframe={activeTimeframe}
           />
         )}
+        {activeTab === "setup" && <SetupPlanPanel conid={activeConid} symbol={activeSymbol} editor={setupPlanEditor} />}
       </div>
     </div>
   );

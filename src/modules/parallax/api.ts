@@ -989,17 +989,17 @@ export const parallaxApi = {
     deleteTriggerRule: (id: number) =>
         sidecarRequest<void>("DELETE", `/triggers/rules/${id}`),
 
-    getSetupPlans: () =>
-        sidecarRequest<SetupPlan[]>("GET", "/triggers/setup-plans"),
+    getSetupPlans: (signal?: AbortSignal) =>
+        sidecarRequest<SetupPlan[]>("GET", "/triggers/setup-plans", undefined, signal),
 
-    getSetupPlan: (id: number) =>
-        sidecarRequest<SetupPlanDetail>("GET", `/triggers/setup-plans/${id}`),
+    getSetupPlan: (id: number, signal?: AbortSignal) =>
+        sidecarRequest<SetupPlanDetail>("GET", `/triggers/setup-plans/${id}`, undefined, signal),
 
-    createSetupPlan: (plan: SetupPlanCreate) =>
-        sidecarRequest<SetupPlanDetail>("POST", "/triggers/setup-plans", plan),
+    createSetupPlan: (plan: SetupPlanCreate, signal?: AbortSignal) =>
+        sidecarRequest<SetupPlanDetail>("POST", "/triggers/setup-plans", plan, signal),
 
-    updateSetupPlan: (id: number, patch: SetupPlanUpdate) =>
-        sidecarRequest<SetupPlanDetail>("PATCH", `/triggers/setup-plans/${id}`, patch),
+    updateSetupPlan: (id: number, patch: SetupPlanUpdate, signal?: AbortSignal) =>
+        sidecarRequest<SetupPlanDetail>("PATCH", `/triggers/setup-plans/${id}`, patch, signal),
 
     reviewSetupPlan: (id: number, evaluation_ids: number[]) =>
         sidecarRequest<SetupPlanDetail>("POST", `/triggers/setup-plans/${id}/review`, { evaluation_ids }),

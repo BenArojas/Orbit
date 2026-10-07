@@ -119,10 +119,15 @@ describe("GatewayProvider — Task 3.7 WS auth_state subscription", () => {
     const membershipKey = ["watchlist-instruments", "same-id", "parallax", 0];
     const sharedMembershipKey = ["watchlist-membership", 1];
     const publicRatingsKey = ["parallax", "rs-ratings", 1];
+    const setupPlansKey = ["parallax", "setup-plans", "DU111", 0];
+    const setupPlanKey = ["parallax", "setup-plan", "DU111", 0, 7];
     qc.setQueryData(["watchlists", "parallax", 0], [{ id: "same-id" }]);
     qc.setQueryData(membershipKey, [{ conid: 1 }]);
     qc.setQueryData(sharedMembershipKey, { inWatchlist: true });
     qc.setQueryData(publicRatingsKey, { status: "stale" });
+    qc.setQueryData(setupPlansKey, [{ id: 7 }]);
+    qc.setQueryData(setupPlanKey, { id: 7, waiting_intention: "private draft context" });
+    useNavigationStore.setState({ analysisContext: { returnTo: "today", setupPlanId: 7, conid: 1 }, analysisDraftDirty: true });
     useNavigationStore.setState({ namesContext: { ...useNavigationStore.getState().namesContext, selectedWatchlistId: "same-id", watchlistFilter: "A" } });
     // Seed the cache with a running+authenticated state.
     qc.setQueryData<GatewayStatusResponse>(GATEWAY_QUERY_KEY, RUNNING_AUTH);
@@ -150,8 +155,11 @@ describe("GatewayProvider — Task 3.7 WS auth_state subscription", () => {
     await waitFor(() => expect(qc.getQueryData(membershipKey)).toBeUndefined());
     expect(qc.getQueryData(["watchlists", "parallax", 0])).toBeUndefined();
     expect(qc.getQueryData(sharedMembershipKey)).toBeUndefined();
+    await waitFor(() => expect(qc.getQueryData(setupPlansKey)).toBeUndefined());
+    expect(qc.getQueryData(setupPlanKey)).toBeUndefined();
     expect(qc.getQueryData(publicRatingsKey)).toEqual({ status: "stale" });
     expect(useNavigationStore.getState().namesContext).toMatchObject({ selectedWatchlistId: "", watchlistFilter: "", brokerSessionEpoch: 1 });
+    expect(useNavigationStore.getState()).toMatchObject({ analysisContext: { setupPlanId: null }, analysisDraftDirty: false });
   });
 
   it("cancels session-owned RS refresh work on logout and ignores a late result", async () => {

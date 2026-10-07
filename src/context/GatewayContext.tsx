@@ -71,9 +71,11 @@ export function GatewayProvider({ children }: { children: ReactNode }) {
     if (previous !== true || gateway.isAuthenticated) return;
 
     useNavigationStore.getState().resetNamesBrokerContext();
+    useNavigationStore.getState().resetAnalysisContext();
     for (const queryKey of [
       ["watchlists"], ["watchlist-instruments"], ["watchlist-quotes"], ["watchlist-membership"],
       ["parallax", "rs-leaders"], ["parallax", "rs-leaders-refresh"], ["parallax", "rs-leaders-progress"],
+      ["parallax", "setup-plans"], ["parallax", "setup-plan"],
     ]) {
       void queryClient.cancelQueries({ queryKey }).then(() => queryClient.removeQueries({ queryKey }));
     }
