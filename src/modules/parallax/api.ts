@@ -659,6 +659,7 @@ export type SetupPlan = {
 
 export type SetupPlanDetail = SetupPlan & {
     evaluations: RuleEvaluation[];
+    unreviewed_matches: RuleEvaluation[];
     hits: TriggerHit[];
 };
 

@@ -889,9 +889,9 @@ class DatabaseService:
         if rule is not None:
             latest = self._fetchone(
                 """SELECT * FROM rule_evaluations
-                   WHERE plan_id=? AND rule_id=? AND rule_revision=?
+                   WHERE plan_id=? AND rule_id=? AND plan_revision=? AND rule_revision=?
                    ORDER BY id DESC LIMIT 1""",
-                (plan["id"], rule["id"], rule["revision"]),
+                (plan["id"], rule["id"], plan["revision"], rule["revision"]),
             )
         if latest is not None:
             latest["condition_values"] = _json.loads(latest["condition_values"])
@@ -900,10 +900,10 @@ class DatabaseService:
         if rule is not None:
             count = self._fetchone(
                 """SELECT COUNT(*) AS n FROM rule_evaluations
-                   WHERE plan_id=? AND rule_id=? AND rule_revision=?
+                   WHERE plan_id=? AND rule_id=? AND plan_revision=? AND rule_revision=?
                      AND (outcome='matched' OR invalidation_outcome='matched')
                      AND reviewed_at IS NULL""",
-                (plan["id"], rule["id"], rule["revision"]),
+                (plan["id"], rule["id"], plan["revision"], rule["revision"]),
             )["n"]
 
         due_at = None
@@ -974,6 +974,19 @@ class DatabaseService:
             plan["evaluations"] = [
                 {**dict(e), "condition_values": _json.loads(e["condition_values"])}
                 for e in evaluations
+            ]
+            rule = plan["rule"]
+            outstanding = self._conn.execute(
+                """SELECT * FROM rule_evaluations
+                   WHERE plan_id=? AND rule_id=? AND plan_revision=? AND rule_revision=?
+                     AND (outcome='matched' OR invalidation_outcome='matched')
+                     AND reviewed_at IS NULL
+                   ORDER BY id DESC""",
+                (plan_id, rule["id"], plan["revision"], rule["revision"]),
+            ).fetchall() if rule is not None else []
+            plan["unreviewed_matches"] = [
+                {**dict(e), "condition_values": _json.loads(e["condition_values"])}
+                for e in outstanding
             ]
             hits = self._conn.execute(
                 """SELECT h.*, r.name AS rule_name
@@ -1366,28 +1379,38 @@ class DatabaseService:
             assert self._conn is not None
             with self._conn:
                 plan = self._conn.execute(
-                    """SELECT 1 FROM setup_plans
+                    """SELECT lifecycle, revision, rule_id FROM setup_plans
                        WHERE id=? AND owner_account_id=? AND account_mode=?""",
                     (plan_id, owner_account_id, account_mode),
                 ).fetchone()
                 if plan is None:
                     return False
+                if plan["lifecycle"] != "active" or plan["rule_id"] is None:
+                    raise ValueError("only active current plan matches can be reviewed")
+                rule = self._conn.execute(
+                    "SELECT revision FROM trigger_rules WHERE id=? AND setup_plan_id=?",
+                    (plan["rule_id"], plan_id),
+                ).fetchone()
+                if rule is None:
+                    raise ValueError("the current plan rule is unavailable")
                 placeholders = ",".join("?" for _ in ids)
                 matching = self._conn.execute(
                     f"""SELECT COUNT(*) AS n FROM rule_evaluations
-                        WHERE plan_id=? AND (outcome='matched' OR invalidation_outcome='matched')
+                        WHERE plan_id=? AND rule_id=? AND plan_revision=? AND rule_revision=?
+                          AND (outcome='matched' OR invalidation_outcome='matched')
                           AND id IN ({placeholders})""",
-                    (plan_id, *ids),
+                    (plan_id, plan["rule_id"], plan["revision"], rule["revision"], *ids),
                 ).fetchone()["n"]
                 if matching != len(ids):
                     raise ValueError(
-                        "evaluation ids must contain a waiting or invalidation match for this plan"
+                        "evaluation ids must contain current waiting or invalidation matches for this plan"
                     )
                 self._conn.execute(
                     f"""UPDATE rule_evaluations SET reviewed_at=COALESCE(reviewed_at, ?)
-                        WHERE plan_id=? AND (outcome='matched' OR invalidation_outcome='matched')
+                        WHERE plan_id=? AND rule_id=? AND plan_revision=? AND rule_revision=?
+                          AND (outcome='matched' OR invalidation_outcome='matched')
                           AND id IN ({placeholders})""",
-                    (datetime.now(timezone.utc).isoformat(), plan_id, *ids),
+                    (datetime.now(timezone.utc).isoformat(), plan_id, plan["rule_id"], plan["revision"], rule["revision"], *ids),
                 )
                 return True
         return await self._run_write(_do)

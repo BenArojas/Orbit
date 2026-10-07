@@ -1,12 +1,11 @@
+import type { TodayHitFilter } from "@/store/navigation";
+
 /**
  * TodayHitsFilters — pill-style filters above the hit card grid.
  * Stateless: parent owns the active value.
  */
 
-export type HitFilter =
-  | { kind: "all" }
-  | { kind: "watchlist"; name: string }
-  | { kind: "high-conf" };
+export type HitFilter = TodayHitFilter;
 
 interface Props {
   value: HitFilter;

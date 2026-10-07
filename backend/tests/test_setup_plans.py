@@ -80,6 +80,13 @@ async def test_atomic_create_manual_rulelessness_and_account_isolation(db):
     plan_id = await _auto_plan(db)
     other_id = await _auto_plan(db, account="DU200")
     assert await db.get_setup_plan(plan_id, "DU200", "paper") is None
+    assert await db.get_setup_plan(plan_id, "DU100", "live") is None
+    assert not await db.update_setup_plan(
+        plan_id, "DU200", "paper", {"waiting_intention": "Cross-account edit."}
+    )
+    assert not await db.archive_setup_plan(plan_id, "DU100", "live")
+    assert not await db.review_setup_plan_events(plan_id, "DU200", "paper", [1])
+    assert (await db.get_setup_plan(plan_id, "DU100", "paper"))["waiting_intention"] == "Wait for price to return to support."
     assert [p["id"] for p in await db.list_setup_plans("DU100", "paper")] == [plan_id]
     assert other_id != plan_id
     assert await db.get_trigger_rules() == []
@@ -93,6 +100,40 @@ async def test_atomic_create_manual_rulelessness_and_account_isolation(db):
         )
     assert await db.fetch_all("SELECT id FROM setup_plans WHERE owner_account_id='DU300'") == []
     assert await db.fetch_all("SELECT id FROM trigger_rules WHERE owner_account_id='DU300'") == []
+
+
+@pytest.mark.asyncio
+async def test_manual_and_automatic_plans_survive_restart_and_day_change(tmp_path: Path):
+    path = str(tmp_path / "restart.db")
+    first = DatabaseService(db_path=path)
+    await first.initialize()
+    manual_id = await first.create_setup_plan(
+        owner_account_id="DU100", account_mode="paper", conid=265598, symbol="AAPL",
+        setup_type="pullback", waiting_intention="Review support manually.",
+        monitoring_mode="manual", invalidation_reference=None,
+        invalidation_condition=None, timeframe=None, scan_interval_seconds=None, conditions=[],
+    )
+    automatic_id = await _auto_plan(first)
+    await first.close()
+
+    second = DatabaseService(db_path=path)
+    await second.initialize()
+    manual = await second.get_setup_plan(manual_id, "DU100", "paper")
+    automatic = await second.get_setup_plan(automatic_id, "DU100", "paper")
+    assert manual["lifecycle"] == "active" and manual["rule"] is None
+    assert automatic["lifecycle"] == "active" and automatic["rule"]["conditions"]
+    first_day = await _evaluation(second, automatic, checked_at="2026-10-07T16:00:00+00:00")
+    next_day = await _evaluation(second, automatic, checked_at="2026-10-08T16:00:00+00:00")
+    assert first_day["hit_id"] is not None and next_day["hit_id"] != first_day["hit_id"]
+    await second.close()
+
+    restarted = DatabaseService(db_path=path)
+    await restarted.initialize()
+    saved = await restarted.get_setup_plan(automatic_id, "DU100", "paper")
+    assert saved["lifecycle"] == "active"
+    assert len(saved["evaluations"]) == 2 and len(saved["hits"]) == 2
+    assert saved["unreviewed_match_count"] == 2
+    await restarted.close()
 
 
 @pytest.mark.asyncio
@@ -137,6 +178,51 @@ async def test_monitoring_health_goes_overdue_without_clearing_match(db):
     assert detail["monitoring_due_at"] == "2026-01-01T00:05:00+00:00"
     assert detail["latest_evaluation"]["outcome"] == "matched"
     assert detail["unreviewed_match_count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_unreviewed_match_is_returned_outside_bounded_evaluation_history(db):
+    plan_id = await _auto_plan(db)
+    plan = await db.get_setup_plan(plan_id, "DU100", "paper")
+    match_id = (await _evaluation(db, plan))["evaluation_id"]
+    for _ in range(205):
+        await _evaluation(db, plan, "not_matched")
+
+    detail = await db.get_setup_plan(plan_id, "DU100", "paper")
+    assert len(detail["evaluations"]) == 200
+    assert all(evaluation["id"] != match_id for evaluation in detail["evaluations"])
+    assert [evaluation["id"] for evaluation in detail["unreviewed_matches"]] == [match_id]
+    assert detail["unreviewed_match_count"] == 1
+    assert await db.review_setup_plan_events(plan_id, "DU100", "paper", [match_id])
+    assert (await db.get_setup_plan(plan_id, "DU100", "paper"))["unreviewed_match_count"] == 0
+
+
+@pytest.mark.asyncio
+async def test_plan_only_revision_hides_old_match_and_rejects_stale_review(db):
+    plan_id = await _auto_plan(db)
+    original = await db.get_setup_plan(plan_id, "DU100", "paper")
+    match = await _evaluation(db, original)
+
+    assert await db.update_setup_plan(
+        plan_id, "DU100", "paper", {"waiting_intention": "Wait for a new retest."}
+    )
+    revised = await db.get_setup_plan(plan_id, "DU100", "paper")
+    assert revised["revision"] == original["revision"] + 1
+    assert revised["rule"]["revision"] == original["rule"]["revision"]
+    assert revised["latest_evaluation"] is None
+    assert revised["monitoring_health"] == "not_checked"
+    assert revised["unreviewed_match_count"] == 0
+    assert revised["evaluations"][0]["plan_revision"] == original["revision"]
+    with pytest.raises(ValueError, match="current waiting or invalidation matches"):
+        await db.review_setup_plan_events(plan_id, "DU100", "paper", [match["evaluation_id"]])
+
+    current_match = await _evaluation(db, revised)
+    current = await db.get_setup_plan(plan_id, "DU100", "paper")
+    assert current["unreviewed_match_count"] == 1
+    assert await db.review_setup_plan_events(
+        plan_id, "DU100", "paper", [current_match["evaluation_id"]]
+    )
+    assert (await db.get_setup_plan(plan_id, "DU100", "paper"))["unreviewed_match_count"] == 0
 
 
 @pytest.mark.asyncio
@@ -312,11 +398,17 @@ async def test_repeatable_upgrade_preserves_legacy_records_and_does_not_attribut
         CREATE TABLE chart_drawings (
           id INTEGER PRIMARY KEY, conid INTEGER NOT NULL, kind TEXT NOT NULL,
           anchors_json TEXT NOT NULL, style_json TEXT, created_at TEXT NOT NULL, updated_at TEXT);
+        CREATE TABLE locked_fibonacci_drawings (
+          id INTEGER PRIMARY KEY, conid INTEGER NOT NULL, timeframe TEXT NOT NULL,
+          tool_type TEXT NOT NULL, swing_high_price REAL NOT NULL, swing_high_time INTEGER NOT NULL,
+          swing_low_price REAL NOT NULL, swing_low_time INTEGER NOT NULL, direction TEXT NOT NULL,
+          user_note TEXT, locked_at TEXT);
         INSERT INTO trigger_rules VALUES (7, 'Legacy', 1, '1D', 300, NULL, 265598, 'AAPL', NULL, NULL, 'a', 'a');
         INSERT INTO trigger_conditions VALUES (9, 7, 0, 'rsi', 'below', 30, NULL);
         INSERT INTO trigger_hits VALUES (11, 7, 265598, 'AAPL', 'old-time', '7:265598:old', '[]', NULL, NULL, NULL, NULL, NULL, 0, NULL);
         INSERT INTO settings VALUES ('chart.theme', 'saved', 'old-time');
         INSERT INTO chart_drawings VALUES (13, 265598, 'trend_line', '[]', '{}', 'old-time', NULL);
+        INSERT INTO locked_fibonacci_drawings VALUES (17, 265598, '1D', 'retracement', 200, 20, 100, 10, 'up', 'saved fib', 'old-time');
     """)
     conn.commit()
     conn.close()
@@ -332,6 +424,9 @@ async def test_repeatable_upgrade_preserves_legacy_records_and_does_not_attribut
     assert hit == {"id": 11, "dedup_key": "7:265598:old", "rule_revision": None}
     assert await service.fetch_all("SELECT key, value FROM settings") == [{"key": "chart.theme", "value": "saved"}]
     assert await service.fetch_all("SELECT id, kind FROM chart_drawings") == [{"id": 13, "kind": "trend_line"}]
+    assert await service.fetch_all("SELECT id, timeframe, tool_type, user_note FROM locked_fibonacci_drawings") == [
+        {"id": 17, "timeframe": "1D", "tool_type": "retracement", "user_note": "saved fib"}
+    ]
     assert await service.fetch_all("SELECT rule_id, revision FROM trigger_rule_revisions") == [
         {"rule_id": 7, "revision": 1}
     ]

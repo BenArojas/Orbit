@@ -701,6 +701,7 @@ class SetupPlanSummary(BaseModel):
 
 class SetupPlanDetail(SetupPlanSummary):
     evaluations: list[RuleEvaluationResponse]
+    unreviewed_matches: list[RuleEvaluationResponse]
     hits: list[TriggerHitResponse]
 
 

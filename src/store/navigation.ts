@@ -35,6 +35,19 @@ export interface AnalysisContext {
   conid: number | null;
 }
 
+export type TodayPlanFilter = "all" | "review" | "watching";
+export type TodayHitFilter =
+  | { kind: "all" }
+  | { kind: "watchlist"; name: string }
+  | { kind: "high-conf" };
+
+export interface TodayContext {
+  planFilter: TodayPlanFilter;
+  hitFilter: TodayHitFilter;
+  selectedPlanId: number | null;
+  scrollTop: number;
+}
+
 const INITIAL_NAMES_CONTEXT: NamesContext = {
   mainTab: "discover",
   discoverTab: "leaders",
@@ -46,10 +59,18 @@ const INITIAL_NAMES_CONTEXT: NamesContext = {
   brokerSessionEpoch: 0,
 };
 
+const INITIAL_TODAY_CONTEXT: TodayContext = {
+  planFilter: "all",
+  hitFilter: { kind: "all" },
+  selectedPlanId: null,
+  scrollTop: 0,
+};
+
 interface NavigationState {
   activeScreen: Screen;
   namesContext: NamesContext;
   analysisContext: AnalysisContext;
+  todayContext: TodayContext;
   analysisDraftDirty: boolean;
 
   navigate: (screen: Screen) => void;
@@ -57,6 +78,7 @@ interface NavigationState {
   setAnalysisSetupPlanId: (id: number | null) => void;
   setAnalysisDraftDirty: (dirty: boolean) => void;
   resetAnalysisContext: () => void;
+  setTodayContext: (context: Partial<TodayContext>) => void;
   setNamesContext: (context: Partial<NamesContext>) => void;
   resetNamesBrokerContext: () => void;
 }
@@ -67,6 +89,7 @@ export const useNavigationStore = create<NavigationState>()((set, get) => ({
   activeScreen: "connection",
   namesContext: INITIAL_NAMES_CONTEXT,
   analysisContext: { returnTo: "screener", setupPlanId: null, conid: null },
+  todayContext: INITIAL_TODAY_CONTEXT,
   analysisDraftDirty: false,
 
   navigate: (screen) => {
@@ -86,6 +109,9 @@ export const useNavigationStore = create<NavigationState>()((set, get) => ({
   },
   setNamesContext: (context) => set((state) => ({
     namesContext: { ...state.namesContext, ...context },
+  })),
+  setTodayContext: (context) => set((state) => ({
+    todayContext: { ...state.todayContext, ...context },
   })),
   resetNamesBrokerContext: () => set((state) => ({
     namesContext: {

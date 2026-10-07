@@ -92,6 +92,7 @@ function planDetail(id: number, monitoringMode: "manual" | "automatic") {
     latest_evaluation: null,
     unreviewed_match_count: 0,
     evaluations: [],
+    unreviewed_matches: [],
     hits: [],
   };
 }

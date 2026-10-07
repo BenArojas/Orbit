@@ -6,16 +6,17 @@
  * (`useDismissHit` / `useSnoozeHit`) and navigation store.
  */
 
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { parallaxApi, type TriggerHit } from "@/modules/parallax/api";
 import { useNavigationStore } from "@/store/navigation";
 import { useDismissHit, useSnoozeHit } from "@/hooks/useHitMutations";
 import { HitCard } from "./HitCard";
-import { TodayHitsFilters, type HitFilter } from "./TodayHitsFilters";
+import { TodayHitsFilters } from "./TodayHitsFilters";
 
 export function TodayHits() {
-  const [filter, setFilter] = useState<HitFilter>({ kind: "all" });
+  const filter = useNavigationStore((s) => s.todayContext.hitFilter);
+  const setTodayContext = useNavigationStore((s) => s.setTodayContext);
   const navigateToAnalysis = useNavigationStore((s) => s.navigateToAnalysis);
   const dismiss = useDismissHit();
   const snooze = useSnoozeHit();
@@ -59,7 +60,7 @@ export function TodayHits() {
         </h2>
         <TodayHitsFilters
           value={filter}
-          onChange={setFilter}
+          onChange={(hitFilter) => setTodayContext({ hitFilter })}
           watchlistNames={watchlistNames}
         />
       </div>
