@@ -122,6 +122,21 @@ class MoonMarketService:
             selected_account_id=selected_id,
         )
 
+    async def selected_account_scope(self) -> dict[str, str] | None:
+        """Return only IBKR's provider-selected account as stable owner scope."""
+        raw_accounts = await self.ibkr.brokerage_accounts()
+        selected_id = getattr(self.ibkr.state, "selected_account", None)
+        row = next(
+            (account for account in raw_accounts if self._account_id(account) == selected_id),
+            None,
+        )
+        if not selected_id or row is None:
+            return None
+        return {
+            "account_id": str(selected_id),
+            "account_mode": "paper" if self._account_is_paper(row, str(selected_id)) else "live",
+        }
+
     async def portfolio(self, account_id: str | None = None) -> MoonMarketPortfolioResponse:
         resolved_account_id = await self._resolve_account_id(account_id)
         rows = await self._fetch_position_rows(resolved_account_id)
@@ -390,7 +405,8 @@ class MoonMarketService:
             currency=_first_text(row, ("currency",), "USD"),
         )
 
-    def _account_is_paper(self, row: dict[str, Any], account_id: str) -> bool:
+    @staticmethod
+    def _account_is_paper(row: dict[str, Any], account_id: str) -> bool:
         for key in ("isPaper", "is_paper", "paper", "paperTrading", "isPaperTrading"):
             if key in row:
                 explicit = _bool_value(row.get(key))

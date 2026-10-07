@@ -34,7 +34,7 @@ restarting your computer — the data stays.
 import asyncio
 import logging
 import sqlite3
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 from typing import Any
 
@@ -194,6 +194,10 @@ class DatabaseService:
                 id                    INTEGER PRIMARY KEY AUTOINCREMENT,
                 name                  TEXT NOT NULL,
                 enabled               INTEGER NOT NULL DEFAULT 1,
+                revision              INTEGER NOT NULL DEFAULT 1,
+                setup_plan_id         INTEGER REFERENCES setup_plans(id) ON DELETE RESTRICT,
+                owner_account_id      TEXT,
+                account_mode          TEXT,
                 timeframe             TEXT NOT NULL DEFAULT '1D',
                 scan_interval_seconds INTEGER NOT NULL DEFAULT 300,
                 watchlist_name        TEXT,                       -- NULL = per-stock override
@@ -215,7 +219,8 @@ class DatabaseService:
                 indicator           TEXT NOT NULL,
                 condition           TEXT NOT NULL,
                 threshold           REAL,
-                news_candle_method  TEXT
+                news_candle_method  TEXT,
+                is_invalidation_condition INTEGER NOT NULL DEFAULT 0
             );
 
             -- ─── Rule Templates ────────────────────────────────────
@@ -242,6 +247,8 @@ class DatabaseService:
             CREATE TABLE IF NOT EXISTS trigger_hits (
                 id                 INTEGER PRIMARY KEY AUTOINCREMENT,
                 rule_id            INTEGER NOT NULL REFERENCES trigger_rules(id) ON DELETE CASCADE,
+                rule_revision      INTEGER,
+                rule_evaluation_id INTEGER REFERENCES rule_evaluations(id) ON DELETE SET NULL,
                 conid              INTEGER NOT NULL,
                 symbol             TEXT NOT NULL,
                 triggered_at       TEXT DEFAULT (datetime('now')),
@@ -255,6 +262,51 @@ class DatabaseService:
                 target_watchlist   TEXT,
                 moved_back         INTEGER NOT NULL DEFAULT 0,
                 expires_at         TEXT
+            );
+
+            CREATE TABLE IF NOT EXISTS setup_plans (
+                id                      INTEGER PRIMARY KEY AUTOINCREMENT,
+                owner_account_id        TEXT NOT NULL,
+                account_mode            TEXT NOT NULL CHECK (account_mode IN ('paper', 'live')),
+                conid                   INTEGER NOT NULL,
+                symbol                  TEXT NOT NULL,
+                setup_type              TEXT NOT NULL,
+                waiting_intention       TEXT NOT NULL,
+                monitoring_mode         TEXT NOT NULL CHECK (monitoring_mode IN ('manual', 'automatic')),
+                invalidation_reference  TEXT,
+                invalidation_condition_json TEXT,
+                rule_id                 INTEGER UNIQUE REFERENCES trigger_rules(id) ON DELETE RESTRICT,
+                lifecycle               TEXT NOT NULL DEFAULT 'active' CHECK (lifecycle IN ('active', 'archived')),
+                revision                INTEGER NOT NULL DEFAULT 1,
+                created_at              TEXT NOT NULL DEFAULT (datetime('now')),
+                updated_at              TEXT NOT NULL DEFAULT (datetime('now')),
+                archived_at             TEXT
+            );
+
+            CREATE TABLE IF NOT EXISTS trigger_rule_revisions (
+                rule_id         INTEGER NOT NULL REFERENCES trigger_rules(id) ON DELETE CASCADE,
+                revision        INTEGER NOT NULL,
+                definition_json TEXT NOT NULL,
+                created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+                PRIMARY KEY (rule_id, revision)
+            );
+
+            CREATE TABLE IF NOT EXISTS rule_evaluations (
+                id               INTEGER PRIMARY KEY AUTOINCREMENT,
+                plan_id          INTEGER NOT NULL REFERENCES setup_plans(id) ON DELETE RESTRICT,
+                plan_revision    INTEGER NOT NULL,
+                rule_id          INTEGER NOT NULL REFERENCES trigger_rules(id) ON DELETE RESTRICT,
+                rule_revision    INTEGER NOT NULL,
+                outcome          TEXT NOT NULL CHECK (outcome IN ('matched', 'not_matched', 'failed', 'unavailable')),
+                invalidation_outcome TEXT CHECK (invalidation_outcome IN ('matched', 'not_matched', 'failed', 'unavailable')),
+                invalidation_failure_code TEXT,
+                invalidation_failure_message TEXT,
+                checked_at       TEXT NOT NULL,
+                evidence_at      TEXT,
+                condition_values TEXT NOT NULL,
+                failure_code     TEXT,
+                failure_message  TEXT,
+                reviewed_at      TEXT
             );
 
             -- ─── Settings ──────────────────────────────────────────
@@ -436,6 +488,11 @@ class DatabaseService:
             CREATE INDEX IF NOT EXISTS idx_chart_drawings_conid
                 ON chart_drawings(conid);
 
+            CREATE INDEX IF NOT EXISTS idx_setup_plans_scope
+                ON setup_plans(owner_account_id, account_mode, lifecycle);
+            CREATE INDEX IF NOT EXISTS idx_rule_evaluations_plan
+                ON rule_evaluations(plan_id, id DESC);
+
         """)
         self._conn.commit()
         log.info("Database tables verified/created.")
@@ -461,6 +518,48 @@ class DatabaseService:
                 log.info("Migration applied: %s", sql)
             except sqlite3.OperationalError:
                 pass  # column already exists — safe to skip
+
+        additions = (
+            ("trigger_rules", "revision", "INTEGER NOT NULL DEFAULT 1"),
+            ("trigger_rules", "setup_plan_id", "INTEGER REFERENCES setup_plans(id) ON DELETE RESTRICT"),
+            ("trigger_rules", "owner_account_id", "TEXT"),
+            ("trigger_rules", "account_mode", "TEXT"),
+            ("trigger_conditions", "is_invalidation_condition", "INTEGER NOT NULL DEFAULT 0"),
+            ("trigger_hits", "rule_revision", "INTEGER"),
+            ("trigger_hits", "rule_evaluation_id", "INTEGER REFERENCES rule_evaluations(id) ON DELETE SET NULL"),
+            ("rule_evaluations", "invalidation_outcome", "TEXT"),
+            ("rule_evaluations", "invalidation_failure_code", "TEXT"),
+            ("rule_evaluations", "invalidation_failure_message", "TEXT"),
+        )
+        for table, column, declaration in additions:
+            columns = {
+                row["name"]
+                for row in self._conn.execute(f"PRAGMA table_info({table})").fetchall()
+            }
+            if column not in columns:
+                self._conn.execute(
+                    f"ALTER TABLE {table} ADD COLUMN {column} {declaration}"
+                )
+
+        self._conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_trigger_rules_setup_plan "
+            "ON trigger_rules(setup_plan_id)"
+        )
+
+        # Capture each rule's current definition once. Existing hits remain
+        # unattributed (rule_revision NULL), so migration never certifies them
+        # as evidence for a tracked plan.
+        import json as _json
+
+        rules = self._conn.execute("SELECT * FROM trigger_rules").fetchall()
+        for row in rules:
+            rule = dict(row)
+            rule["conditions"] = self._read_conditions(rule["id"])
+            self._conn.execute(
+                "INSERT OR IGNORE INTO trigger_rule_revisions "
+                "(rule_id, revision, definition_json) VALUES (?, ?, ?)",
+                (rule["id"], rule["revision"], _json.dumps(rule, sort_keys=True)),
+            )
 
         # Legacy pulse defaults briefly used BTC.USD / ETH.USD, but IBKR's
         # secdef search resolves the crypto spot contracts under BTC / ETH.
@@ -530,9 +629,9 @@ class DatabaseService:
     async def get_trigger_rules(self, enabled_only: bool = False) -> list[dict]:
         def _do():
             assert self._conn is not None
-            q = "SELECT * FROM trigger_rules"
+            q = "SELECT * FROM trigger_rules WHERE setup_plan_id IS NULL"
             if enabled_only:
-                q += " WHERE enabled=1"
+                q += " AND enabled=1"
             q += " ORDER BY id DESC"
             cur = self._conn.execute(q)
             cols = [d[0] for d in cur.description]
@@ -559,7 +658,8 @@ class DatabaseService:
         """Synchronous helper — caller must hold the read or write lock."""
         assert self._conn is not None
         cur = self._conn.execute(
-            "SELECT indicator, condition, threshold, news_candle_method "
+            "SELECT indicator, condition, threshold, news_candle_method, "
+            "is_invalidation_condition "
             "FROM trigger_conditions WHERE rule_id=? ORDER BY order_index",
             (rule_id,),
         )
@@ -570,7 +670,8 @@ class DatabaseService:
         def _do():
             assert self._conn is not None
             cur = self._conn.execute(
-                "SELECT * FROM trigger_rules WHERE watchlist_name=? AND enabled=1",
+                "SELECT * FROM trigger_rules WHERE watchlist_name=? AND enabled=1 "
+                "AND setup_plan_id IS NULL",
                 (watchlist_name,),
             )
             cols = [d[0] for d in cur.description]
@@ -614,6 +715,7 @@ class DatabaseService:
                         (rule_id, idx, c["indicator"], c["condition"],
                          c.get("threshold"), c.get("news_candle_method")),
                     )
+                self._save_rule_revision(rule_id, 1)
                 return rule_id
         return await self._run_write(_do)
 
@@ -633,11 +735,30 @@ class DatabaseService:
         def _do():
             assert self._conn is not None
             with self._conn:
+                existing = self._conn.execute(
+                    "SELECT setup_plan_id, revision FROM trigger_rules WHERE id=?",
+                    (rule_id,),
+                ).fetchone()
+                if existing is None:
+                    return False
+                if existing["setup_plan_id"] is not None:
+                    raise PermissionError("plan-linked rules must be edited through their setup plan")
+                old_revision = int(existing["revision"])
+                revision = old_revision + int(
+                    bool(set(fields) & {"timeframe", "conid", "watchlist_name"})
+                    or conditions is not None
+                )
                 if fields:
                     set_clause = ", ".join(f"{k}=?" for k in fields)
                     self._conn.execute(
-                        f"UPDATE trigger_rules SET {set_clause}, updated_at=datetime('now') WHERE id=?",
-                        (*fields.values(), rule_id),
+                        f"UPDATE trigger_rules SET {set_clause}, revision=?, "
+                        "updated_at=datetime('now') WHERE id=?",
+                        (*fields.values(), revision, rule_id),
+                    )
+                else:
+                    self._conn.execute(
+                        "UPDATE trigger_rules SET revision=?, updated_at=datetime('now') WHERE id=?",
+                        (revision, rule_id),
                     )
                 if conditions is not None:
                     if not conditions:
@@ -651,16 +772,624 @@ class DatabaseService:
                             (rule_id, idx, c["indicator"], c["condition"],
                              c.get("threshold"), c.get("news_candle_method")),
                         )
-                cur = self._conn.execute("SELECT 1 FROM trigger_rules WHERE id=?", (rule_id,))
-                return cur.fetchone() is not None
+                self._save_rule_revision(rule_id, revision)
+                return True
         return await self._run_write(_do)
 
     async def delete_trigger_rule(self, rule_id: int) -> bool:
         def _do():
             assert self._conn is not None
             with self._conn:
+                existing = self._conn.execute(
+                    "SELECT setup_plan_id FROM trigger_rules WHERE id=?", (rule_id,)
+                ).fetchone()
+                if existing is None:
+                    return False
+                if existing["setup_plan_id"] is not None:
+                    raise PermissionError("plan-linked rules cannot be deleted")
                 cur = self._conn.execute("DELETE FROM trigger_rules WHERE id=?", (rule_id,))
                 return cur.rowcount > 0
+        return await self._run_write(_do)
+
+    def _save_rule_revision(self, rule_id: int, revision: int) -> None:
+        """Persist the complete rule definition while the DB lock is held."""
+        import json as _json
+
+        rule = self._fetchone("SELECT * FROM trigger_rules WHERE id=?", (rule_id,))
+        if rule is None:
+            raise ValueError(f"rule {rule_id} not found")
+        rule["conditions"] = self._read_conditions(rule_id)
+        self._conn.execute(
+            "INSERT OR REPLACE INTO trigger_rule_revisions "
+            "(rule_id, revision, definition_json) VALUES (?, ?, ?)",
+            (rule_id, revision, _json.dumps(rule, sort_keys=True)),
+        )
+
+    def _insert_setup_plan_rule(
+        self,
+        *,
+        plan_id: int,
+        owner_account_id: str,
+        account_mode: str,
+        conid: int,
+        symbol: str,
+        setup_type: str,
+        timeframe: str,
+        scan_interval_seconds: int,
+        conditions: list[dict],
+        invalidation_condition: dict | None,
+    ) -> int:
+        assert self._conn is not None
+        cur = self._conn.execute(
+            """INSERT INTO trigger_rules
+               (name, watchlist_name, conid, symbol, template_id, ibkr_mirror_target,
+                timeframe, scan_interval_seconds, enabled, setup_plan_id,
+                owner_account_id, account_mode)
+               VALUES (?, NULL, ?, ?, NULL, NULL, ?, ?, 1, ?, ?, ?)""",
+            (f"{symbol} {setup_type}", conid, symbol, timeframe,
+             scan_interval_seconds, plan_id, owner_account_id, account_mode),
+        )
+        rule_id = int(cur.lastrowid)
+        self._replace_setup_rule_conditions(rule_id, conditions, invalidation_condition)
+        self._save_rule_revision(rule_id, 1)
+        return rule_id
+
+    def _replace_setup_rule_conditions(
+        self, rule_id: int, conditions: list[dict], invalidation_condition: dict | None
+    ) -> None:
+        assert self._conn is not None
+        self._conn.execute("DELETE FROM trigger_conditions WHERE rule_id=?", (rule_id,))
+        rows = [({**c, "is_invalidation_condition": 0}) for c in conditions]
+        if invalidation_condition is not None:
+            rows.append({**invalidation_condition, "is_invalidation_condition": 1})
+        for idx, condition in enumerate(rows):
+            self._conn.execute(
+                """INSERT INTO trigger_conditions
+                   (rule_id, order_index, indicator, condition, threshold,
+                    news_candle_method, is_invalidation_condition)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (rule_id, idx, condition["indicator"], condition["condition"],
+                 condition.get("threshold"), condition.get("news_candle_method"),
+                 condition["is_invalidation_condition"]),
+            )
+
+    def _setup_plan_summary(self, row: sqlite3.Row | dict) -> dict:
+        import json as _json
+
+        plan = dict(row)
+        rule = None
+        if plan["rule_id"] is not None:
+            rule = self._fetchone(
+                "SELECT id, revision, enabled, timeframe, scan_interval_seconds "
+                "FROM trigger_rules WHERE id=? AND setup_plan_id=?",
+                (plan["rule_id"], plan["id"]),
+            )
+            if rule is not None:
+                all_conditions = self._read_conditions(rule["id"])
+                rule["conditions"] = [
+                    {k: v for k, v in condition.items() if k != "is_invalidation_condition"}
+                    for condition in all_conditions
+                    if not condition["is_invalidation_condition"]
+                ]
+                rule["invalidation_condition"] = next(
+                    (
+                        {k: v for k, v in condition.items() if k != "is_invalidation_condition"}
+                        for condition in all_conditions
+                        if condition["is_invalidation_condition"]
+                    ),
+                    None,
+                )
+                rule["enabled"] = bool(rule["enabled"])
+
+        invalidation_condition = plan.pop("invalidation_condition_json")
+        plan["invalidation_condition"] = (
+            _json.loads(invalidation_condition) if invalidation_condition else None
+        )
+        latest = None
+        if rule is not None:
+            latest = self._fetchone(
+                """SELECT * FROM rule_evaluations
+                   WHERE plan_id=? AND rule_id=? AND rule_revision=?
+                   ORDER BY id DESC LIMIT 1""",
+                (plan["id"], rule["id"], rule["revision"]),
+            )
+        if latest is not None:
+            latest["condition_values"] = _json.loads(latest["condition_values"])
+
+        count = 0
+        if rule is not None:
+            count = self._fetchone(
+                """SELECT COUNT(*) AS n FROM rule_evaluations
+                   WHERE plan_id=? AND rule_id=? AND rule_revision=?
+                     AND (outcome='matched' OR invalidation_outcome='matched')
+                     AND reviewed_at IS NULL""",
+                (plan["id"], rule["id"], rule["revision"]),
+            )["n"]
+
+        due_at = None
+        if plan["monitoring_mode"] == "manual" or plan["lifecycle"] == "archived":
+            health = "not_monitored"
+        elif latest is None:
+            health = "not_checked"
+        else:
+            try:
+                checked_at = datetime.fromisoformat(latest["checked_at"].replace("Z", "+00:00"))
+                if checked_at.tzinfo is None:
+                    checked_at = checked_at.replace(tzinfo=timezone.utc)
+                due = checked_at.astimezone(timezone.utc) + timedelta(
+                    seconds=int(rule["scan_interval_seconds"])
+                )
+                due_at = due.isoformat()
+                if datetime.now(timezone.utc) >= due:
+                    health = "overdue"
+                elif (
+                    latest["outcome"] in {"matched", "not_matched"}
+                    and latest["invalidation_outcome"] not in {"failed", "unavailable"}
+                ):
+                    health = "healthy"
+                else:
+                    health = "unavailable"
+            except (TypeError, ValueError):
+                health = "unavailable"
+
+        plan["account_id"] = plan.pop("owner_account_id")
+        plan["rule"] = rule
+        plan["latest_evaluation"] = latest
+        plan["unreviewed_match_count"] = int(count)
+        plan["monitoring_health"] = health
+        plan["monitoring_due_at"] = due_at
+        return plan
+
+    async def list_setup_plans(self, owner_account_id: str, account_mode: str) -> list[dict]:
+        def _do():
+            assert self._conn is not None
+            rows = self._conn.execute(
+                """SELECT * FROM setup_plans
+                   WHERE owner_account_id=? AND account_mode=?
+                   ORDER BY updated_at DESC, id DESC""",
+                (owner_account_id, account_mode),
+            ).fetchall()
+            return [self._setup_plan_summary(row) for row in rows]
+        return await self._run_read(_do)
+
+    async def get_setup_plan(
+        self, plan_id: int, owner_account_id: str, account_mode: str
+    ) -> dict | None:
+        import json as _json
+
+        def _do():
+            assert self._conn is not None
+            row = self._conn.execute(
+                """SELECT * FROM setup_plans
+                   WHERE id=? AND owner_account_id=? AND account_mode=?""",
+                (plan_id, owner_account_id, account_mode),
+            ).fetchone()
+            if row is None:
+                return None
+            plan = self._setup_plan_summary(row)
+            evaluations = self._conn.execute(
+                "SELECT * FROM rule_evaluations WHERE plan_id=? ORDER BY id DESC LIMIT 200",
+                (plan_id,),
+            ).fetchall()
+            plan["evaluations"] = [
+                {**dict(e), "condition_values": _json.loads(e["condition_values"])}
+                for e in evaluations
+            ]
+            hits = self._conn.execute(
+                """SELECT h.*, r.name AS rule_name
+                   FROM trigger_hits h JOIN trigger_rules r ON r.id=h.rule_id
+                   WHERE r.setup_plan_id=? ORDER BY h.triggered_at DESC, h.id DESC LIMIT 200""",
+                (plan_id,),
+            ).fetchall()
+            plan["hits"] = [
+                {**dict(hit), "condition_values": _json.loads(hit["condition_values"])}
+                for hit in hits
+            ]
+            return plan
+        return await self._run_read(_do)
+
+    async def create_setup_plan(
+        self,
+        *,
+        owner_account_id: str,
+        account_mode: str,
+        conid: int,
+        symbol: str,
+        setup_type: str,
+        waiting_intention: str,
+        monitoring_mode: str,
+        invalidation_reference: str | None,
+        invalidation_condition: dict | None,
+        timeframe: str | None,
+        scan_interval_seconds: int | None,
+        conditions: list[dict],
+    ) -> int:
+        import json as _json
+
+        def _do():
+            assert self._conn is not None
+            with self._conn:
+                if monitoring_mode == "automatic" and not conditions:
+                    raise ValueError("automatic plans require at least one waiting condition")
+                if monitoring_mode == "manual" and (conditions or invalidation_condition is not None):
+                    raise ValueError("manual plans cannot have rule conditions")
+                cur = self._conn.execute(
+                    """INSERT INTO setup_plans
+                       (owner_account_id, account_mode, conid, symbol, setup_type,
+                        waiting_intention, monitoring_mode, invalidation_reference,
+                        invalidation_condition_json)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (owner_account_id, account_mode, conid, symbol, setup_type,
+                     waiting_intention, monitoring_mode, invalidation_reference,
+                     _json.dumps(invalidation_condition) if invalidation_condition else None),
+                )
+                plan_id = int(cur.lastrowid)
+                if monitoring_mode == "automatic":
+                    if not timeframe or not scan_interval_seconds:
+                        raise ValueError("automatic plans require a timeframe and scan interval")
+                    rule_id = self._insert_setup_plan_rule(
+                        plan_id=plan_id, owner_account_id=owner_account_id,
+                        account_mode=account_mode, conid=conid, symbol=symbol,
+                        setup_type=setup_type, timeframe=timeframe,
+                        scan_interval_seconds=scan_interval_seconds,
+                        conditions=conditions, invalidation_condition=invalidation_condition,
+                    )
+                    self._conn.execute(
+                        "UPDATE setup_plans SET rule_id=? WHERE id=?", (rule_id, plan_id)
+                    )
+                return plan_id
+        return await self._run_write(_do)
+
+    async def update_setup_plan(
+        self,
+        plan_id: int,
+        owner_account_id: str,
+        account_mode: str,
+        updates: dict,
+    ) -> bool:
+        import json as _json
+
+        allowed = {
+            "setup_type", "waiting_intention", "monitoring_mode",
+            "invalidation_reference", "invalidation_condition", "timeframe",
+            "scan_interval_seconds", "conditions",
+        }
+        if set(updates) - allowed:
+            raise ValueError("unknown setup plan fields")
+
+        def _do():
+            assert self._conn is not None
+            with self._conn:
+                plan = self._conn.execute(
+                    """SELECT * FROM setup_plans
+                       WHERE id=? AND owner_account_id=? AND account_mode=?""",
+                    (plan_id, owner_account_id, account_mode),
+                ).fetchone()
+                if plan is None:
+                    return False
+                if plan["lifecycle"] != "active":
+                    raise ValueError("archived plans cannot be edited")
+                if not updates:
+                    raise ValueError("no fields to update")
+
+                mode = updates.get("monitoring_mode", plan["monitoring_mode"])
+                current_rule = None
+                current_conditions: list[dict] = []
+                current_invalidation = (
+                    _json.loads(plan["invalidation_condition_json"])
+                    if plan["invalidation_condition_json"] else None
+                )
+                if plan["rule_id"] is not None:
+                    current_rule = self._conn.execute(
+                        "SELECT * FROM trigger_rules WHERE id=? AND setup_plan_id=?",
+                        (plan["rule_id"], plan_id),
+                    ).fetchone()
+                    if current_rule is None:
+                        raise ValueError("linked rule is missing")
+                    all_conditions = self._read_conditions(current_rule["id"])
+                    current_conditions = [
+                        {k: v for k, v in c.items() if k != "is_invalidation_condition"}
+                        for c in all_conditions if not c["is_invalidation_condition"]
+                    ]
+
+                conditions = updates.get("conditions", current_conditions)
+                invalidation = updates.get("invalidation_condition", current_invalidation)
+                timeframe = updates.get("timeframe", current_rule["timeframe"] if current_rule else None)
+                interval = updates.get(
+                    "scan_interval_seconds",
+                    current_rule["scan_interval_seconds"] if current_rule else None,
+                )
+                if mode == "automatic" and not conditions:
+                    raise ValueError("automatic plans require at least one waiting condition")
+                if mode == "automatic" and (not timeframe or not interval):
+                    raise ValueError("automatic plans require a timeframe and scan interval")
+                if mode == "manual" and (
+                    updates.get("conditions") or updates.get("invalidation_condition")
+                    or updates.get("timeframe") or updates.get("scan_interval_seconds")
+                ):
+                    raise ValueError("manual plans cannot have rule conditions")
+
+                fields = {
+                    key: updates[key]
+                    for key in ("setup_type", "waiting_intention", "invalidation_reference")
+                    if key in updates
+                }
+                fields["monitoring_mode"] = mode
+                fields["invalidation_condition_json"] = (
+                    _json.dumps(invalidation) if mode == "automatic" and invalidation else None
+                )
+                set_clause = ", ".join(f"{key}=?" for key in fields)
+                self._conn.execute(
+                    f"UPDATE setup_plans SET {set_clause}, revision=revision+1, "
+                    "updated_at=datetime('now') WHERE id=?",
+                    (*fields.values(), plan_id),
+                )
+
+                if mode == "manual" and current_rule is not None:
+                    revision = int(current_rule["revision"]) + 1
+                    self._conn.execute(
+                        "UPDATE trigger_rules SET enabled=0, revision=?, updated_at=datetime('now') WHERE id=?",
+                        (revision, current_rule["id"]),
+                    )
+                    self._save_rule_revision(current_rule["id"], revision)
+                    self._conn.execute("UPDATE setup_plans SET rule_id=NULL WHERE id=?", (plan_id,))
+                elif mode == "automatic" and current_rule is None:
+                    rule_id = self._insert_setup_plan_rule(
+                        plan_id=plan_id, owner_account_id=owner_account_id,
+                        account_mode=account_mode, conid=plan["conid"], symbol=plan["symbol"],
+                        setup_type=fields.get("setup_type", plan["setup_type"]),
+                        timeframe=timeframe, scan_interval_seconds=interval,
+                        conditions=conditions, invalidation_condition=invalidation,
+                    )
+                    self._conn.execute(
+                        "UPDATE setup_plans SET rule_id=? WHERE id=?", (rule_id, plan_id)
+                    )
+                elif mode == "automatic" and current_rule is not None:
+                    definition_changed = (
+                        conditions != current_conditions
+                        or invalidation != current_invalidation
+                        or timeframe != current_rule["timeframe"]
+                    )
+                    if definition_changed:
+                        revision = int(current_rule["revision"]) + 1
+                        self._conn.execute(
+                            """UPDATE trigger_rules SET name=?, timeframe=?, scan_interval_seconds=?,
+                               revision=?, updated_at=datetime('now') WHERE id=?""",
+                            (f"{plan['symbol']} {fields.get('setup_type', plan['setup_type'])}",
+                             timeframe, interval, revision, current_rule["id"]),
+                        )
+                        self._replace_setup_rule_conditions(
+                            current_rule["id"], conditions, invalidation
+                        )
+                        self._save_rule_revision(current_rule["id"], revision)
+                    elif interval != current_rule["scan_interval_seconds"]:
+                        self._conn.execute(
+                            "UPDATE trigger_rules SET scan_interval_seconds=?, updated_at=datetime('now') WHERE id=?",
+                            (interval, current_rule["id"]),
+                        )
+                return True
+        return await self._run_write(_do)
+
+    async def archive_setup_plan(
+        self, plan_id: int, owner_account_id: str, account_mode: str
+    ) -> bool:
+        def _do():
+            assert self._conn is not None
+            with self._conn:
+                plan = self._conn.execute(
+                    """SELECT id, lifecycle FROM setup_plans
+                       WHERE id=? AND owner_account_id=? AND account_mode=?""",
+                    (plan_id, owner_account_id, account_mode),
+                ).fetchone()
+                if plan is None:
+                    return False
+                if plan["lifecycle"] == "archived":
+                    return True
+                rules = self._conn.execute(
+                    "SELECT id, revision FROM trigger_rules WHERE setup_plan_id=? AND enabled=1",
+                    (plan_id,),
+                ).fetchall()
+                for rule in rules:
+                    revision = int(rule["revision"]) + 1
+                    self._conn.execute(
+                        "UPDATE trigger_rules SET enabled=0, revision=?, updated_at=datetime('now') WHERE id=?",
+                        (revision, rule["id"]),
+                    )
+                    self._save_rule_revision(rule["id"], revision)
+                self._conn.execute(
+                    """UPDATE setup_plans SET lifecycle='archived', archived_at=datetime('now'),
+                       revision=revision+1, updated_at=datetime('now') WHERE id=?""",
+                    (plan_id,),
+                )
+                return True
+        return await self._run_write(_do)
+
+    async def get_active_setup_plan_rules(
+        self, owner_account_id: str, account_mode: str
+    ) -> list[dict]:
+        def _do():
+            assert self._conn is not None
+            rows = self._conn.execute(
+                """SELECT p.*, r.id AS current_rule_id, r.name AS rule_name,
+                          r.revision AS rule_revision, r.enabled AS rule_enabled,
+                          r.timeframe, r.scan_interval_seconds
+                   FROM setup_plans p JOIN trigger_rules r ON r.id=p.rule_id
+                   WHERE p.owner_account_id=? AND p.account_mode=?
+                     AND p.lifecycle='active' AND p.monitoring_mode='automatic'
+                     AND r.setup_plan_id=p.id AND r.enabled=1
+                   ORDER BY p.id""",
+                (owner_account_id, account_mode),
+            ).fetchall()
+            plans = []
+            for row in rows:
+                plan = dict(row)
+                all_conditions = self._read_conditions(plan["current_rule_id"])
+                plan["conditions"] = [
+                    {k: v for k, v in c.items() if k != "is_invalidation_condition"}
+                    for c in all_conditions if not c["is_invalidation_condition"]
+                ]
+                plan["invalidation_condition"] = next(
+                    (
+                        {k: v for k, v in c.items() if k != "is_invalidation_condition"}
+                        for c in all_conditions if c["is_invalidation_condition"]
+                    ),
+                    None,
+                )
+                plan["rule"] = {
+                    "id": plan["current_rule_id"],
+                    "revision": plan["rule_revision"],
+                    "name": plan["rule_name"],
+                    "timeframe": plan["timeframe"],
+                    "scan_interval_seconds": plan["scan_interval_seconds"],
+                    "conditions": plan["conditions"],
+                    "invalidation_condition": plan["invalidation_condition"],
+                }
+                plans.append(plan)
+            return plans
+        return await self._run_read(_do)
+
+    async def record_setup_plan_evaluation(
+        self,
+        *,
+        plan_id: int,
+        owner_account_id: str,
+        account_mode: str,
+        plan_revision: int,
+        rule_id: int,
+        rule_revision: int,
+        outcome: str,
+        checked_at: str,
+        evidence_at: str | None,
+        condition_values: list[dict],
+        failure_code: str | None = None,
+        failure_message: str | None = None,
+        invalidation_outcome: str | None = None,
+        invalidation_failure_code: str | None = None,
+        invalidation_failure_message: str | None = None,
+    ) -> dict | None:
+        import json as _json
+
+        if outcome not in {"matched", "not_matched", "failed", "unavailable"}:
+            raise ValueError("invalid rule evaluation outcome")
+        if invalidation_outcome not in {None, "matched", "not_matched", "failed", "unavailable"}:
+            raise ValueError("invalid invalidation evaluation outcome")
+        if invalidation_outcome is None and (
+            invalidation_failure_code is not None or invalidation_failure_message is not None
+        ):
+            raise ValueError("invalidation failure details require an invalidation check")
+
+        def _do():
+            assert self._conn is not None
+            with self._conn:
+                current = self._conn.execute(
+                    """SELECT p.conid, p.symbol, r.timeframe
+                       FROM setup_plans p JOIN trigger_rules r ON r.id=p.rule_id
+                       WHERE p.id=? AND p.owner_account_id=? AND p.account_mode=?
+                         AND p.lifecycle='active' AND p.monitoring_mode='automatic'
+                         AND p.revision=? AND p.rule_id=? AND r.revision=? AND r.enabled=1
+                         AND r.setup_plan_id=p.id AND r.owner_account_id=p.owner_account_id
+                         AND r.account_mode=p.account_mode AND r.conid=p.conid
+                         AND r.watchlist_name IS NULL AND r.ibkr_mirror_target IS NULL""",
+                    (plan_id, owner_account_id, account_mode, plan_revision,
+                     rule_id, rule_revision),
+                ).fetchone()
+                if current is None:
+                    return None
+                cur = self._conn.execute(
+                    """INSERT INTO rule_evaluations
+                        (plan_id, plan_revision, rule_id, rule_revision, outcome, invalidation_outcome,
+                        invalidation_failure_code, invalidation_failure_message,
+                        checked_at, evidence_at, condition_values, failure_code, failure_message)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (plan_id, plan_revision, rule_id, rule_revision, outcome, invalidation_outcome,
+                     invalidation_failure_code, invalidation_failure_message,
+                     checked_at, evidence_at, _json.dumps(condition_values),
+                     failure_code, failure_message),
+                )
+                evaluation_id = int(cur.lastrowid)
+                hit_id = None
+                matched_roles = []
+                if outcome == "matched":
+                    matched_roles.append("waiting")
+                if invalidation_outcome == "matched":
+                    matched_roles.append("invalidation")
+                for role in matched_roles:
+                    check_time = datetime.fromisoformat(checked_at)
+                    if check_time.tzinfo is None:
+                        check_time = check_time.replace(tzinfo=timezone.utc)
+                    day = check_time.astimezone(_ET).strftime("%Y-%m-%d")
+                    dedup_key = (
+                        f"{rule_id}:r{rule_revision}:{current['conid']}:{day}:{current['timeframe']}"
+                    )
+                    if role == "invalidation":
+                        dedup_key += ":invalidation"
+                    role_values = [
+                        value for value in condition_values
+                        if value.get("condition_role") == role
+                    ]
+                    if (
+                        role == "waiting" and not role_values
+                        and all("condition_role" not in value for value in condition_values)
+                    ):
+                        role_values = condition_values
+                    hit = self._conn.execute(
+                        """INSERT OR IGNORE INTO trigger_hits
+                           (rule_id, rule_revision, rule_evaluation_id, conid, symbol,
+                            dedup_key, condition_values, watchlist_name)
+                           VALUES (?, ?, ?, ?, ?, ?, ?, NULL)""",
+                        (rule_id, rule_revision, evaluation_id, current["conid"],
+                         current["symbol"], dedup_key, _json.dumps(role_values)),
+                    )
+                    if hit.rowcount:
+                        if hit_id is None:
+                            hit_id = int(hit.lastrowid)
+                    else:
+                        existing_hit = self._conn.execute(
+                            "SELECT id FROM trigger_hits WHERE dedup_key=?", (dedup_key,)
+                        ).fetchone()
+                        if hit_id is None and existing_hit:
+                            hit_id = int(existing_hit["id"])
+                return {"evaluation_id": evaluation_id, "hit_id": hit_id}
+        return await self._run_write(_do)
+
+    async def review_setup_plan_events(
+        self,
+        plan_id: int,
+        owner_account_id: str,
+        account_mode: str,
+        evaluation_ids: list[int],
+    ) -> bool:
+        ids = list(dict.fromkeys(evaluation_ids))
+        if not ids:
+            raise ValueError("at least one evaluation id is required")
+        def _do():
+            assert self._conn is not None
+            with self._conn:
+                plan = self._conn.execute(
+                    """SELECT 1 FROM setup_plans
+                       WHERE id=? AND owner_account_id=? AND account_mode=?""",
+                    (plan_id, owner_account_id, account_mode),
+                ).fetchone()
+                if plan is None:
+                    return False
+                placeholders = ",".join("?" for _ in ids)
+                matching = self._conn.execute(
+                    f"""SELECT COUNT(*) AS n FROM rule_evaluations
+                        WHERE plan_id=? AND (outcome='matched' OR invalidation_outcome='matched')
+                          AND id IN ({placeholders})""",
+                    (plan_id, *ids),
+                ).fetchone()["n"]
+                if matching != len(ids):
+                    raise ValueError(
+                        "evaluation ids must contain a waiting or invalidation match for this plan"
+                    )
+                self._conn.execute(
+                    f"""UPDATE rule_evaluations SET reviewed_at=COALESCE(reviewed_at, ?)
+                        WHERE plan_id=? AND (outcome='matched' OR invalidation_outcome='matched')
+                          AND id IN ({placeholders})""",
+                    (datetime.now(timezone.utc).isoformat(), plan_id, *ids),
+                )
+                return True
         return await self._run_write(_do)
 
     # ── Trigger Hits ──────────────────────────────────────
@@ -674,6 +1403,8 @@ class DatabaseService:
         dedup_key: str,
         condition_values: list[dict],
         watchlist_name: str | None,
+        rule_revision: int | None = None,
+        rule_evaluation_id: int | None = None,
         source_watchlist: str | None = None,
         target_watchlist: str | None = None,
         expires_at: str | None = None,
@@ -686,10 +1417,12 @@ class DatabaseService:
                 try:
                     cur = self._conn.execute(
                         """INSERT INTO trigger_hits
-                           (rule_id, conid, symbol, dedup_key, condition_values,
+                           (rule_id, rule_revision, rule_evaluation_id, conid, symbol,
+                            dedup_key, condition_values,
                             watchlist_name, source_watchlist, target_watchlist, expires_at)
-                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                        (rule_id, conid, symbol, dedup_key, _json.dumps(condition_values),
+                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        (rule_id, rule_revision, rule_evaluation_id, conid, symbol,
+                         dedup_key, _json.dumps(condition_values),
                          watchlist_name, source_watchlist, target_watchlist, expires_at),
                     )
                     return cur.lastrowid
@@ -721,6 +1454,7 @@ class DatabaseService:
             if watchlist:
                 clauses.append("h.watchlist_name=?")
                 params.append(watchlist)
+            clauses.append("r.setup_plan_id IS NULL")
             where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
             q = f"""
                 SELECT h.*, r.name AS rule_name
@@ -743,7 +1477,8 @@ class DatabaseService:
             assert self._conn is not None
             with self._conn:
                 cur = self._conn.execute(
-                    "UPDATE trigger_hits SET dismissed_at=datetime('now') WHERE id=?",
+                    "UPDATE trigger_hits SET dismissed_at=datetime('now') WHERE id=? "
+                    "AND rule_id IN (SELECT id FROM trigger_rules WHERE setup_plan_id IS NULL)",
                     (hit_id,),
                 )
                 return cur.rowcount > 0
@@ -755,7 +1490,8 @@ class DatabaseService:
             with self._conn:
                 cur = self._conn.execute(
                     "UPDATE trigger_hits "
-                    "SET snoozed_until=datetime('now', ? || ' minutes') WHERE id=?",
+                    "SET snoozed_until=datetime('now', ? || ' minutes') WHERE id=? "
+                    "AND rule_id IN (SELECT id FROM trigger_rules WHERE setup_plan_id IS NULL)",
                     (f"+{minutes}", hit_id),
                 )
                 return cur.rowcount > 0
@@ -822,6 +1558,7 @@ class DatabaseService:
                     FROM trigger_hits h
                     LEFT JOIN trigger_rules r ON r.id = h.rule_id
                     WHERE h.conid IN ({placeholders})
+                      AND r.setup_plan_id IS NULL
                       AND h.dismissed_at IS NULL
                       AND (h.snoozed_until IS NULL OR h.snoozed_until < datetime('now'))
                     ORDER BY h.triggered_at DESC""",

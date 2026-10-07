@@ -564,12 +564,13 @@ export type TriggerRule = {
     symbol: string | null;
     template_id: number | null;
     ibkr_mirror_target: string | null;
+    revision: number;
     conditions: TriggerCondition[];
     created_at: string;
     updated_at: string;
 };
 
-export type TriggerRuleCreate = Omit<TriggerRule, "id" | "created_at" | "updated_at">;
+export type TriggerRuleCreate = Omit<TriggerRule, "id" | "revision" | "created_at" | "updated_at">;
 
 export type TriggerRuleUpdate = Partial<TriggerRuleCreate>;
 
@@ -577,13 +578,16 @@ export type TriggerConditionValue = {
     indicator: string;
     condition: string;
     threshold: number | null;
-    actual_value: number;
+    actual_value: number | null;
     news_candle_method?: string | null;
+    condition_role?: "waiting" | "invalidation" | null;
 };
 
 export type TriggerHit = {
     id: number;
     rule_id: number;
+    rule_revision?: number | null;
+    rule_evaluation_id?: number | null;
     rule_name: string | null;
     conid: number;
     symbol: string;
@@ -597,6 +601,80 @@ export type TriggerHit = {
     moved_back: boolean;
     expires_at: string | null;
 };
+
+export type SetupPlanType = "pullback" | "breakout" | "breakout_retest";
+export type SetupPlanTimeframe = "1m" | "5m" | "15m" | "1h" | "4h" | "1D" | "1W" | "1M";
+export type SetupPlanMonitoringMode = "manual" | "automatic";
+
+export type RuleEvaluation = {
+    id: number;
+    plan_id: number;
+    plan_revision: number;
+    rule_id: number;
+    rule_revision: number;
+    outcome: "matched" | "not_matched" | "failed" | "unavailable";
+    invalidation_outcome: "matched" | "not_matched" | "failed" | "unavailable" | null;
+    invalidation_failure_code: string | null;
+    invalidation_failure_message: string | null;
+    checked_at: string;
+    evidence_at: string | null;
+    condition_values: TriggerConditionValue[];
+    failure_code: string | null;
+    failure_message: string | null;
+    reviewed_at: string | null;
+};
+
+export type SetupPlanRule = {
+    id: number;
+    revision: number;
+    enabled: boolean;
+    timeframe: SetupPlanTimeframe;
+    scan_interval_seconds: number;
+    conditions: TriggerCondition[];
+    invalidation_condition: TriggerCondition | null;
+};
+
+export type SetupPlan = {
+    id: number;
+    account_id: string;
+    account_mode: "paper" | "live";
+    conid: number;
+    symbol: string;
+    setup_type: SetupPlanType;
+    waiting_intention: string;
+    monitoring_mode: SetupPlanMonitoringMode;
+    invalidation_reference: string | null;
+    invalidation_condition: TriggerCondition | null;
+    rule: SetupPlanRule | null;
+    lifecycle: "active" | "archived";
+    revision: number;
+    created_at: string;
+    updated_at: string;
+    archived_at: string | null;
+    monitoring_health: "not_monitored" | "not_checked" | "healthy" | "unavailable" | "overdue";
+    monitoring_due_at: string | null;
+    latest_evaluation: RuleEvaluation | null;
+    unreviewed_match_count: number;
+};
+
+export type SetupPlanDetail = SetupPlan & {
+    evaluations: RuleEvaluation[];
+    hits: TriggerHit[];
+};
+
+export type SetupPlanCreate = {
+    conid: number;
+    setup_type: SetupPlanType;
+    waiting_intention: string;
+    monitoring_mode: SetupPlanMonitoringMode;
+    invalidation_reference?: string | null;
+    invalidation_condition?: TriggerCondition | null;
+    timeframe?: SetupPlanTimeframe;
+    scan_interval_seconds?: number;
+    conditions?: TriggerCondition[];
+};
+
+export type SetupPlanUpdate = Partial<Omit<SetupPlanCreate, "conid">>;
 
 export type RuleTemplate = {
     id: number;
@@ -910,6 +988,24 @@ export const parallaxApi = {
 
     deleteTriggerRule: (id: number) =>
         sidecarRequest<void>("DELETE", `/triggers/rules/${id}`),
+
+    getSetupPlans: () =>
+        sidecarRequest<SetupPlan[]>("GET", "/triggers/setup-plans"),
+
+    getSetupPlan: (id: number) =>
+        sidecarRequest<SetupPlanDetail>("GET", `/triggers/setup-plans/${id}`),
+
+    createSetupPlan: (plan: SetupPlanCreate) =>
+        sidecarRequest<SetupPlanDetail>("POST", "/triggers/setup-plans", plan),
+
+    updateSetupPlan: (id: number, patch: SetupPlanUpdate) =>
+        sidecarRequest<SetupPlanDetail>("PATCH", `/triggers/setup-plans/${id}`, patch),
+
+    reviewSetupPlan: (id: number, evaluation_ids: number[]) =>
+        sidecarRequest<SetupPlanDetail>("POST", `/triggers/setup-plans/${id}/review`, { evaluation_ids }),
+
+    archiveSetupPlan: (id: number) =>
+        sidecarRequest<SetupPlanDetail>("POST", `/triggers/setup-plans/${id}/archive`),
 
     getTriggerHits: (
         opts: {

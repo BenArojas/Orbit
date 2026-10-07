@@ -21,8 +21,10 @@ Note: Watchlists are managed in IBKR — no local models needed.
 
 from __future__ import annotations
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
-from typing import Any, Literal, Optional
+import math
+
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
+from typing import Annotated, Any, Literal, Optional
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -533,6 +535,7 @@ class TriggerRuleResponse(BaseModel):
     symbol: Optional[str] = None
     template_id: Optional[int] = None
     ibkr_mirror_target: Optional[str] = None
+    revision: int = 1
     conditions: list[TriggerConditionPayload]
     created_at: str
     updated_at: str
@@ -543,13 +546,16 @@ class TriggerConditionValue(BaseModel):
     indicator: str
     condition: str
     threshold: Optional[float] = None
-    actual_value: float
+    actual_value: Optional[float] = None
     news_candle_method: Optional[str] = None
+    condition_role: Optional[Literal["waiting", "invalidation"]] = None
 
 
 class TriggerHitResponse(BaseModel):
     id: int
     rule_id: int
+    rule_revision: Optional[int] = None
+    rule_evaluation_id: Optional[int] = None
     rule_name: Optional[str] = None
     conid: int
     symbol: str
@@ -563,6 +569,145 @@ class TriggerHitResponse(BaseModel):
     target_watchlist: Optional[str] = None
     moved_back: bool = False
     expires_at: Optional[str] = None
+
+
+SetupPlanTimeframe = Literal["1m", "5m", "15m", "1h", "4h", "1D", "1W", "1M"]
+SetupPlanMonitoringMode = Literal["manual", "automatic"]
+
+_SETUP_PLAN_INDICATORS = {
+    "open", "high", "low", "close", "volume", "rsi", "macd",
+    "ema_9", "ema_21", "ema_50", "ema_200", "bbands", "vwap",
+    "atr", "stoch", "obv", "adx", "news_candle",
+}
+
+
+def _validate_setup_conditions(conditions: list[TriggerConditionPayload]) -> None:
+    for item in conditions:
+        if item.indicator not in _SETUP_PLAN_INDICATORS:
+            raise ValueError(f"unsupported setup rule indicator: {item.indicator}")
+        if item.threshold is not None and not math.isfinite(item.threshold):
+            raise ValueError("setup rule thresholds must be finite")
+        if item.indicator == "news_candle":
+            if item.condition != "fires" or item.news_candle_method is None:
+                raise ValueError("news_candle requires its existing fires condition and method")
+        elif item.condition == "fires" or item.threshold is None:
+            raise ValueError("supported setup comparisons require a threshold")
+
+
+class SetupPlanCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    conid: int = Field(gt=0)
+    setup_type: Literal["pullback", "breakout", "breakout_retest"]
+    waiting_intention: Annotated[str, StringConstraints(
+        strip_whitespace=True, min_length=1, max_length=500
+    )]
+    monitoring_mode: SetupPlanMonitoringMode
+    invalidation_reference: Optional[str] = Field(default=None, max_length=500)
+    invalidation_condition: Optional[TriggerConditionPayload] = None
+    timeframe: Optional[SetupPlanTimeframe] = None
+    scan_interval_seconds: Optional[int] = Field(default=None, ge=60)
+    conditions: list[TriggerConditionPayload] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _validate_mode_and_conditions(self) -> "SetupPlanCreate":
+        if self.monitoring_mode == "manual":
+            if self.conditions or self.invalidation_condition or self.timeframe or self.scan_interval_seconds:
+                raise ValueError("manual plans cannot include automatic rule settings")
+            return self
+        _validate_setup_conditions(self.conditions)
+        if self.invalidation_condition is not None:
+            _validate_setup_conditions([self.invalidation_condition])
+        if not self.conditions:
+            raise ValueError("automatic plans require at least one waiting condition")
+        self.timeframe = self.timeframe or "1D"
+        self.scan_interval_seconds = self.scan_interval_seconds or 300
+        return self
+
+
+class SetupPlanUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    setup_type: Optional[Literal["pullback", "breakout", "breakout_retest"]] = None
+    waiting_intention: Optional[Annotated[str, StringConstraints(
+        strip_whitespace=True, min_length=1, max_length=500
+    )]] = None
+    monitoring_mode: Optional[SetupPlanMonitoringMode] = None
+    invalidation_reference: Optional[str] = Field(default=None, max_length=500)
+    invalidation_condition: Optional[TriggerConditionPayload] = None
+    timeframe: Optional[SetupPlanTimeframe] = None
+    scan_interval_seconds: Optional[int] = Field(default=None, ge=60)
+    conditions: Optional[list[TriggerConditionPayload]] = None
+
+    @model_validator(mode="after")
+    def _validate_supplied_conditions(self) -> "SetupPlanUpdate":
+        if self.conditions is not None:
+            _validate_setup_conditions(self.conditions)
+        if self.invalidation_condition is not None:
+            _validate_setup_conditions([self.invalidation_condition])
+        return self
+
+
+class SetupPlanRuleResponse(BaseModel):
+    id: int
+    revision: int
+    enabled: bool
+    timeframe: SetupPlanTimeframe
+    scan_interval_seconds: int
+    conditions: list[TriggerConditionPayload]
+    invalidation_condition: Optional[TriggerConditionPayload] = None
+
+
+class RuleEvaluationResponse(BaseModel):
+    id: int
+    plan_id: int
+    plan_revision: int
+    rule_id: int
+    rule_revision: int
+    outcome: Literal["matched", "not_matched", "failed", "unavailable"]
+    invalidation_outcome: Optional[Literal["matched", "not_matched", "failed", "unavailable"]] = None
+    invalidation_failure_code: Optional[str] = None
+    invalidation_failure_message: Optional[str] = None
+    checked_at: str
+    evidence_at: Optional[str] = None
+    condition_values: list[TriggerConditionValue]
+    failure_code: Optional[str] = None
+    failure_message: Optional[str] = None
+    reviewed_at: Optional[str] = None
+
+
+class SetupPlanSummary(BaseModel):
+    id: int
+    account_id: str
+    account_mode: Literal["paper", "live"]
+    conid: int
+    symbol: str
+    setup_type: Literal["pullback", "breakout", "breakout_retest"]
+    waiting_intention: str
+    monitoring_mode: SetupPlanMonitoringMode
+    invalidation_reference: Optional[str] = None
+    invalidation_condition: Optional[TriggerConditionPayload] = None
+    rule: Optional[SetupPlanRuleResponse] = None
+    lifecycle: Literal["active", "archived"]
+    revision: int
+    created_at: str
+    updated_at: str
+    archived_at: Optional[str] = None
+    monitoring_health: Literal["not_monitored", "not_checked", "healthy", "unavailable", "overdue"]
+    monitoring_due_at: Optional[str] = None
+    latest_evaluation: Optional[RuleEvaluationResponse] = None
+    unreviewed_match_count: int
+
+
+class SetupPlanDetail(SetupPlanSummary):
+    evaluations: list[RuleEvaluationResponse]
+    hits: list[TriggerHitResponse]
+
+
+class SetupPlanReviewRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    evaluation_ids: list[int] = Field(min_length=1)
 
 
 class RuleTemplateResponse(BaseModel):
