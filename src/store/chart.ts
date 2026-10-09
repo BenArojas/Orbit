@@ -42,7 +42,7 @@ function savePanelPreferences(preferences: { collapsed?: boolean; activeTab?: An
 import type { FibonacciCandidate, FibonacciResult } from "@/modules/parallax/api";
 import { useDrawingsStore } from "@/store/drawings";
 
-export type Timeframe = "1m" | "5m" | "15m" | "1h" | "4h" | "1D" | "1W" | "1M";
+export type Timeframe = "1m" | "5m" | "15m" | "30m" | "1h" | "4h" | "1D" | "1W" | "1M";
 
 /** Matches the 14 indicators from PROJECT_PLAN.md */
 export type IndicatorId =

@@ -42,6 +42,8 @@ export type TodayHitFilter =
   | { kind: "high-conf" };
 
 export interface TodayContext {
+  view: "plans" | "alerts";
+  alertsScrollTop: number;
   planFilter: TodayPlanFilter;
   hitFilter: TodayHitFilter;
   selectedPlanId: number | null;
@@ -60,6 +62,8 @@ const INITIAL_NAMES_CONTEXT: NamesContext = {
 };
 
 const INITIAL_TODAY_CONTEXT: TodayContext = {
+  view: "plans",
+  alertsScrollTop: 0,
   planFilter: "all",
   hitFilter: { kind: "all" },
   selectedPlanId: null,

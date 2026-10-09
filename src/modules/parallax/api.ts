@@ -603,7 +603,7 @@ export type TriggerHit = {
 };
 
 export type SetupPlanType = "pullback" | "breakout" | "breakout_retest";
-export type SetupPlanTimeframe = "1m" | "5m" | "15m" | "1h" | "4h" | "1D" | "1W" | "1M";
+export type SetupPlanTimeframe = "1m" | "5m" | "15m" | "30m" | "1h" | "4h" | "1D" | "1W" | "1M";
 export type SetupPlanMonitoringMode = "manual" | "automatic";
 
 export type RuleEvaluation = {
@@ -618,6 +618,7 @@ export type RuleEvaluation = {
     invalidation_failure_message: string | null;
     checked_at: string;
     evidence_at: string | null;
+    evidence_session_policy?: "us_equity_extended" | null;
     condition_values: TriggerConditionValue[];
     failure_code: string | null;
     failure_message: string | null;

@@ -137,12 +137,18 @@ async def test_manual_and_automatic_plans_survive_restart_and_day_change(tmp_pat
 
 
 @pytest.mark.asyncio
-async def test_scanner_persists_matches_and_unavailable_checks(db):
+async def test_scanner_persists_matches_and_unavailable_checks(db, monkeypatch):
     plan_id = await _auto_plan(db)
     plan = await db.get_setup_plan(plan_id, "DU100", "paper")
+    from services import scanner as scanner_module
+    class Clock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return datetime(2026, 10, 8, 14, tzinfo=timezone.utc)
+    monkeypatch.setattr(scanner_module, "datetime", Clock)
     bars = [
-        {"t": 1_791_403_200_000, "o": 108, "h": 112, "l": 107, "c": 110, "v": 1000},
-        {"t": 1_791_489_600_000, "o": 109, "h": 113, "l": 108, "c": 111, "v": 1200},
+        {"t": 1_791_331_200_000, "o": 108, "h": 112, "l": 107, "c": 110, "v": 1000},
+        {"t": 1_791_417_600_000, "o": 109, "h": 113, "l": 108, "c": 111, "v": 1200},
     ]
 
     class IBKR:
@@ -151,7 +157,10 @@ async def test_scanner_persists_matches_and_unavailable_checks(db):
         async def brokerage_accounts(self):
             return [{"accountId": "DU100"}]
 
-        async def history(self, *_args, **_kwargs):
+        async def security_definitions(self, _conids):
+            return [{"conid": 265598, "ticker": "AAPL", "assetClass": "STK", "listingExchange": "NASDAQ", "countryCode": "US", "currency": "USD", "isUS": True}]
+
+        async def history_fresh(self, *_args, **_kwargs):
             return {"data": bars}
 
     scanner = ScannerService(IBKR(), db)
@@ -226,7 +235,7 @@ async def test_plan_only_revision_hides_old_match_and_rejects_stale_review(db):
 
 
 @pytest.mark.asyncio
-async def test_waiting_and_invalidation_conditions_are_evaluated_separately(db):
+async def test_waiting_and_invalidation_conditions_are_evaluated_separately(db, monkeypatch):
     plan_id = await db.create_setup_plan(
         owner_account_id="DU100", account_mode="paper", conid=265598, symbol="AAPL",
         setup_type="breakout", waiting_intention="Wait above 120.",
@@ -236,9 +245,15 @@ async def test_waiting_and_invalidation_conditions_are_evaluated_separately(db):
         conditions=[{"indicator": "close", "condition": "above", "threshold": 120.0}],
     )
     close = 130.0
+    from services import scanner as scanner_module
+    class Clock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return datetime(2026, 10, 8, 14, tzinfo=timezone.utc)
+    monkeypatch.setattr(scanner_module, "datetime", Clock)
     bars = [
-        {"t": 1_791_403_200_000, "o": close, "h": close + 1, "l": close - 1, "c": close, "v": 1000},
-        {"t": 1_791_489_600_000, "o": close, "h": close + 1, "l": close - 1, "c": close, "v": 1200},
+        {"t": 1_791_331_200_000, "o": close, "h": close + 1, "l": close - 1, "c": close, "v": 1000},
+        {"t": 1_791_417_600_000, "o": close, "h": close + 1, "l": close - 1, "c": close, "v": 1200},
     ]
 
     class IBKR:
@@ -247,7 +262,10 @@ async def test_waiting_and_invalidation_conditions_are_evaluated_separately(db):
         async def brokerage_accounts(self):
             return [{"accountId": "DU100"}]
 
-        async def history(self, *_args, **_kwargs):
+        async def security_definitions(self, _conids):
+            return [{"conid": 265598, "ticker": "AAPL", "assetClass": "STK", "listingExchange": "NASDAQ", "countryCode": "US", "currency": "USD", "isUS": True}]
+
+        async def history_fresh(self, *_args, **_kwargs):
             return {"data": bars}
 
     scanner = ScannerService(IBKR(), db)
@@ -256,8 +274,8 @@ async def test_waiting_and_invalidation_conditions_are_evaluated_separately(db):
     await scanner._evaluate_setup_plan(plan, scope)
     close = 80.0
     bars[:] = [
-        {"t": 1_791_403_200_000, "o": close, "h": close + 1, "l": close - 1, "c": close, "v": 1000},
-        {"t": 1_791_489_600_000, "o": close, "h": close + 1, "l": close - 1, "c": close, "v": 1200},
+        {"t": 1_791_331_200_000, "o": close, "h": close + 1, "l": close - 1, "c": close, "v": 1000},
+        {"t": 1_791_417_600_000, "o": close, "h": close + 1, "l": close - 1, "c": close, "v": 1200},
     ]
     await scanner._evaluate_setup_plan(plan, scope)
 

@@ -40,10 +40,12 @@ import { useCompareStore } from "@/store/compare";
 import { CompareView } from "@/components/compare";
 import { useOrderTicketStore } from "@/orbit/OrderTicket";
 import { useNavigationStore } from "@/store/navigation";
+import { useLiveQuotes } from "@/hooks/useLiveQuotes";
+import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 
 // ── Constants ────────────────────────────────────────────────
 
-const TIMEFRAMES: Timeframe[] = ["1m", "5m", "15m", "1h", "4h", "1D", "1W", "1M"];
+const TIMEFRAMES: Timeframe[] = ["1m", "5m", "15m", "30m", "1h", "4h", "1D", "1W", "1M"];
 
 /** Sub-chart indicator IDs → panel type mapping (module-level constant) */
 const SUB_CHART_IDS: { id: IndicatorId; type: SubChartType }[] = [
@@ -90,6 +92,21 @@ export default function AnalysisPage() {
 
   const [symbolInput, setSymbolInput] = useState(activeSymbol || "");
   const [inputFocused, setInputFocused] = useState(false);
+  const [wideWindow, setWideWindow] = useState(() => typeof window.matchMedia !== "function" || window.matchMedia("(min-width: 1100px)").matches);
+  const panelReturnFocus = useRef<HTMLElement | null>(null);
+  const workspaceRef = useRef<HTMLDivElement | null>(null);
+  const quotes = useLiveQuotes(activeConid == null ? [] : [activeConid]);
+  const quote = activeConid == null ? undefined : quotes.get(activeConid);
+  const availability = quote?.availability?.[0];
+  const quoteLabel = availability === "R" ? "Live" : availability === "D" || availability === "Y" ? "Delayed" : availability === "Z" ? "Frozen" : availability === "N" ? "Unavailable" : "Feed unconfirmed";
+
+  useEffect(() => {
+    if (typeof window.matchMedia !== "function") return;
+    const media = window.matchMedia("(min-width: 1100px)");
+    const update = () => setWideWindow(media.matches);
+    media.addEventListener("change", update);
+    return () => media.removeEventListener("change", update);
+  }, []);
 
   const handleTrade = () => {
     if (!activeConid) {
@@ -110,11 +127,13 @@ export default function AnalysisPage() {
   };
 
   const handleOpenWatchlists = () => {
+    panelReturnFocus.current = document.activeElement as HTMLElement;
     setRightPanelActiveTab("watchlists");
     if (useChartStore.getState().rightPanelCollapsed) toggleRightPanel();
   };
 
   const handleOpenSetup = () => {
+    panelReturnFocus.current = document.activeElement as HTMLElement;
     setRightPanelActiveTab("setup");
     if (useChartStore.getState().rightPanelCollapsed) toggleRightPanel();
   };
@@ -312,7 +331,7 @@ export default function AnalysisPage() {
   };
 
   return (
-    <div className={`grid h-full min-h-0 ${rightPanelCollapsed ? "grid-cols-[minmax(0,1fr)_32px]" : "grid-cols-[minmax(0,1fr)_340px]"}`}>
+    <div ref={workspaceRef} className={`relative grid h-full min-h-0 ${!wideWindow ? "grid-cols-[minmax(0,1fr)]" : rightPanelCollapsed ? "grid-cols-[minmax(0,1fr)_32px]" : "grid-cols-[minmax(0,1fr)_340px]"}`}>
       {/* ── Center: Chart area ── */}
       <div className="relative flex min-h-0 flex-col overflow-visible">
         {/* Toolbar — hidden in compare mode (CompareView has its own header).
@@ -320,7 +339,7 @@ export default function AnalysisPage() {
             are added below; otherwise flex squeezes it and only the bottom row
             of indicator/timeframe pills remains visible. */}
         {!compareActive && (
-          <div className="relative z-30 flex shrink-0 flex-nowrap items-center gap-2 border-b border-border bg-[var(--bg-1)] px-3 py-1.5">
+          <div className="relative z-30 flex min-w-0 shrink-0 flex-wrap items-center gap-2 border-b border-border bg-[var(--bg-1)] px-3 py-2">
             <button type="button" onClick={() => navigateToNames(analysisContext.returnTo)} className="shrink-0 rounded border border-[var(--border)] px-2.5 py-1.5 text-[11px] font-medium text-[var(--text-2)] hover:text-[var(--text-1)]">{returnLabel}</button>
             <input
               type="text"
@@ -335,15 +354,17 @@ export default function AnalysisPage() {
               title={analysisContext.setupPlanId != null ? "This chart is tied to the open setup plan." : undefined}
               className={`w-[76px] shrink-0 rounded-md border border-border bg-[var(--bg-0)] px-2 py-1.5 text-center text-sm font-bold text-foreground outline-none transition-all focus:border-[var(--clr-cyan)] focus:shadow-[0_0_12px_var(--glow-cyan)] disabled:opacity-60 ${resolveConidMutation.isPending ? "animate-pulse" : ""}`}
             />
-            <div className="flex shrink-0 gap-px rounded-md border border-border bg-[var(--bg-0)] p-0.5">
+            <div role="group" aria-label="Chart timeframe" className="flex min-w-0 flex-wrap items-center gap-px rounded-md border border-border bg-[var(--bg-0)] p-0.5">
+              <span className="px-1.5 text-xs text-[var(--text-2)]">Chart timeframe</span>
               {TIMEFRAMES.map((tf) => (
-                <button key={tf} onClick={() => setTimeframe(tf)} className={`rounded px-2 py-1 font-data text-[10px] font-medium transition-all ${tf === timeframe ? "bg-[var(--bg-4)] text-foreground shadow-[inset_0_0_8px_var(--glow-cyan)]" : "text-[var(--text-3)] hover:text-[var(--text-2)]"}`}>
+                <button key={tf} aria-pressed={tf === timeframe} onClick={() => setTimeframe(tf)} className={`rounded px-2 py-1.5 font-data text-xs font-medium transition-colors ${tf === timeframe ? "bg-[var(--bg-4)] text-foreground" : "text-[var(--text-3)] hover:text-[var(--text-2)]"}`}>
                   {tf}
                 </button>
               ))}
             </div>
             {companyName && <span className="min-w-0 flex-1 truncate text-[10px] text-[var(--text-3)]">{companyName}</span>}
-            <div className="ml-auto flex shrink-0 items-center gap-1.5">
+            {activeConid && <div aria-label="Analysis price" className="flex flex-wrap items-baseline gap-1.5 text-xs text-[var(--text-2)]"><strong className="font-data text-sm tabular-nums">{quote && Number.isFinite(quote.last) && availability !== "N" ? quote.last.toFixed(2) : "Price unavailable"}</strong><span>{quoteLabel}</span>{quote?.receivedAt && <time dateTime={new Date(quote.receivedAt * 1000).toISOString()}>Received {new Date(quote.receivedAt * 1000).toLocaleTimeString()}</time>}</div>}
+            <div className="ml-auto flex min-w-0 flex-wrap items-center gap-1.5">
               <button type="button" onClick={handleOpenSetup} className="rounded border border-[var(--border)] px-2.5 py-1.5 text-[11px] font-medium text-[var(--text-2)] hover:border-[var(--clr-cyan)] hover:text-[var(--text-1)]">Setup</button>
               <button type="button" onClick={handleOpenWatchlists} className="rounded border border-[var(--border)] px-2.5 py-1.5 text-[11px] font-medium text-[var(--text-2)] hover:text-[var(--text-1)]">Watchlists</button>
               <button
@@ -476,7 +497,14 @@ export default function AnalysisPage() {
       </div>
 
       {/* ── Right: tabbed Parallax tools sidebar ── */}
-      {rightPanelCollapsed ? (
+      {!wideWindow ? (
+        <Dialog modal={false} open={!rightPanelCollapsed} onOpenChange={(open) => { if (!open && !rightPanelCollapsed) toggleRightPanel(); }}>
+          <DialogContent container={workspaceRef} showOverlay={false} finalFocus={panelReturnFocus} showCloseButton={false} className="absolute top-0 right-0 bottom-0 left-auto flex h-full w-[min(380px,100vw)] max-w-none translate-x-0 translate-y-0 flex-col gap-0 rounded-none p-0 sm:max-w-none">
+            <DialogTitle className="sr-only">Analysis tools</DialogTitle>
+            <RightSidebar activeConid={activeConid} activeSymbol={activeSymbol} activeTimeframe={timeframe} setupPlanEditor={setupPlanEditor} onCollapse={toggleRightPanel} />
+          </DialogContent>
+        </Dialog>
+      ) : rightPanelCollapsed ? (
         <div className="flex flex-col items-center border-l border-[var(--border)] bg-[var(--bg-1)] pt-2">
           <button
             onClick={toggleRightPanel}

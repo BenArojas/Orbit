@@ -26,10 +26,12 @@ import { useWebSocket, type WsMessage } from "./useWebSocket";
 import type { Timeframe } from "@/store/chart";
 import type { Layout } from "@/store/compare";
 import { chartHistoryPeriodForTimeframe } from "./historyPeriods";
+import { useCandleRollover } from "./useCandleRollover";
 
 // ── Types ────────────────────────────────────────────────────
 
 export interface CompareLiveTick {
+  timestamp?: number;
   last: number;
   volume: number;
   high: number;
@@ -177,6 +179,7 @@ export function useCompareData(
       const low = msg.low as number | undefined;
       if (msg.conid === stockConid) {
         setStockLiveTick((prev) => ({
+          timestamp: typeof msg.timestamp === "number" ? msg.timestamp : undefined,
           last,
           volume: volume ?? prev?.volume ?? 0,
           high: high ?? prev?.high ?? last,
@@ -184,6 +187,7 @@ export function useCompareData(
         }));
       } else if (msg.conid === refConid) {
         setRefLiveTick((prev) => ({
+          timestamp: typeof msg.timestamp === "number" ? msg.timestamp : undefined,
           last,
           volume: volume ?? prev?.volume ?? 0,
           high: high ?? prev?.high ?? last,
@@ -200,12 +204,14 @@ export function useCompareData(
   }, [addHandler, handleMessage]);
 
   // ── Return ────────────────────────────────────────────────
+  const currentStockTick = useCandleRollover(timeframe, stockQuery.data?.candles, stockLiveTick, stockQuery.refetch);
+  const currentRefTick = useCandleRollover(timeframe, refQuery.data?.candles, refLiveTick, refQuery.refetch);
 
   return {
     stockCandles: stockQuery.data?.candles,
     refCandles: refQuery.data?.candles,
-    stockLiveTick,
-    refLiveTick,
+    stockLiveTick: currentStockTick,
+    refLiveTick: currentRefTick,
     isLoading: stockQuery.isLoading || refQuery.isLoading,
     error: stockQuery.error ?? refQuery.error,
   };

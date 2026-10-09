@@ -3,7 +3,7 @@ import { X } from "lucide-react";
 import type { Timeframe } from "@/store/chart";
 import type { Layout } from "@/store/compare";
 
-const TIMEFRAMES: Timeframe[] = ["1m", "5m", "15m", "1h", "4h", "1D", "1W", "1M"];
+const TIMEFRAMES: Timeframe[] = ["1m", "5m", "15m", "30m", "1h", "4h", "1D", "1W", "1M"];
 
 const LAYOUT_LABELS: Record<Layout, string> = {
   overlay: "Overlay",
@@ -64,12 +64,14 @@ export default function PaneToolbar({
   };
 
   return (
-    <div className="flex shrink-0 items-center gap-1.5 border-b border-[var(--border)] bg-[var(--bg-1)] px-2 py-1">
-      <div className="flex gap-px rounded-md border border-[var(--border)] bg-[var(--bg-0)] p-0.5">
+    <div className="flex min-w-0 shrink-0 flex-wrap items-center gap-1.5 border-b border-[var(--border)] bg-[var(--bg-1)] px-2 py-1">
+      <div role="group" aria-label={`Chart timeframe for pane ${paneId}`} className="flex min-w-0 flex-wrap gap-px rounded-md border border-[var(--border)] bg-[var(--bg-0)] p-0.5">
+        <span className="px-1 text-xs text-[var(--text-2)]">Chart timeframe</span>
         {TIMEFRAMES.map((tf) => (
           <button
             key={tf}
             onClick={() => onTimeframeChange(tf)}
+            aria-pressed={tf === timeframe}
             className={`rounded px-2 py-0.5 font-data text-[10px] font-medium transition-all ${
               tf === timeframe
                 ? "bg-[var(--bg-4)] text-foreground shadow-[inset_0_0_8px_var(--glow-cyan)]"

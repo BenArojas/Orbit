@@ -14,6 +14,7 @@ def _make_bar(t: int = 1700000000000) -> dict:
 def _make_ibkr(bars: list[dict]) -> MagicMock:
     ibkr = MagicMock()
     ibkr.history = AsyncMock(return_value={"data": bars})
+    ibkr.history_fresh = AsyncMock(return_value={"data": bars})
     return ibkr
 
 

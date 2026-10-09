@@ -25,6 +25,7 @@ import math
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
 from typing import Annotated, Any, Literal, Optional
+from constants.ibkr_history import Timeframe
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -496,13 +497,14 @@ class TriggerRuleCreate(BaseModel):
     symbol: Optional[str] = None
     template_id: Optional[int] = None
     ibkr_mirror_target: Optional[str] = None
-    timeframe: str = "1D"
+    timeframe: Timeframe = "1D"
     scan_interval_seconds: int = 300
     enabled: bool = True
     conditions: list[TriggerConditionPayload]
 
     @model_validator(mode="after")
     def _validate_scope_and_conditions(self) -> "TriggerRuleCreate":
+        _validate_setup_conditions(self.conditions)
         if self.watchlist_name is None and self.conid is None:
             raise ValueError("Rule must have either watchlist_name or conid")
         if not self.conditions:
@@ -514,13 +516,19 @@ class TriggerRuleUpdate(BaseModel):
     """Partial update — fields not sent stay as-is."""
     name: Optional[str] = None
     enabled: Optional[bool] = None
-    timeframe: Optional[str] = None
+    timeframe: Optional[Timeframe] = None
     scan_interval_seconds: Optional[int] = None
     watchlist_name: Optional[str] = None
     conid: Optional[int] = None
     symbol: Optional[str] = None
     ibkr_mirror_target: Optional[str] = None
     conditions: Optional[list[TriggerConditionPayload]] = None
+
+    @model_validator(mode="after")
+    def _validate_conditions(self) -> "TriggerRuleUpdate":
+        if self.conditions is not None:
+            _validate_setup_conditions(self.conditions)
+        return self
 
 
 class TriggerRuleResponse(BaseModel):
@@ -571,7 +579,7 @@ class TriggerHitResponse(BaseModel):
     expires_at: Optional[str] = None
 
 
-SetupPlanTimeframe = Literal["1m", "5m", "15m", "1h", "4h", "1D", "1W", "1M"]
+SetupPlanTimeframe = Literal["1m", "5m", "15m", "30m", "1h", "4h", "1D", "1W", "1M"]
 SetupPlanMonitoringMode = Literal["manual", "automatic"]
 
 _SETUP_PLAN_INDICATORS = {
@@ -670,6 +678,7 @@ class RuleEvaluationResponse(BaseModel):
     invalidation_failure_message: Optional[str] = None
     checked_at: str
     evidence_at: Optional[str] = None
+    evidence_session_policy: Optional[Literal["us_equity_extended"]] = None
     condition_values: list[TriggerConditionValue]
     failure_code: Optional[str] = None
     failure_message: Optional[str] = None
@@ -766,7 +775,7 @@ class IndicatorRequest(BaseModel):
     conid:     IBKR's unique ID for the stock
     timeframe: Frontend timeframe string — the router maps this to a
                canonical (period, bar) pair via TIMEFRAME_SPEC.
-               Valid values: "1m", "5m", "15m", "1h", "4h", "1D", "1W", "1M"
+               Valid values: "1m", "5m", "15m", "30m", "1h", "4h", "1D", "1W", "1M"
     indicators: Which indicators to compute — use their short names:
                "rsi", "macd", "ema_9", "ema_21", "ema_50", "ema_200",
                "bbands", "vwap", "atr", "stoch", "obv", "adx",
@@ -778,7 +787,7 @@ class IndicatorRequest(BaseModel):
                Ignored when `timeframe` is provided.
     """
     conid: int
-    timeframe: Literal["1m", "5m", "15m", "1h", "4h", "1D", "1W", "1M"] = "1D"
+    timeframe: Literal["1m", "5m", "15m", "30m", "1h", "4h", "1D", "1W", "1M"] = "1D"
     indicators: list[str] = Field(
         default=["rsi", "macd", "ema_50", "ema_200"],
         description="List of indicator names to compute",

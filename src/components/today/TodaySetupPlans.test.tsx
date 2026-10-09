@@ -7,7 +7,7 @@ import { useAccountStore } from "@/orbit/accountContext";
 import { useNavigationStore } from "@/store/navigation";
 
 const { api, accountContext } = vi.hoisted(() => ({
-  api: { getSetupPlans: vi.fn(), getSetupPlan: vi.fn(), reviewSetupPlan: vi.fn(), archiveSetupPlan: vi.fn() },
+  api: { getTriggerRules: vi.fn(), getTriggerHits: vi.fn(), getSetupPlans: vi.fn(), getSetupPlan: vi.fn(), reviewSetupPlan: vi.fn(), archiveSetupPlan: vi.fn() },
   accountContext: {
     selectedAccountId: "DU111",
     providerSelectedAccountId: "DU111",
@@ -25,11 +25,8 @@ vi.mock("@/orbit/accountContext", async (importOriginal) => ({
   useOrbitAccountContext: () => accountContext,
 }));
 vi.mock("@/components/dashboard", () => ({ MarketPulse: () => null }));
-vi.mock("@/components/watchlist/WatchlistSidebar", () => ({ default: () => null }));
-vi.mock("@/components/today", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/components/today")>();
-  return { ...actual, TodayHits: () => null, TodayTimeline: () => null, TodayRulesPanel: () => null };
-});
+vi.mock("@/hooks/useWebSocket", () => ({ useWebSocket: () => ({ addHandler: () => () => {} }) }));
+
 
 function evaluation(id: number, planId: number, planRevision: number, ruleId: number, ruleRevision: number, outcome: "matched" | "failed", reviewedAt: string | null = null) {
   return {
@@ -84,13 +81,16 @@ function wrapper(client = new QueryClient({ defaultOptions: { queries: { retry: 
 }
 
 beforeEach(() => {
+  vi.spyOn(window, "confirm").mockReturnValue(true);
   api.getSetupPlans.mockResolvedValue([]);
+  api.getTriggerRules.mockResolvedValue([]);
+  api.getTriggerHits.mockResolvedValue([]);
   accountContext.refetchAccounts.mockResolvedValue({ selected_account_id: "DU111", accounts: [{ account_id: "DU111", is_paper: true }] });
   useNavigationStore.setState((state) => ({
     activeScreen: "today",
     namesContext: { ...state.namesContext, brokerSessionEpoch: 0 },
     analysisContext: { returnTo: "screener", setupPlanId: null, conid: null },
-    todayContext: { ...state.todayContext, planFilter: "all", hitFilter: { kind: "all" }, selectedPlanId: null, scrollTop: 0 },
+    todayContext: { ...state.todayContext, view: "plans", alertsScrollTop: 0, planFilter: "all", hitFilter: { kind: "all" }, selectedPlanId: null, scrollTop: 0 },
     analysisDraftDirty: false,
   }));
   useAccountStore.setState({
@@ -104,6 +104,7 @@ afterEach(() => {
   vi.useRealTimers();
   focusManager.setFocused(undefined);
   vi.unstubAllGlobals();
+  vi.restoreAllMocks();
   Object.values(api).forEach((mock) => mock.mockReset());
   accountContext.refetchAccounts.mockReset();
 });
@@ -147,7 +148,7 @@ describe("Today setup plans", () => {
     expect(screen.getAllByText(/Check failed/).length).toBeGreaterThan(0);
     expect(screen.getAllByText("Monitoring unavailable").length).toBeGreaterThan(0);
     expect(screen.getByText("Manual review")).toBeTruthy();
-    expect(screen.getByText("No automatic check is attached.")).toBeTruthy();
+    expect(screen.getByText("Review this plan in Analysis when you are ready.")).toBeTruthy();
 
     fireEvent.click(screen.getByRole("button", { name: "Review chart for S21 Breakout plan 21" }));
     expect(useNavigationStore.getState().analysisContext).toMatchObject({ returnTo: "today", setupPlanId: 21, conid: 1021 });
@@ -173,6 +174,9 @@ describe("Today setup plans", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Watching" }));
     const manualRow = screen.getByText("S22").closest("article")!;
+    vi.mocked(window.confirm).mockReturnValueOnce(false);
+    fireEvent.click(within(manualRow).getByRole("button", { name: "Stop tracking" }));
+    expect(api.archiveSetupPlan).not.toHaveBeenCalled();
     fireEvent.click(within(manualRow).getByRole("button", { name: "Stop tracking" }));
     expect(await screen.findByText("Tracking could not be stopped. Plan history is unchanged.")).toBeTruthy();
     fireEvent.click(within(screen.getByText("S22").closest("article")!).getByRole("button", { name: "Stop tracking" }));
@@ -280,4 +284,30 @@ describe("Today setup plans", () => {
     expect(restoredRegion.scrollTop).toBe(420);
     restored.unmount();
   });
+});
+
+
+it("defaults to plans, keeps standalone alerts functional, and sorts SQLite UTC timestamps with qualified evaluations", async () => {
+  const archived = manualPlan(51, "archived");
+  archived.archived_at = "2026-10-08 14:00:00";
+  const checked = automaticPlan(52);
+  checked.evaluations[0].checked_at = "2026-10-08T13:59:00Z";
+  api.getSetupPlans.mockResolvedValue([asSummary(archived), asSummary(checked)]);
+  api.getSetupPlan.mockImplementation(async (id: number) => id === 51 ? archived : checked);
+  render(<TodayPage />, { wrapper: wrapper() });
+  await screen.findByText("S52");
+  expect(api.getTriggerRules).not.toHaveBeenCalled();
+  expect(screen.queryByText("Setups firing")).toBeNull();
+  fireEvent.click(screen.getByText("Recent activity"));
+  await screen.findByText(/Tracking stopped/);
+  const events = screen.getByRole("list").querySelectorAll("li");
+  expect(events[0].textContent).toContain("S51");
+  expect(events[1].textContent).toContain("S52");
+  expect(events[0].textContent).toContain(new Date("2026-10-08T14:00:00Z").toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }));
+  fireEvent.click(screen.getByRole("button", { name: "Standalone alerts" }));
+  await waitFor(() => expect(api.getTriggerRules).toHaveBeenCalled());
+  expect(api.getTriggerHits).toHaveBeenCalled();
+  expect(screen.queryByText("S52")).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Tracked plans" }));
+  expect(await screen.findByText("S52")).toBeTruthy();
 });

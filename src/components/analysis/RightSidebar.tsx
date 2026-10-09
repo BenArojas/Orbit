@@ -37,14 +37,15 @@ export default function RightSidebar({
   const setActiveTab = useChartStore((state) => state.setRightPanelActiveTab);
 
   return (
-    <div className="flex h-full min-h-0 flex-col overflow-hidden border-l border-[var(--border)] bg-[var(--bg-1)]">
+    <div className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden border-l border-[var(--border)] bg-[var(--bg-1)]">
       <div className="flex border-b border-[var(--border)]">
         {TABS.map((tab) => (
           <button
             key={tab.id}
             onClick={() => setActiveTab(tab.id)}
             data-testid={`tab-${tab.id}`}
-            className={`flex-1 py-2 text-[10px] font-semibold uppercase tracking-wider transition-colors ${
+            aria-pressed={activeTab === tab.id}
+            className={`min-w-0 flex-1 py-3 text-xs font-semibold transition-colors ${
               activeTab === tab.id
                 ? "border-b-2 border-[var(--clr-cyan)] text-[var(--clr-cyan)]"
                 : "text-[var(--text-3)] hover:text-[var(--text-2)]"
@@ -57,6 +58,7 @@ export default function RightSidebar({
           <button
             onClick={onCollapse}
             title="Collapse panel (\\)"
+            aria-label="Close analysis panel"
             className="ml-auto px-2 text-[var(--text-3)] transition-colors hover:text-[var(--clr-cyan)]"
           >
             <ChevronRight size={12} />
@@ -64,7 +66,7 @@ export default function RightSidebar({
         )}
       </div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto p-2">
+      <div className="min-h-0 min-w-0 flex-1 overflow-y-auto p-3">
         {activeTab === "fibonacci" && <FibStackPanel />}
         {activeTab === "watchlists" && (
           <WatchlistTab activeConid={activeConid} activeSymbol={activeSymbol} />

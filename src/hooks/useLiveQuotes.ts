@@ -17,6 +17,7 @@ import { useWebSocket, type WsMessage } from "./useWebSocket";
 
 export interface LiveQuoteTick {
   last: number;
+  receivedAt?: number;
   availability?: string;
   changePct?: number;
   changeAmt?: number;
@@ -104,6 +105,7 @@ export function useLiveQuotes(conids: number[]): Map<number, LiveQuoteTick> {
         if (last == null && !prior) return prev;
         next.set(c, {
           last: last ?? prior!.last,
+          receivedAt: last != null && typeof msg.timestamp === "number" ? msg.timestamp : prior?.receivedAt,
           availability: availability ?? prior?.availability,
           changePct: (msg.change_pct as number | undefined) ?? prior?.changePct,
           changeAmt: (msg.change_amt as number | undefined) ?? prior?.changeAmt,

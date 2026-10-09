@@ -15,18 +15,19 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { renderHook } from "@testing-library/react";
+import { act, renderHook } from "@testing-library/react";
 import { useLiveQuotes } from "../useLiveQuotes";
 
 const mockSubscribe = vi.fn();
 const mockUnsubscribe = vi.fn();
+const mockAddHandler = vi.fn((_handler: (message: Record<string, unknown>) => void) => () => {});
 
 vi.mock("../useWebSocket", () => ({
   useWebSocket: () => ({
     status: "connected",
     subscribe: mockSubscribe,
     unsubscribe: mockUnsubscribe,
-    addHandler: () => () => {},
+    addHandler: mockAddHandler,
   }),
 }));
 
@@ -103,4 +104,12 @@ describe("useLiveQuotes — subscription churn", () => {
     expect(mockUnsubscribe).toHaveBeenCalledWith(320227571);
     expect(mockUnsubscribe).toHaveBeenCalledWith(756733);
   });
+});
+
+it("retains the last price receipt when only feed availability changes", () => {
+  const { result } = renderHook(() => useLiveQuotes([265598]));
+  const handler = mockAddHandler.mock.calls[mockAddHandler.mock.calls.length - 1][0] as (message: Record<string, unknown>) => void;
+  act(() => handler({ type: "market_data", conid: 265598, last: 123, availability: "R", timestamp: 100 }));
+  act(() => handler({ type: "market_data", conid: 265598, availability: "Z", timestamp: 200 }));
+  expect(result.current.get(265598)).toMatchObject({ last: 123, availability: "Z", receivedAt: 100 });
 });

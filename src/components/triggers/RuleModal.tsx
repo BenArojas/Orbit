@@ -22,7 +22,7 @@ import { TemplatePicker } from "./TemplatePicker";
 
 type Scope = "watchlist" | "stock";
 
-const TIMEFRAME_OPTIONS = ["1m", "5m", "15m", "1h", "4h", "1D", "1W", "1M"];
+const TIMEFRAME_OPTIONS = ["1m", "5m", "15m", "30m", "1h", "4h", "1D", "1W", "1M"];
 
 interface Props {
   trigger?: React.ReactNode;
@@ -239,7 +239,7 @@ export function RuleModal({ trigger, initial, onClose }: Props) {
             <div className="grid grid-cols-2 gap-2">
               <div>
                 <label className="mb-1 block text-[10px] text-[var(--text-3)]">
-                  Timeframe
+                  Check timeframe
                 </label>
                 <select
                   value={form.timeframe}

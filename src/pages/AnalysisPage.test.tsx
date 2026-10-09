@@ -36,6 +36,7 @@ vi.mock("react-router-dom", async (importOriginal) => ({
 vi.mock("@/hooks/useChartData", () => ({
   useChartData: () => ({ candles: [], indicators: [], fibonacci: null, liveTick: null, isLoading: false, isFetching: false, error: null, loadMore: vi.fn(), isLoadingMore: false, canLoadMore: false }),
 }));
+vi.mock("@/hooks/useLiveQuotes", () => ({ useLiveQuotes: () => new Map() }));
 vi.mock("@/hooks/useInstrument", () => ({ useInstrument: () => ({ companyName: null }) }));
 vi.mock("@/hooks/useLockedFibs", () => ({ useLockedFibs: vi.fn() }));
 vi.mock("@/components/charts", () => ({
@@ -104,6 +105,7 @@ function planSummary(id: number, lifecycle: "active" | "archived" = "active") {
 
 afterEach(() => {
   cleanup();
+  vi.unstubAllGlobals();
   Object.values(api).forEach((mock) => mock.mockReset());
   navigate.mockReset();
   useCompareStore.getState().exit();
@@ -213,7 +215,7 @@ describe("AnalysisPage hierarchy", () => {
     fireEvent.change(screen.getByLabelText("What are you waiting for?"), { target: { value: "Wait for a close above resistance." } });
     fireEvent.change(screen.getByLabelText("Monitoring mode"), { target: { value: "automatic" } });
     fireEvent.click(screen.getByRole("button", { name: "+ Add condition" }));
-    expect(screen.getByLabelText("Timeframe")).toHaveValue("1D");
+    expect(screen.getByLabelText("Check timeframe")).toHaveValue("1D");
     fireEvent.click(screen.getByRole("button", { name: "Track setup in Today" }));
     await waitFor(() => expect(api.createSetupPlan).toHaveBeenCalledTimes(2));
     expect(api.createSetupPlan.mock.calls[1][0]).toMatchObject({
@@ -284,4 +286,75 @@ describe("AnalysisPage hierarchy", () => {
     expect(api.getSetupPlans).not.toHaveBeenCalled();
     client.clear();
   });
+});
+
+
+it("selects separate plans and creates a new plan explicitly without losing a cancelled dirty draft or changing chart preference", async () => {
+  api.getSetupPlan.mockImplementation(async (id: number) => planDetail(id, "automatic"));
+  api.getSetupPlans.mockResolvedValue([planSummary(32), planSummary(33)]);
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  render(<QueryClientProvider client={client}><AnalysisHarness /></QueryClientProvider>);
+  fireEvent.click(screen.getByRole("button", { name: "Setup" }));
+  await screen.findByRole("option", { name: /#32/ });
+  const picker = screen.getByLabelText("Existing plans for AAA");
+  fireEvent.change(picker, { target: { value: "32" } });
+  await waitFor(() => expect(screen.getByLabelText("What are you waiting for?")).toHaveValue("Plan 32 wait intention"));
+  const preferredTimeframe = useChartStore.getState().timeframe;
+  fireEvent.change(screen.getByLabelText("Check timeframe"), { target: { value: "30m" } });
+  expect(useChartStore.getState().timeframe).toBe(preferredTimeframe);
+  fireEvent.click(screen.getByRole("button", { name: "View 30m check timeframe" }));
+  expect(useChartStore.getState().timeframe).toBe("30m");
+  const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+  fireEvent.click(screen.getByRole("button", { name: "New plan for AAA" }));
+  expect(useNavigationStore.getState().analysisContext.setupPlanId).toBe(32);
+  expect(screen.getByLabelText("Check timeframe")).toHaveValue("30m");
+  fireEvent.change(picker, { target: { value: "33" } });
+  expect(useNavigationStore.getState().analysisContext.setupPlanId).toBe(32);
+  confirm.mockReturnValue(true);
+  fireEvent.click(screen.getByRole("button", { name: "New plan for AAA" }));
+  await waitFor(() => expect(screen.getByLabelText("What are you waiting for?")).toHaveValue(""));
+  expect(useNavigationStore.getState().analysisContext.setupPlanId).toBeNull();
+  fireEvent.change(screen.getByLabelText("Monitoring mode"), { target: { value: "automatic" } });
+  fireEvent.click(screen.getByRole("button", { name: "Add price alert" }));
+  fireEvent.change(screen.getByLabelText("threshold"), { target: { value: "123" } });
+  expect(screen.getByText(/Request review when Price above 123/)).toBeInTheDocument();
+  fireEvent.change(screen.getByLabelText("indicator"), { target: { value: "news_candle" } });
+  expect(screen.getByLabelText("condition")).toHaveValue("fires");
+  fireEvent.change(screen.getByLabelText("indicator"), { target: { value: "rsi" } });
+  expect(screen.getByLabelText("condition")).toHaveValue("above");
+  expect(screen.queryByRole("option", { name: "Fires" })).toBeNull();
+  expect(screen.getByLabelText("threshold")).toHaveValue(null);
+  client.clear();
+});
+
+it("keeps top navigation accessible with the narrow Analysis panel open and protects dirty drafts", async () => {
+  vi.stubGlobal("matchMedia", vi.fn(() => ({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() })));
+  useChartStore.setState({ activeConid: 321, activeSymbol: "AAA", rightPanelCollapsed: false, rightPanelActiveTab: "setup" });
+  useNavigationStore.setState({ activeScreen: "analysis", analysisContext: { returnTo: "screener", setupPlanId: null, conid: 321 }, analysisDraftDirty: false });
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+  const view = render(<QueryClientProvider client={client}>
+    <nav aria-label="Top navigation"><button onClick={() => useNavigationStore.getState().navigate("today")}>Today</button></nav>
+    <AnalysisHarness />
+  </QueryClientProvider>);
+  try {
+    await screen.findByLabelText("What are you waiting for?");
+    const nav = screen.getByRole("navigation", { name: "Top navigation" });
+    expect(nav.closest('[inert], [aria-hidden="true"]')).toBeNull();
+    expect(view.container.contains(screen.getByRole("dialog", { name: "Analysis tools" }))).toBe(true);
+    expect(document.querySelector('[data-slot="dialog-overlay"]')).toBeNull();
+    fireEvent.change(screen.getByLabelText("What are you waiting for?"), { target: { value: "Preserve this draft" } });
+    fireEvent.click(screen.getByRole("button", { name: "Today" }));
+    expect(confirm).toHaveBeenCalledWith("Discard unsaved setup plan changes?");
+    expect(useNavigationStore.getState().activeScreen).toBe("analysis");
+    fireEvent.click(screen.getByRole("button", { name: "Setup" }));
+    expect(await screen.findByLabelText("What are you waiting for?")).toHaveValue("Preserve this draft");
+    confirm.mockReturnValue(true);
+    fireEvent.click(screen.getByRole("button", { name: "Today" }));
+    await screen.findByRole("region", { name: "Tracked setup plans" });
+    expect(useNavigationStore.getState().activeScreen).toBe("today");
+  } finally {
+    confirm.mockRestore();
+    client.clear();
+  }
 });

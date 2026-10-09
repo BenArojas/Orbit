@@ -54,6 +54,8 @@ from services.db import DatabaseService
 from services.ibkr import IBKRService
 from services.indicators import IndicatorService
 from services.moonmarket import MoonMarketService
+from services.rs_leaders import _is_verified_us_stock
+from services.setup_evidence import US_EXTENDED, evidence_is_current
 
 log = logging.getLogger("parallax.scanner")
 
@@ -301,6 +303,7 @@ class ScannerService:
         }
         checked_at = datetime.now(timezone.utc).isoformat()
         evidence_at = None
+        evidence_session_policy = None
         outcome = "failed"
         invalidation_outcome = "failed" if invalidation_condition else None
         values: list[dict] = []
@@ -336,7 +339,26 @@ class ScannerService:
                 evidence_at = datetime.fromtimestamp(
                     evidence_seconds, timezone.utc
                 ).isoformat()
-            if bar is None:
+            definitions = await self.ibkr.security_definitions((plan["conid"],))
+            verified_us = any(
+                _is_verified_us_stock(definition, plan["conid"], plan["symbol"]) is True
+                for definition in definitions
+            )
+            if verified_us:
+                evidence_session_policy = US_EXTENDED
+            checked_at = datetime.now(timezone.utc).isoformat()
+            current = verified_us and evidence_is_current(
+                evidence_at, rule["timeframe"], datetime.fromisoformat(checked_at)
+            )
+            if not current:
+                outcome = "unavailable"
+                failure_code = "stale_evidence" if verified_us and evidence_at else "evidence_unverifiable"
+                failure_message = "Latest candle is stale or its US session freshness cannot be verified."
+                if invalidation_condition:
+                    invalidation_outcome = "unavailable"
+                    invalidation_failure_code = failure_code
+                    invalidation_failure_message = failure_message
+            elif bar is None:
                 outcome = "unavailable"
                 failure_code = "insufficient_history"
                 failure_message = "IBKR returned fewer than two candles for this timeframe."
@@ -416,8 +438,21 @@ class ScannerService:
         if current_scope != scope:
             return
 
+        checked_at = datetime.now(timezone.utc).isoformat()
+        if (outcome in {"matched", "not_matched"} or invalidation_outcome in {"matched", "not_matched"}) and not evidence_is_current(
+            evidence_at, rule["timeframe"], datetime.fromisoformat(checked_at)
+        ):
+            outcome = "unavailable"
+            failure_code = "stale_evidence"
+            failure_message = "Market evidence became stale before the check completed."
+            if invalidation_condition:
+                invalidation_outcome = "unavailable"
+                invalidation_failure_code = failure_code
+                invalidation_failure_message = failure_message
+
         await self.db.record_setup_plan_evaluation(
             plan_id=plan["id"],
+            evidence_session_policy=evidence_session_policy,
             owner_account_id=scope["account_id"],
             account_mode=scope["account_mode"],
             plan_revision=plan["revision"],
@@ -556,7 +591,7 @@ class ScannerService:
 
         Returns None when there are fewer than 2 candles available.
         """
-        candles = await self._fetch_candles(conid, rule.get("timeframe", "1D"))
+        candles = await self._fetch_candles(conid, rule.get("timeframe", "1D"), fresh=include_evidence)
         evidence_time = candles[-1].time if candles else None
         if len(candles) < 2:
             log.debug(
@@ -642,14 +677,15 @@ class ScannerService:
 
         return (bar, evidence_time) if include_evidence else bar
 
-    async def _fetch_candles(self, conid: int, timeframe: str = "1D") -> list[CandleData]:
+    async def _fetch_candles(self, conid: int, timeframe: str = "1D", *, fresh: bool = False) -> list[CandleData]:
         """
         Fetch OHLCV history for trigger evaluation.
 
         Uses the same timeframe-to-history mapping as the Analysis chart.
         """
-        spec = TIMEFRAME_SPEC.get(timeframe, TIMEFRAME_SPEC["1D"])
-        raw = await self.ibkr.history(conid, period=spec.period, bar=spec.bar)
+        spec = TIMEFRAME_SPEC[timeframe]
+        history = self.ibkr.history_fresh if fresh else self.ibkr.history
+        raw = await history(conid, period=spec.period, bar=spec.bar, outside_rth=True)
         bars = raw.get("data", [])
         return [
             CandleData(

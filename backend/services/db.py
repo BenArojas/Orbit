@@ -44,6 +44,7 @@ from typing import Any
 _ET = ZoneInfo("America/New_York")
 
 from config import SQLITE_DB_PATH
+from services.setup_evidence import US_EXTENDED, evidence_is_current, setup_timestamps
 
 log = logging.getLogger("parallax.db")
 
@@ -530,6 +531,7 @@ class DatabaseService:
             ("rule_evaluations", "invalidation_outcome", "TEXT"),
             ("rule_evaluations", "invalidation_failure_code", "TEXT"),
             ("rule_evaluations", "invalidation_failure_message", "TEXT"),
+            ("rule_evaluations", "evidence_session_policy", "TEXT"),
         )
         for table, column, declaration in additions:
             columns = {
@@ -895,6 +897,7 @@ class DatabaseService:
             )
         if latest is not None:
             latest["condition_values"] = _json.loads(latest["condition_values"])
+            setup_timestamps(latest)
 
         count = 0
         if rule is not None:
@@ -925,6 +928,8 @@ class DatabaseService:
                 elif (
                     latest["outcome"] in {"matched", "not_matched"}
                     and latest["invalidation_outcome"] not in {"failed", "unavailable"}
+                    and latest["evidence_session_policy"] == US_EXTENDED
+                    and evidence_is_current(latest["evidence_at"], rule["timeframe"], datetime.now(timezone.utc))
                 ):
                     health = "healthy"
                 else:
@@ -938,7 +943,7 @@ class DatabaseService:
         plan["unreviewed_match_count"] = int(count)
         plan["monitoring_health"] = health
         plan["monitoring_due_at"] = due_at
-        return plan
+        return setup_timestamps(plan)
 
     async def list_setup_plans(self, owner_account_id: str, account_mode: str) -> list[dict]:
         def _do():
@@ -972,7 +977,7 @@ class DatabaseService:
                 (plan_id,),
             ).fetchall()
             plan["evaluations"] = [
-                {**dict(e), "condition_values": _json.loads(e["condition_values"])}
+                setup_timestamps({**dict(e), "condition_values": _json.loads(e["condition_values"])})
                 for e in evaluations
             ]
             rule = plan["rule"]
@@ -985,7 +990,7 @@ class DatabaseService:
                 (plan_id, rule["id"], plan["revision"], rule["revision"]),
             ).fetchall() if rule is not None else []
             plan["unreviewed_matches"] = [
-                {**dict(e), "condition_values": _json.loads(e["condition_values"])}
+                setup_timestamps({**dict(e), "condition_values": _json.loads(e["condition_values"])})
                 for e in outstanding
             ]
             hits = self._conn.execute(
@@ -1279,6 +1284,7 @@ class DatabaseService:
         invalidation_outcome: str | None = None,
         invalidation_failure_code: str | None = None,
         invalidation_failure_message: str | None = None,
+        evidence_session_policy: str | None = None,
     ) -> dict | None:
         import json as _json
 
@@ -1312,12 +1318,12 @@ class DatabaseService:
                     """INSERT INTO rule_evaluations
                         (plan_id, plan_revision, rule_id, rule_revision, outcome, invalidation_outcome,
                         invalidation_failure_code, invalidation_failure_message,
-                        checked_at, evidence_at, condition_values, failure_code, failure_message)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        checked_at, evidence_at, condition_values, failure_code, failure_message, evidence_session_policy)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (plan_id, plan_revision, rule_id, rule_revision, outcome, invalidation_outcome,
                      invalidation_failure_code, invalidation_failure_message,
                      checked_at, evidence_at, _json.dumps(condition_values),
-                     failure_code, failure_message),
+                     failure_code, failure_message, evidence_session_policy),
                 )
                 evaluation_id = int(cur.lastrowid)
                 hit_id = None

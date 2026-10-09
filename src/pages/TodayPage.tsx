@@ -1,18 +1,3 @@
-/**
- * Today page — daily trading cockpit.
- *
- * Layout (full-height grid):
- *   ┌────────────────────────────────────────────────────────────┐
- *   │  MarketPulse (54px — the original market-indices bar)       │
- *   ├──────────────────────────────────────┬─────────────────────┤
- *   │  TodayHits (filter pills + grid)     │  WatchlistSidebar   │
- *   │  TodayTimeline (scrollable feed)     │  TodayRulesPanel    │
- *   └──────────────────────────────────────┴─────────────────────┘
- *
- * All data composition lives in the child components — this page is layout
- * only.
- */
-
 import { useLayoutEffect, useRef } from "react";
 import { MarketPulse } from "@/components/dashboard";
 import {
@@ -21,7 +6,6 @@ import {
   TodayTimeline,
   TodayRulesPanel,
 } from "@/components/today";
-import WatchlistSidebar from "@/components/watchlist/WatchlistSidebar";
 import { useNavigationStore } from "@/store/navigation";
 
 export default function TodayPage() {
@@ -30,12 +14,16 @@ export default function TodayPage() {
   const restorePendingRef = useRef(false);
   const cancelRestoreRef = useRef<() => void>(() => {});
   const setTodayContext = useNavigationStore((state) => state.setTodayContext);
+  const view = useNavigationStore((state) => state.todayContext.view);
 
   useLayoutEffect(() => {
     const node = contentRef.current;
     const body = contentBodyRef.current;
-    const target = useNavigationStore.getState().todayContext.scrollTop;
-    if (!node || !body || target <= 0) return;
+    const context = useNavigationStore.getState().todayContext;
+    const target = view === "alerts" ? context.alertsScrollTop : context.scrollTop;
+    if (!node || !body) return;
+    node.scrollTop = 0;
+    if (target <= 0) return;
 
     restorePendingRef.current = true;
     const restore = () => {
@@ -59,7 +47,7 @@ export default function TodayPage() {
       cancelRestoreRef.current();
       cancelRestoreRef.current = () => {};
     };
-  }, []);
+  }, [view]);
 
   // Flex column (not a grid) at the root: MarketPulse carries a baked-in
   // `col-span-2` from its dashboard origins. In a grid that span conjures a
@@ -69,7 +57,10 @@ export default function TodayPage() {
   return (
     <div className="flex h-full flex-col overflow-hidden">
       <MarketPulse />
-      <div className="grid min-h-0 flex-1 grid-cols-[1fr_280px] overflow-hidden">
+      <div role="group" aria-label="Today views" className="flex shrink-0 gap-2 border-b border-border px-4 py-2">
+        {([["plans", "Tracked plans"], ["alerts", "Standalone alerts"]] as const).map(([value, label]) => <button key={value} type="button" aria-pressed={view === value} onClick={() => setTodayContext({ view: value })} className={`rounded border px-3 py-2 text-sm font-medium ${view === value ? "border-[var(--clr-cyan)] bg-[var(--bg-3)] text-[var(--text-1)]" : "border-border text-[var(--text-2)]"}`}>{label}</button>)}
+      </div>
+      <div className="flex min-h-0 flex-1 overflow-hidden">
         <div
           ref={contentRef}
           role="region"
@@ -77,33 +68,26 @@ export default function TodayPage() {
           onScroll={(event) => {
             if (restorePendingRef.current) return;
             const scrollTop = event.currentTarget.scrollTop;
-            if (scrollTop !== useNavigationStore.getState().todayContext.scrollTop) {
-              setTodayContext({ scrollTop });
+            const field = view === "alerts" ? "alertsScrollTop" : "scrollTop";
+            if (scrollTop !== useNavigationStore.getState().todayContext[field]) {
+              setTodayContext({ [field]: scrollTop });
             }
           }}
           onWheel={() => cancelRestoreRef.current()}
           onTouchStart={() => cancelRestoreRef.current()}
           onPointerDown={() => cancelRestoreRef.current()}
           onKeyDown={() => cancelRestoreRef.current()}
-          className="overflow-y-auto p-4"
+          className="min-w-0 flex-1 overflow-y-auto p-4"
         >
           <div ref={contentBodyRef} className="flex flex-col gap-3">
-            <TodaySetupPlans />
-            <TodayHits />
-            <TodayTimeline />
+            {view === "plans" ? <TodaySetupPlans /> : <>
+              <h1 className="text-base font-semibold text-[var(--text-1)]">Standalone alerts</h1>
+              <TodayRulesPanel />
+              <TodayHits />
+              <TodayTimeline />
+            </>}
           </div>
         </div>
-        <aside className="flex min-h-0 flex-col overflow-hidden border-l border-border bg-[var(--bg-1)]">
-          {/* Watchlist takes the flexible top portion */}
-          <div className="min-h-0 flex-1 overflow-hidden border-b border-border">
-            <WatchlistSidebar />
-          </div>
-          {/* Rules panel gets a guaranteed slice with its own scroll so it
-              never collapses to just its header */}
-          <div className="flex max-h-[45%] min-h-[140px] flex-col overflow-y-auto">
-            <TodayRulesPanel />
-          </div>
-        </aside>
       </div>
     </div>
   );
