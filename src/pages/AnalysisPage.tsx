@@ -34,7 +34,7 @@ import { useInstrument } from "@/hooks/useInstrument";
 import { useLockedFibs } from "@/hooks/useLockedFibs";
 import { IndicatorToolbar } from "@/components/indicators";
 import RightSidebar from "@/components/analysis/RightSidebar";
-import { useSetupPlanEditor } from "@/components/analysis/SetupPlanPanel";
+import { useSetupPlanEditor } from "@/components/analysis/useSetupPlanEditor";
 import { SHORTCUT_MAP } from "@/components/charts/drawingsRegistry";
 import { useCompareStore } from "@/store/compare";
 import { CompareView } from "@/components/compare";

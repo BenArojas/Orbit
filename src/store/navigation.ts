@@ -33,21 +33,17 @@ export interface AnalysisContext {
   returnTo: Screen;
   setupPlanId: number | null;
   conid: number | null;
+  triggerHitId?: number | null;
 }
-
-export type TodayPlanFilter = "all" | "review" | "watching";
-export type TodayHitFilter =
-  | { kind: "all" }
-  | { kind: "watchlist"; name: string }
-  | { kind: "high-conf" };
 
 export interface TodayContext {
   view: "plans" | "alerts";
   alertsScrollTop: number;
-  planFilter: TodayPlanFilter;
-  hitFilter: TodayHitFilter;
   selectedPlanId: number | null;
   scrollTop: number;
+  watchingOpen?: boolean;
+  planHistoryOpen?: boolean;
+  alertHistoryOpen?: boolean;
 }
 
 const INITIAL_NAMES_CONTEXT: NamesContext = {
@@ -64,8 +60,6 @@ const INITIAL_NAMES_CONTEXT: NamesContext = {
 const INITIAL_TODAY_CONTEXT: TodayContext = {
   view: "plans",
   alertsScrollTop: 0,
-  planFilter: "all",
-  hitFilter: { kind: "all" },
   selectedPlanId: null,
   scrollTop: 0,
 };
@@ -78,7 +72,7 @@ interface NavigationState {
   analysisDraftDirty: boolean;
 
   navigate: (screen: Screen) => void;
-  navigateToAnalysis: (conid: number, symbol?: string, setupPlanId?: number) => boolean;
+  navigateToAnalysis: (conid: number, symbol?: string, setupPlanId?: number, triggerHitId?: number) => boolean;
   setAnalysisSetupPlanId: (id: number | null) => void;
   setAnalysisDraftDirty: (dirty: boolean) => void;
   resetAnalysisContext: () => void;
@@ -107,7 +101,7 @@ export const useNavigationStore = create<NavigationState>()((set, get) => ({
     set({
       activeScreen: screen,
       ...(state.activeScreen === "analysis" && screen !== "analysis"
-        ? { analysisDraftDirty: false, analysisContext: { ...state.analysisContext, setupPlanId: null, conid: null } }
+        ? { analysisDraftDirty: false, analysisContext: { ...state.analysisContext, setupPlanId: null, triggerHitId: null, conid: null } }
         : {}),
     });
   },
@@ -135,31 +129,41 @@ export const useNavigationStore = create<NavigationState>()((set, get) => ({
     analysisDraftDirty: false,
   }),
 
-  navigateToAnalysis: (conid, symbol = "", setupPlanId) => {
+  navigateToAnalysis: (conid, symbol = "", setupPlanId, triggerHitId) => {
     const state = get();
     const nextPlanId = setupPlanId ?? null;
     const sameTarget = state.activeScreen === "analysis" &&
-      state.analysisContext.setupPlanId === nextPlanId && state.analysisContext.conid === conid;
+      state.analysisContext.setupPlanId === nextPlanId && state.analysisContext.conid === conid &&
+      (state.analysisContext.triggerHitId ?? null) === (triggerHitId ?? null);
     if (
       state.activeScreen === "analysis" &&
-      (state.analysisContext.setupPlanId !== nextPlanId || state.analysisContext.conid !== conid) &&
+      !sameTarget &&
       state.analysisDraftDirty &&
       typeof window !== "undefined" &&
       !window.confirm("Discard unsaved setup plan changes?")
     ) return false;
     // Import chart store dynamically to avoid circular deps
     import("./chart").then(({ useChartStore }) => {
+      const current = get();
+      if (current.activeScreen !== "analysis" || current.analysisContext.conid !== conid || current.analysisContext.setupPlanId !== nextPlanId || (current.analysisContext.triggerHitId ?? null) !== (triggerHitId ?? null)) return;
       useChartStore.getState().setActiveConid(conid);
       if (symbol) {
         useChartStore.getState().setActiveSymbol(symbol);
       }
-      if (setupPlanId != null) useChartStore.getState().setRightPanelActiveTab("setup");
+      if (setupPlanId != null || triggerHitId != null) {
+        useChartStore.getState().setRightPanelActiveTab("setup");
+        if (state.activeScreen === "today" && useChartStore.getState().rightPanelCollapsed) useChartStore.getState().toggleRightPanel();
+      }
+      if (state.activeScreen === "today") void import("./compare").then(({ useCompareStore }) => {
+        if (get().activeScreen === "analysis" && get().analysisContext.conid === conid) useCompareStore.getState().exit();
+      });
     });
     set((current) => ({
       activeScreen: "analysis",
       analysisContext: {
         returnTo: current.activeScreen === "analysis" ? current.analysisContext.returnTo : current.activeScreen,
         setupPlanId: nextPlanId,
+        triggerHitId: triggerHitId ?? null,
         conid,
       },
       analysisDraftDirty: sameTarget ? current.analysisDraftDirty : false,

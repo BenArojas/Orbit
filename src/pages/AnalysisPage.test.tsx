@@ -249,13 +249,17 @@ describe("AnalysisPage hierarchy", () => {
     expect(await screen.findByText("Setup saved.")).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Open Today" }));
-    expect(await screen.findByText("2", { exact: true })).toBeInTheDocument();
+    await screen.findByText("Watching · 2");
+    fireEvent.click(screen.getByText("Watching · 2"));
     expect(screen.queryByRole("button", { name: "Open AAA Breakout plan 34" })).not.toBeInTheDocument();
     const otherPlan = await screen.findByRole("button", { name: "Open AAA Breakout plan 33" });
     expect(screen.getByRole("button", { name: "Open AAA Breakout plan 32" })).toBeInTheDocument();
     fireEvent.click(otherPlan);
     await waitFor(() => expect(api.getSetupPlan).toHaveBeenCalledWith(33, expect.any(AbortSignal)));
     expect(await screen.findByRole("button", { name: "Back to Today" })).toBeInTheDocument();
+    await screen.findByText("Plan 33 wait intention");
+    fireEvent.click(screen.getByText("More"));
+    fireEvent.click(screen.getByRole("button", { name: "Edit plan" }));
     expect(screen.getByLabelText("What are you waiting for?")).toHaveValue("Plan 33 wait intention");
     fireEvent.change(screen.getByLabelText("What are you waiting for?"), { target: { value: "Unsaved plan 33 edit" } });
     expect(useNavigationStore.getState().navigateToAnalysis(321, "AAA", 32)).toBe(false);

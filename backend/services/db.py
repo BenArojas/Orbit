@@ -284,6 +284,15 @@ class DatabaseService:
                 archived_at             TEXT
             );
 
+            CREATE TABLE IF NOT EXISTS trigger_match_state (
+                rule_id INTEGER NOT NULL REFERENCES trigger_rules(id) ON DELETE CASCADE,
+                rule_revision INTEGER NOT NULL,
+                conid INTEGER NOT NULL,
+                matched INTEGER NOT NULL CHECK (matched IN (0, 1)),
+                episode INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (rule_id, rule_revision, conid)
+            );
+
             CREATE TABLE IF NOT EXISTS trigger_rule_revisions (
                 rule_id         INTEGER NOT NULL REFERENCES trigger_rules(id) ON DELETE CASCADE,
                 revision        INTEGER NOT NULL,
@@ -1437,12 +1446,43 @@ class DatabaseService:
         source_watchlist: str | None = None,
         target_watchlist: str | None = None,
         expires_at: str | None = None,
+        repeat_on_transition: bool = False,
     ) -> int | None:
         """Insert a hit. Returns hit id, or None if dedup_key already existed."""
         import json as _json
         def _do():
             assert self._conn is not None
             with self._conn:
+                hit_key = dedup_key
+                episode = 0
+                if repeat_on_transition:
+                    rule = self._conn.execute(
+                        "SELECT id FROM trigger_rules WHERE id=? AND revision=? AND enabled=1 "
+                        "AND setup_plan_id IS NULL AND ibkr_mirror_target IS NULL",
+                        (rule_id, rule_revision),
+                    ).fetchone()
+                    if not rule:
+                        return None
+                    state = self._conn.execute(
+                        "SELECT matched, episode FROM trigger_match_state WHERE rule_id=? AND rule_revision=? AND conid=?",
+                        (rule_id, rule_revision, conid),
+                    ).fetchone()
+                    if state is None:
+                        # Existing alerts stay quiet until a complete check observes the condition clear.
+                        prior = self._conn.execute(
+                            "SELECT 1 FROM trigger_hits WHERE rule_id=? AND conid=? AND COALESCE(rule_revision, 1)=? LIMIT 1",
+                            (rule_id, conid, rule_revision),
+                        ).fetchone()
+                        self._conn.execute(
+                            "INSERT INTO trigger_match_state (rule_id, rule_revision, conid, matched, episode) VALUES (?, ?, ?, ?, 0)",
+                            (rule_id, rule_revision, conid, int(prior is not None)),
+                        )
+                        if prior:
+                            return None
+                    elif state["matched"]:
+                        return None
+                    episode = (state["episode"] if state else 0) + 1
+                    hit_key = f"{rule_id}:r{rule_revision}:{conid}:episode:{episode}"
                 try:
                     cur = self._conn.execute(
                         """INSERT INTO trigger_hits
@@ -1451,14 +1491,32 @@ class DatabaseService:
                             watchlist_name, source_watchlist, target_watchlist, expires_at)
                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                         (rule_id, rule_revision, rule_evaluation_id, conid, symbol,
-                         dedup_key, _json.dumps(condition_values),
+                         hit_key, _json.dumps(condition_values),
                          watchlist_name, source_watchlist, target_watchlist, expires_at),
                     )
+                    if repeat_on_transition:
+                        self._conn.execute(
+                            "UPDATE trigger_match_state SET matched=1, episode=? WHERE rule_id=? AND rule_revision=? AND conid=?",
+                            (episode, rule_id, rule_revision, conid),
+                        )
                     return cur.lastrowid
                 except sqlite3.IntegrityError:
                     # UNIQUE(dedup_key) — already fired today for this rule+conid+interval
                     return None
         return await self._run_write(_do)
+
+    async def clear_trigger_match(self, rule_id: int, rule_revision: int, conid: int) -> None:
+        def _do():
+            assert self._conn is not None
+            with self._conn:
+                self._conn.execute(
+                    "INSERT INTO trigger_match_state (rule_id, rule_revision, conid, matched, episode) "
+                    "SELECT id, revision, ?, 0, 0 FROM trigger_rules WHERE id=? AND revision=? AND enabled=1 "
+                    "AND setup_plan_id IS NULL AND ibkr_mirror_target IS NULL "
+                    "ON CONFLICT(rule_id, rule_revision, conid) DO UPDATE SET matched=0",
+                    (conid, rule_id, rule_revision),
+                )
+        await self._run_write(_do)
 
     async def get_trigger_hits(
         self,
@@ -1506,9 +1564,11 @@ class DatabaseService:
             assert self._conn is not None
             with self._conn:
                 cur = self._conn.execute(
-                    "UPDATE trigger_hits SET dismissed_at=datetime('now') WHERE id=? "
+                    "UPDATE trigger_hits SET dismissed_at=datetime('now') WHERE id<=? "
+                    "AND rule_id=(SELECT rule_id FROM trigger_hits WHERE id=?) "
+                    "AND conid=(SELECT conid FROM trigger_hits WHERE id=?) "
                     "AND rule_id IN (SELECT id FROM trigger_rules WHERE setup_plan_id IS NULL)",
-                    (hit_id,),
+                    (hit_id, hit_id, hit_id),
                 )
                 return cur.rowcount > 0
         return await self._run_write(_do)

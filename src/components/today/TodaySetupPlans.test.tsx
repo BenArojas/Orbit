@@ -5,6 +5,8 @@ import { TodaySetupPlans } from "./TodaySetupPlans";
 import TodayPage from "@/pages/TodayPage";
 import { useAccountStore } from "@/orbit/accountContext";
 import { useNavigationStore } from "@/store/navigation";
+import { SetupPlanPanel } from "@/components/analysis/SetupPlanPanel";
+import { useSetupPlanEditor } from "@/components/analysis/useSetupPlanEditor";
 
 const { api, accountContext } = vi.hoisted(() => ({
   api: { getTriggerRules: vi.fn(), getTriggerHits: vi.fn(), getSetupPlans: vi.fn(), getSetupPlan: vi.fn(), reviewSetupPlan: vi.fn(), archiveSetupPlan: vi.fn() },
@@ -90,7 +92,7 @@ beforeEach(() => {
     activeScreen: "today",
     namesContext: { ...state.namesContext, brokerSessionEpoch: 0 },
     analysisContext: { returnTo: "screener", setupPlanId: null, conid: null },
-    todayContext: { ...state.todayContext, view: "plans", alertsScrollTop: 0, planFilter: "all", hitFilter: { kind: "all" }, selectedPlanId: null, scrollTop: 0 },
+    todayContext: { ...state.todayContext, view: "plans", alertsScrollTop: 0, watchingOpen: false, planHistoryOpen: false, alertHistoryOpen: false, selectedPlanId: null, scrollTop: 0 },
     analysisDraftDirty: false,
   }));
   useAccountStore.setState({
@@ -109,6 +111,15 @@ afterEach(() => {
   accountContext.refetchAccounts.mockReset();
 });
 
+function PlanAnalysis() {
+  const context = useNavigationStore((state) => state.analysisContext);
+  const editor = useSetupPlanEditor(context.conid);
+  return <SetupPlanPanel conid={context.conid} symbol={editor.plan?.symbol ?? ""} editor={editor} />;
+}
+function ReviewHarness() {
+  return useNavigationStore((state) => state.activeScreen) === "analysis" ? <PlanAnalysis /> : <TodaySetupPlans />;
+}
+
 describe("Today setup plans", () => {
   it("refreshes persisted plan state while Today remains mounted", async () => {
     const active = automaticPlan(30);
@@ -122,136 +133,96 @@ describe("Today setup plans", () => {
     const refresh = interval.mock.calls.find(([, delay]) => delay === 30_000)?.[0];
     expect(refresh).toBeDefined();
     act(() => refresh?.());
+    act(() => useNavigationStore.getState().setTodayContext({ watchingOpen: true }));
     expect(await screen.findByText("S30")).toBeTruthy();
     expect(api.getSetupPlans).toHaveBeenCalledTimes(2);
     view.unmount();
   });
 
-  it("keeps review, archive, revision, reconnect, and navigation state tied to persisted plans", async () => {
-    const alert = automaticPlan(21, { review: true });
-    const revisedAlert = automaticPlan(25, { review: true });
-    const manual = manualPlan(22);
-    const old = automaticPlan(23, { oldRevision: true });
-    const reviewed = automaticPlan(21, { review: true });
-    reviewed.unreviewed_match_count = 0;
-    reviewed.evaluations.find((item) => item.outcome === "matched")!.reviewed_at = "2026-10-07T11:00:00Z";
-    const archivedManual = manualPlan(22, "archived");
-    const initial = [alert, revisedAlert, manual, old].map(asSummary);
-    api.getSetupPlans.mockResolvedValueOnce(initial).mockResolvedValueOnce([asSummary(reviewed), asSummary(revisedAlert), asSummary(manual), asSummary(old)]).mockResolvedValue([asSummary(revisedAlert), asSummary(archivedManual), asSummary(old)]);
-    api.getSetupPlan.mockImplementation(async (id: number) => id === 21 ? alert : id === 25 ? revisedAlert : id === 22 ? archivedManual : old);
-    api.reviewSetupPlan.mockRejectedValueOnce(new Error("review unavailable")).mockResolvedValue(reviewed);
-    api.archiveSetupPlan.mockRejectedValueOnce(new Error("archive unavailable")).mockResolvedValue(archivedManual);
-    const Wrapper = wrapper();
-    const view = render(<TodaySetupPlans />, { wrapper: Wrapper });
-
-    await screen.findByText("S21");
-    expect(screen.getAllByText(/Check failed/).length).toBeGreaterThan(0);
-    expect(screen.getAllByText("Monitoring unavailable").length).toBeGreaterThan(0);
-    expect(screen.getByText("Manual review")).toBeTruthy();
-    expect(screen.getByText("Review this plan in Analysis when you are ready.")).toBeTruthy();
-
-    fireEvent.click(screen.getByRole("button", { name: "Review chart for S21 Breakout plan 21" }));
+  it("reviews the exact plan in Analysis, returns to Watching, and preserves edits, archive history and reconnect state", async () => {
+    const alert = automaticPlan(21, { review: true }), other = automaticPlan(25, { review: true });
+    const manual = manualPlan(22), old = automaticPlan(23, { oldRevision: true });
+    const reviewed = { ...alert, unreviewed_match_count: 0, unreviewed_matches: [], evaluations: alert.evaluations.map((item) => ({ ...item, reviewed_at: "2026-10-07T11:00:00Z" })) };
+    const archived = manualPlan(22, "archived");
+    let plans = [alert, other, manual, old];
+    api.getSetupPlans.mockImplementation(async () => plans.map(asSummary));
+    api.getSetupPlan.mockImplementation(async (id: number) => id === 21 ? alert : id === 25 ? other : id === 22 ? manual : old);
+    api.reviewSetupPlan.mockRejectedValueOnce(new Error("Review was not saved")).mockImplementation(async () => { plans = [reviewed, other, manual, old]; return reviewed; });
+    api.archiveSetupPlan.mockRejectedValueOnce(new Error("Tracking could not be stopped")).mockImplementation(async () => { plans = [reviewed, other, archived, old]; return archived; });
+    render(<ReviewHarness />, { wrapper: wrapper() });
+    await screen.findByRole("button", { name: "Open S21 Breakout plan 21" });
+    expect(screen.queryByRole("group", { name: "Filter tracked setups" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Open S22 Breakout plan 22" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Open S21 Breakout plan 21" }));
     expect(useNavigationStore.getState().analysisContext).toMatchObject({ returnTo: "today", setupPlanId: 21, conid: 1021 });
-    expect(api.reviewSetupPlan).not.toHaveBeenCalled();
-    act(() => useNavigationStore.getState().navigate("today"));
-
-    fireEvent.click(screen.getAllByRole("button", { name: "Review alert" })[0]);
     await screen.findByRole("button", { name: "Keep watching" });
+    expect(api.reviewSetupPlan).not.toHaveBeenCalled();
+    expect(screen.getByText(/Monitoring unavailable/)).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Keep watching" }));
-    expect(await screen.findByText("The review was not saved.")).toBeTruthy();
+    await screen.findByRole("alert");
     fireEvent.click(screen.getByRole("button", { name: "Keep watching" }));
-    await waitFor(() => expect(api.reviewSetupPlan).toHaveBeenCalledTimes(2));
-    await waitFor(() => expect(within(screen.getByRole("region", { name: "Watching" })).getByText("S21")).toBeTruthy());
-    expect(document.activeElement).toBe(screen.getByRole("button", { name: "All active" }));
+    await waitFor(() => expect(useNavigationStore.getState().activeScreen).toBe("today"));
+    expect(api.reviewSetupPlan).toHaveBeenLastCalledWith(21, [210]);
+    expect(await screen.findByRole("button", { name: "Open S21 Breakout plan 21" })).toBeTruthy();
+    expect(useNavigationStore.getState().todayContext.watchingOpen).toBe(true);
 
-    const revisedRow = screen.getByText("S25").closest("article")!;
-    fireEvent.click(within(revisedRow).getByRole("button", { name: "Review alert" }));
-    await screen.findByRole("button", { name: "Revise plan" });
-    fireEvent.click(screen.getByRole("button", { name: "Revise plan" }));
-    expect(useNavigationStore.getState().analysisContext).toMatchObject({ returnTo: "today", setupPlanId: 25, conid: 1025 });
-    expect(api.reviewSetupPlan).toHaveBeenCalledTimes(2);
+    fireEvent.click(screen.getByRole("button", { name: "Open S25 Breakout plan 25" }));
+    await screen.findByRole("button", { name: "Keep watching" });
+    fireEvent.click(screen.getByText("More"));
+    fireEvent.click(screen.getByRole("button", { name: "Edit plan" }));
+    expect(screen.getByLabelText("What are you waiting for?")).toHaveValue(other.waiting_intention);
+    fireEvent.click(screen.getByRole("button", { name: "Cancel editing" }));
     act(() => useNavigationStore.getState().navigate("today"));
 
-    fireEvent.click(screen.getByRole("button", { name: "Watching" }));
-    const manualRow = screen.getByText("S22").closest("article")!;
-    vi.mocked(window.confirm).mockReturnValueOnce(false);
-    fireEvent.click(within(manualRow).getByRole("button", { name: "Stop tracking" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Open S22 Breakout plan 22" }));
+    await screen.findByText("Manual review · no automatic condition.");
+    fireEvent.click(screen.getByText("More"));
+    fireEvent.click(screen.getByRole("button", { name: "Stop tracking" }));
+    const archiveDialog = await screen.findByRole("dialog");
+    fireEvent.click(within(archiveDialog).getByRole("button", { name: "Cancel" }));
     expect(api.archiveSetupPlan).not.toHaveBeenCalled();
-    fireEvent.click(within(manualRow).getByRole("button", { name: "Stop tracking" }));
-    expect(await screen.findByText("Tracking could not be stopped. Plan history is unchanged.")).toBeTruthy();
-    fireEvent.click(within(screen.getByText("S22").closest("article")!).getByRole("button", { name: "Stop tracking" }));
-    await waitFor(() => expect(api.archiveSetupPlan).toHaveBeenCalledTimes(2));
-    await waitFor(() => expect(within(screen.getByRole("region", { name: "Watching" })).queryByText("S22")).toBeNull());
-    expect(document.activeElement).toBe(screen.getByRole("button", { name: "Watching" }));
-
-    fireEvent.click(screen.getByText("Recent activity"));
+    fireEvent.click(screen.getByRole("button", { name: "Stop tracking" }));
+    fireEvent.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Stop tracking" }));
+    await screen.findByRole("alert");
+    fireEvent.click(screen.getByRole("button", { name: "Stop tracking" }));
+    await waitFor(() => expect(useNavigationStore.getState().activeScreen).toBe("today"));
+    expect(screen.queryByRole("button", { name: "Open S22 Breakout plan 22" })).toBeNull();
+    api.getSetupPlan.mockImplementation(async (id: number) => id === 22 ? archived : id === 23 ? old : id === 25 ? other : reviewed);
+    fireEvent.click(screen.getByText("History"));
     await screen.findByText("Not a current match");
-
-    act(() => {
-      useNavigationStore.getState().setTodayContext({ planFilter: "watching" });
-      useNavigationStore.getState().setTodayContext({ selectedPlanId: 25 });
-    });
-    view.unmount();
-    const remounted = render(<TodaySetupPlans />, { wrapper: wrapper() });
-    expect(screen.getByRole("button", { name: "Watching" }).getAttribute("aria-pressed")).toBe("true");
-    expect(useNavigationStore.getState().todayContext.selectedPlanId).toBe(25);
-    await waitFor(() => expect(within(screen.getByRole("region", { name: "Watching" })).getByText("S23")).toBeTruthy());
-
-    const callsBeforeReconnect = api.getSetupPlans.mock.calls.length;
-    api.getSetupPlans.mockResolvedValueOnce([asSummary(automaticPlan(29))]);
-    act(() => useNavigationStore.setState((state) => ({ namesContext: { ...state.namesContext, brokerSessionEpoch: state.namesContext.brokerSessionEpoch + 1 } })));
-    await waitFor(() => {
-      expect(api.getSetupPlans.mock.calls.length).toBeGreaterThan(callsBeforeReconnect);
-      expect(within(screen.getByRole("region", { name: "Watching" })).getByText("S29")).toBeTruthy();
-    });
-    remounted.unmount();
+    await screen.findByText(/Tracking stopped/);
+    api.getSetupPlans.mockResolvedValue([asSummary(automaticPlan(29))]);
+    act(() => useNavigationStore.getState().resetNamesBrokerContext());
+    expect(await screen.findByRole("button", { name: "Open S29 Breakout plan 29" })).toBeTruthy();
   });
 
-  it("ignores delayed review and archive completions from an older session scope", async () => {
-    const first = automaticPlan(31, { review: true });
-    const second = automaticPlan(32, { review: true });
-    const third = automaticPlan(33, { review: true });
-    const reviewed = automaticPlan(31);
-    const archived = automaticPlan(32, { review: true, lifecycle: "archived" });
+  it("ignores delayed review and archive responses after the session or opened plan changes", async () => {
+    const first = automaticPlan(31, { review: true }), second = automaticPlan(32, { review: true }), third = automaticPlan(33, { review: true });
     let resolveReview!: (plan: ReturnType<typeof automaticPlan>) => void;
     let resolveArchive!: (plan: ReturnType<typeof automaticPlan>) => void;
-    api.getSetupPlans.mockResolvedValue([asSummary(first), asSummary(second), asSummary(third)]);
+    api.getSetupPlans.mockResolvedValue([first, second, third].map(asSummary));
     api.getSetupPlan.mockImplementation(async (id: number) => id === 31 ? first : id === 32 ? second : third);
     api.reviewSetupPlan.mockImplementation(() => new Promise((resolve) => { resolveReview = resolve; }));
     api.archiveSetupPlan.mockImplementation(() => new Promise((resolve) => { resolveArchive = resolve; }));
     const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 60_000 } } });
-    render(<TodaySetupPlans />, { wrapper: wrapper(client) });
-    await screen.findByText("S31");
-    const firstRow = screen.getByText("S31").closest("article")!;
-    fireEvent.click(within(firstRow).getByRole("button", { name: "Review alert" }));
-    await screen.findByRole("button", { name: "Keep watching" });
-    fireEvent.click(screen.getByRole("button", { name: "Keep watching" }));
+    render(<ReviewHarness />, { wrapper: wrapper(client) });
+    fireEvent.click(await screen.findByRole("button", { name: "Open S31 Breakout plan 31" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Keep watching" }));
     await waitFor(() => expect(api.reviewSetupPlan).toHaveBeenCalledWith(31, [310]));
-
-    act(() => useNavigationStore.setState((state) => ({ namesContext: { ...state.namesContext, brokerSessionEpoch: state.namesContext.brokerSessionEpoch + 1 } })));
-    await waitFor(() => expect(screen.getByText("S32")).toBeTruthy());
-    const secondRow = screen.getByText("S32").closest("article")!;
-    fireEvent.click(within(secondRow).getByRole("button", { name: "Review alert" }));
-    await screen.findByRole("region", { name: "Review S32 alert" });
-    const epochZeroDetail = client.getQueryData<ReturnType<typeof automaticPlan>>(["parallax", "setup-plan", "DU111", "paper", 0, 31]);
-    expect(epochZeroDetail?.unreviewed_match_count).toBe(1);
-
-    await act(async () => { resolveReview(reviewed); await Promise.resolve(); });
-    expect(screen.getByRole("region", { name: "Review S32 alert" })).toBeTruthy();
+    act(() => { useNavigationStore.getState().resetNamesBrokerContext(); useNavigationStore.getState().navigate("today"); });
+    fireEvent.click(await screen.findByRole("button", { name: "Open S32 Breakout plan 32" }));
+    await screen.findByRole("button", { name: "Keep watching" });
+    await act(async () => { resolveReview(automaticPlan(31)); });
+    expect(useNavigationStore.getState().analysisContext.setupPlanId).toBe(32);
     expect(client.getQueryData<ReturnType<typeof automaticPlan>>(["parallax", "setup-plan", "DU111", "paper", 0, 31])?.unreviewed_match_count).toBe(1);
-
-    const secondReview = within(screen.getByRole("region", { name: "Review S32 alert" }));
-    fireEvent.click(await secondReview.findByRole("button", { name: "Stop tracking" }));
+    fireEvent.click(screen.getByText("More"));
+    fireEvent.click(screen.getByRole("button", { name: "Stop tracking" }));
+    fireEvent.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Stop tracking" }));
     await waitFor(() => expect(api.archiveSetupPlan).toHaveBeenCalledWith(32));
-    act(() => useNavigationStore.setState((state) => ({ namesContext: { ...state.namesContext, brokerSessionEpoch: state.namesContext.brokerSessionEpoch + 1 } })));
-    await waitFor(() => expect(screen.getByText("S33")).toBeTruthy());
-    const thirdRow = screen.getByText("S33").closest("article")!;
-    fireEvent.click(within(thirdRow).getByRole("button", { name: "Review alert" }));
-    await screen.findByRole("region", { name: "Review S33 alert" });
-
-    await act(async () => { resolveArchive(archived); await Promise.resolve(); });
-    expect(screen.getByRole("region", { name: "Review S33 alert" })).toBeTruthy();
-    expect(useNavigationStore.getState().todayContext.selectedPlanId).toBe(33);
+    act(() => { useNavigationStore.getState().resetNamesBrokerContext(); useNavigationStore.getState().navigateToAnalysis(1033, "S33", 33); });
+    await screen.findByRole("heading", { name: "S33" });
+    await act(async () => { resolveArchive(automaticPlan(32, { review: true, lifecycle: "archived" })); });
+    expect(useNavigationStore.getState().analysisContext.setupPlanId).toBe(33);
     expect(client.getQueryData<ReturnType<typeof automaticPlan>>(["parallax", "setup-plan", "DU111", "paper", 1, 32])?.lifecycle).toBe("active");
   });
 
@@ -286,7 +257,6 @@ describe("Today setup plans", () => {
   });
 });
 
-
 it("defaults to plans, keeps standalone alerts functional, and sorts SQLite UTC timestamps with qualified evaluations", async () => {
   const archived = manualPlan(51, "archived");
   archived.archived_at = "2026-10-08 14:00:00";
@@ -295,19 +265,20 @@ it("defaults to plans, keeps standalone alerts functional, and sorts SQLite UTC 
   api.getSetupPlans.mockResolvedValue([asSummary(archived), asSummary(checked)]);
   api.getSetupPlan.mockImplementation(async (id: number) => id === 51 ? archived : checked);
   render(<TodayPage />, { wrapper: wrapper() });
+  act(() => useNavigationStore.getState().setTodayContext({ watchingOpen: true }));
   await screen.findByText("S52");
   expect(api.getTriggerRules).not.toHaveBeenCalled();
   expect(screen.queryByText("Setups firing")).toBeNull();
-  fireEvent.click(screen.getByText("Recent activity"));
+  fireEvent.click(screen.getByText("History"));
   await screen.findByText(/Tracking stopped/);
   const events = screen.getByRole("list").querySelectorAll("li");
   expect(events[0].textContent).toContain("S51");
   expect(events[1].textContent).toContain("S52");
   expect(events[0].textContent).toContain(new Date("2026-10-08T14:00:00Z").toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }));
-  fireEvent.click(screen.getByRole("button", { name: "Standalone alerts" }));
+  fireEvent.click(screen.getByRole("tab", { name: "Quick alerts" }));
   await waitFor(() => expect(api.getTriggerRules).toHaveBeenCalled());
   expect(api.getTriggerHits).toHaveBeenCalled();
   expect(screen.queryByText("S52")).toBeNull();
-  fireEvent.click(screen.getByRole("button", { name: "Tracked plans" }));
+  fireEvent.click(screen.getByRole("tab", { name: "Tracked plans" }));
   expect(await screen.findByText("S52")).toBeTruthy();
 });

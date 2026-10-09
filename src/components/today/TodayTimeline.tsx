@@ -1,86 +1,30 @@
-/**
- * TodayTimeline — chronological feed of all trigger hits (active + dismissed
- * + snoozed). Each row jumps to Analysis on click.
- *
- * Subscribes to WS `trigger_alert` events to invalidate the hits queries
- * (so the feed updates the instant the scanner fires, without waiting for
- * the 60 s refetch).
- */
-
 import { useEffect } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { parallaxApi, type TriggerHit } from "@/modules/parallax/api";
 import { useNavigationStore } from "@/store/navigation";
 import { useWebSocket, type WsMessage } from "@/hooks/useWebSocket";
 import { formatTriggerConditionValue } from "@/components/triggers/formatTriggerCondition";
-
-const fmtTime = (iso: string) => {
-  const norm = iso.includes("T") ? iso : iso.replace(" ", "T") + "Z";
-  return new Date(norm).toLocaleTimeString([], {
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-  });
-};
+import { formatTime, timeValue } from "./setupPlanPresentation";
 
 export function TodayTimeline() {
-  const qc = useQueryClient();
+  const open = useNavigationStore((state) => state.todayContext.alertHistoryOpen ?? false);
+  const setTodayContext = useNavigationStore((state) => state.setTodayContext);
+  const queryClient = useQueryClient();
   const { addHandler } = useWebSocket();
-  const navigateToAnalysis = useNavigationStore((s) => s.navigateToAnalysis);
-
-  const { data: hits } = useQuery<TriggerHit[]>({
-    queryKey: ["trigger-hits", "timeline"],
-    queryFn: () => parallaxApi.getTriggerHits({ status: "all", limit: 200 }),
-    staleTime: 30_000,
-    refetchInterval: 60_000,
-  });
-
-  useEffect(() => {
-    const off = addHandler((m: WsMessage) => {
-      if (m.type === "trigger_alert") {
-        qc.invalidateQueries({ queryKey: ["trigger-hits"] });
-      }
-    });
-    return off;
-  }, [addHandler, qc]);
-
-  const rows = (hits ?? []).slice(0, 50);
-
-  return (
-    <div className="rounded-md border border-border bg-[var(--bg-1)] p-2">
-      <div className="mb-1 text-[10px] uppercase tracking-wider text-[var(--text-3)]">
-        Timeline
-      </div>
-      {rows.length === 0 ? (
-        <div className="px-2 py-3 text-center text-[9.5px] text-[var(--text-3)]">
-          No hits yet today.
-        </div>
-      ) : (
-        rows.map((h) => (
-          <button
-            key={h.id}
-            type="button"
-            onClick={() => navigateToAnalysis(h.conid, h.symbol)}
-            className="grid w-full grid-cols-[52px_60px_1fr_90px] items-center gap-2 px-2 py-[3px] text-left hover:bg-[var(--bg-3)]"
-          >
-            <span className="font-data text-[9px] text-[var(--text-3)]">
-              {fmtTime(h.triggered_at)}
-            </span>
-            <span className="font-data text-[10px] font-semibold text-[var(--text-1)]">
-              {h.symbol}
-            </span>
-            <span className="truncate text-[9.5px] text-[var(--text-2)]">
-              {h.rule_name ?? "(deleted rule)"} ·{" "}
-              {h.condition_values
-                .map(formatTriggerConditionValue)
-                .join(", ")}
-            </span>
-            <span className="truncate text-[8.5px] text-[var(--text-3)]">
-              {h.watchlist_name ?? "—"}
-            </span>
-          </button>
-        ))
-      )}
-    </div>
-  );
+  const navigateToAnalysis = useNavigationStore((state) => state.navigateToAnalysis);
+  const { data: hits, isError } = useQuery<TriggerHit[]>({ queryKey: ["trigger-hits", "timeline"], queryFn: () => parallaxApi.getTriggerHits({ status: "all", limit: 200 }), staleTime: 30_000, refetchInterval: 60_000 });
+  useEffect(() => addHandler((message: WsMessage) => { if (message.type === "trigger_alert") void queryClient.invalidateQueries({ queryKey: ["trigger-hits"] }); }), [addHandler, queryClient]);
+  const groups = new Map<string, TriggerHit[]>();
+  for (const hit of hits ?? []) { const key = `${hit.rule_id}:${hit.conid}`; const group = groups.get(key) ?? []; group.push(hit); groups.set(key, group); }
+  for (const group of groups.values()) group.sort((left, right) => timeValue(right.triggered_at) - timeValue(left.triggered_at) || right.id - left.id);
+  return <details open={open} onToggle={(event) => { if (event.currentTarget.open !== open) setTodayContext({ alertHistoryOpen: event.currentTarget.open }); }} className="workbench-surface workbench-disclosure text-base">
+    <summary className="cursor-pointer py-2 font-medium">History</summary>
+    {isError && <p role="alert" className="py-2 text-[var(--clr-red)]">Alert history could not be refreshed.</p>}
+    {!hits?.length ? <p className="px-4 py-3 text-[var(--text-2)]">No alert history yet.</p> : [...groups.values()].map((group) => <details key={`${group[0].rule_id}:${group[0].conid}`} className="border-b border-[var(--border)] px-4 py-2">
+      <summary className="cursor-pointer py-2">{group[0].symbol} · {group[0].rule_name ?? "Deleted rule"} · {group.length} alerts</summary>
+      {group.map((hit) => <button key={hit.id} type="button" onClick={() => navigateToAnalysis(hit.conid, hit.symbol, undefined, hit.id)} className="flex w-full flex-wrap items-baseline gap-x-4 gap-y-1 py-3 text-left hover:bg-[var(--bg-2)]">
+        <time className="text-[15px] text-[var(--text-2)]">{formatTime(hit.triggered_at)}</time><span>{hit.condition_values.map(formatTriggerConditionValue).join(" · ")}</span>{hit.dismissed_at && <span className="text-[15px] text-[var(--text-2)]">Acknowledged</span>}
+      </button>)}
+    </details>)}
+  </details>;
 }

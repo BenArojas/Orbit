@@ -1,91 +1,28 @@
-/**
- * TodayHits — hero grid of currently-firing trigger setups.
- *
- * Loads the active hits list, derives the available watchlist filter chips
- * from it, and wires per-card actions to the existing mutation hooks
- * (`useDismissHit` / `useSnoozeHit`) and navigation store.
- */
-
-import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { parallaxApi, type TriggerHit } from "@/modules/parallax/api";
 import { useNavigationStore } from "@/store/navigation";
-import { useDismissHit, useSnoozeHit } from "@/hooks/useHitMutations";
-import { HitCard } from "./HitCard";
-import { TodayHitsFilters } from "./TodayHitsFilters";
+import { formatTriggerConditionValue } from "@/components/triggers/formatTriggerCondition";
 
 export function TodayHits() {
-  const filter = useNavigationStore((s) => s.todayContext.hitFilter);
-  const setTodayContext = useNavigationStore((s) => s.setTodayContext);
-  const navigateToAnalysis = useNavigationStore((s) => s.navigateToAnalysis);
-  const dismiss = useDismissHit();
-  const snooze = useSnoozeHit();
-
-  const { data: hits, isLoading } = useQuery<TriggerHit[]>({
+  const navigateToAnalysis = useNavigationStore((state) => state.navigateToAnalysis);
+  const { data: hits, isLoading, isError, refetch } = useQuery<TriggerHit[]>({
     queryKey: ["trigger-hits", "active"],
     queryFn: () => parallaxApi.getTriggerHits({ status: "active", limit: 200 }),
-    staleTime: 15_000,
-    refetchInterval: 30_000,
+    staleTime: 15_000, refetchInterval: 30_000,
   });
-
-  const watchlistNames = useMemo(
-    () =>
-      Array.from(
-        new Set(
-          (hits ?? [])
-            .map((h) => h.watchlist_name)
-            .filter((n): n is string => !!n),
-        ),
-      ),
-    [hits],
-  );
-
-  const filtered = useMemo(() => {
-    if (!hits) return [];
-    if (filter.kind === "watchlist") {
-      return hits.filter((h) => h.watchlist_name === filter.name);
-    }
-    if (filter.kind === "high-conf") {
-      return hits.filter((h) => h.condition_values.length >= 3);
-    }
-    return hits;
-  }, [hits, filter]);
-
-  return (
-    <div className="flex flex-col gap-2">
-      <div className="flex items-center justify-between">
-        <h2 className="text-[11px] font-semibold text-[var(--text-1)]">
-          Setups firing — {filtered.length}{" "}
-          {filter.kind !== "all" ? "shown" : "today"}
-        </h2>
-        <TodayHitsFilters
-          value={filter}
-          onChange={(hitFilter) => setTodayContext({ hitFilter })}
-          watchlistNames={watchlistNames}
-        />
-      </div>
-
-      {isLoading ? (
-        <div className="text-[10px] text-[var(--text-3)]">Loading…</div>
-      ) : filtered.length === 0 ? (
-        <div className="rounded border border-dashed border-border px-4 py-6 text-center text-[10px] text-[var(--text-3)]">
-          No setups firing yet. Triggers run every 5 min during market hours.
-        </div>
-      ) : (
-        <div className="grid grid-cols-2 gap-2">
-          {filtered.map((h) => (
-            <HitCard
-              key={h.id}
-              hit={h}
-              onOpenChart={(hit) => navigateToAnalysis(hit.conid, hit.symbol)}
-              onDismiss={(hit) => dismiss.mutate(hit.id)}
-              onSnooze={(hit, mins) =>
-                snooze.mutate({ id: hit.id, minutes: mins })
-              }
-            />
-          ))}
-        </div>
-      )}
-    </div>
-  );
+  const groups = new Map<string, TriggerHit>();
+  for (const hit of hits ?? []) {
+    const key = `${hit.rule_id}:${hit.conid}`;
+    const previous = groups.get(key);
+    if (!previous || hit.id > previous.id) groups.set(key, hit);
+  }
+  const alerts = [...groups.values()];
+  return <section aria-label="Quick alerts" className="space-y-3 text-base">
+    <h2 className="text-lg font-semibold">{alerts.length ? `New alerts · ${alerts.length}` : "No new alerts"}</h2>
+    {isLoading ? <p role="status">Loading alerts…</p> : isError ? <div><p role="alert" className="text-[var(--clr-red)]">Alerts could not be refreshed.</p><button type="button" onClick={() => void refetch()} className="underline">Retry</button></div>
+      : !alerts.length ? <p className="text-[var(--text-2)]">Simple price or indicator alerts, without a trading plan.</p>
+      : <div className="border-t border-[var(--border)]">{alerts.map((hit) => <button key={`${hit.rule_id}:${hit.conid}`} type="button" aria-label={`Open ${hit.symbol} ${hit.rule_name ?? "alert"} in Analysis`} onClick={() => navigateToAnalysis(hit.conid, hit.symbol, undefined, hit.id)} className="flex w-full flex-wrap items-center justify-between gap-3 border-b border-[var(--border)] px-3 py-4 text-left hover:bg-[var(--bg-2)]">
+        <span className="min-w-0 flex-1"><span className="flex flex-wrap items-baseline gap-2"><strong className="text-lg font-semibold">{hit.symbol}</strong><span>{hit.rule_name ?? "Deleted rule"}</span></span><span className="mt-1 block text-[var(--text-2)]">{hit.condition_values.map(formatTriggerConditionValue).join(" · ")}</span></span><span className="text-[var(--clr-cyan)]">Review →</span>
+      </button>)}</div>}
+  </section>;
 }

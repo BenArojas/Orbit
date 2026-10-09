@@ -503,6 +503,8 @@ class ScannerService:
 
             result = self._evaluate_conditions(rule, bar)
             if not result["fires"]:
+                if not result["unavailable"] and not rule.get("ibkr_mirror_target"):
+                    await self.db.clear_trigger_match(rule["id"], int(rule.get("revision", 1)), tgt["conid"])
                 continue
 
             recorded = await self._record_hit(rule, tgt, result["values"])
@@ -767,9 +769,10 @@ class ScannerService:
             source_watchlist=source,
             target_watchlist=mirror,
             expires_at=expires_at,
+            repeat_on_transition=not bool(mirror),
         )
         if hit_id is None:
-            log.debug("Rule %d/%s already fired today (dedup)", rule["id"], target["conid"])
+            log.debug("Rule %d/%s has no new alert (dedup)", rule["id"], target["conid"])
             return False
 
         log.info(
