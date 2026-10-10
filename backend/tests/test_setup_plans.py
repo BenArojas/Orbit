@@ -11,7 +11,7 @@ import pytest
 from fastapi import HTTPException
 from pydantic import ValidationError
 
-from models import SetupPlanCreate
+from models import SetupPlanCreate, SetupPlanSummary
 from routers.triggers import _setup_plan_scope
 from services.db import DatabaseService
 from services.scanner import ScannerService
@@ -202,8 +202,11 @@ async def test_unreviewed_match_is_returned_outside_bounded_evaluation_history(d
     assert all(evaluation["id"] != match_id for evaluation in detail["evaluations"])
     assert [evaluation["id"] for evaluation in detail["unreviewed_matches"]] == [match_id]
     assert detail["unreviewed_match_count"] == 1
+    summary = (await db.list_setup_plans("DU100", "paper"))[0]
+    assert SetupPlanSummary.model_validate(summary).review_evaluation.id == match_id
     assert await db.review_setup_plan_events(plan_id, "DU100", "paper", [match_id])
     assert (await db.get_setup_plan(plan_id, "DU100", "paper"))["unreviewed_match_count"] == 0
+    assert (await db.list_setup_plans("DU100", "paper"))[0]["review_evaluation"] is None
 
 
 @pytest.mark.asyncio
@@ -221,6 +224,7 @@ async def test_plan_only_revision_hides_old_match_and_rejects_stale_review(db):
     assert revised["latest_evaluation"] is None
     assert revised["monitoring_health"] == "not_checked"
     assert revised["unreviewed_match_count"] == 0
+    assert revised["review_evaluation"] is None
     assert revised["evaluations"][0]["plan_revision"] == original["revision"]
     with pytest.raises(ValueError, match="current waiting or invalidation matches"):
         await db.review_setup_plan_events(plan_id, "DU100", "paper", [match["evaluation_id"]])
@@ -291,11 +295,17 @@ async def test_waiting_and_invalidation_conditions_are_evaluated_separately(db, 
     } == {"waiting", "invalidation"}
     assert len(detail["hits"]) == 2
     assert detail["unreviewed_match_count"] == 2
+    newer_waiting = await _evaluation(db, detail)
+    await _evaluation(db, detail, "failed")
+    summary = (await db.list_setup_plans("DU100", "paper"))[0]
+    assert summary["latest_evaluation"]["outcome"] == "failed"
+    assert SetupPlanSummary.model_validate(summary).review_evaluation.id == at_80["id"]
     assert await db.review_setup_plan_events(
         plan_id, "DU100", "paper", [at_80["id"]]
     )
     reviewed = await db.get_setup_plan(plan_id, "DU100", "paper")
-    assert reviewed["unreviewed_match_count"] == 1
+    assert reviewed["unreviewed_match_count"] == 2
+    assert reviewed["review_evaluation"]["id"] == newer_waiting["evaluation_id"]
 
 
 @pytest.mark.asyncio

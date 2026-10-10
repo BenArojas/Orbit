@@ -46,7 +46,7 @@ function automaticPlan(id: number, options: { review?: boolean; oldRevision?: bo
   const revision = options.oldRevision ? 2 : 1;
   const ruleId = id + 100;
   const rule = { id: ruleId, revision: 1, enabled: options.lifecycle !== "archived", timeframe: "1D" as const, scan_interval_seconds: 300, conditions: [{ indicator: "close", condition: "above" as const, threshold: 100, news_candle_method: null }], invalidation_condition: null };
-  const match = evaluation(id * 10, id, options.oldRevision ? 1 : revision, ruleId, 1, "matched");
+  const match = evaluation(id * 10, id, options.oldRevision ? 1 : revision, ruleId, 1, "matched", options.review ? null : "2026-10-07T10:05:00Z");
   const latest = options.review ? evaluation(id * 10 + 1, id, revision, ruleId, 1, "failed") : options.oldRevision ? null : match;
   return {
     id, account_id: "DU111", account_mode: "paper" as const, conid: id + 1000, symbol: `S${id}`,
@@ -58,6 +58,7 @@ function automaticPlan(id: number, options: { review?: boolean; oldRevision?: bo
     monitoring_health: options.review ? "unavailable" as const : "healthy" as const,
     monitoring_due_at: null, latest_evaluation: latest,
     unreviewed_match_count: options.review ? 1 : options.oldRevision ? 0 : 0,
+    review_evaluation: options.review ? match : null,
     evaluations: options.review ? [latest!, match] : [match],
     unreviewed_matches: options.review ? [match] : [],
     hits: [],
@@ -139,7 +140,7 @@ describe("Today setup plans", () => {
     view.unmount();
   });
 
-  it("reviews the exact plan in Analysis, returns to Watching, and preserves edits, archive history and reconnect state", async () => {
+  it("reviews the exact plan in Analysis, retains monitoring issues, and preserves edits, archive history and reconnect state", async () => {
     const alert = automaticPlan(21, { review: true }), other = automaticPlan(25, { review: true });
     const manual = manualPlan(22), old = automaticPlan(23, { oldRevision: true });
     const reviewed = { ...alert, unreviewed_match_count: 0, unreviewed_matches: [], evaluations: alert.evaluations.map((item) => ({ ...item, reviewed_at: "2026-10-07T11:00:00Z" })) };
@@ -152,7 +153,7 @@ describe("Today setup plans", () => {
     render(<ReviewHarness />, { wrapper: wrapper() });
     await screen.findByRole("button", { name: "Open S21 Breakout plan 21" });
     expect(screen.queryByRole("group", { name: "Filter tracked setups" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "Open S22 Breakout plan 22" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Open S22 Breakout plan 22", hidden: true })).not.toBeVisible();
     fireEvent.click(screen.getByRole("button", { name: "Open S21 Breakout plan 21" }));
     expect(useNavigationStore.getState().analysisContext).toMatchObject({ returnTo: "today", setupPlanId: 21, conid: 1021 });
     await screen.findByRole("button", { name: "Keep watching" });
@@ -164,6 +165,7 @@ describe("Today setup plans", () => {
     await waitFor(() => expect(useNavigationStore.getState().activeScreen).toBe("today"));
     expect(api.reviewSetupPlan).toHaveBeenLastCalledWith(21, [210]);
     expect(await screen.findByRole("button", { name: "Open S21 Breakout plan 21" })).toBeTruthy();
+    expect(within(screen.getByRole("region", { name: "Needs review" })).getByRole("button", { name: "Open S21 Breakout plan 21" })).toHaveTextContent("Status unknown");
     expect(useNavigationStore.getState().todayContext.watchingOpen).toBe(true);
 
     fireEvent.click(screen.getByRole("button", { name: "Open S25 Breakout plan 25" }));
@@ -254,6 +256,47 @@ describe("Today setup plans", () => {
     act(() => callbacks[callbacks.length - 1]?.([], {} as ResizeObserver));
     expect(restoredRegion.scrollTop).toBe(420);
     restored.unmount();
+  });
+
+  it("prioritizes invalidation evidence, explains monitoring gaps, and opens the exact saved plan", async () => {
+    const waiting = { ...automaticPlan(61, { review: true }), monitoring_health: "healthy" as const,
+      latest_evaluation: { ...evaluation(611, 61, 1, 161, 1, "matched"), outcome: "not_matched" as const },
+    };
+    const invalidation = {
+      ...automaticPlan(62, { review: true }), monitoring_health: "healthy" as const,
+      review_evaluation: {
+        ...evaluation(620, 62, 1, 162, 1, "matched"),
+        invalidation_outcome: "matched" as const,
+        condition_values: [{ indicator: "close", condition: "below", threshold: 92, actual_value: 91.6, condition_role: "invalidation" as const }],
+      },
+    };
+    const invalidationPlan = { ...invalidation, latest_evaluation: invalidation.review_evaluation, unreviewed_matches: [invalidation.review_evaluation] };
+    const overdue = { ...automaticPlan(63), monitoring_health: "overdue" as const };
+    const notChecked = { ...automaticPlan(64), monitoring_health: "not_checked" as const, latest_evaluation: null };
+    const manual = manualPlan(65);
+    const staleRevision = { ...automaticPlan(66, { oldRevision: true }), latest_evaluation: evaluation(660, 66, 1, 166, 1, "matched") };
+    const tracked = [overdue, waiting, manual, notChecked, invalidationPlan, staleRevision];
+    api.getSetupPlans.mockResolvedValue(tracked.map(asSummary));
+    api.getSetupPlan.mockResolvedValue(invalidationPlan);
+    render(<ReviewHarness />, { wrapper: wrapper() });
+    await screen.findByText("Needs your attention · 5");
+    const attention = screen.getByRole("region", { name: "Needs review" });
+    const rows = within(attention).getAllByRole("button");
+    expect(rows[0]).toHaveAccessibleName("Open S62 Breakout plan 62");
+    expect(rows[0]).toHaveTextContent("Your saved invalidation condition matched.");
+    expect(rows[0]).toHaveTextContent("Price below 92 · checked 91.6");
+    expect(rows[1]).toHaveAccessibleName("Open S61 Breakout plan 61");
+    expect(rows[1]).toHaveTextContent("Latest check: No match");
+    expect(within(attention).getByRole("button", { name: "Open S63 Breakout plan 63" })).toHaveTextContent("Historical check; current status unknown");
+    expect(within(attention).getByRole("button", { name: "Open S64 Breakout plan 64" })).toHaveTextContent("No automatic check has completed yet.");
+    expect(within(attention).getByRole("button", { name: "Open S66 Breakout plan 66" })).not.toHaveTextContent("checked 105");
+    expect(screen.queryByText("You’re caught up")).toBeNull();
+    expect(within(attention).queryByRole("button", { name: "Open S65 Breakout plan 65" })).toBeNull();
+    fireEvent.click(rows[0]);
+    await screen.findByRole("button", { name: "Keep watching" });
+    expect(screen.getByText("Review whether your saved plan still holds.")).toBeTruthy();
+    expect(useNavigationStore.getState().analysisContext).toMatchObject({ setupPlanId: 62, conid: 1062, returnTo: "today" });
+    expect(api.reviewSetupPlan).not.toHaveBeenCalled();
   });
 });
 

@@ -1,10 +1,11 @@
 import { useQueries, useQuery } from "@tanstack/react-query";
+import { ChevronRight } from "lucide-react";
 import { useIbkrReady } from "@/context/GatewayContext";
 import { formatTriggerCondition } from "@/components/triggers/formatTriggerCondition";
 import { parallaxApi, type RuleEvaluation, type SetupPlan, type SetupPlanDetail } from "@/modules/parallax/api";
 import { useOrbitAccountContext } from "@/orbit/accountContext";
 import { useNavigationStore } from "@/store/navigation";
-import { evaluationLabel, formatTime, hasCurrentRevision, monitoringLabel, setupLabel, timeValue } from "./setupPlanPresentation";
+import { evaluationLabel, formatTime, hasCurrentRevision, planGuidance, setupLabel, timeValue } from "./setupPlanPresentation";
 
 function PlanActivity({
   plans,
@@ -137,20 +138,37 @@ export function TodaySetupPlans() {
   };
   const plans = query.data ?? [];
   const active = plans.filter((plan) => plan.lifecycle === "active");
-  const pending = active.filter((plan) => plan.unreviewed_match_count > 0);
-  const watching = active.filter((plan) => plan.unreviewed_match_count === 0);
-  const row = (plan: SetupPlan) => <button
+  const guided = active.map((plan) => ({ plan, guidance: planGuidance(plan) }));
+  const pending = guided.filter(({ guidance }) => guidance.needsAttention)
+    .sort((left, right) => left.guidance.priority - right.guidance.priority ||
+      timeValue(right.guidance.evidence?.checked_at ?? right.plan.updated_at) - timeValue(left.guidance.evidence?.checked_at ?? left.plan.updated_at));
+  const watching = guided.filter(({ guidance }) => !guidance.needsAttention);
+  const matchPlans = pending.filter(({ plan }) => plan.unreviewed_match_count > 0).length;
+  const monitoringIssues = pending.filter(({ guidance }) => guidance.monitoringIssue).length;
+  const row = ({ plan, guidance }: typeof guided[number]) => <button
     key={plan.id} type="button" aria-label={`Open ${plan.symbol} ${setupLabel(plan.setup_type)} plan ${plan.id}`}
     aria-current={selectedPlanId === plan.id ? "location" : undefined}
     onClick={() => { setTodayContext({ selectedPlanId: plan.id }); navigateToAnalysis(plan.conid, plan.symbol, plan.id); }}
-    className={`flex w-full flex-wrap items-center justify-between gap-3 border-b border-[var(--border)] px-3 py-4 text-left hover:bg-[var(--bg-2)] ${selectedPlanId === plan.id ? "bg-[var(--bg-2)]" : ""}`}
+    className={`today-plan-row ${selectedPlanId === plan.id ? "today-plan-selected" : ""}`}
   >
-    <span className="min-w-0 flex-1 space-y-1">
-      <span className="flex flex-wrap items-baseline gap-2"><strong className="text-lg font-semibold text-[var(--text-1)]">{plan.symbol}</strong><span className="text-base text-[var(--text-2)]">{setupLabel(plan.setup_type)}</span></span>
-      <span className="block text-base text-[var(--text-2)]">{plan.monitoring_mode === "manual" ? "Manual review" : `${plan.rule?.conditions.map(formatTriggerCondition).join(" · ") || "Conditions unavailable"}${plan.rule ? ` · ${plan.rule.timeframe}` : ""}`}</span>
-      {plan.monitoring_mode === "automatic" && <span className={`block text-[15px] ${plan.monitoring_health === "unavailable" || plan.monitoring_health === "overdue" ? "text-[var(--clr-orange)]" : "text-[var(--text-2)]"}`}>{monitoringLabel(plan)}{plan.unreviewed_match_count > 0 && plan.monitoring_health !== "healthy" ? " · Earlier alert retained" : ""}</span>}
+    <span className="today-plan-identity">
+      <strong className="text-xl font-semibold text-[var(--text-1)]">{plan.symbol}</strong>
+      <span className="text-[15px] text-[var(--text-2)]">{setupLabel(plan.setup_type)}{plan.rule && ` · ${plan.rule.timeframe}`}</span>
+      <span className="workbench-status" data-tone={guidance.tone}>{guidance.label}</span>
     </span>
-    <span className="text-base text-[var(--clr-cyan)]">{plan.unreviewed_match_count > 0 ? "Review →" : "Open →"}</span>
+    <span className="today-plan-copy">
+      <strong className="font-medium text-[var(--text-1)]">{guidance.change}</strong>
+      <span className="text-[var(--text-2)]">{guidance.review}</span>
+      {guidance.evidence ? <span className="today-plan-evidence">
+        {guidance.evidenceText && <span>{guidance.evidenceText} · </span>}
+        <span>{guidance.evidenceText ? "Evidence" : "Latest attempt"} </span>
+        <time dateTime={guidance.evidenceText ? guidance.evidence.evidence_at ?? guidance.evidence.checked_at : guidance.evidence.checked_at}>{formatTime(guidance.evidenceText ? guidance.evidence.evidence_at ?? guidance.evidence.checked_at : guidance.evidence.checked_at)}</time>
+        {guidance.monitoringIssue && !plan.unreviewed_match_count && guidance.evidenceText && <span> · Historical check; current status unknown</span>}
+      </span> : plan.rule && <span className="today-plan-evidence">Saved check: {plan.rule.conditions.map(formatTriggerCondition).join(" · ") || "Conditions unavailable"}</span>}
+      {guidance.latestNote && <span className="text-[15px] text-[var(--text-2)]">{guidance.latestNote}</span>}
+      {guidance.monitoringIssue && plan.unreviewed_match_count > 0 && <span className="text-[15px] text-[var(--clr-orange)]">{guidance.monitoring} · Earlier alert retained; current status unknown</span>}
+    </span>
+    <ChevronRight size={20} aria-hidden="true" className="today-plan-arrow" />
   </button>;
 
   return <section aria-label="Tracked setup plans" className="space-y-3 text-base">
@@ -165,8 +183,12 @@ export function TodaySetupPlans() {
       : <>
         {query.isError && <p role="status" className="text-[var(--clr-orange)]">Refresh failed. Showing the last saved plan state.</p>}
         {!active.length ? <div className="py-4"><h2 className="text-lg font-semibold">No tracked setups yet</h2><p className="mt-2 text-[var(--text-2)]">Choose a name in Names and save your plan in Analysis.</p></div> : <>
-          <section aria-label="Needs review"><h2 className="text-lg font-semibold text-[var(--text-1)]">{pending.length ? `Needs review · ${pending.length}` : "You’re caught up"}</h2>
-            {pending.length ? <div className="mt-3 border-t border-[var(--border)]">{pending.map(row)}</div> : <p className="mt-2 text-[var(--text-2)]">Your plans remain under Watching.</p>}
+          <section aria-label="Needs review">
+            <div className="flex flex-wrap items-baseline justify-between gap-2"><h2 className="text-lg font-semibold text-[var(--text-1)]">{pending.length ? `Needs your attention · ${pending.length}` : "No unreviewed matches"}</h2>
+              {pending.length > 0 && <span className="text-[15px] text-[var(--text-2)]">{matchPlans} {matchPlans === 1 ? "plan with matches" : "plans with matches"} · {monitoringIssues} monitoring {monitoringIssues === 1 ? "issue" : "issues"}</span>}
+            </div>
+            {pending.length ? <div className="workbench-surface mt-3">{pending.map(row)}</div> : <p className="mt-2 text-[var(--text-2)]">{active.some((plan) => plan.monitoring_mode === "automatic") && !query.isError ? "Automatic checks are current. Your plans remain under Watching." : "Open Watching to review your saved plans."}</p>}
+            {pending.length > 0 && <p className="mt-2 text-[15px] text-[var(--text-2)]">Matches use your saved conditions. Review the full plan in Analysis.</p>}
           </section>
           <details open={watchingOpen} onToggle={(event) => { if (event.currentTarget.open !== watchingOpen) setTodayContext({ watchingOpen: event.currentTarget.open }); }} className="workbench-surface workbench-disclosure">
             <summary className="cursor-pointer py-2 text-base font-medium">Watching · {watching.length}</summary><section aria-label="Watching">{watching.map(row)}</section>

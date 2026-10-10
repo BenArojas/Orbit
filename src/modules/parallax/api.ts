@@ -656,6 +656,7 @@ export type SetupPlan = {
     monitoring_due_at: string | null;
     latest_evaluation: RuleEvaluation | null;
     unreviewed_match_count: number;
+    review_evaluation?: RuleEvaluation | null;
 };
 
 export type SetupPlanDetail = SetupPlan & {

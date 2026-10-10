@@ -918,6 +918,20 @@ class DatabaseService:
                 (plan["id"], rule["id"], plan["revision"], rule["revision"]),
             )["n"]
 
+        review = None
+        if count:
+            review = self._fetchone(
+                """SELECT * FROM rule_evaluations
+                   WHERE plan_id=? AND rule_id=? AND plan_revision=? AND rule_revision=?
+                     AND (outcome='matched' OR invalidation_outcome='matched')
+                     AND reviewed_at IS NULL
+                   ORDER BY CASE WHEN invalidation_outcome='matched' THEN 0 ELSE 1 END,
+                            id DESC LIMIT 1""",
+                (plan["id"], rule["id"], plan["revision"], rule["revision"]),
+            )
+            review["condition_values"] = _json.loads(review["condition_values"])
+            setup_timestamps(review)
+
         due_at = None
         if plan["monitoring_mode"] == "manual" or plan["lifecycle"] == "archived":
             health = "not_monitored"
@@ -950,6 +964,7 @@ class DatabaseService:
         plan["rule"] = rule
         plan["latest_evaluation"] = latest
         plan["unreviewed_match_count"] = int(count)
+        plan["review_evaluation"] = review
         plan["monitoring_health"] = health
         plan["monitoring_due_at"] = due_at
         return setup_timestamps(plan)

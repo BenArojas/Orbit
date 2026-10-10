@@ -8,7 +8,7 @@ import { parallaxApi, type SetupPlan, type SetupPlanDetail } from "@/modules/par
 import { useAccountStore, useOrbitAccountContext } from "@/orbit/accountContext";
 import { useNavigationStore } from "@/store/navigation";
 import { formatTriggerCondition, formatTriggerConditionValue } from "@/components/triggers/formatTriggerCondition";
-import { evaluationLabel, formatTime, isUnreviewedMatch, monitoringLabel, setupLabel } from "@/components/today/setupPlanPresentation";
+import { evaluationLabel, formatTime, isUnreviewedMatch, planGuidance, setupLabel } from "@/components/today/setupPlanPresentation";
 import type { SetupPlanEditor } from "./useSetupPlanEditor";
 
 type ActionScope = { accountId: string; accountMode: "paper" | "live"; sessionEpoch: number; planId: number; conid: number };
@@ -56,6 +56,7 @@ export function SetupPlanReview({ editor, onEdit }: { editor: SetupPlanEditor; o
     },
   });
   const matches = plan.unreviewed_matches.filter((evaluation) => isUnreviewedMatch(plan, evaluation));
+  const guidance = planGuidance(plan, matches.find((evaluation) => evaluation.invalidation_outcome === "matched") ?? matches[0] ?? plan.latest_evaluation);
   const apply = (archive: boolean) => {
     const scope = scopeRef.current;
     if (!scope || action.isPending || (!archive && !matches.length)) return;
@@ -63,17 +64,21 @@ export function SetupPlanReview({ editor, onEdit }: { editor: SetupPlanEditor; o
   };
 
   return <section aria-label="Review setup plan" className="analysis-review">
-    <header><div className="mb-3 flex items-center justify-between gap-2 text-[15px] text-[var(--text-2)]"><span className="flex items-center gap-2"><Eye size={16} />Tracked plan</span><span className="workbench-status" data-active={matches.length > 0}>{matches.length ? "Needs review" : "Watching"}</span></div><h2>{plan.symbol}</h2><p className="mt-1 text-[var(--text-2)]">{setupLabel(plan.setup_type)}</p></header>
+    <header><div className="mb-3 flex items-center justify-between gap-2 text-[15px] text-[var(--text-2)]"><span className="flex items-center gap-2"><Eye size={16} />Tracked plan</span><span className="workbench-status" data-tone={guidance.tone}>{guidance.label}</span></div><h2>{plan.symbol}</h2><p className="mt-1 text-[var(--text-2)]">{setupLabel(plan.setup_type)}</p></header>
     <p className="text-[var(--text-1)]">{plan.waiting_intention}</p>
     {plan.monitoring_mode === "automatic" ? <div className="review-evidence">
       <h3>{matches.length ? "Change to review" : "Automatic check"}</h3>
+      <p className="font-medium text-[var(--text-1)]">{guidance.change}</p>
+      <p className="mb-3 text-[var(--text-2)]">{guidance.review}</p>
+      {guidance.latestNote && <p className="mb-3 text-[15px] text-[var(--text-2)]">{guidance.latestNote}</p>}
       <p>{plan.rule?.conditions.map(formatTriggerCondition).join(" · ") || "Conditions unavailable"}{plan.rule && ` · ${plan.rule.timeframe}`}</p>
       {matches.length ? <ul className="space-y-2">{matches.map((evaluation) => <li key={evaluation.id}>
+        <p className="font-medium">{evaluationLabel(plan, evaluation)}</p>
         <p>{evaluation.condition_values.map(formatTriggerConditionValue).join(" · ") || evaluationLabel(plan, evaluation)}</p>
         <time className="text-[15px] text-[var(--text-2)]">{formatTime(evaluation.evidence_at ?? evaluation.checked_at)}</time>
-      </li>)}</ul> : <p className="text-[15px] text-[var(--text-2)]">{monitoringLabel(plan)}</p>}
+      </li>)}</ul> : guidance.evidenceText ? <p className="text-[15px] text-[var(--text-2)]">{guidance.evidenceText}<br />Evidence {formatTime(guidance.evidence?.evidence_at ?? guidance.evidence?.checked_at ?? null)}{guidance.monitoringIssue && " · Historical check; current status unknown"}</p> : <p className="text-[15px] text-[var(--text-2)]">{guidance.monitoring}</p>}
     </div> : <p className="text-[var(--text-2)]">Manual review · no automatic condition.</p>}
-    {(plan.monitoring_health === "unavailable" || plan.monitoring_health === "overdue") && <p role="status" className="text-[15px] text-[var(--clr-orange)]">{monitoringLabel(plan)}. Earlier alerts remain available for review.</p>}
+    {guidance.monitoringIssue && <p role="status" className="text-[15px] text-[var(--clr-orange)]">{guidance.monitoring}. Current status is unknown.{matches.length > 0 && " Earlier alerts remain available for review."}</p>}
     {matches.length > 0 && <div className="review-primary"><Button disabled={action.isPending} onClick={() => apply(false)} className="workbench-button workbench-primary"><Check />{action.isPending ? "Saving…" : "Keep watching"}</Button><p className="mt-2 text-[15px] text-[var(--text-2)]">Marks these alerts reviewed. Tracking continues.</p></div>}
     {action.isError && !confirmArchive && <p role="alert" className="text-[var(--clr-red)]">{action.error.message || "The action was not saved."}</p>}
     <details className="workbench-disclosure review-actions"><summary>More</summary><div>

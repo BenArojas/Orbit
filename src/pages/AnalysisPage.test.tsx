@@ -249,8 +249,8 @@ describe("AnalysisPage hierarchy", () => {
     expect(await screen.findByText("Setup saved.")).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Open Today" }));
-    await screen.findByText("Watching · 2");
-    fireEvent.click(screen.getByText("Watching · 2"));
+    await screen.findByText("Needs your attention · 2");
+    expect(screen.getAllByText("Awaiting first check")).toHaveLength(2);
     expect(screen.queryByRole("button", { name: "Open AAA Breakout plan 34" })).not.toBeInTheDocument();
     const otherPlan = await screen.findByRole("button", { name: "Open AAA Breakout plan 33" });
     expect(screen.getByRole("button", { name: "Open AAA Breakout plan 32" })).toBeInTheDocument();

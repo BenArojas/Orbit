@@ -706,6 +706,7 @@ class SetupPlanSummary(BaseModel):
     monitoring_due_at: Optional[str] = None
     latest_evaluation: Optional[RuleEvaluationResponse] = None
     unreviewed_match_count: int
+    review_evaluation: Optional[RuleEvaluationResponse] = None
 
 
 class SetupPlanDetail(SetupPlanSummary):

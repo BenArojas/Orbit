@@ -51,7 +51,7 @@ export default function TodayPage() {
 
   return (
     <div className="today-workspace flex h-full flex-col overflow-hidden">
-      <header className="mx-auto w-full max-w-6xl shrink-0 px-6 pt-5 pb-3"><h1 className="text-2xl font-semibold text-[var(--text-1)]">Today</h1><p className="mt-1 text-base text-[var(--text-2)]">What needs your attention.</p></header>
+      <header className="mx-auto w-full max-w-6xl shrink-0 px-6 pt-5 pb-3"><h1 className="text-2xl font-semibold text-[var(--text-1)]">Today</h1><p className="mt-1 text-base text-[var(--text-2)]">What changed in your plans. What to review next.</p></header>
       <div className="mx-auto w-full max-w-6xl shrink-0 px-6 pb-4"><div role="tablist" aria-label="Today views" className="today-tabs">
         {([["plans", "Tracked plans"], ["alerts", "Quick alerts"]] as const).map(([value, label]) => <button key={value} type="button" role="tab" id={`today-${value}`} aria-controls="today-content" aria-selected={view === value} onClick={() => setTodayContext({ view: value })}>{label}</button>)}
       </div></div>

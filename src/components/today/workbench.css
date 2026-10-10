@@ -15,6 +15,16 @@
 .workbench-icon { width: 40px; padding: 0; }
 .workbench-status { display: inline-flex; align-items: center; gap: 7px; padding: 5px 9px; border-radius: 6px; background: var(--bg-2); color: var(--text-2); font-size: 15px; white-space: nowrap; }
 .workbench-status[data-active="true"] { background: color-mix(in srgb, var(--clr-cyan) 10%, var(--bg-0)); color: var(--text-1); }
+.workbench-status[data-tone="active"] { background: color-mix(in srgb, var(--clr-cyan) 10%, var(--card)); color: var(--text-1); }
+.workbench-status[data-tone="danger"] { background: color-mix(in srgb, var(--clr-red) 10%, var(--card)); color: var(--clr-red); }
+.workbench-status[data-tone="warning"] { background: color-mix(in srgb, var(--clr-orange) 10%, var(--card)); color: var(--clr-orange); }
+.today-plan-row { display: grid; width: 100%; grid-template-columns: 180px minmax(0,1fr) 20px; align-items: center; gap: 16px; padding: 16px; border-top: 1px solid var(--border); background: var(--card); text-align: left; font-size: 16px; line-height: 1.5; cursor: pointer; }
+.today-plan-row:first-child { border-top: 0; }
+.today-plan-identity, .today-plan-copy { display: grid; min-width: 0; gap: 4px; overflow-wrap: anywhere; }
+.today-plan-identity .workbench-status { justify-self: start; white-space: normal; }
+.today-plan-evidence { color: var(--text-2); font-size: 15px; font-variant-numeric: tabular-nums; }
+.today-plan-arrow { color: var(--clr-cyan); }
+.today-plan-selected { background: var(--bg-2); }
 .workbench-row { display: grid; grid-template-columns: minmax(0,1fr) auto; align-items: center; gap: 16px; padding: 14px 16px; border-top: 1px solid var(--border); }
 .workbench-row:first-child { border-top: 0; }
 .workbench-row-actions { display: flex; align-items: center; gap: 8px; }
@@ -30,10 +40,12 @@
 .review-actions[open] > summary { border-radius: 7px 7px 0 0; }
 .review-actions > div { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 8px; padding: 12px; border: 1px solid var(--border); border-top: 0; border-radius: 0 0 7px 7px; }
 .workbench-button:focus-visible, .today-tabs button:focus-visible, .workbench-disclosure > summary:focus-visible { outline: 2px solid var(--clr-cyan); outline-offset: 3px; }
+.today-plan-row:focus-visible { outline: 2px solid var(--clr-cyan); outline-offset: -3px; }
 :root.light .workbench-primary { border-color: #087e9f; background: #087e9f; color: #ffffff; }
 :root.light .workbench-danger { color: #b82842; }
 @media (hover: hover) and (pointer: fine) {
   .workbench-button:not(:disabled):hover { background: var(--bg-2); }
+  .today-plan-row:hover { background: var(--bg-2); }
   .workbench-primary:not(:disabled):hover { background: color-mix(in srgb, var(--clr-cyan) 88%, var(--text-1)); }
   :root.light .workbench-primary:not(:disabled):hover { background: #076d8a; }
   .workbench-danger:not(:disabled):hover { background: color-mix(in srgb, var(--clr-red) 14%, var(--bg-0)); }
@@ -42,6 +54,10 @@
 @media (max-width: 600px) {
   .workbench-row { grid-template-columns: minmax(0,1fr); gap: 10px; }
   .workbench-row-actions { justify-content: flex-end; }
+  .today-plan-row { grid-template-columns: minmax(0,1fr) 20px; gap: 10px; }
+  .today-plan-identity { grid-column: 1; display: flex; align-items: baseline; flex-wrap: wrap; gap: 8px; }
+  .today-plan-copy { grid-column: 1; }
+  .today-plan-arrow { grid-column: 2; grid-row: 1; }
 }
 @media (prefers-reduced-motion: reduce) {
   .workbench-button { transition: none; }
