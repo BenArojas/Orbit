@@ -1,7 +1,8 @@
 # Orbit — Active Project Plan
 
 Updated: 2026-10-11. This file tracks active work and unresolved follow-ups, not shipped history.
-Product baseline: `refactor/remove-ai-inflect`, which removes AI analysis and Inflect.
+Product baseline: `main`, with AI analysis and Inflect removed. The agreed starting
+purpose is recorded in [module ownership](docs/architecture/modules.md#product-purpose).
 
 ## Active product
 

@@ -7,6 +7,14 @@ It contains two product modules and a shared execution assistant:
 - **MoonMarket:** portfolio, account, options, and order workflows.
 - **TWS Assistant:** live execution planning and broker workflow support.
 
+## Product Purpose
+
+Agreed starting purpose, 2026-10-11: Orbit helps a self-directed trader understand
+the market, find candidates, create and track a plan, then execute and manage it
+through the appropriate IBKR workflow, with clear evidence and explicit user
+control. This states the product goal; it does not imply that all stages are
+currently connected or approve new execution behavior.
+
 ## Shared Orbit Ownership
 
 - `OrbitModuleEntry` owns top-level authentication access to module routes.
