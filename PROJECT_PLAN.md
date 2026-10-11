@@ -10,7 +10,7 @@ Product baseline: `refactor/remove-ai-inflect`, which removes AI analysis and In
 - TWS Assistant: user-controlled execution planning and broker workflows, with its existing exclusive session mode.
 - Shared Orbit boundaries: local FastAPI data/persistence access, conid identity, account context and Trading Safety. Current architecture documents remain authoritative.
 
-## Parallax redesign — implemented; full merge gate passed
+## Parallax redesign — closeout complete; merged locally
 
 [Approved design](docs/superpowers/specs/2026-10-03-parallax-redesign-design.md) · [Sidecar contracts](docs/superpowers/specs/2026-06-07-sidecar-client-contracts-design.md)
 
@@ -20,7 +20,7 @@ Product baseline: `refactor/remove-ai-inflect`, which removes AI analysis and In
 - Quick alerts have explicit edit/delete controls and pending/failure/retry states. Dismissal persists and repeated checks stay quiet until a valid clear→match transition. Grouped history reduces repeated ticker noise. The market ticker strip lives on Market. Compare, chart tools and saved drawings remain available.
 - Verification on 2026-10-11: repaired the OrderTicket quote-owner mock and partial-fill status assertion, supplied the TWS policy fixture, and isolated Gateway route/process tests from the real developer environment. No runtime behavior changed. Focused checks passed (55 OrderTicket and 90 backend); the full merge gate passed (188 frontend and 450 backend), as did production build, policy drift and diff checks. Existing chart import, bundle-size and dependency deprecation warnings remain.
 - Merged into local `main` on 2026-10-11 as `9335cbb`, after the user approved test repairs and the full gate passed. Nothing was pushed. The merged source tree matches the tested feature branch and includes the earlier TWS work and AI/Inflect removal. Real Gateway data was not reset or altered by the repaired fixtures.
-- Next owner: native paper-account verification. Complete a walkthrough for navigation, plan review, invalidation, unavailable/overdue evidence, restart persistence and account/mode isolation. Native verification is pending: the available app inventory has no Orbit entry and direct app access returns `Invalid app: Orbit`. User next action: open Orbit with the current code and sign in to an IBKR paper account; then resume the walkthrough. Live Fred/IBKR refresh, quotes, reconnect, watchlist mutations and packaged-platform behavior remain unverified by this gate.
+- Manual acceptance: the user reported testing the app and approved closeout on 2026-10-11. This records user acceptance; an agent-operated native walkthrough was not performed. Release QA owns the remaining provider/platform checks: verify live Fred/IBKR refresh, quotes, reconnect, watchlist mutations and packaged-platform behavior before claiming release readiness. These checks are not established by the automated gate or the unspecified scope of the user’s manual testing.
 - Later product work: approve one tactic's detector rules before automatic tactic detection. Chart-tool interaction improvements remain separate; restore AI guidance only after the evidence and review workflow is validated.
 
 ## Other active follow-ups
