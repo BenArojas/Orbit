@@ -371,7 +371,10 @@ class TestGatewayStart:
     async def test_start_detects_external_gateway(self, tmp_path):
         """If Gateway is already running (Docker/manual), just report RUNNING."""
         gw = GatewayLifecycle(gateway_home=str(tmp_path))
-        with patch.object(gw, "_is_gateway_healthy", AsyncMock(return_value=True)):
+        with (
+            patch.object(gw, "_is_gateway_healthy", AsyncMock(return_value=True)),
+            patch.object(gw, "_scan_for_orphan_gateway", return_value=None),
+        ):
             await gw.start()
         assert gw.state == GatewayState.RUNNING
 
@@ -383,7 +386,10 @@ class TestGatewayStart:
         start() short-circuits when the healthy probe returns True.
         """
         gw = GatewayLifecycle(gateway_home=str(tmp_path))
-        with patch.object(gw, "_is_gateway_healthy", AsyncMock(return_value=True)):
+        with (
+            patch.object(gw, "_is_gateway_healthy", AsyncMock(return_value=True)),
+            patch.object(gw, "_scan_for_orphan_gateway", return_value=None),
+        ):
             await gw.start()
         assert gw.state == GatewayState.RUNNING
 

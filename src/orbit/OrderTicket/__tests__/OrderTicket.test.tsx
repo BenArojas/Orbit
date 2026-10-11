@@ -52,6 +52,10 @@ vi.mock("@/modules/moonmarket/api", async (importOriginal) => {
   };
 });
 
+vi.mock("@/modules/parallax/api", () => ({
+  parallaxApi: { quote: mockApi.quote },
+}));
+
 vi.mock("@/hooks/useWebSocket", () => ({
   useWebSocket: () => ({
     status: "connected",
@@ -1257,7 +1261,7 @@ describe("OrderTicket", () => {
       liveOrders: [{ order_id: "o1", conid: 111, side: "BUY", quantity: 5, remaining_quantity: 2, status: "Submitted", order_type: "LMT", limit_price: 10 }],
     });
     await placeOrder({ orderId: "o1" });
-    expect(await screen.findByText(/Partially Filled|Order Tracker/)).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByText("Status").parentElement).toHaveTextContent("Partially Filled"));
     expect(screen.queryByText("Order Filled")).not.toBeInTheDocument();
     expect(screen.getByText("3")).toBeInTheDocument(); // filled = 5 - 2
   });

@@ -11,6 +11,7 @@ from fastapi.testclient import TestClient
 from deps import get_broker_session, get_tws_adapter
 from routers.execution_assistant import router as ea_router
 from services.broker_session import BrokerSessionService
+from services.tws_live_policy import TwsLivePolicyService
 from models.tws_execution_assistant import ReconciliationSummary, TwsStatusResponse
 
 
@@ -59,6 +60,7 @@ def _client(*, connect_succeeds: bool, api_server_available: bool = False) -> tu
     session = BrokerSessionService(fake_ibkr, adapter)
 
     app = FastAPI()
+    app.state.tws_live_policy = TwsLivePolicyService()
     app.include_router(ea_router)
     app.dependency_overrides[get_broker_session] = lambda: session
     app.dependency_overrides[get_tws_adapter] = lambda: adapter
