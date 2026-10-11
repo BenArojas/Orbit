@@ -103,6 +103,10 @@ describe("useWebSocket subscription refcounting", () => {
 
     let sock = MockWebSocket.instances[0];
     act(() => sock.open());
+    act(() => sock.onmessage?.(new MessageEvent("message", {
+      data: JSON.stringify({ type: "connection_status", ibkr_connected: true, ws_ready: true }),
+    })));
+    expect(a.current.upstreamStatus).toEqual({ ibkrConnected: true, wsReady: true });
 
     act(() => {
       a.current.subscribe(123);
@@ -115,11 +119,16 @@ describe("useWebSocket subscription refcounting", () => {
     // reconnect setTimeout() is captured and can be advanced.
     vi.useFakeTimers();
     act(() => sock.onclose?.());
+    expect(a.current.upstreamStatus).toBeNull();
     act(() => { vi.advanceTimersByTime(1500); });
     vi.useRealTimers();
 
     sock = MockWebSocket.instances[MockWebSocket.instances.length - 1];
     act(() => sock.open());
+    act(() => sock.onmessage?.(new MessageEvent("message", {
+      data: JSON.stringify({ type: "connection_status", ibkr_connected: true, ws_ready: true }),
+    })));
+    expect(a.current.upstreamStatus).toEqual({ ibkrConnected: true, wsReady: true });
 
     const subMsgs = sock.sent.filter((s) => s.includes('"action":"subscribe"'));
     // 123 and 456 each subscribed exactly once on reconnect — refcount of 2 for 123 should NOT cause 2 messages.

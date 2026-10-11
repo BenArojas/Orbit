@@ -6,18 +6,6 @@ The companion design doc is [`2026-05-20-watchlists-triggers-design.md`](./2026-
 
 ---
 
-## 1. Smart Screener "Add + watch" action
-
-**What:** A one-click action on Screener result rows that adds the symbol to a chosen watchlist *and* proposes a starter rule set (either a template or AI-generated based on the screener filters used).
-
-**Motivation:** Screener → Watchlist → Triggers is the project's stated core workflow. Today it's three separate steps. A combined action collapses the bridge.
-
-**Why parked:** Requires the new trigger schema to ship first, and the AI-assist piece overlaps with item 9 below. Cleanest after both are stable.
-
-**Rough sizing:** ~2 days. UI change on the Screener result row + Screener quick-peek slide-over. Backend already has watchlist add and the new rule endpoints; the AI rule-generation hook needs the work from item 9.
-
----
-
 ## 2. Analysis page "Create rule from current view"
 
 **What:** Right-click a chart level (price line, fib level, EMA touch) and get a prefilled rule modal with the threshold seeded from where you clicked, the indicator inferred from the line, and the symbol from the current chart.
@@ -102,31 +90,7 @@ The companion design doc is [`2026-05-20-watchlists-triggers-design.md`](./2026-
 
 ---
 
-## 9. AI-assisted rule generation
-
-**What:** A text input in the rule modal: "describe the setup in plain English" → Ollama outputs a multi-condition rule. Same pattern as the AI screener filter feature (`POST /screener/ai-filters` → `POST /triggers/ai-rule`).
-
-**Motivation:** Lowers the floor for creating rules. The user describes a setup; the system encodes it. Powerful when paired with the template library — AI fills in a starter rule, user tunes from there.
-
-**Why parked:** The screener AI filter feature is the reference implementation; we want to ship the rest of v1 first, then mirror the pattern with the lessons learned.
-
-**Rough sizing:** ~2 days. Prompt builder + endpoint + UI hookup. Pattern is well-established.
-
----
-
-## 10. Watchlist-aware AI prompts on Analysis
-
-**What:** When the user opens a stock that's in a named watchlist (e.g. "Swing Setups"), the AI analysis system prompt is modified to frame the analysis through that watchlist's lens (e.g. multi-day swing trade framing for "Swing Setups", short-term framing for "Day Trade Setups").
-
-**Motivation:** Already in `parallax-v2-roadmap` under "Watchlist-aware prompts". Same idea, just listed here for completeness so it doesn't get lost when v1 is closed out.
-
-**Why parked:** Belongs to the AI prompt-builder work in v2, not the trigger overhaul.
-
-**Rough sizing:** Already specified in `parallax-v2-roadmap`.
-
----
-
-## 11. Watchlist-config expiry overrides UI
+## 9. Watchlist-config expiry overrides UI
 
 **What:** The current `<WatchlistConfigSection>` (per-watchlist auto-expire-days override) becomes much less prominent under the new tag-in-place model. v1 hides it; if a user still wants per-watchlist expiry on rules that opt into `ibkr_mirror_target`, expose this as an advanced field inside the rule modal rather than a sidebar panel.
 

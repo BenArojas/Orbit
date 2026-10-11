@@ -7,7 +7,7 @@ import {
 } from "./formatTriggerCondition";
 
 const CONDITION_OPTIONS: TriggerCondition["condition"][] = [
-  "above", "below", "crosses_above", "crosses_below", "fires",
+  "above", "below", "crosses_above", "crosses_below",
 ];
 
 const NEWS_METHOD_OPTIONS = [
@@ -49,26 +49,27 @@ export function ConditionsList({ value, onChange }: Props) {
     }
     update(idx, {
       indicator,
-      threshold: usesAutoThreshold(indicator) ? 0 : value[idx]?.threshold,
+      condition: value[idx]?.condition === "fires" ? "above" : value[idx].condition,
+      threshold: usesAutoThreshold(indicator) ? 0 : value[idx]?.indicator === "news_candle" ? null : value[idx]?.threshold,
       news_candle_method: null,
     });
   };
 
   return (
     <div className="flex flex-col gap-2">
-      <label className="text-[10px] uppercase tracking-wider text-[var(--text-3)]">
-        Conditions (ALL must pass on the same bar)
+      <label className="text-xs font-medium text-[var(--text-2)]">
+        Automatic conditions · all must match
       </label>
       {value.map((c, idx) => (
         <div
           key={idx}
-          className="grid grid-cols-[1fr_1fr_90px_30px] items-center gap-2"
+          className="grid min-w-0 grid-cols-[minmax(0,1fr)_40px] items-center gap-2 rounded border border-border p-2"
         >
           <select
             aria-label="indicator"
             value={c.indicator}
             onChange={(e) => updateIndicator(idx, e.target.value)}
-            className="h-8 rounded-md border border-border bg-[var(--bg-1)] px-2 text-[10px]"
+            className="col-span-2 h-9 min-w-0 w-full rounded-md border border-border bg-[var(--bg-1)] px-2 text-xs"
           >
             {TRIGGER_INDICATOR_OPTIONS.map((option) => (
               <option key={option.value} value={option.value}>{option.label}</option>
@@ -83,10 +84,11 @@ export function ConditionsList({ value, onChange }: Props) {
                 threshold: usesAutoThreshold(c.indicator) ? 0 : c.threshold,
               })
             }
-            className="h-8 rounded-md border border-border bg-[var(--bg-1)] px-2 text-[10px]"
+            className="col-span-2 h-9 min-w-0 w-full rounded-md border border-border bg-[var(--bg-1)] px-2 text-xs"
             disabled={c.indicator === "news_candle"}
           >
-            {CONDITION_OPTIONS.map((cond) => (
+            {c.indicator !== "news_candle" && c.condition === "fires" && <option value="fires" disabled>Unsupported operator: fires</option>}
+            {(c.indicator === "news_candle" ? ["fires" as const] : CONDITION_OPTIONS).map((cond) => (
               <option key={cond} value={cond}>
                 {getTriggerConditionLabel({ ...c, condition: cond })}
               </option>
@@ -101,7 +103,7 @@ export function ConditionsList({ value, onChange }: Props) {
                   news_candle_method: e.target.value as TriggerCondition["news_candle_method"],
                 })
               }
-              className="h-8 rounded-md border border-border bg-[var(--bg-1)] px-2 text-[10px]"
+              className="h-9 min-w-0 w-full rounded-md border border-border bg-[var(--bg-1)] px-2 text-xs"
             >
               {NEWS_METHOD_OPTIONS.map((option) => (
                 <option key={option.value} value={option.value}>{option.label}</option>
@@ -111,7 +113,7 @@ export function ConditionsList({ value, onChange }: Props) {
             <div
               aria-label="threshold"
               title="The app compares price to the selected indicator automatically."
-              className="flex h-8 items-center rounded-md border border-border bg-[var(--bg-1)] px-2 font-data text-[10px] text-[var(--text-3)]"
+              className="flex h-9 min-w-0 items-center rounded-md border border-border bg-[var(--bg-1)] px-2 font-data text-xs text-[var(--text-3)]"
             >
               Auto
             </div>
@@ -125,7 +127,7 @@ export function ConditionsList({ value, onChange }: Props) {
                   threshold: e.target.value === "" ? null : Number(e.target.value),
                 })
               }
-              className="h-8 bg-[var(--bg-1)] font-data text-[10px]"
+              className="h-9 min-w-0 bg-[var(--bg-1)] font-data text-xs"
             />
           )}
           <Button
@@ -134,7 +136,7 @@ export function ConditionsList({ value, onChange }: Props) {
             size="sm"
             aria-label="remove"
             onClick={() => remove(idx)}
-            className="h-8 w-8 p-0 text-[var(--text-3)] hover:text-[var(--clr-red)]"
+            className="h-10 w-10 p-0 text-[var(--text-3)] hover:text-[var(--clr-red)]"
           >
             ×
           </Button>
@@ -145,7 +147,7 @@ export function ConditionsList({ value, onChange }: Props) {
         variant="outline"
         size="sm"
         onClick={add}
-        className="h-7 self-start text-[10px]"
+        className="h-9 self-start text-xs"
       >
         + Add condition
       </Button>

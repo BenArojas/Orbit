@@ -11,7 +11,7 @@
  *
  * Orbit integration: Settings are per-module. When Parallax runs inside Orbit,
  * its settings keys are namespaced (e.g. "parallax.scan_interval").
- * MoonMarket and Inflect have their own settings.
+ * MoonMarket has its own settings.
  */
 
 import { create } from "zustand";

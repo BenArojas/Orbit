@@ -6,8 +6,8 @@
  *   │ Filter bar (sticky top, full width)             │
  *   ├────────────────────────────┬────────────────────┤
  *   │ Disclaimer strip           │                    │
- *   │ Results table (scrollable) │ AI panel (300px)   │
- *   │ Pagination (bottom)        │ collapsible        │
+ *   │ Results table (scrollable) │
+ *   │ Pagination (bottom)        │
  *   └────────────────────────────┴────────────────────┘
  *   + ScreenerPeekPanel (right overlay on row click)
  *
@@ -19,7 +19,7 @@
  * Flow:
  *   1. User picks a scanner preset (Most Active, Top Gainers, etc.)
  *      OR clicks a "Try this" empty-state card.
- *   2. User optionally adds IBKR native filter codes (or uses AI panel)
+ *   2. User optionally adds IBKR native filter codes
  *   3. User clicks "Scan" → POST /screener/scan (always page 1, 50 rows)
  *   4. Results render. Sorting + pagination happen client-side from the
  *      cumulative store buffer.
@@ -30,7 +30,7 @@
  *   that calls appendResults() to grow the buffer without clearing page/sort.
  */
 
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { parallaxApi, type ScanRequest, type ScannerLocation } from "@/modules/parallax/api";
 import { useScreenerStore, type ActiveFilter } from "@/store/screener";
@@ -92,7 +92,6 @@ import ScreenerFilterBar from "@/components/screener/ScreenerFilterBar";
 import ScreenerResultsTable from "@/components/screener/ScreenerResultsTable";
 import ScreenerPagination from "@/components/screener/ScreenerPagination";
 import ScreenerPeekPanel from "@/components/screener/ScreenerPeekPanel";
-import ScreenerAiPanel from "@/components/screener/ScreenerAiPanel";
 import BrowseAllScansPanel from "@/components/screener/BrowseAllScansPanel";
 import LocationResetBanner from "@/components/screener/LocationResetBanner";
 
@@ -126,8 +125,7 @@ interface CardDef {
   usOnly?: boolean;
 }
 
-// Market-cap brackets used by the cards (and mirrored in the AI prompt's
-// sensible-defaults table — see services/screener_ai.py SYSTEM_PROMPT).
+// Market-cap brackets used by the cards and the deterministic filter catalogue.
 //   Small cap:   $300M – $5B
 //   Mid cap:     $5B   – $50B
 //   Large cap:   $50B+ (anything at or above this floor)
@@ -209,7 +207,7 @@ function EmptyCard({
     <button
       onClick={onClick}
       disabled={disabled}
-      className="group flex flex-col gap-1 rounded-xl border border-[var(--border)] bg-[var(--bg-2)] p-4 text-left transition-all hover:border-[var(--clr-cyan)]/50 hover:bg-[var(--bg-3)] disabled:opacity-40 disabled:cursor-not-allowed"
+      className="group flex flex-col gap-1 rounded-xl border border-[var(--border)] bg-[var(--bg-2)] p-4 text-left transition-colors hover:border-[var(--clr-cyan)]/70 hover:bg-[var(--bg-3)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--clr-cyan)] active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-40"
     >
       <span className="flex items-center gap-2">
         <span className="text-[12px] font-semibold text-[var(--text-1)] group-hover:text-[var(--clr-cyan)] transition-colors">
@@ -225,7 +223,7 @@ function EmptyCard({
           </span>
         )}
       </span>
-      <span className="text-[10px] text-[var(--text-3)] leading-relaxed">
+          <span className="text-xs text-[var(--text-3)] leading-relaxed">
         {card.description}
       </span>
       {/* Filter pills preview */}
@@ -246,12 +244,6 @@ function EmptyCard({
 // ── Page ─────────────────────────────────────────────────────
 
 export default function ScreenerPage() {
-  const [aiPanelOpen, setAiPanelOpen] = useState(false);
-
-  // Pre-load the AI model into memory when the user navigates here.
-  useEffect(() => {
-    parallaxApi.aiWarmup().catch(() => {/* non-fatal */});
-  }, []);
   // Path C — Browse all scans slide-over open state
   const [browseOpen, setBrowseOpen] = useState(false);
 
@@ -387,8 +379,6 @@ export default function ScreenerPage() {
       {/* Filter bar — sticky top, full width */}
       <ScreenerFilterBar
         onScan={handleScan}
-        aiPanelOpen={aiPanelOpen}
-        onToggleAiPanel={() => setAiPanelOpen((v) => !v)}
         showClearResults={results.length > 0 || scanMutation.isError || lastScanWasEmpty}
         onClearResults={() => {
           resetScreener();
@@ -405,26 +395,26 @@ export default function ScreenerPage() {
 
       {/* Error state */}
       {scanMutation.isError && (
-        <div className="border-b border-[var(--clr-red)]/20 bg-[var(--clr-red)]/5 px-4 py-2 text-[11px] text-[var(--clr-red)]">
+        <div className="border-b border-[var(--clr-red)]/20 bg-[var(--clr-red)]/5 px-4 py-2 text-xs text-[var(--clr-red)]">
           {scanMutation.error instanceof Error
             ? scanMutation.error.message
             : "Scan failed — check IBKR connection"}
         </div>
       )}
 
-      {/* Main content — results left, AI panel right */}
+      {/* Main content — deterministic IBKR results */}
       <div className="flex flex-1 overflow-hidden">
         {/* Left column: results + pagination (or empty state) */}
         <div className="flex flex-1 flex-col overflow-hidden">
           {showEmptyState ? (
-            <div className="flex flex-1 flex-col items-center justify-center gap-6 p-8">
-              <div className="text-center">
+            <div className="flex flex-1 flex-col items-start justify-start gap-3 overflow-y-auto p-4">
+              <div className="text-left">
                 {lastScanWasEmpty ? (
                   <>
                     <p className="text-[13px] font-semibold text-[var(--text-1)]">
                       No matches for this preset right now
                     </p>
-                    <p className="mt-1 text-[11px] text-[var(--text-3)]">
+                    <p className="mt-1 text-xs text-[var(--text-3)]">
                       {selectedPreset?.subtitle
                         ? `${selectedPreset.subtitle} — try again during its window, or pick a different preset below.`
                         : "Try a different preset, or pick a quick scan card below."}
@@ -435,7 +425,7 @@ export default function ScreenerPage() {
                     <p className="text-[13px] font-semibold text-[var(--text-1)]">
                       Pick a preset or try a quick scan
                     </p>
-                    <p className="mt-1 text-[11px] text-[var(--text-3)]">
+                    <p className="mt-1 text-xs text-[var(--text-3)]">
                       Select a scanner preset above, or click a card to run a pre-built screen
                     </p>
                   </>
@@ -462,8 +452,6 @@ export default function ScreenerPage() {
           )}
         </div>
 
-        {/* Right column: AI panel (collapsible) */}
-        <ScreenerAiPanel isOpen={aiPanelOpen} />
       </div>
 
       {/* Quick-peek slide-over (overlay) */}

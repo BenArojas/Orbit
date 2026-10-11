@@ -5,8 +5,8 @@ constants win when this document becomes stale.
 
 ## Boundary
 
-- One FastAPI sidecar owns broker, AI-provider, and SQLite access.
-- React never calls IBKR, Ollama, cloud model providers, or SQLite directly.
+- One FastAPI sidecar owns broker and SQLite access.
+- React never calls IBKR or SQLite directly.
 - Routers translate HTTP requests and typed errors; services own domain logic.
 - Public and trust boundaries use Pydantic request/response models.
 - Errors distinguish authentication, network, rate limit, validation, and data

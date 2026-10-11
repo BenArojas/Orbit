@@ -4,7 +4,6 @@
  * Product-module endpoint contracts should live in their owning modules:
  *
  * - MoonMarket: "@/modules/moonmarket/api"
- * - Inflect: "@/modules/inflect/api"
  * - Parallax: "@/modules/parallax/api"
  *
  * This file intentionally remains as a small compatibility/shared-shell layer

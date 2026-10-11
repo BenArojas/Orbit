@@ -9,19 +9,19 @@ without knowing how they were created.
 
 from fastapi import Depends, HTTPException, Request, status
 
+from services.broker_session import BrokerSessionService
+from services.execution_plan import ExecutionPlanService
+from services.tws_broker_adapter import TwsBrokerAdapter
+from services.tws_live_policy import TwsLivePolicyService
 from services.db import DatabaseService
 from services.ibkr import IBKRService
 from services.screener import ScreenerService
 from services.sectors import SectorService
-from services.ai import AiService
-from services.ai_analysis_preparation import AIAnalysisPreparationService
-from services.ai_keystore import AIKeyStore
-from services.ai_settings import AISettingsService
-from services.ai_usage import AIUsageLedger
+from services.market_assessment import MarketAssessmentService
 from services.gateway import GatewayLifecycle
 from services.instrument_identity import InstrumentIdentityService
-from services.ollama import OllamaLifecycle
 from services.scanner import ScannerService
+from services.rs_leaders import RSLeadersService
 
 
 def get_ibkr(request: Request) -> IBKRService:
@@ -46,42 +46,19 @@ def get_sectors(request: Request) -> SectorService:
     return request.app.state.sectors
 
 
-def get_ai(request: Request) -> AiService:
-    """Get the AI service singleton stashed on app.state during lifespan."""
-    return request.app.state.ai
-
-
-def get_ai_analysis_preparation(request: Request) -> AIAnalysisPreparationService:
-    return request.app.state.ai_analysis_preparation
-
-
-def get_ai_settings(db: DatabaseService = Depends(get_db)) -> AISettingsService:
-    """Get the AI settings service for the active database dependency."""
-    return AISettingsService(db)
-
-
-def get_ai_usage_ledger(db: DatabaseService = Depends(get_db)) -> AIUsageLedger:
-    """Get the local AI usage/cost ledger for the active database dependency."""
-    return AIUsageLedger(db)
-
-
-def get_ai_keystore(request: Request) -> AIKeyStore:
-    """Get the OS-keychain backed AI key store."""
-    key_store = getattr(request.app.state, "ai_keystore", None)
-    if key_store is None:
-        key_store = AIKeyStore()
-        request.app.state.ai_keystore = key_store
-    return key_store
-
-
-def get_ollama(request: Request) -> OllamaLifecycle:
-    """Get the Ollama lifecycle manager from app.state during lifespan."""
-    return request.app.state.ollama
+def get_market_assessment(request: Request) -> MarketAssessmentService:
+    """Get the Parallax completed-session assessment service."""
+    return request.app.state.market_assessment
 
 
 def get_screener(request: Request) -> ScreenerService:
     """Get the screener service singleton stashed on app.state during lifespan."""
     return request.app.state.screener
+
+
+def get_rs_leaders(request: Request) -> RSLeadersService:
+    """Get the published Parallax RS snapshot service."""
+    return request.app.state.rs_leaders
 
 
 def get_gateway(request: Request) -> GatewayLifecycle:
@@ -92,6 +69,49 @@ def get_gateway(request: Request) -> GatewayLifecycle:
 def get_scanner(request: Request) -> ScannerService:
     """Get the background scanner singleton stashed on app.state during lifespan."""
     return request.app.state.scanner
+
+
+def get_broker_session(request: Request) -> BrokerSessionService:
+    """Get the broker session service singleton stashed on app.state during lifespan."""
+    return request.app.state.broker_session
+
+
+def get_tws_adapter(request: Request) -> TwsBrokerAdapter:
+    """Get the TWS broker adapter singleton stashed on app.state during lifespan."""
+    return request.app.state.tws_adapter
+
+
+def get_execution_plan_service(request: Request) -> ExecutionPlanService:
+    """Get the execution plan service singleton stashed on app.state during lifespan."""
+    return request.app.state.execution_plan_service
+
+
+def get_tws_live_policy(request: Request) -> TwsLivePolicyService:
+    """Get the TWS live policy service singleton stashed on app.state during lifespan."""
+    return request.app.state.tws_live_policy
+
+
+async def require_cp_mode(
+    session: BrokerSessionService = Depends(get_broker_session),
+) -> None:
+    """Guard Client Portal mutation routes against execution while in TWS mode.
+
+    Raises 409 when broker session mode is 'tws' so CP mutations fail closed
+    before reaching the execution adapter. Preview and read routes must NOT
+    use this dependency — they remain available in any mode.
+    """
+    if session.current_mode() == "tws":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "error": "broker_session_mode_conflict",
+                "message": (
+                    "Client Portal order mutations are disabled while broker "
+                    "session is in TWS mode. Switch to Client Portal mode first."
+                ),
+                "current_mode": "tws",
+            },
+        )
 
 
 async def require_ibkr_auth(ibkr: IBKRService = Depends(get_ibkr)) -> IBKRService:

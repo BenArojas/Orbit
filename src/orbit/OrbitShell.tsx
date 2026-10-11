@@ -3,7 +3,6 @@
  *   /              -> OrbitLauncher (combined auth + launcher)
  *   /parallax/*    -> existing Parallax app
  *   /moonmarket/*  -> MoonMarket (stub for now)
- *   /inflect/*     -> Inflect (trading journal)
  *
  * `orbitRoutes` is exported separately so tests can mount it with a memory router.
  */
@@ -15,7 +14,7 @@ export const orbitRoutes: RouteObject[] = [
   { path: "/", element: <OrbitLauncher /> },
   { path: "/parallax/*", element: <OrbitModuleEntry moduleId="parallax" /> },
   { path: "/moonmarket/*", element: <OrbitModuleEntry moduleId="moonmarket" /> },
-  { path: "/inflect/*", element: <OrbitModuleEntry moduleId="inflect" /> },
+  { path: "/tws/*", element: <OrbitModuleEntry moduleId="tws-execution-assistant" /> },
 ];
 
 export const orbitRouter = createBrowserRouter(orbitRoutes);

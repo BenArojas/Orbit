@@ -1,14 +1,14 @@
 import {
   createContext,
   useContext,
+  useCallback,
   useEffect,
   useMemo,
   type ReactNode,
 } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useIbkrReady } from "@/context/GatewayContext";
-import { type MoonMarketAccount } from "@/modules/moonmarket/api";
-import {moonmarketApi} from "@/modules/moonmarket/api";
+import { moonmarketApi, type MoonMarketAccount, type MoonMarketAccountsResponse } from "@/modules/moonmarket/api";
 import { useAccountStore } from "./useAccountStore";
 
 export type OrbitAccountMode = "paper" | "live" | "unknown";
@@ -17,6 +17,10 @@ export type OrbitAccountReadyState = "idle" | "loading" | "ready" | "empty" | "e
 type OrbitAccountContextValue = {
   accounts: MoonMarketAccount[];
   selectedAccountId: string | null;
+  providerSelectedAccountId: string | null;
+  providerSelectedAccountMode: OrbitAccountMode;
+  providerScopeLoading: boolean;
+  providerScopeError: boolean;
   selectedAccount: MoonMarketAccount | null;
   accountMode: OrbitAccountMode;
   isPaperAccount: boolean;
@@ -26,7 +30,7 @@ type OrbitAccountContextValue = {
   readyState: OrbitAccountReadyState;
   error: Error | null;
   setSelectedAccountId: (accountId: string | null) => void;
-  refetchAccounts: () => Promise<unknown>;
+  refetchAccounts: () => Promise<MoonMarketAccountsResponse | undefined>;
 };
 
 const OrbitAccountContext = createContext<OrbitAccountContextValue | null>(null);
@@ -66,6 +70,15 @@ export function OrbitAccountProvider({ children, enabled }: OrbitAccountProvider
     : "unknown";
 
   const hasSelectedAccount = selectedAccount !== null;
+  const providerSelectedAccountId = accountsQuery.data?.selected_account_id ?? null;
+  const providerSelectedAccount = accountsQuery.data?.accounts.find(
+    (account) => account.account_id === providerSelectedAccountId,
+  ) ?? null;
+  const providerSelectedAccountMode: OrbitAccountMode = providerSelectedAccount
+    ? providerSelectedAccount.is_paper ? "paper" : "live"
+    : "unknown";
+  const providerScopeLoading = queryEnabled && accountsQuery.isLoading;
+  const providerScopeError = queryEnabled && accountsQuery.isError;
   const isLoading = !hasSelectedAccount && queryEnabled && accountsQuery.isLoading;
   const error = accountsQuery.error instanceof Error ? accountsQuery.error : null;
   const isReady = hasSelectedAccount;
@@ -78,11 +91,23 @@ export function OrbitAccountProvider({ children, enabled }: OrbitAccountProvider
       : accountsQuery.isError
         ? "error"
         : "empty";
+  const refetchAccounts = useCallback(
+    async () => {
+      const result = await accountsQuery.refetch();
+      if (result.isError) throw result.error;
+      return result.data;
+    },
+    [accountsQuery.refetch],
+  );
 
   const value = useMemo<OrbitAccountContextValue>(
     () => ({
       accounts,
       selectedAccountId,
+      providerSelectedAccountId,
+      providerSelectedAccountMode,
+      providerScopeLoading,
+      providerScopeError,
       selectedAccount,
       accountMode,
       isPaperAccount: accountMode === "paper",
@@ -92,15 +117,19 @@ export function OrbitAccountProvider({ children, enabled }: OrbitAccountProvider
       readyState,
       error,
       setSelectedAccountId,
-      refetchAccounts: accountsQuery.refetch,
+      refetchAccounts,
     }),
     [
       accountMode,
       accounts,
-      accountsQuery.refetch,
       error,
       isLoading,
       isReady,
+      providerScopeError,
+      providerScopeLoading,
+      providerSelectedAccountId,
+      providerSelectedAccountMode,
+      refetchAccounts,
       readyState,
       selectedAccount,
       selectedAccountId,

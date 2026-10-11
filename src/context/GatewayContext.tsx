@@ -23,12 +23,14 @@ import {
   useContext,
   useEffect,
   useCallback,
+  useRef,
   type ReactNode,
 } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useGateway } from "@/hooks/useGateway";
 import { useWebSocket, type WsMessage } from "@/hooks/useWebSocket";
 import type { GatewayStatusResponse } from "@/lib/api";
+import { useNavigationStore } from "@/store/navigation";
 
 interface GatewayContextValue {
   status: GatewayStatusResponse | null;
@@ -61,6 +63,23 @@ export function GatewayProvider({ children }: { children: ReactNode }) {
   const gateway = useGateway();
   const queryClient = useQueryClient();
   const { addHandler } = useWebSocket();
+  const previousAuthentication = useRef<boolean | null>(null);
+
+  useEffect(() => {
+    const previous = previousAuthentication.current;
+    previousAuthentication.current = gateway.isAuthenticated;
+    if (previous !== true || gateway.isAuthenticated) return;
+
+    useNavigationStore.getState().resetNamesBrokerContext();
+    useNavigationStore.getState().resetAnalysisContext();
+    for (const queryKey of [
+      ["watchlists"], ["watchlist-instruments"], ["watchlist-quotes"], ["watchlist-membership"],
+      ["parallax", "rs-leaders"], ["parallax", "rs-leaders-refresh"], ["parallax", "rs-leaders-progress"],
+      ["parallax", "setup-plans"], ["parallax", "setup-plan"],
+    ]) {
+      void queryClient.cancelQueries({ queryKey }).then(() => queryClient.removeQueries({ queryKey }));
+    }
+  }, [gateway.isAuthenticated, queryClient]);
 
   // Phase 8 / Task 3.7 — handle WS `auth_state` pushes from the backend.
   //

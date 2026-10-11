@@ -22,9 +22,9 @@ Note on 15m / 1w period:
 
 from typing import Literal, NamedTuple
 
-Timeframe = Literal["1m", "5m", "15m", "1h", "4h", "1D", "1W", "1M"]
+Timeframe = Literal["1m", "5m", "15m", "30m", "1h", "4h", "1D", "1W", "1M"]
 
-VALID_TIMEFRAMES: tuple[str, ...] = ("1m", "5m", "15m", "1h", "4h", "1D", "1W", "1M")
+VALID_TIMEFRAMES: tuple[str, ...] = ("1m", "5m", "15m", "30m", "1h", "4h", "1D", "1W", "1M")
 
 
 class HistorySpec(NamedTuple):
@@ -57,6 +57,7 @@ TIMEFRAME_SPEC: dict[str, HistorySpec] = {
     "1m":  HistorySpec(period="1d",  bar="1min",  est_max_bars=400,  max_period="2d"),
     "5m":  HistorySpec(period="5d",  bar="5min",  est_max_bars=1000, max_period="5d"),
     "15m": HistorySpec(period="1w",  bar="15min", est_max_bars=1000, max_period="1m"),
+    "30m": HistorySpec(period="1w",  bar="30min", est_max_bars=1000, max_period="1w"),
     "1h":  HistorySpec(period="1m",  bar="1h",    est_max_bars=1000, max_period="6m"),
     "4h":  HistorySpec(period="6m",  bar="4h",    est_max_bars=1000, max_period="1y"),
     "1D":  HistorySpec(period="1y",  bar="1d",    est_max_bars=1000, max_period="5y"),

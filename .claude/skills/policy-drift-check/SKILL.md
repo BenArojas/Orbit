@@ -1,1 +1,0 @@
-../../../.agents/skills/policy-drift-check/SKILL.md

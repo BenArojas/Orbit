@@ -7,7 +7,7 @@ not appear in that dump — IBKR silently ignores unknown codes, which
 causes filters to appear to "work" while returning unfiltered rows.
 
 This catalogue drives both:
-  - The Ollama AI prompt (backend/services/screener_ai.py imports from here)
+  - The deterministic screener filter catalogue
   - The screener filter bar UI (frontend fetches via GET /screener/filter-catalogue)
 
 Schema per entry:
@@ -15,11 +15,11 @@ Schema per entry:
   label         — human-readable label shown in UI
   direction     — "above" or "below" (which bound of a range this code is)
   unit          — "$M", "%", "$", or None
-  example       — example numeric value (string) for Ollama prompts
+  example       — example numeric value (string) for filter inputs
   category      — "fundamental" | "technical" | "analyst" | "short_ownership"
   popular       — True  → shown as an always-visible quick-pick chip
   description   — short natural-language explanation of the filter.
-                  Sent to Ollama (context for picking filters) AND shown as
+                  Shown as
                   a `title` tooltip on the UI's Add Filter menu items.
   paired_code   — the opposite-direction IBKR code for this filter
                   ("" when no opposite exists, e.g. volumeAbove has no volumeBelow)
@@ -669,5 +669,5 @@ FILTER_CATALOGUE: list[FilterEntry] = (
     FUNDAMENTAL + TECHNICAL + ANALYST + SHORT_OWNERSHIP
 )
 
-# Fast membership test — used by screener_ai.py to drop unknown codes.
+# Fast membership test — used by screener validation to drop unknown codes.
 FILTER_CODES: frozenset[str] = frozenset(f["code"] for f in FILTER_CATALOGUE)

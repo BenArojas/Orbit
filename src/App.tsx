@@ -28,6 +28,7 @@ import { useSidecar } from "@/hooks/useSidecar";
 import { useWebSocket } from "@/hooks/useWebSocket";
 import { useTriggerAlerts } from "@/hooks/useTriggerAlerts";
 import { useGatewayContext } from "@/context/GatewayContext";
+import { useRSLeaders } from "@/hooks/useRSLeaders";
 import { IbkrReconnectBanner } from "@/components/gateway/IbkrReconnectBanner";
 import { HealthStrip } from "@/components/ui/HealthStrip";
 import { ThemeToggle } from "@/components/ui/ThemeToggle";
@@ -38,10 +39,10 @@ import ConnectionPage from "@/pages/ConnectionPage";
 // Today and Market are lazy — they'll grow as Tasks 2/9 land.
 const TodayPage = lazy(() => import("@/pages/TodayPage"));
 const MarketPage = lazy(() => import("@/pages/MarketPage"));
-// Analysis and Screener are heavy (TradingView charts, screener logic).
+// Analysis and Names are heavy (TradingView charts, names and scanner views).
 // Lazy-load so their JS is only parsed when the user first navigates there.
 const AnalysisPage = lazy(() => import("@/pages/AnalysisPage"));
-const ScreenerPage = lazy(() => import("@/pages/ScreenerPage"));
+const NamesPage = lazy(() => import("@/pages/NamesPage"));
 import "./styles.css";
 
 /** Minimal full-screen skeleton shown while a lazy page chunk loads. */
@@ -103,10 +104,10 @@ function useGlobalEffects() {
 // The "connection" screen is intentionally absent from this list — it's
 // surfaced by <AuthGuard> when the IBKR session is missing, not via a tab.
 const NAV_ITEMS: { id: Screen; label: string }[] = [
-  { id: "today", label: "Today" },
   { id: "market", label: "Market" },
+  { id: "screener", label: "Names" },
+  { id: "today", label: "Today" },
   { id: "analysis", label: "Analysis" },
-  { id: "screener", label: "Screener" },
   { id: "settings", label: "Settings" },
 ];
 
@@ -137,7 +138,7 @@ function ActivePage() {
     case "screener":
       return (
         <Suspense fallback={<PageSkeleton />}>
-          <ScreenerPage />
+          <NamesPage />
         </Suspense>
       );
     case "settings":
@@ -205,7 +206,9 @@ function NavLogoutButton() {
  */
 function AppShell() {
   const { activeScreen, navigate } = useNavigationStore();
+  const gateway = useGatewayContext();
   const { addHandler } = useGlobalEffects();
+  useRSLeaders(gateway.isRunning && gateway.isAuthenticated, true);
 
   return (
     <div className="flex h-screen flex-col overflow-hidden">
@@ -252,8 +255,8 @@ function AppShell() {
 
       {/* ── Page content ── */}
       {/* min-h-0 lets <main> shrink below its content's intrinsic height in
-          this flex column. Without it, a tall page (e.g. a long AI response
-          in the Analysis right sidebar) could push <main> past its flex-1
+          this flex column. Without it, a tall page (e.g. a long chart/sidebar
+          state) could push <main> past its flex-1
           share and trigger window-level scroll — which then becomes the
           target for any descendant scrollIntoView call. */}
       <main className="min-h-0 flex-1 overflow-hidden">

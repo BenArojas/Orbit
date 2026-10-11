@@ -29,7 +29,7 @@ import { NetworkOfflineError } from "./network";
 //       serving from cache.
 //
 //  3. Essentially static data (watchlist names, instrument lists,
-//     trigger rules, ai/models, conids):
+//     trigger rules, conids):
 //       staleTime: Infinity, refetchInterval: false (or omitted)
 //       Fetched once per session; mutations/WS events invalidate explicitly.
 //       Never burns IBKR quota on a polling clock.

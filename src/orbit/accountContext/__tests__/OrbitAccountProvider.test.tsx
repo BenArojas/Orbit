@@ -54,7 +54,7 @@ describe("OrbitAccountProvider", () => {
       wrapper: makeWrapper(),
     });
 
-    await waitFor(() => expect(result.current.isReady).toBe(true));
+    await waitFor(() => expect(result.current.providerSelectedAccountId).toBe("U12345"));
 
     expect(mockApi.moonmarketAccounts).toHaveBeenCalledTimes(1);
     expect(result.current.accounts).toHaveLength(2);
@@ -76,9 +76,11 @@ describe("OrbitAccountProvider", () => {
       wrapper: makeWrapper(),
     });
 
-    await waitFor(() => expect(result.current.isReady).toBe(true));
+    await waitFor(() => expect(result.current.providerSelectedAccountId).toBe("U12345"));
 
     expect(result.current.selectedAccountId).toBe("DU12345");
+    expect(result.current.providerSelectedAccountId).toBe("U12345");
+    expect(result.current.providerSelectedAccountMode).toBe("live");
     expect(result.current.accountMode).toBe("paper");
     expect(result.current.isPaperAccount).toBe(true);
   });

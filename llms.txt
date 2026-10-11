@@ -1,7 +1,7 @@
 # Orbit
 
 > Orbit is a local-first desktop trading decision-support platform. It helps a
-> human analyze markets, manage a portfolio, and journal trades. It is NOT an
+> human analyze markets and manage trading workflows. It is NOT an
 > autonomous trading bot and never places or executes orders on its own — every
 > broker action requires explicit human confirmation.
 
@@ -10,22 +10,21 @@ sidecar). There is no public website or hosted API for external agents to crawl
 or transact with. Agents interact with Orbit in two ways:
 
 1. **Coding agents** read this repo (see `AGENTS.md`) to plan and implement work.
-2. **Runtime agents** (the in-app AI, or any local MCP/HTTP client) call the
+2. **Runtime agents** (an MCP/HTTP client) call the
    local FastAPI backend at `http://localhost:8000`.
 
 ## Safety policy (non-negotiable)
 
 - Orbit is decision support, never an autonomous trading bot.
 - No order is placed or executed without explicit human confirmation.
-- All broker, AI-provider, and persistence access flows through the FastAPI backend.
-- Cloud AI is opt-in only; secrets live in the OS keychain, never in SQLite or logs.
+- All broker and persistence access flows through the FastAPI backend.
 - Machine-readable version of this policy: `GET /.well-known/agent.json` on the running backend.
 
 ## Modules
 
 - **Parallax**: technical analysis, screening, watchlists, and alerts.
 - **MoonMarket**: portfolio, account, options, and order workflows (human-confirmed).
-- **Inflect**: trading journal and trade review.
+- **TWS Assistant**: live execution planning and broker workflow support.
 
 Cross-module identity uses `conid` (IBKR contract id); ticker text is display metadata only.
 
@@ -53,4 +52,4 @@ Cross-module identity uses `conid` (IBKR contract id); ticker text is display me
 ## Stack
 
 Tauri v2, React 19 / TypeScript, Tailwind / shadcn, FastAPI / Python 3.12,
-Polars (pandas only for the pandas-ta bridge), SQLite, IBKR Client Portal, Ollama.
+Polars (pandas only for the pandas-ta bridge), SQLite, IBKR Client Portal.

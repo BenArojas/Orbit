@@ -117,52 +117,6 @@ class InvalidFibWeightsError(DataError):
         super().__init__(message)
 
 
-# ── AI Errors ────────────────────────────────────────────────
-
-
-class AIError(ParallaxError):
-    """Base for Ollama / AI service errors."""
-
-
-class OllamaConnectionError(AIError):
-    """Cannot reach the Ollama server."""
-
-    def __init__(self, message: str = "Cannot connect to Ollama"):
-        super().__init__(message)
-
-
-class OllamaModelError(AIError):
-    """Requested model is not available in Ollama."""
-
-    def __init__(self, model: str):
-        self.model = model
-        super().__init__(f"Model not available: {model}")
-
-
-class AIAnalysisError(AIError):
-    """AI analysis failed — could not generate a valid signal."""
-
-    def __init__(self, message: str = "Analysis failed"):
-        super().__init__(message)
-
-
-class AIAnalysisTimeoutError(AIError):
-    """
-    An Ollama call in the analysis pipeline exceeded its per-stage timeout.
-
-    stage: which step timed out — "narrative", "signal_extraction", or "reformat"
-    timeout_s: the timeout ceiling that was breached (seconds)
-    """
-
-    def __init__(self, stage: str, timeout_s: float):
-        self.stage = stage
-        self.timeout_s = timeout_s
-        super().__init__(
-            f"AI analysis timed out at '{stage}' stage after {timeout_s:.0f}s. "
-            f"Try a faster model or increase the timeout."
-        )
-
-
 # ── Gateway Errors ──────────────────────────────────────────
 
 

@@ -74,6 +74,7 @@ def _mock_db(hit_id: int | None = 1) -> MagicMock:
     db.get_trigger_rules = AsyncMock(return_value=[])
     db.get_setting = AsyncMock(return_value=None)
     db.record_trigger_hit = AsyncMock(return_value=hit_id)
+    db.clear_trigger_match = AsyncMock()
     db.get_watchlist_config = AsyncMock(return_value=None)
     return db
 

@@ -41,6 +41,10 @@ import { WS_URL } from "@/config/endpoints";
 // ── Types ───────────────────────────────────────────────────
 
 export type WsStatus = "disconnected" | "connecting" | "connected";
+export interface IBKRStreamStatus {
+  ibkrConnected: boolean;
+  wsReady: boolean;
+}
 
 export interface WsMessage {
   type: string;
@@ -50,6 +54,7 @@ export interface WsMessage {
 
 type MessageHandler = (msg: WsMessage) => void;
 type StatusListener = (s: WsStatus) => void;
+type UpstreamStatusListener = (s: IBKRStreamStatus | null) => void;
 
 // ── Constants ───────────────────────────────────────────────
 
@@ -65,9 +70,11 @@ const TEARDOWN_GRACE_MS = 10_000;
 const handlers = new Set<MessageHandler>();
 const subscriptions = new Map<number, number>(); // conid → refcount
 const statusListeners = new Set<StatusListener>();
+const upstreamStatusListeners = new Set<UpstreamStatusListener>();
 
 let ws: WebSocket | null = null;
 let currentStatus: WsStatus = "disconnected";
+let currentUpstreamStatus: IBKRStreamStatus | null = null;
 let reconnectAttempt = 0;
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let teardownTimer: ReturnType<typeof setTimeout> | null = null;
@@ -76,6 +83,11 @@ let refCount = 0;
 function setStatus(s: WsStatus) {
   currentStatus = s;
   for (const l of statusListeners) l(s);
+}
+
+function setUpstreamStatus(status: IBKRStreamStatus | null) {
+  currentUpstreamStatus = status;
+  for (const listener of upstreamStatusListeners) listener(status);
 }
 
 function send(data: Record<string, unknown>) {
@@ -94,6 +106,7 @@ function connect() {
 
   sock.onopen = () => {
     reconnectAttempt = 0;
+    setUpstreamStatus(null);
     setStatus("connected");
     // Re-subscribe to all active conids after (re)connect
     for (const conid of subscriptions.keys()) {
@@ -104,6 +117,12 @@ function connect() {
   sock.onmessage = (event) => {
     try {
       const msg = JSON.parse(event.data) as WsMessage;
+      if (msg.type === "connection_status") {
+        setUpstreamStatus({
+          ibkrConnected: msg.ibkr_connected === true,
+          wsReady: msg.ws_ready === true,
+        });
+      }
       for (const handler of handlers) handler(msg);
     } catch (err) {
       if (import.meta.env.DEV) {
@@ -116,6 +135,7 @@ function connect() {
     // Only reconnect if the close wasn't intentional (ws is still the active socket).
     const wasActive = ws === sock;
     ws = null;
+    setUpstreamStatus(null);
     setStatus("disconnected");
     if (!wasActive) return;
 
@@ -151,6 +171,7 @@ function closeSocket() {
     }
     ws = null;
   }
+  setUpstreamStatus(null);
   setStatus("disconnected");
 }
 
@@ -183,15 +204,19 @@ function release() {
 
 export function useWebSocket() {
   const [status, setLocalStatus] = useState<WsStatus>(currentStatus);
+  const [upstreamStatus, setLocalUpstreamStatus] = useState<IBKRStreamStatus | null>(currentUpstreamStatus);
 
   useEffect(() => {
     acquire();
     statusListeners.add(setLocalStatus);
+    upstreamStatusListeners.add(setLocalUpstreamStatus);
     // Sync the initial local status with the current singleton state.
     setLocalStatus(currentStatus);
+    setLocalUpstreamStatus(currentUpstreamStatus);
 
     return () => {
       statusListeners.delete(setLocalStatus);
+      upstreamStatusListeners.delete(setLocalUpstreamStatus);
       release();
     };
   }, []);
@@ -226,6 +251,7 @@ export function useWebSocket() {
 
   return {
     status,
+    upstreamStatus,
     subscribe,
     unsubscribe,
     send: sendCmd,
@@ -251,6 +277,7 @@ export function __resetWebSocketSingletonForTests() {
   handlers.clear();
   subscriptions.clear();
   statusListeners.clear();
+  upstreamStatusListeners.clear();
   refCount = 0;
   if (ws) {
     ws.onclose = null;
@@ -263,5 +290,6 @@ export function __resetWebSocketSingletonForTests() {
     ws = null;
   }
   currentStatus = "disconnected";
+  currentUpstreamStatus = null;
   reconnectAttempt = 0;
 }

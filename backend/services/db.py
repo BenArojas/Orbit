@@ -17,7 +17,6 @@ The `instruments` table is the one piece of the current Parallax-owned
 schema that other Orbit modules will read from:
 
   MoonMarket  → reads instruments to display symbol/name in portfolio
-  Inflect     → reads instruments to display symbol/name in journal entries
 
 Both modules use conid as their primary key. Instruments gets populated
 lazily here in Parallax whenever we resolve a conid for the first time
@@ -33,7 +32,6 @@ restarting your computer — the data stays.
 """
 
 import asyncio
-import json
 import logging
 import sqlite3
 from datetime import datetime, timedelta, timezone
@@ -46,6 +44,7 @@ from typing import Any
 _ET = ZoneInfo("America/New_York")
 
 from config import SQLITE_DB_PATH
+from services.setup_evidence import US_EXTENDED, evidence_is_current, setup_timestamps
 
 log = logging.getLogger("parallax.db")
 
@@ -196,6 +195,10 @@ class DatabaseService:
                 id                    INTEGER PRIMARY KEY AUTOINCREMENT,
                 name                  TEXT NOT NULL,
                 enabled               INTEGER NOT NULL DEFAULT 1,
+                revision              INTEGER NOT NULL DEFAULT 1,
+                setup_plan_id         INTEGER REFERENCES setup_plans(id) ON DELETE RESTRICT,
+                owner_account_id      TEXT,
+                account_mode          TEXT,
                 timeframe             TEXT NOT NULL DEFAULT '1D',
                 scan_interval_seconds INTEGER NOT NULL DEFAULT 300,
                 watchlist_name        TEXT,                       -- NULL = per-stock override
@@ -217,7 +220,8 @@ class DatabaseService:
                 indicator           TEXT NOT NULL,
                 condition           TEXT NOT NULL,
                 threshold           REAL,
-                news_candle_method  TEXT
+                news_candle_method  TEXT,
+                is_invalidation_condition INTEGER NOT NULL DEFAULT 0
             );
 
             -- ─── Rule Templates ────────────────────────────────────
@@ -244,6 +248,8 @@ class DatabaseService:
             CREATE TABLE IF NOT EXISTS trigger_hits (
                 id                 INTEGER PRIMARY KEY AUTOINCREMENT,
                 rule_id            INTEGER NOT NULL REFERENCES trigger_rules(id) ON DELETE CASCADE,
+                rule_revision      INTEGER,
+                rule_evaluation_id INTEGER REFERENCES rule_evaluations(id) ON DELETE SET NULL,
                 conid              INTEGER NOT NULL,
                 symbol             TEXT NOT NULL,
                 triggered_at       TEXT DEFAULT (datetime('now')),
@@ -259,6 +265,60 @@ class DatabaseService:
                 expires_at         TEXT
             );
 
+            CREATE TABLE IF NOT EXISTS setup_plans (
+                id                      INTEGER PRIMARY KEY AUTOINCREMENT,
+                owner_account_id        TEXT NOT NULL,
+                account_mode            TEXT NOT NULL CHECK (account_mode IN ('paper', 'live')),
+                conid                   INTEGER NOT NULL,
+                symbol                  TEXT NOT NULL,
+                setup_type              TEXT NOT NULL,
+                waiting_intention       TEXT NOT NULL,
+                monitoring_mode         TEXT NOT NULL CHECK (monitoring_mode IN ('manual', 'automatic')),
+                invalidation_reference  TEXT,
+                invalidation_condition_json TEXT,
+                rule_id                 INTEGER UNIQUE REFERENCES trigger_rules(id) ON DELETE RESTRICT,
+                lifecycle               TEXT NOT NULL DEFAULT 'active' CHECK (lifecycle IN ('active', 'archived')),
+                revision                INTEGER NOT NULL DEFAULT 1,
+                created_at              TEXT NOT NULL DEFAULT (datetime('now')),
+                updated_at              TEXT NOT NULL DEFAULT (datetime('now')),
+                archived_at             TEXT
+            );
+
+            CREATE TABLE IF NOT EXISTS trigger_match_state (
+                rule_id INTEGER NOT NULL REFERENCES trigger_rules(id) ON DELETE CASCADE,
+                rule_revision INTEGER NOT NULL,
+                conid INTEGER NOT NULL,
+                matched INTEGER NOT NULL CHECK (matched IN (0, 1)),
+                episode INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (rule_id, rule_revision, conid)
+            );
+
+            CREATE TABLE IF NOT EXISTS trigger_rule_revisions (
+                rule_id         INTEGER NOT NULL REFERENCES trigger_rules(id) ON DELETE CASCADE,
+                revision        INTEGER NOT NULL,
+                definition_json TEXT NOT NULL,
+                created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+                PRIMARY KEY (rule_id, revision)
+            );
+
+            CREATE TABLE IF NOT EXISTS rule_evaluations (
+                id               INTEGER PRIMARY KEY AUTOINCREMENT,
+                plan_id          INTEGER NOT NULL REFERENCES setup_plans(id) ON DELETE RESTRICT,
+                plan_revision    INTEGER NOT NULL,
+                rule_id          INTEGER NOT NULL REFERENCES trigger_rules(id) ON DELETE RESTRICT,
+                rule_revision    INTEGER NOT NULL,
+                outcome          TEXT NOT NULL CHECK (outcome IN ('matched', 'not_matched', 'failed', 'unavailable')),
+                invalidation_outcome TEXT CHECK (invalidation_outcome IN ('matched', 'not_matched', 'failed', 'unavailable')),
+                invalidation_failure_code TEXT,
+                invalidation_failure_message TEXT,
+                checked_at       TEXT NOT NULL,
+                evidence_at      TEXT,
+                condition_values TEXT NOT NULL,
+                failure_code     TEXT,
+                failure_message  TEXT,
+                reviewed_at      TEXT
+            );
+
             -- ─── Settings ──────────────────────────────────────────
             -- Key-value store for app preferences.
             -- Examples: scan_interval=300, default_timeframe=1D
@@ -268,58 +328,6 @@ class DatabaseService:
                 updated_at  TEXT DEFAULT (datetime('now'))
             );
 
-            -- ─── AI Provider Settings (Orbit v2 cloud shell) ───────
-            -- Non-secret provider configuration only. `api_key_ref` is an
-            -- opaque OS-keychain reference that will be populated in a later
-            -- slice. Plaintext or encrypted key material is never stored here.
-            CREATE TABLE IF NOT EXISTS ai_provider_configs (
-                provider_name  TEXT PRIMARY KEY,
-                display_name   TEXT NOT NULL,
-                kind           TEXT NOT NULL,
-                enabled        INTEGER NOT NULL DEFAULT 0,
-                selected_model TEXT,
-                api_key_ref    TEXT,
-                routing_role   TEXT NOT NULL DEFAULT 'disabled',
-                settings_json  TEXT NOT NULL DEFAULT '{}',
-                created_at     TEXT DEFAULT (datetime('now')),
-                updated_at     TEXT DEFAULT (datetime('now'))
-            );
-
-            CREATE TABLE IF NOT EXISTS ai_routing_policy (
-                id                         INTEGER PRIMARY KEY CHECK (id = 1),
-                active_provider            TEXT NOT NULL DEFAULT 'ollama',
-                routing_mode               TEXT NOT NULL DEFAULT 'local_only',
-                local_fallback_enabled     INTEGER NOT NULL DEFAULT 1,
-                per_call_cost_cap_usd      REAL NOT NULL DEFAULT 1.0,
-                monthly_cost_cap_usd       REAL NOT NULL DEFAULT 25.0,
-                updated_at                 TEXT DEFAULT (datetime('now'))
-            );
-
-            CREATE TABLE IF NOT EXISTS ai_usage_log (
-                id                  INTEGER PRIMARY KEY AUTOINCREMENT,
-                provider_name       TEXT NOT NULL,
-                model               TEXT,
-                task_type           TEXT NOT NULL,
-                routing_mode        TEXT NOT NULL,
-                input_tokens        INTEGER,
-                output_tokens       INTEGER,
-                estimated_cost      REAL,
-                actual_cost         REAL,
-                currency            TEXT NOT NULL DEFAULT 'USD',
-                status              TEXT NOT NULL,
-                provider_request_id TEXT,
-                error_code          TEXT,
-                run_id              TEXT,
-                requested_provider_name TEXT,
-                requested_model     TEXT,
-                resolved_model      TEXT,
-                fallback_reason     TEXT,
-                duration_ms         INTEGER,
-                reasoning_tokens    INTEGER,
-                cached_tokens       INTEGER,
-                created_at          TEXT DEFAULT (datetime('now'))
-            );
-
             -- ─── Instruments Cache ─────────────────────────────────
             -- Local cache of IBKR's instrument metadata.
             -- Avoids hitting IBKR's search API repeatedly for the same stock.
@@ -327,8 +335,7 @@ class DatabaseService:
             -- conid is the primary key — IBKR's unique integer for each security.
             -- This is the UNIVERSAL KEY across the entire Orbit:
             --   Parallax uses conid in trigger_rules, trigger_hits, indicators
-            --   MoonMarket will use conid in fills, positions, orders
-            --   Inflect will use conid in journal_entries
+            --   MoonMarket will use conid in positions and orders
             --
             -- Populated lazily: when Parallax resolves a conid for the first
             -- time (via /market/search or /market/conid), it writes a row here.
@@ -342,32 +349,6 @@ class DatabaseService:
                 company_name   TEXT DEFAULT '',         -- Full name ("Apple Inc")
                 sec_type       TEXT DEFAULT 'STK',      -- STK, ETF, OPT, FUT, etc.
                 cached_at      TEXT DEFAULT (datetime('now'))
-            );
-
-            -- ─── MoonMarket Fills ─────────────────────────────────
-            -- Local execution/fill store for MoonMarket and future
-            -- Inflect journal reads. IBKR remains the source of truth;
-            -- this table is an idempotent local projection keyed by
-            -- (account_id, execution_id). conid is the Orbit-wide instrument key.
-            CREATE TABLE IF NOT EXISTS fills (
-                execution_id  TEXT NOT NULL,
-                account_id    TEXT NOT NULL,
-                conid         INTEGER NOT NULL,
-                symbol        TEXT,
-                description   TEXT,
-                side          TEXT NOT NULL,
-                quantity      REAL NOT NULL,
-                price         REAL,
-                net_amount    REAL,
-                commission    REAL,
-                sec_type      TEXT,
-                trade_time    TEXT NOT NULL,
-                trade_time_ms INTEGER,
-                source        TEXT NOT NULL DEFAULT 'IBKR_TRADES',
-                raw_json      TEXT,
-                created_at    TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                updated_at    TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                PRIMARY KEY (account_id, execution_id)
             );
 
             -- ─── Conid Cache (Phase 8 / Task 1.5) ──────────────────
@@ -428,10 +409,6 @@ class DatabaseService:
 
             CREATE INDEX IF NOT EXISTS idx_instruments_symbol
                 ON instruments(symbol);
-            CREATE INDEX IF NOT EXISTS idx_fills_account_time
-                ON fills(account_id, trade_time_ms DESC);
-            CREATE INDEX IF NOT EXISTS idx_fills_conid_time
-                ON fills(conid, trade_time_ms DESC);
 
             -- ─── Watchlist Config (Phase 6.8) ──────────────────────
             -- Per-target-watchlist override for auto-expire.
@@ -521,90 +498,11 @@ class DatabaseService:
             CREATE INDEX IF NOT EXISTS idx_chart_drawings_conid
                 ON chart_drawings(conid);
 
-            -- ─── Inflect Journal Entries ───────────────────────────
-            -- Inflect's only owned table. Stores the user's per-trade
-            -- annotations (setup label, freeform notes, freeform tags).
-            --
-            -- Keyed by a stable round-trip `trade_id`
-            -- (account_id:conid:first_open_execution_id) so an entry
-            -- survives re-derivation of trades from `fills` — Inflect
-            -- never persists the round-trip trades themselves, it
-            -- recomputes them on demand via the FIFO matcher.
-            --
-            -- conid is the Orbit-wide instrument key; the index on it
-            -- lets the trades list bulk-fetch entries for a set of
-            -- conids and join them back by trade_id in memory.
-            --
-            -- `tags` is a JSON array of freeform tag strings.
-            CREATE TABLE IF NOT EXISTS journal_entries (
-                trade_id     TEXT PRIMARY KEY,
-                account_id   TEXT NOT NULL,
-                conid        INTEGER NOT NULL,
-                setup        TEXT,
-                notes        TEXT,
-                tags         TEXT,
-                created_at   TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                updated_at   TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-            );
+            CREATE INDEX IF NOT EXISTS idx_setup_plans_scope
+                ON setup_plans(owner_account_id, account_mode, lifecycle);
+            CREATE INDEX IF NOT EXISTS idx_rule_evaluations_plan
+                ON rule_evaluations(plan_id, id DESC);
 
-            CREATE INDEX IF NOT EXISTS idx_journal_conid
-                ON journal_entries(conid);
-
-            -- ─── Inflect Basis Backfill Queue ─────────────────────
-            -- One queue row per (account_id, conid) that the matcher marked
-            -- as Needs basis. The scheduler owns pacing for /pa/transactions.
-            CREATE TABLE IF NOT EXISTS basis_backfill_queue (
-                account_id      TEXT NOT NULL,
-                conid           INTEGER NOT NULL,
-                status          TEXT NOT NULL DEFAULT 'pending',
-                attempts        INTEGER NOT NULL DEFAULT 0,
-                days_used       INTEGER,
-                last_checked_ms INTEGER,
-                last_error      TEXT,
-                created_at      TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                updated_at      TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                PRIMARY KEY (account_id, conid)
-            );
-
-            CREATE INDEX IF NOT EXISTS idx_basis_backfill_status
-                ON basis_backfill_queue(status, last_checked_ms, created_at);
-
-            -- ─── Inflect Manual Basis Lots ────────────────────────
-            -- User-entered starting lots for positions whose opening basis
-            -- predates recoverable IBKR history. P2-I converts these rows to
-            -- synthetic matcher fills; this table is CRUD-only in P2-H.
-            CREATE TABLE IF NOT EXISTS basis_lots (
-                id           INTEGER PRIMARY KEY AUTOINCREMENT,
-                account_id   TEXT NOT NULL,
-                conid        INTEGER NOT NULL,
-                side         TEXT NOT NULL,
-                quantity     REAL NOT NULL,
-                entry_date   TEXT NOT NULL,
-                entry_price  REAL NOT NULL,
-                commission   REAL,
-                note         TEXT,
-                created_at   TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                updated_at   TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-            );
-
-            CREATE INDEX IF NOT EXISTS idx_basis_lots_acct_conid
-                ON basis_lots(account_id, conid);
-
-            -- ─── Inflect Basis Audit ──────────────────────────────
-            -- Audit symmetry for automatic PA recovery and manual basis repair.
-            CREATE TABLE IF NOT EXISTS basis_audit (
-                id          INTEGER PRIMARY KEY AUTOINCREMENT,
-                account_id  TEXT NOT NULL,
-                conid       INTEGER NOT NULL,
-                action      TEXT NOT NULL,
-                source      TEXT,
-                before_json TEXT,
-                after_json  TEXT,
-                created_at  TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-            );
-
-            CREATE INDEX IF NOT EXISTS idx_basis_audit_acct_conid
-                ON basis_audit(account_id, conid);
         """)
         self._conn.commit()
         log.info("Database tables verified/created.")
@@ -622,17 +520,6 @@ class DatabaseService:
         migrations = [
             # Phase 8.9 / Commit D: sec_type hint for pulse items
             "ALTER TABLE pulse_config ADD COLUMN sec_type TEXT NOT NULL DEFAULT ''",
-            # Inflect P1-F: distinguish IBKR recent fills from PA/manual basis rows.
-            "ALTER TABLE fills ADD COLUMN source TEXT NOT NULL DEFAULT 'IBKR_TRADES'",
-            "ALTER TABLE ai_routing_policy ADD COLUMN active_provider TEXT NOT NULL DEFAULT 'ollama'",
-            "ALTER TABLE ai_usage_log ADD COLUMN run_id TEXT",
-            "ALTER TABLE ai_usage_log ADD COLUMN requested_provider_name TEXT",
-            "ALTER TABLE ai_usage_log ADD COLUMN requested_model TEXT",
-            "ALTER TABLE ai_usage_log ADD COLUMN resolved_model TEXT",
-            "ALTER TABLE ai_usage_log ADD COLUMN fallback_reason TEXT",
-            "ALTER TABLE ai_usage_log ADD COLUMN duration_ms INTEGER",
-            "ALTER TABLE ai_usage_log ADD COLUMN reasoning_tokens INTEGER",
-            "ALTER TABLE ai_usage_log ADD COLUMN cached_tokens INTEGER",
         ]
         for sql in migrations:
             try:
@@ -642,7 +529,48 @@ class DatabaseService:
             except sqlite3.OperationalError:
                 pass  # column already exists — safe to skip
 
-        self._migrate_fills_account_execution_pk()
+        additions = (
+            ("trigger_rules", "revision", "INTEGER NOT NULL DEFAULT 1"),
+            ("trigger_rules", "setup_plan_id", "INTEGER REFERENCES setup_plans(id) ON DELETE RESTRICT"),
+            ("trigger_rules", "owner_account_id", "TEXT"),
+            ("trigger_rules", "account_mode", "TEXT"),
+            ("trigger_conditions", "is_invalidation_condition", "INTEGER NOT NULL DEFAULT 0"),
+            ("trigger_hits", "rule_revision", "INTEGER"),
+            ("trigger_hits", "rule_evaluation_id", "INTEGER REFERENCES rule_evaluations(id) ON DELETE SET NULL"),
+            ("rule_evaluations", "invalidation_outcome", "TEXT"),
+            ("rule_evaluations", "invalidation_failure_code", "TEXT"),
+            ("rule_evaluations", "invalidation_failure_message", "TEXT"),
+            ("rule_evaluations", "evidence_session_policy", "TEXT"),
+        )
+        for table, column, declaration in additions:
+            columns = {
+                row["name"]
+                for row in self._conn.execute(f"PRAGMA table_info({table})").fetchall()
+            }
+            if column not in columns:
+                self._conn.execute(
+                    f"ALTER TABLE {table} ADD COLUMN {column} {declaration}"
+                )
+
+        self._conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_trigger_rules_setup_plan "
+            "ON trigger_rules(setup_plan_id)"
+        )
+
+        # Capture each rule's current definition once. Existing hits remain
+        # unattributed (rule_revision NULL), so migration never certifies them
+        # as evidence for a tracked plan.
+        import json as _json
+
+        rules = self._conn.execute("SELECT * FROM trigger_rules").fetchall()
+        for row in rules:
+            rule = dict(row)
+            rule["conditions"] = self._read_conditions(rule["id"])
+            self._conn.execute(
+                "INSERT OR IGNORE INTO trigger_rule_revisions "
+                "(rule_id, revision, definition_json) VALUES (?, ?, ?)",
+                (rule["id"], rule["revision"], _json.dumps(rule, sort_keys=True)),
+            )
 
         # Legacy pulse defaults briefly used BTC.USD / ETH.USD, but IBKR's
         # secdef search resolves the crypto spot contracts under BTC / ETH.
@@ -657,71 +585,6 @@ class DatabaseService:
             "WHERE label = 'ETH' AND resolve = 'ETH.USD' AND sec_type = ''"
         )
         self._conn.commit()
-
-    def _migrate_fills_account_execution_pk(self) -> None:
-        """Rebuild legacy fills tables keyed only by execution_id.
-
-        SQLite cannot alter a primary key in place. Existing rows keep their
-        account_id, so the rebuild preserves current local history while making
-        duplicate execution ids safe across accounts.
-        """
-        assert self._conn is not None
-        columns = self._conn.execute("PRAGMA table_info(fills)").fetchall()
-        execution_pk = next(
-            (int(row["pk"]) for row in columns if row["name"] == "execution_id"),
-            0,
-        )
-        account_pk = next(
-            (int(row["pk"]) for row in columns if row["name"] == "account_id"),
-            0,
-        )
-        if execution_pk != 1 or account_pk != 0:
-            return
-
-        self._conn.executescript("""
-            ALTER TABLE fills RENAME TO fills_legacy_single_execution_pk;
-
-            CREATE TABLE fills (
-                execution_id  TEXT NOT NULL,
-                account_id    TEXT NOT NULL,
-                conid         INTEGER NOT NULL,
-                symbol        TEXT,
-                description   TEXT,
-                side          TEXT NOT NULL,
-                quantity      REAL NOT NULL,
-                price         REAL,
-                net_amount    REAL,
-                commission    REAL,
-                sec_type      TEXT,
-                trade_time    TEXT NOT NULL,
-                trade_time_ms INTEGER,
-                source        TEXT NOT NULL DEFAULT 'IBKR_TRADES',
-                raw_json      TEXT,
-                created_at    TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                updated_at    TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                PRIMARY KEY (account_id, execution_id)
-            );
-
-            INSERT OR REPLACE INTO fills (
-                execution_id, account_id, conid, symbol, description, side,
-                quantity, price, net_amount, commission, sec_type, trade_time,
-                trade_time_ms, source, raw_json, created_at, updated_at
-            )
-            SELECT
-                execution_id, account_id, conid, symbol, description, side,
-                quantity, price, net_amount, commission, sec_type, trade_time,
-                trade_time_ms, source, raw_json, created_at, updated_at
-            FROM fills_legacy_single_execution_pk;
-
-            DROP TABLE fills_legacy_single_execution_pk;
-
-            CREATE INDEX IF NOT EXISTS idx_fills_account_time
-                ON fills(account_id, trade_time_ms DESC);
-            CREATE INDEX IF NOT EXISTS idx_fills_conid_time
-                ON fills(conid, trade_time_ms DESC);
-        """)
-        self._conn.commit()
-        log.info("Migration applied: fills primary key is now (account_id, execution_id)")
 
     # ── Internal helpers ─────────────────────────────────────
 
@@ -772,592 +635,14 @@ class DatabaseService:
         async with self._write_lock:
             return await asyncio.to_thread(fn)
 
-    # ── MoonMarket Fills ─────────────────────────────────────
-
-    async def upsert_fills(self, rows: list[dict[str, Any]]) -> int:
-        """Insert or update normalized MoonMarket fills by execution id."""
-        accepted = [row for row in rows if self._valid_fill_row(row)]
-
-        def _do() -> int:
-            assert self._conn is not None
-            with self._conn:
-                for row in accepted:
-                    self._conn.execute(
-                        """
-                        INSERT INTO fills (
-                            execution_id, account_id, conid, symbol, description,
-                            side, quantity, price, net_amount, commission, sec_type,
-                            trade_time, trade_time_ms, source, raw_json
-                        )
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                        ON CONFLICT(account_id, execution_id) DO UPDATE SET
-                            conid = excluded.conid,
-                            symbol = excluded.symbol,
-                            description = excluded.description,
-                            side = excluded.side,
-                            quantity = excluded.quantity,
-                            price = excluded.price,
-                            net_amount = excluded.net_amount,
-                            commission = excluded.commission,
-                            sec_type = excluded.sec_type,
-                            trade_time = excluded.trade_time,
-                            trade_time_ms = excluded.trade_time_ms,
-                            source = excluded.source,
-                            raw_json = excluded.raw_json,
-                            updated_at = CURRENT_TIMESTAMP
-                        """,
-                        (
-                            row["execution_id"],
-                            row["account_id"],
-                            int(row["conid"]),
-                            row.get("symbol"),
-                            row.get("description"),
-                            row["side"],
-                            float(row["quantity"]),
-                            row.get("price"),
-                            row.get("net_amount"),
-                            row.get("commission"),
-                            row.get("sec_type"),
-                            row["trade_time"],
-                            row.get("trade_time_ms"),
-                            row.get("source") or "IBKR_TRADES",
-                            self._encode_raw_json(row.get("raw_json")),
-                        ),
-                    )
-            return len(accepted)
-
-        return await self._run_write(_do)
-
-    async def list_fills(self, account_id: str, days: int = 7) -> list[dict[str, Any]]:
-        """Return recent fills for an account, newest first."""
-        bounded_days = max(1, min(int(days), 7))
-        cutoff_ms = int((datetime.now(timezone.utc) - timedelta(days=bounded_days)).timestamp() * 1000)
-
-        def _do() -> list[dict[str, Any]]:
-            assert self._conn is not None
-            cur = self._conn.execute(
-                """
-                SELECT *
-                FROM fills
-                WHERE account_id = ?
-                  AND (trade_time_ms IS NULL OR trade_time_ms >= ?)
-                ORDER BY trade_time_ms DESC, trade_time DESC
-                """,
-                (account_id, cutoff_ms),
-            )
-            cols = [d[0] for d in cur.description]
-            return [dict(zip(cols, row)) for row in cur.fetchall()]
-
-        return await self._run_read(_do)
-
-    async def list_fills_for_account_range(
-        self, account_id: str, start_ms: int, end_ms: int
-    ) -> list[dict[str, Any]]:
-        """Return an account's fills within [start_ms, end_ms], oldest first.
-
-        This is the FIFO matcher's only input. Order is chronological
-        (ascending trade_time_ms) because the matcher walks fills forward
-        maintaining a signed lot queue. Fills with NULL trade_time_ms are
-        excluded — the matcher cannot place them on the timeline, and the
-        upsert path always populates trade_time_ms for IBKR executions.
-
-        Reads bypass the write lock (see _run_read).
-        """
-        def _do() -> list[dict[str, Any]]:
-            assert self._conn is not None
-            cur = self._conn.execute(
-                """
-                SELECT *
-                FROM fills
-                WHERE account_id = ?
-                  AND trade_time_ms IS NOT NULL
-                  AND trade_time_ms >= ?
-                  AND trade_time_ms <= ?
-                ORDER BY trade_time_ms ASC, trade_time ASC
-                """,
-                (account_id, int(start_ms), int(end_ms)),
-            )
-            cols = [d[0] for d in cur.description]
-            return [dict(zip(cols, row)) for row in cur.fetchall()]
-
-        return await self._run_read(_do)
-
-    @staticmethod
-    def _valid_fill_row(row: dict[str, Any]) -> bool:
-        required = ("execution_id", "account_id", "conid", "side", "quantity", "trade_time")
-        return all(row.get(key) not in (None, "") for key in required)
-
-    @staticmethod
-    def _encode_raw_json(value: Any) -> str | None:
-        if value is None:
-            return None
-        if isinstance(value, str):
-            return value
-        return json.dumps(value, sort_keys=True)
-
-    # ── Inflect Basis Backfill Queue ─────────────────────────
-
-    async def enqueue_basis(self, account_id: str, conid: int) -> None:
-        """Create an idempotent basis-backfill queue row for account + conid."""
-        def _do() -> None:
-            assert self._conn is not None
-            with self._conn:
-                self._conn.execute(
-                    """
-                    INSERT OR IGNORE INTO basis_backfill_queue
-                        (account_id, conid, status)
-                    VALUES (?, ?, 'pending')
-                    """,
-                    (account_id, int(conid)),
-                )
-
-        await self._run_write(_do)
-
-    async def claim_next_backfill(self, now_ms: int | None = None) -> dict | None:
-        """Claim the oldest eligible pending backfill item.
-
-        Eligibility is intentionally conservative: only pending rows whose
-        last check is absent or at least 16 minutes old can be claimed.
-        """
-        now = now_ms if now_ms is not None else int(
-            datetime.now(timezone.utc).timestamp() * 1000
-        )
-        cutoff_ms = int(now) - (16 * 60 * 1000)
-
-        def _do() -> dict | None:
-            assert self._conn is not None
-            with self._conn:
-                row = self._conn.execute(
-                    """
-                    SELECT account_id, conid
-                    FROM basis_backfill_queue
-                    WHERE status = 'pending'
-                      AND (last_checked_ms IS NULL OR last_checked_ms <= ?)
-                    ORDER BY created_at ASC, account_id ASC, conid ASC
-                    LIMIT 1
-                    """,
-                    (cutoff_ms,),
-                ).fetchone()
-                if row is None:
-                    return None
-
-                self._conn.execute(
-                    """
-                    UPDATE basis_backfill_queue
-                    SET status = 'running',
-                        attempts = attempts + 1,
-                        last_checked_ms = ?,
-                        last_error = NULL,
-                        updated_at = CURRENT_TIMESTAMP
-                    WHERE account_id = ? AND conid = ?
-                    """,
-                    (int(now), row["account_id"], int(row["conid"])),
-                )
-                claimed = self._conn.execute(
-                    """
-                    SELECT *
-                    FROM basis_backfill_queue
-                    WHERE account_id = ? AND conid = ?
-                    """,
-                    (row["account_id"], int(row["conid"])),
-                ).fetchone()
-                return dict(claimed) if claimed else None
-
-        return await self._run_write(_do)
-
-    async def set_backfill_status(
-        self,
-        account_id: str,
-        conid: int,
-        *,
-        status: str,
-        days_used: int | None = None,
-        last_checked_ms: int | None = None,
-        last_error: str | None = None,
-    ) -> None:
-        """Update one backfill queue row's status fields."""
-        def _do() -> None:
-            assert self._conn is not None
-            with self._conn:
-                self._conn.execute(
-                    """
-                    UPDATE basis_backfill_queue
-                    SET status = ?,
-                        days_used = ?,
-                        last_checked_ms = COALESCE(?, last_checked_ms),
-                        last_error = ?,
-                        updated_at = CURRENT_TIMESTAMP
-                    WHERE account_id = ? AND conid = ?
-                    """,
-                    (
-                        status,
-                        days_used,
-                        last_checked_ms,
-                        last_error,
-                        account_id,
-                        int(conid),
-                    ),
-                )
-
-        await self._run_write(_do)
-
-    async def insert_basis_audit(
-        self,
-        *,
-        account_id: str,
-        conid: int,
-        action: str,
-        source: str | None,
-        before_json: str | None,
-        after_json: str | None,
-    ) -> None:
-        """Append one basis recovery/repair audit row."""
-        def _do() -> None:
-            assert self._conn is not None
-            with self._conn:
-                self._conn.execute(
-                    """
-                    INSERT INTO basis_audit
-                        (account_id, conid, action, source, before_json, after_json)
-                    VALUES (?, ?, ?, ?, ?, ?)
-                    """,
-                    (account_id, int(conid), action, source, before_json, after_json),
-                )
-
-        await self._run_write(_do)
-
-    async def list_backfill_status(self, account_id: str) -> list[dict[str, Any]]:
-        """Return basis-backfill queue rows for one account."""
-        def _do() -> list[dict[str, Any]]:
-            assert self._conn is not None
-            cur = self._conn.execute(
-                """
-                SELECT *
-                FROM basis_backfill_queue
-                WHERE account_id = ?
-                ORDER BY created_at ASC, conid ASC
-                """,
-                (account_id,),
-            )
-            cols = [d[0] for d in cur.description]
-            return [dict(zip(cols, row)) for row in cur.fetchall()]
-
-        return await self._run_read(_do)
-
-    # ── Inflect Manual Basis Lots ────────────────────────────
-
-    async def create_basis_lot(
-        self,
-        *,
-        account_id: str,
-        conid: int,
-        side: str,
-        quantity: float,
-        entry_date: str,
-        entry_price: float,
-        commission: float | None,
-        note: str | None,
-    ) -> dict[str, Any]:
-        """Insert one manual starting lot and return the stored row."""
-        def _do() -> dict[str, Any]:
-            assert self._conn is not None
-            with self._conn:
-                cur = self._conn.execute(
-                    """
-                    INSERT INTO basis_lots (
-                        account_id, conid, side, quantity, entry_date,
-                        entry_price, commission, note
-                    )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        account_id,
-                        int(conid),
-                        side,
-                        float(quantity),
-                        entry_date,
-                        float(entry_price),
-                        commission,
-                        note,
-                    ),
-                )
-                row = self._conn.execute(
-                    "SELECT * FROM basis_lots WHERE id = ?",
-                    (cur.lastrowid,),
-                ).fetchone()
-                assert row is not None
-                return dict(row)
-
-        return await self._run_write(_do)
-
-    async def list_basis_lots(
-        self, account_id: str, conid: int
-    ) -> list[dict[str, Any]]:
-        """Return manual starting lots for one account + conid."""
-        def _do() -> list[dict[str, Any]]:
-            assert self._conn is not None
-            cur = self._conn.execute(
-                """
-                SELECT *
-                FROM basis_lots
-                WHERE account_id = ? AND conid = ?
-                ORDER BY entry_date ASC, created_at ASC, id ASC
-                """,
-                (account_id, int(conid)),
-            )
-            cols = [d[0] for d in cur.description]
-            return [dict(zip(cols, row)) for row in cur.fetchall()]
-
-        return await self._run_read(_do)
-
-    async def update_basis_lot(
-        self,
-        *,
-        lot_id: int,
-        account_id: str,
-        conid: int,
-        side: str,
-        quantity: float,
-        entry_date: str,
-        entry_price: float,
-        commission: float | None,
-        note: str | None,
-    ) -> dict[str, Any] | None:
-        """Replace one manual starting lot for the owning account."""
-        def _do() -> dict[str, Any] | None:
-            assert self._conn is not None
-            with self._conn:
-                self._conn.execute(
-                    """
-                    UPDATE basis_lots
-                    SET conid = ?,
-                        side = ?,
-                        quantity = ?,
-                        entry_date = ?,
-                        entry_price = ?,
-                        commission = ?,
-                        note = ?,
-                        updated_at = CURRENT_TIMESTAMP
-                    WHERE id = ? AND account_id = ?
-                    """,
-                    (
-                        int(conid),
-                        side,
-                        float(quantity),
-                        entry_date,
-                        float(entry_price),
-                        commission,
-                        note,
-                        int(lot_id),
-                        account_id,
-                    ),
-                )
-                row = self._conn.execute(
-                    """
-                    SELECT *
-                    FROM basis_lots
-                    WHERE id = ? AND account_id = ?
-                    """,
-                    (int(lot_id), account_id),
-                ).fetchone()
-                return dict(row) if row else None
-
-        return await self._run_write(_do)
-
-    async def delete_basis_lot(self, lot_id: int, account_id: str) -> bool:
-        """Delete one manual starting lot for the owning account."""
-        def _do() -> bool:
-            assert self._conn is not None
-            with self._conn:
-                cur = self._conn.execute(
-                    """
-                    DELETE FROM basis_lots
-                    WHERE id = ? AND account_id = ?
-                    """,
-                    (int(lot_id), account_id),
-                )
-                return cur.rowcount > 0
-
-        return await self._run_write(_do)
-
-    # ── Inflect Journal Entries ──────────────────────────────
-    #
-    # Inflect's only owned table. Round-trip trades are derived on demand
-    # from `fills`; these rows are the durable per-trade annotations the
-    # user writes. Keyed by the stable round-trip trade_id so an entry
-    # survives re-derivation. Writes serialise through the write lock;
-    # reads decode the `tags` JSON column into a list of strings.
-
-    async def upsert_journal_entry(
-        self,
-        *,
-        trade_id: str,
-        account_id: str,
-        conid: int,
-        setup: str | None,
-        notes: str | None,
-        tags: list[str] | None,
-    ) -> None:
-        """Insert or update a journal entry, keyed by stable trade_id.
-
-        `tags` is stored as a JSON array string. Passing None or an empty
-        list clears the stored tags. created_at is preserved on update;
-        updated_at is always refreshed.
-        """
-        tags_json = json.dumps(list(tags)) if tags else None
-
-        def _upsert() -> None:
-            assert self._conn is not None
-            with self._conn:
-                self._conn.execute(
-                    """
-                    INSERT INTO journal_entries
-                        (trade_id, account_id, conid, setup, notes, tags, updated_at)
-                    VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-                    ON CONFLICT(trade_id) DO UPDATE SET
-                        account_id = excluded.account_id,
-                        conid = excluded.conid,
-                        setup = excluded.setup,
-                        notes = excluded.notes,
-                        tags = excluded.tags,
-                        updated_at = CURRENT_TIMESTAMP
-                    """,
-                    (trade_id, account_id, int(conid), setup, notes, tags_json),
-                )
-
-        await self._run_write(_upsert)
-
-    async def get_journal_entry(self, trade_id: str) -> dict | None:
-        """Return one journal entry by trade_id, or None. Tags decoded to a list."""
-        def _do() -> dict | None:
-            row = self._fetchone(
-                "SELECT * FROM journal_entries WHERE trade_id = ?",
-                (trade_id,),
-            )
-            if row is None:
-                return None
-            row["tags"] = self._decode_tags(row.get("tags"))
-            return row
-
-        return await self._run_read(_do)
-
-    async def rekey_journal_entry(self, old_trade_id: str, new_trade_id: str) -> None:
-        """Move one journal annotation to a successor derived trade id."""
-        if old_trade_id == new_trade_id:
-            return
-
-        def _do() -> None:
-            assert self._conn is not None
-            with self._conn:
-                existing = self._conn.execute(
-                    "SELECT * FROM journal_entries WHERE trade_id = ?",
-                    (old_trade_id,),
-                ).fetchone()
-                if existing is None:
-                    return
-
-                conflict = self._conn.execute(
-                    "SELECT trade_id FROM journal_entries WHERE trade_id = ?",
-                    (new_trade_id,),
-                ).fetchone()
-                if conflict is not None:
-                    self._conn.execute(
-                        """
-                        UPDATE journal_entries
-                        SET account_id = ?,
-                            conid = ?,
-                            setup = ?,
-                            notes = ?,
-                            tags = ?,
-                            updated_at = CURRENT_TIMESTAMP
-                        WHERE trade_id = ?
-                        """,
-                        (
-                            existing["account_id"],
-                            int(existing["conid"]),
-                            existing["setup"],
-                            existing["notes"],
-                            existing["tags"],
-                            new_trade_id,
-                        ),
-                    )
-                    self._conn.execute(
-                        "DELETE FROM journal_entries WHERE trade_id = ?",
-                        (old_trade_id,),
-                    )
-                    return
-
-                self._conn.execute(
-                    """
-                    UPDATE journal_entries
-                    SET trade_id = ?,
-                        updated_at = CURRENT_TIMESTAMP
-                    WHERE trade_id = ?
-                    """,
-                    (new_trade_id, old_trade_id),
-                )
-
-        await self._run_write(_do)
-
-    async def get_journal_entries_for_conids(
-        self, conids: list[int], account_id: str | None = None
-    ) -> list[dict]:
-        """Bulk-fetch journal entries for a set of conids (indexed lookup).
-
-        The trades list joins these back to trades by trade_id + account_id
-        in memory. Passing account_id prevents annotations from another
-        account leaking onto same-conid trades.
-        Returns [] for an empty input. Tags decoded to a list.
-        """
-        if not conids:
-            return []
-
-        def _do() -> list[dict]:
-            placeholders = ",".join("?" for _ in conids)
-            params: list[Any] = [int(c) for c in conids]
-            account_clause = ""
-            if account_id is not None:
-                account_clause = " AND account_id = ?"
-                params.append(account_id)
-            rows = self._fetchall(
-                f"""
-                SELECT *
-                FROM journal_entries
-                WHERE conid IN ({placeholders}){account_clause}
-                """,
-                tuple(params),
-            )
-            for r in rows:
-                r["tags"] = self._decode_tags(r.get("tags"))
-            return rows
-
-        return await self._run_read(_do)
-
-    @staticmethod
-    def _decode_tags(value: Any) -> list[str]:
-        """Decode the stored tags JSON column into a list of strings.
-
-        Never raises — a corrupt or non-list payload degrades to []
-        rather than breaking the trades query.
-        """
-        if not value:
-            return []
-        try:
-            data = json.loads(value)
-        except (ValueError, TypeError):
-            return []
-        if not isinstance(data, list):
-            return []
-        return [str(t) for t in data]
-
     # ── Trigger Rules ─────────────────────────────────────
 
     async def get_trigger_rules(self, enabled_only: bool = False) -> list[dict]:
         def _do():
             assert self._conn is not None
-            q = "SELECT * FROM trigger_rules"
+            q = "SELECT * FROM trigger_rules WHERE setup_plan_id IS NULL"
             if enabled_only:
-                q += " WHERE enabled=1"
+                q += " AND enabled=1"
             q += " ORDER BY id DESC"
             cur = self._conn.execute(q)
             cols = [d[0] for d in cur.description]
@@ -1384,7 +669,8 @@ class DatabaseService:
         """Synchronous helper — caller must hold the read or write lock."""
         assert self._conn is not None
         cur = self._conn.execute(
-            "SELECT indicator, condition, threshold, news_candle_method "
+            "SELECT indicator, condition, threshold, news_candle_method, "
+            "is_invalidation_condition "
             "FROM trigger_conditions WHERE rule_id=? ORDER BY order_index",
             (rule_id,),
         )
@@ -1395,7 +681,8 @@ class DatabaseService:
         def _do():
             assert self._conn is not None
             cur = self._conn.execute(
-                "SELECT * FROM trigger_rules WHERE watchlist_name=? AND enabled=1",
+                "SELECT * FROM trigger_rules WHERE watchlist_name=? AND enabled=1 "
+                "AND setup_plan_id IS NULL",
                 (watchlist_name,),
             )
             cols = [d[0] for d in cur.description]
@@ -1439,6 +726,7 @@ class DatabaseService:
                         (rule_id, idx, c["indicator"], c["condition"],
                          c.get("threshold"), c.get("news_candle_method")),
                     )
+                self._save_rule_revision(rule_id, 1)
                 return rule_id
         return await self._run_write(_do)
 
@@ -1458,11 +746,30 @@ class DatabaseService:
         def _do():
             assert self._conn is not None
             with self._conn:
+                existing = self._conn.execute(
+                    "SELECT setup_plan_id, revision FROM trigger_rules WHERE id=?",
+                    (rule_id,),
+                ).fetchone()
+                if existing is None:
+                    return False
+                if existing["setup_plan_id"] is not None:
+                    raise PermissionError("plan-linked rules must be edited through their setup plan")
+                old_revision = int(existing["revision"])
+                revision = old_revision + int(
+                    bool(set(fields) & {"timeframe", "conid", "watchlist_name"})
+                    or conditions is not None
+                )
                 if fields:
                     set_clause = ", ".join(f"{k}=?" for k in fields)
                     self._conn.execute(
-                        f"UPDATE trigger_rules SET {set_clause}, updated_at=datetime('now') WHERE id=?",
-                        (*fields.values(), rule_id),
+                        f"UPDATE trigger_rules SET {set_clause}, revision=?, "
+                        "updated_at=datetime('now') WHERE id=?",
+                        (*fields.values(), revision, rule_id),
+                    )
+                else:
+                    self._conn.execute(
+                        "UPDATE trigger_rules SET revision=?, updated_at=datetime('now') WHERE id=?",
+                        (revision, rule_id),
                     )
                 if conditions is not None:
                     if not conditions:
@@ -1476,16 +783,666 @@ class DatabaseService:
                             (rule_id, idx, c["indicator"], c["condition"],
                              c.get("threshold"), c.get("news_candle_method")),
                         )
-                cur = self._conn.execute("SELECT 1 FROM trigger_rules WHERE id=?", (rule_id,))
-                return cur.fetchone() is not None
+                self._save_rule_revision(rule_id, revision)
+                return True
         return await self._run_write(_do)
 
     async def delete_trigger_rule(self, rule_id: int) -> bool:
         def _do():
             assert self._conn is not None
             with self._conn:
+                existing = self._conn.execute(
+                    "SELECT setup_plan_id FROM trigger_rules WHERE id=?", (rule_id,)
+                ).fetchone()
+                if existing is None:
+                    return False
+                if existing["setup_plan_id"] is not None:
+                    raise PermissionError("plan-linked rules cannot be deleted")
                 cur = self._conn.execute("DELETE FROM trigger_rules WHERE id=?", (rule_id,))
                 return cur.rowcount > 0
+        return await self._run_write(_do)
+
+    def _save_rule_revision(self, rule_id: int, revision: int) -> None:
+        """Persist the complete rule definition while the DB lock is held."""
+        import json as _json
+
+        rule = self._fetchone("SELECT * FROM trigger_rules WHERE id=?", (rule_id,))
+        if rule is None:
+            raise ValueError(f"rule {rule_id} not found")
+        rule["conditions"] = self._read_conditions(rule_id)
+        self._conn.execute(
+            "INSERT OR REPLACE INTO trigger_rule_revisions "
+            "(rule_id, revision, definition_json) VALUES (?, ?, ?)",
+            (rule_id, revision, _json.dumps(rule, sort_keys=True)),
+        )
+
+    def _insert_setup_plan_rule(
+        self,
+        *,
+        plan_id: int,
+        owner_account_id: str,
+        account_mode: str,
+        conid: int,
+        symbol: str,
+        setup_type: str,
+        timeframe: str,
+        scan_interval_seconds: int,
+        conditions: list[dict],
+        invalidation_condition: dict | None,
+    ) -> int:
+        assert self._conn is not None
+        cur = self._conn.execute(
+            """INSERT INTO trigger_rules
+               (name, watchlist_name, conid, symbol, template_id, ibkr_mirror_target,
+                timeframe, scan_interval_seconds, enabled, setup_plan_id,
+                owner_account_id, account_mode)
+               VALUES (?, NULL, ?, ?, NULL, NULL, ?, ?, 1, ?, ?, ?)""",
+            (f"{symbol} {setup_type}", conid, symbol, timeframe,
+             scan_interval_seconds, plan_id, owner_account_id, account_mode),
+        )
+        rule_id = int(cur.lastrowid)
+        self._replace_setup_rule_conditions(rule_id, conditions, invalidation_condition)
+        self._save_rule_revision(rule_id, 1)
+        return rule_id
+
+    def _replace_setup_rule_conditions(
+        self, rule_id: int, conditions: list[dict], invalidation_condition: dict | None
+    ) -> None:
+        assert self._conn is not None
+        self._conn.execute("DELETE FROM trigger_conditions WHERE rule_id=?", (rule_id,))
+        rows = [({**c, "is_invalidation_condition": 0}) for c in conditions]
+        if invalidation_condition is not None:
+            rows.append({**invalidation_condition, "is_invalidation_condition": 1})
+        for idx, condition in enumerate(rows):
+            self._conn.execute(
+                """INSERT INTO trigger_conditions
+                   (rule_id, order_index, indicator, condition, threshold,
+                    news_candle_method, is_invalidation_condition)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (rule_id, idx, condition["indicator"], condition["condition"],
+                 condition.get("threshold"), condition.get("news_candle_method"),
+                 condition["is_invalidation_condition"]),
+            )
+
+    def _setup_plan_summary(self, row: sqlite3.Row | dict) -> dict:
+        import json as _json
+
+        plan = dict(row)
+        rule = None
+        if plan["rule_id"] is not None:
+            rule = self._fetchone(
+                "SELECT id, revision, enabled, timeframe, scan_interval_seconds "
+                "FROM trigger_rules WHERE id=? AND setup_plan_id=?",
+                (plan["rule_id"], plan["id"]),
+            )
+            if rule is not None:
+                all_conditions = self._read_conditions(rule["id"])
+                rule["conditions"] = [
+                    {k: v for k, v in condition.items() if k != "is_invalidation_condition"}
+                    for condition in all_conditions
+                    if not condition["is_invalidation_condition"]
+                ]
+                rule["invalidation_condition"] = next(
+                    (
+                        {k: v for k, v in condition.items() if k != "is_invalidation_condition"}
+                        for condition in all_conditions
+                        if condition["is_invalidation_condition"]
+                    ),
+                    None,
+                )
+                rule["enabled"] = bool(rule["enabled"])
+
+        invalidation_condition = plan.pop("invalidation_condition_json")
+        plan["invalidation_condition"] = (
+            _json.loads(invalidation_condition) if invalidation_condition else None
+        )
+        latest = None
+        if rule is not None:
+            latest = self._fetchone(
+                """SELECT * FROM rule_evaluations
+                   WHERE plan_id=? AND rule_id=? AND plan_revision=? AND rule_revision=?
+                   ORDER BY id DESC LIMIT 1""",
+                (plan["id"], rule["id"], plan["revision"], rule["revision"]),
+            )
+        if latest is not None:
+            latest["condition_values"] = _json.loads(latest["condition_values"])
+            setup_timestamps(latest)
+
+        count = 0
+        if rule is not None:
+            count = self._fetchone(
+                """SELECT COUNT(*) AS n FROM rule_evaluations
+                   WHERE plan_id=? AND rule_id=? AND plan_revision=? AND rule_revision=?
+                     AND (outcome='matched' OR invalidation_outcome='matched')
+                     AND reviewed_at IS NULL""",
+                (plan["id"], rule["id"], plan["revision"], rule["revision"]),
+            )["n"]
+
+        review = None
+        if count:
+            review = self._fetchone(
+                """SELECT * FROM rule_evaluations
+                   WHERE plan_id=? AND rule_id=? AND plan_revision=? AND rule_revision=?
+                     AND (outcome='matched' OR invalidation_outcome='matched')
+                     AND reviewed_at IS NULL
+                   ORDER BY CASE WHEN invalidation_outcome='matched' THEN 0 ELSE 1 END,
+                            id DESC LIMIT 1""",
+                (plan["id"], rule["id"], plan["revision"], rule["revision"]),
+            )
+            review["condition_values"] = _json.loads(review["condition_values"])
+            setup_timestamps(review)
+
+        due_at = None
+        if plan["monitoring_mode"] == "manual" or plan["lifecycle"] == "archived":
+            health = "not_monitored"
+        elif latest is None:
+            health = "not_checked"
+        else:
+            try:
+                checked_at = datetime.fromisoformat(latest["checked_at"].replace("Z", "+00:00"))
+                if checked_at.tzinfo is None:
+                    checked_at = checked_at.replace(tzinfo=timezone.utc)
+                due = checked_at.astimezone(timezone.utc) + timedelta(
+                    seconds=int(rule["scan_interval_seconds"])
+                )
+                due_at = due.isoformat()
+                if datetime.now(timezone.utc) >= due:
+                    health = "overdue"
+                elif (
+                    latest["outcome"] in {"matched", "not_matched"}
+                    and latest["invalidation_outcome"] not in {"failed", "unavailable"}
+                    and latest["evidence_session_policy"] == US_EXTENDED
+                    and evidence_is_current(latest["evidence_at"], rule["timeframe"], datetime.now(timezone.utc))
+                ):
+                    health = "healthy"
+                else:
+                    health = "unavailable"
+            except (TypeError, ValueError):
+                health = "unavailable"
+
+        plan["account_id"] = plan.pop("owner_account_id")
+        plan["rule"] = rule
+        plan["latest_evaluation"] = latest
+        plan["unreviewed_match_count"] = int(count)
+        plan["review_evaluation"] = review
+        plan["monitoring_health"] = health
+        plan["monitoring_due_at"] = due_at
+        return setup_timestamps(plan)
+
+    async def list_setup_plans(self, owner_account_id: str, account_mode: str) -> list[dict]:
+        def _do():
+            assert self._conn is not None
+            rows = self._conn.execute(
+                """SELECT * FROM setup_plans
+                   WHERE owner_account_id=? AND account_mode=?
+                   ORDER BY updated_at DESC, id DESC""",
+                (owner_account_id, account_mode),
+            ).fetchall()
+            return [self._setup_plan_summary(row) for row in rows]
+        return await self._run_read(_do)
+
+    async def get_setup_plan(
+        self, plan_id: int, owner_account_id: str, account_mode: str
+    ) -> dict | None:
+        import json as _json
+
+        def _do():
+            assert self._conn is not None
+            row = self._conn.execute(
+                """SELECT * FROM setup_plans
+                   WHERE id=? AND owner_account_id=? AND account_mode=?""",
+                (plan_id, owner_account_id, account_mode),
+            ).fetchone()
+            if row is None:
+                return None
+            plan = self._setup_plan_summary(row)
+            evaluations = self._conn.execute(
+                "SELECT * FROM rule_evaluations WHERE plan_id=? ORDER BY id DESC LIMIT 200",
+                (plan_id,),
+            ).fetchall()
+            plan["evaluations"] = [
+                setup_timestamps({**dict(e), "condition_values": _json.loads(e["condition_values"])})
+                for e in evaluations
+            ]
+            rule = plan["rule"]
+            outstanding = self._conn.execute(
+                """SELECT * FROM rule_evaluations
+                   WHERE plan_id=? AND rule_id=? AND plan_revision=? AND rule_revision=?
+                     AND (outcome='matched' OR invalidation_outcome='matched')
+                     AND reviewed_at IS NULL
+                   ORDER BY id DESC""",
+                (plan_id, rule["id"], plan["revision"], rule["revision"]),
+            ).fetchall() if rule is not None else []
+            plan["unreviewed_matches"] = [
+                setup_timestamps({**dict(e), "condition_values": _json.loads(e["condition_values"])})
+                for e in outstanding
+            ]
+            hits = self._conn.execute(
+                """SELECT h.*, r.name AS rule_name
+                   FROM trigger_hits h JOIN trigger_rules r ON r.id=h.rule_id
+                   WHERE r.setup_plan_id=? ORDER BY h.triggered_at DESC, h.id DESC LIMIT 200""",
+                (plan_id,),
+            ).fetchall()
+            plan["hits"] = [
+                {**dict(hit), "condition_values": _json.loads(hit["condition_values"])}
+                for hit in hits
+            ]
+            return plan
+        return await self._run_read(_do)
+
+    async def create_setup_plan(
+        self,
+        *,
+        owner_account_id: str,
+        account_mode: str,
+        conid: int,
+        symbol: str,
+        setup_type: str,
+        waiting_intention: str,
+        monitoring_mode: str,
+        invalidation_reference: str | None,
+        invalidation_condition: dict | None,
+        timeframe: str | None,
+        scan_interval_seconds: int | None,
+        conditions: list[dict],
+    ) -> int:
+        import json as _json
+
+        def _do():
+            assert self._conn is not None
+            with self._conn:
+                if monitoring_mode == "automatic" and not conditions:
+                    raise ValueError("automatic plans require at least one waiting condition")
+                if monitoring_mode == "manual" and (conditions or invalidation_condition is not None):
+                    raise ValueError("manual plans cannot have rule conditions")
+                cur = self._conn.execute(
+                    """INSERT INTO setup_plans
+                       (owner_account_id, account_mode, conid, symbol, setup_type,
+                        waiting_intention, monitoring_mode, invalidation_reference,
+                        invalidation_condition_json)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (owner_account_id, account_mode, conid, symbol, setup_type,
+                     waiting_intention, monitoring_mode, invalidation_reference,
+                     _json.dumps(invalidation_condition) if invalidation_condition else None),
+                )
+                plan_id = int(cur.lastrowid)
+                if monitoring_mode == "automatic":
+                    if not timeframe or not scan_interval_seconds:
+                        raise ValueError("automatic plans require a timeframe and scan interval")
+                    rule_id = self._insert_setup_plan_rule(
+                        plan_id=plan_id, owner_account_id=owner_account_id,
+                        account_mode=account_mode, conid=conid, symbol=symbol,
+                        setup_type=setup_type, timeframe=timeframe,
+                        scan_interval_seconds=scan_interval_seconds,
+                        conditions=conditions, invalidation_condition=invalidation_condition,
+                    )
+                    self._conn.execute(
+                        "UPDATE setup_plans SET rule_id=? WHERE id=?", (rule_id, plan_id)
+                    )
+                return plan_id
+        return await self._run_write(_do)
+
+    async def update_setup_plan(
+        self,
+        plan_id: int,
+        owner_account_id: str,
+        account_mode: str,
+        updates: dict,
+    ) -> bool:
+        import json as _json
+
+        allowed = {
+            "setup_type", "waiting_intention", "monitoring_mode",
+            "invalidation_reference", "invalidation_condition", "timeframe",
+            "scan_interval_seconds", "conditions",
+        }
+        if set(updates) - allowed:
+            raise ValueError("unknown setup plan fields")
+
+        def _do():
+            assert self._conn is not None
+            with self._conn:
+                plan = self._conn.execute(
+                    """SELECT * FROM setup_plans
+                       WHERE id=? AND owner_account_id=? AND account_mode=?""",
+                    (plan_id, owner_account_id, account_mode),
+                ).fetchone()
+                if plan is None:
+                    return False
+                if plan["lifecycle"] != "active":
+                    raise ValueError("archived plans cannot be edited")
+                if not updates:
+                    raise ValueError("no fields to update")
+
+                mode = updates.get("monitoring_mode", plan["monitoring_mode"])
+                current_rule = None
+                current_conditions: list[dict] = []
+                current_invalidation = (
+                    _json.loads(plan["invalidation_condition_json"])
+                    if plan["invalidation_condition_json"] else None
+                )
+                if plan["rule_id"] is not None:
+                    current_rule = self._conn.execute(
+                        "SELECT * FROM trigger_rules WHERE id=? AND setup_plan_id=?",
+                        (plan["rule_id"], plan_id),
+                    ).fetchone()
+                    if current_rule is None:
+                        raise ValueError("linked rule is missing")
+                    all_conditions = self._read_conditions(current_rule["id"])
+                    current_conditions = [
+                        {k: v for k, v in c.items() if k != "is_invalidation_condition"}
+                        for c in all_conditions if not c["is_invalidation_condition"]
+                    ]
+
+                conditions = updates.get("conditions", current_conditions)
+                invalidation = updates.get("invalidation_condition", current_invalidation)
+                timeframe = updates.get("timeframe", current_rule["timeframe"] if current_rule else None)
+                interval = updates.get(
+                    "scan_interval_seconds",
+                    current_rule["scan_interval_seconds"] if current_rule else None,
+                )
+                if mode == "automatic" and not conditions:
+                    raise ValueError("automatic plans require at least one waiting condition")
+                if mode == "automatic" and (not timeframe or not interval):
+                    raise ValueError("automatic plans require a timeframe and scan interval")
+                if mode == "manual" and (
+                    updates.get("conditions") or updates.get("invalidation_condition")
+                    or updates.get("timeframe") or updates.get("scan_interval_seconds")
+                ):
+                    raise ValueError("manual plans cannot have rule conditions")
+
+                fields = {
+                    key: updates[key]
+                    for key in ("setup_type", "waiting_intention", "invalidation_reference")
+                    if key in updates
+                }
+                fields["monitoring_mode"] = mode
+                fields["invalidation_condition_json"] = (
+                    _json.dumps(invalidation) if mode == "automatic" and invalidation else None
+                )
+                set_clause = ", ".join(f"{key}=?" for key in fields)
+                self._conn.execute(
+                    f"UPDATE setup_plans SET {set_clause}, revision=revision+1, "
+                    "updated_at=datetime('now') WHERE id=?",
+                    (*fields.values(), plan_id),
+                )
+
+                if mode == "manual" and current_rule is not None:
+                    revision = int(current_rule["revision"]) + 1
+                    self._conn.execute(
+                        "UPDATE trigger_rules SET enabled=0, revision=?, updated_at=datetime('now') WHERE id=?",
+                        (revision, current_rule["id"]),
+                    )
+                    self._save_rule_revision(current_rule["id"], revision)
+                    self._conn.execute("UPDATE setup_plans SET rule_id=NULL WHERE id=?", (plan_id,))
+                elif mode == "automatic" and current_rule is None:
+                    rule_id = self._insert_setup_plan_rule(
+                        plan_id=plan_id, owner_account_id=owner_account_id,
+                        account_mode=account_mode, conid=plan["conid"], symbol=plan["symbol"],
+                        setup_type=fields.get("setup_type", plan["setup_type"]),
+                        timeframe=timeframe, scan_interval_seconds=interval,
+                        conditions=conditions, invalidation_condition=invalidation,
+                    )
+                    self._conn.execute(
+                        "UPDATE setup_plans SET rule_id=? WHERE id=?", (rule_id, plan_id)
+                    )
+                elif mode == "automatic" and current_rule is not None:
+                    definition_changed = (
+                        conditions != current_conditions
+                        or invalidation != current_invalidation
+                        or timeframe != current_rule["timeframe"]
+                    )
+                    if definition_changed:
+                        revision = int(current_rule["revision"]) + 1
+                        self._conn.execute(
+                            """UPDATE trigger_rules SET name=?, timeframe=?, scan_interval_seconds=?,
+                               revision=?, updated_at=datetime('now') WHERE id=?""",
+                            (f"{plan['symbol']} {fields.get('setup_type', plan['setup_type'])}",
+                             timeframe, interval, revision, current_rule["id"]),
+                        )
+                        self._replace_setup_rule_conditions(
+                            current_rule["id"], conditions, invalidation
+                        )
+                        self._save_rule_revision(current_rule["id"], revision)
+                    elif interval != current_rule["scan_interval_seconds"]:
+                        self._conn.execute(
+                            "UPDATE trigger_rules SET scan_interval_seconds=?, updated_at=datetime('now') WHERE id=?",
+                            (interval, current_rule["id"]),
+                        )
+                return True
+        return await self._run_write(_do)
+
+    async def archive_setup_plan(
+        self, plan_id: int, owner_account_id: str, account_mode: str
+    ) -> bool:
+        def _do():
+            assert self._conn is not None
+            with self._conn:
+                plan = self._conn.execute(
+                    """SELECT id, lifecycle FROM setup_plans
+                       WHERE id=? AND owner_account_id=? AND account_mode=?""",
+                    (plan_id, owner_account_id, account_mode),
+                ).fetchone()
+                if plan is None:
+                    return False
+                if plan["lifecycle"] == "archived":
+                    return True
+                rules = self._conn.execute(
+                    "SELECT id, revision FROM trigger_rules WHERE setup_plan_id=? AND enabled=1",
+                    (plan_id,),
+                ).fetchall()
+                for rule in rules:
+                    revision = int(rule["revision"]) + 1
+                    self._conn.execute(
+                        "UPDATE trigger_rules SET enabled=0, revision=?, updated_at=datetime('now') WHERE id=?",
+                        (revision, rule["id"]),
+                    )
+                    self._save_rule_revision(rule["id"], revision)
+                self._conn.execute(
+                    """UPDATE setup_plans SET lifecycle='archived', archived_at=datetime('now'),
+                       revision=revision+1, updated_at=datetime('now') WHERE id=?""",
+                    (plan_id,),
+                )
+                return True
+        return await self._run_write(_do)
+
+    async def get_active_setup_plan_rules(
+        self, owner_account_id: str, account_mode: str
+    ) -> list[dict]:
+        def _do():
+            assert self._conn is not None
+            rows = self._conn.execute(
+                """SELECT p.*, r.id AS current_rule_id, r.name AS rule_name,
+                          r.revision AS rule_revision, r.enabled AS rule_enabled,
+                          r.timeframe, r.scan_interval_seconds
+                   FROM setup_plans p JOIN trigger_rules r ON r.id=p.rule_id
+                   WHERE p.owner_account_id=? AND p.account_mode=?
+                     AND p.lifecycle='active' AND p.monitoring_mode='automatic'
+                     AND r.setup_plan_id=p.id AND r.enabled=1
+                   ORDER BY p.id""",
+                (owner_account_id, account_mode),
+            ).fetchall()
+            plans = []
+            for row in rows:
+                plan = dict(row)
+                all_conditions = self._read_conditions(plan["current_rule_id"])
+                plan["conditions"] = [
+                    {k: v for k, v in c.items() if k != "is_invalidation_condition"}
+                    for c in all_conditions if not c["is_invalidation_condition"]
+                ]
+                plan["invalidation_condition"] = next(
+                    (
+                        {k: v for k, v in c.items() if k != "is_invalidation_condition"}
+                        for c in all_conditions if c["is_invalidation_condition"]
+                    ),
+                    None,
+                )
+                plan["rule"] = {
+                    "id": plan["current_rule_id"],
+                    "revision": plan["rule_revision"],
+                    "name": plan["rule_name"],
+                    "timeframe": plan["timeframe"],
+                    "scan_interval_seconds": plan["scan_interval_seconds"],
+                    "conditions": plan["conditions"],
+                    "invalidation_condition": plan["invalidation_condition"],
+                }
+                plans.append(plan)
+            return plans
+        return await self._run_read(_do)
+
+    async def record_setup_plan_evaluation(
+        self,
+        *,
+        plan_id: int,
+        owner_account_id: str,
+        account_mode: str,
+        plan_revision: int,
+        rule_id: int,
+        rule_revision: int,
+        outcome: str,
+        checked_at: str,
+        evidence_at: str | None,
+        condition_values: list[dict],
+        failure_code: str | None = None,
+        failure_message: str | None = None,
+        invalidation_outcome: str | None = None,
+        invalidation_failure_code: str | None = None,
+        invalidation_failure_message: str | None = None,
+        evidence_session_policy: str | None = None,
+    ) -> dict | None:
+        import json as _json
+
+        if outcome not in {"matched", "not_matched", "failed", "unavailable"}:
+            raise ValueError("invalid rule evaluation outcome")
+        if invalidation_outcome not in {None, "matched", "not_matched", "failed", "unavailable"}:
+            raise ValueError("invalid invalidation evaluation outcome")
+        if invalidation_outcome is None and (
+            invalidation_failure_code is not None or invalidation_failure_message is not None
+        ):
+            raise ValueError("invalidation failure details require an invalidation check")
+
+        def _do():
+            assert self._conn is not None
+            with self._conn:
+                current = self._conn.execute(
+                    """SELECT p.conid, p.symbol, r.timeframe
+                       FROM setup_plans p JOIN trigger_rules r ON r.id=p.rule_id
+                       WHERE p.id=? AND p.owner_account_id=? AND p.account_mode=?
+                         AND p.lifecycle='active' AND p.monitoring_mode='automatic'
+                         AND p.revision=? AND p.rule_id=? AND r.revision=? AND r.enabled=1
+                         AND r.setup_plan_id=p.id AND r.owner_account_id=p.owner_account_id
+                         AND r.account_mode=p.account_mode AND r.conid=p.conid
+                         AND r.watchlist_name IS NULL AND r.ibkr_mirror_target IS NULL""",
+                    (plan_id, owner_account_id, account_mode, plan_revision,
+                     rule_id, rule_revision),
+                ).fetchone()
+                if current is None:
+                    return None
+                cur = self._conn.execute(
+                    """INSERT INTO rule_evaluations
+                        (plan_id, plan_revision, rule_id, rule_revision, outcome, invalidation_outcome,
+                        invalidation_failure_code, invalidation_failure_message,
+                        checked_at, evidence_at, condition_values, failure_code, failure_message, evidence_session_policy)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (plan_id, plan_revision, rule_id, rule_revision, outcome, invalidation_outcome,
+                     invalidation_failure_code, invalidation_failure_message,
+                     checked_at, evidence_at, _json.dumps(condition_values),
+                     failure_code, failure_message, evidence_session_policy),
+                )
+                evaluation_id = int(cur.lastrowid)
+                hit_id = None
+                matched_roles = []
+                if outcome == "matched":
+                    matched_roles.append("waiting")
+                if invalidation_outcome == "matched":
+                    matched_roles.append("invalidation")
+                for role in matched_roles:
+                    check_time = datetime.fromisoformat(checked_at)
+                    if check_time.tzinfo is None:
+                        check_time = check_time.replace(tzinfo=timezone.utc)
+                    day = check_time.astimezone(_ET).strftime("%Y-%m-%d")
+                    dedup_key = (
+                        f"{rule_id}:r{rule_revision}:{current['conid']}:{day}:{current['timeframe']}"
+                    )
+                    if role == "invalidation":
+                        dedup_key += ":invalidation"
+                    role_values = [
+                        value for value in condition_values
+                        if value.get("condition_role") == role
+                    ]
+                    if (
+                        role == "waiting" and not role_values
+                        and all("condition_role" not in value for value in condition_values)
+                    ):
+                        role_values = condition_values
+                    hit = self._conn.execute(
+                        """INSERT OR IGNORE INTO trigger_hits
+                           (rule_id, rule_revision, rule_evaluation_id, conid, symbol,
+                            dedup_key, condition_values, watchlist_name)
+                           VALUES (?, ?, ?, ?, ?, ?, ?, NULL)""",
+                        (rule_id, rule_revision, evaluation_id, current["conid"],
+                         current["symbol"], dedup_key, _json.dumps(role_values)),
+                    )
+                    if hit.rowcount:
+                        if hit_id is None:
+                            hit_id = int(hit.lastrowid)
+                    else:
+                        existing_hit = self._conn.execute(
+                            "SELECT id FROM trigger_hits WHERE dedup_key=?", (dedup_key,)
+                        ).fetchone()
+                        if hit_id is None and existing_hit:
+                            hit_id = int(existing_hit["id"])
+                return {"evaluation_id": evaluation_id, "hit_id": hit_id}
+        return await self._run_write(_do)
+
+    async def review_setup_plan_events(
+        self,
+        plan_id: int,
+        owner_account_id: str,
+        account_mode: str,
+        evaluation_ids: list[int],
+    ) -> bool:
+        ids = list(dict.fromkeys(evaluation_ids))
+        if not ids:
+            raise ValueError("at least one evaluation id is required")
+        def _do():
+            assert self._conn is not None
+            with self._conn:
+                plan = self._conn.execute(
+                    """SELECT lifecycle, revision, rule_id FROM setup_plans
+                       WHERE id=? AND owner_account_id=? AND account_mode=?""",
+                    (plan_id, owner_account_id, account_mode),
+                ).fetchone()
+                if plan is None:
+                    return False
+                if plan["lifecycle"] != "active" or plan["rule_id"] is None:
+                    raise ValueError("only active current plan matches can be reviewed")
+                rule = self._conn.execute(
+                    "SELECT revision FROM trigger_rules WHERE id=? AND setup_plan_id=?",
+                    (plan["rule_id"], plan_id),
+                ).fetchone()
+                if rule is None:
+                    raise ValueError("the current plan rule is unavailable")
+                placeholders = ",".join("?" for _ in ids)
+                matching = self._conn.execute(
+                    f"""SELECT COUNT(*) AS n FROM rule_evaluations
+                        WHERE plan_id=? AND rule_id=? AND plan_revision=? AND rule_revision=?
+                          AND (outcome='matched' OR invalidation_outcome='matched')
+                          AND id IN ({placeholders})""",
+                    (plan_id, plan["rule_id"], plan["revision"], rule["revision"], *ids),
+                ).fetchone()["n"]
+                if matching != len(ids):
+                    raise ValueError(
+                        "evaluation ids must contain current waiting or invalidation matches for this plan"
+                    )
+                self._conn.execute(
+                    f"""UPDATE rule_evaluations SET reviewed_at=COALESCE(reviewed_at, ?)
+                        WHERE plan_id=? AND rule_id=? AND plan_revision=? AND rule_revision=?
+                          AND (outcome='matched' OR invalidation_outcome='matched')
+                          AND id IN ({placeholders})""",
+                    (datetime.now(timezone.utc).isoformat(), plan_id, plan["rule_id"], plan["revision"], rule["revision"], *ids),
+                )
+                return True
         return await self._run_write(_do)
 
     # ── Trigger Hits ──────────────────────────────────────
@@ -1499,29 +1456,82 @@ class DatabaseService:
         dedup_key: str,
         condition_values: list[dict],
         watchlist_name: str | None,
+        rule_revision: int | None = None,
+        rule_evaluation_id: int | None = None,
         source_watchlist: str | None = None,
         target_watchlist: str | None = None,
         expires_at: str | None = None,
+        repeat_on_transition: bool = False,
     ) -> int | None:
         """Insert a hit. Returns hit id, or None if dedup_key already existed."""
         import json as _json
         def _do():
             assert self._conn is not None
             with self._conn:
+                hit_key = dedup_key
+                episode = 0
+                if repeat_on_transition:
+                    rule = self._conn.execute(
+                        "SELECT id FROM trigger_rules WHERE id=? AND revision=? AND enabled=1 "
+                        "AND setup_plan_id IS NULL AND ibkr_mirror_target IS NULL",
+                        (rule_id, rule_revision),
+                    ).fetchone()
+                    if not rule:
+                        return None
+                    state = self._conn.execute(
+                        "SELECT matched, episode FROM trigger_match_state WHERE rule_id=? AND rule_revision=? AND conid=?",
+                        (rule_id, rule_revision, conid),
+                    ).fetchone()
+                    if state is None:
+                        # Existing alerts stay quiet until a complete check observes the condition clear.
+                        prior = self._conn.execute(
+                            "SELECT 1 FROM trigger_hits WHERE rule_id=? AND conid=? AND COALESCE(rule_revision, 1)=? LIMIT 1",
+                            (rule_id, conid, rule_revision),
+                        ).fetchone()
+                        self._conn.execute(
+                            "INSERT INTO trigger_match_state (rule_id, rule_revision, conid, matched, episode) VALUES (?, ?, ?, ?, 0)",
+                            (rule_id, rule_revision, conid, int(prior is not None)),
+                        )
+                        if prior:
+                            return None
+                    elif state["matched"]:
+                        return None
+                    episode = (state["episode"] if state else 0) + 1
+                    hit_key = f"{rule_id}:r{rule_revision}:{conid}:episode:{episode}"
                 try:
                     cur = self._conn.execute(
                         """INSERT INTO trigger_hits
-                           (rule_id, conid, symbol, dedup_key, condition_values,
+                           (rule_id, rule_revision, rule_evaluation_id, conid, symbol,
+                            dedup_key, condition_values,
                             watchlist_name, source_watchlist, target_watchlist, expires_at)
-                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                        (rule_id, conid, symbol, dedup_key, _json.dumps(condition_values),
+                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        (rule_id, rule_revision, rule_evaluation_id, conid, symbol,
+                         hit_key, _json.dumps(condition_values),
                          watchlist_name, source_watchlist, target_watchlist, expires_at),
                     )
+                    if repeat_on_transition:
+                        self._conn.execute(
+                            "UPDATE trigger_match_state SET matched=1, episode=? WHERE rule_id=? AND rule_revision=? AND conid=?",
+                            (episode, rule_id, rule_revision, conid),
+                        )
                     return cur.lastrowid
                 except sqlite3.IntegrityError:
                     # UNIQUE(dedup_key) — already fired today for this rule+conid+interval
                     return None
         return await self._run_write(_do)
+
+    async def clear_trigger_match(self, rule_id: int, rule_revision: int, conid: int) -> None:
+        def _do():
+            assert self._conn is not None
+            with self._conn:
+                self._conn.execute(
+                    "INSERT INTO trigger_match_state (rule_id, rule_revision, conid, matched, episode) "
+                    "SELECT id, revision, ?, 0, 0 FROM trigger_rules WHERE id=? AND revision=? AND enabled=1 "
+                    "AND setup_plan_id IS NULL AND ibkr_mirror_target IS NULL "
+                    "ON CONFLICT(rule_id, rule_revision, conid) DO UPDATE SET matched=0",
+                    (conid, rule_id, rule_revision),
+                )
+        await self._run_write(_do)
 
     async def get_trigger_hits(
         self,
@@ -1546,6 +1556,7 @@ class DatabaseService:
             if watchlist:
                 clauses.append("h.watchlist_name=?")
                 params.append(watchlist)
+            clauses.append("r.setup_plan_id IS NULL")
             where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
             q = f"""
                 SELECT h.*, r.name AS rule_name
@@ -1568,8 +1579,11 @@ class DatabaseService:
             assert self._conn is not None
             with self._conn:
                 cur = self._conn.execute(
-                    "UPDATE trigger_hits SET dismissed_at=datetime('now') WHERE id=?",
-                    (hit_id,),
+                    "UPDATE trigger_hits SET dismissed_at=datetime('now') WHERE id<=? "
+                    "AND rule_id=(SELECT rule_id FROM trigger_hits WHERE id=?) "
+                    "AND conid=(SELECT conid FROM trigger_hits WHERE id=?) "
+                    "AND rule_id IN (SELECT id FROM trigger_rules WHERE setup_plan_id IS NULL)",
+                    (hit_id, hit_id, hit_id),
                 )
                 return cur.rowcount > 0
         return await self._run_write(_do)
@@ -1580,7 +1594,8 @@ class DatabaseService:
             with self._conn:
                 cur = self._conn.execute(
                     "UPDATE trigger_hits "
-                    "SET snoozed_until=datetime('now', ? || ' minutes') WHERE id=?",
+                    "SET snoozed_until=datetime('now', ? || ' minutes') WHERE id=? "
+                    "AND rule_id IN (SELECT id FROM trigger_rules WHERE setup_plan_id IS NULL)",
                     (f"+{minutes}", hit_id),
                 )
                 return cur.rowcount > 0
@@ -1647,6 +1662,7 @@ class DatabaseService:
                     FROM trigger_hits h
                     LEFT JOIN trigger_rules r ON r.id = h.rule_id
                     WHERE h.conid IN ({placeholders})
+                      AND r.setup_plan_id IS NULL
                       AND h.dismissed_at IS NULL
                       AND (h.snoozed_until IS NULL OR h.snoozed_until < datetime('now'))
                     ORDER BY h.triggered_at DESC""",
@@ -1763,410 +1779,6 @@ class DatabaseService:
             return cursor.rowcount > 0
 
         return await self._run_write(_delete)
-
-    # ── AI Provider Settings ─────────────────────────────────
-
-    _AI_PROVIDER_DEFAULTS: tuple[dict[str, Any], ...] = (
-        {
-            "provider_name": "ollama",
-            "display_name": "Ollama",
-            "kind": "local",
-            "enabled": 1,
-            "selected_model": None,
-            "api_key_ref": None,
-            "routing_role": "default",
-            "settings_json": "{}",
-        },
-        {
-            "provider_name": "openrouter",
-            "display_name": "OpenRouter",
-            "kind": "cloud",
-            "enabled": 0,
-            "selected_model": None,
-            "api_key_ref": None,
-            "routing_role": "disabled",
-            "settings_json": "{}",
-        },
-        {
-            "provider_name": "openai",
-            "display_name": "OpenAI",
-            "kind": "cloud",
-            "enabled": 0,
-            "selected_model": None,
-            "api_key_ref": None,
-            "routing_role": "disabled",
-            "settings_json": "{}",
-        },
-        {
-            "provider_name": "anthropic",
-            "display_name": "Anthropic",
-            "kind": "cloud",
-            "enabled": 0,
-            "selected_model": None,
-            "api_key_ref": None,
-            "routing_role": "disabled",
-            "settings_json": "{}",
-        },
-        {
-            "provider_name": "gemini",
-            "display_name": "Gemini",
-            "kind": "cloud",
-            "enabled": 0,
-            "selected_model": None,
-            "api_key_ref": None,
-            "routing_role": "disabled",
-            "settings_json": "{}",
-        },
-        {
-            "provider_name": "grok",
-            "display_name": "Grok",
-            "kind": "cloud",
-            "enabled": 0,
-            "selected_model": None,
-            "api_key_ref": None,
-            "routing_role": "disabled",
-            "settings_json": "{}",
-        },
-    )
-
-    async def ensure_ai_settings_defaults(self) -> None:
-        """Seed non-secret AI provider config and routing policy defaults."""
-        def _do() -> None:
-            assert self._conn is not None
-            with self._conn:
-                for provider in self._AI_PROVIDER_DEFAULTS:
-                    self._conn.execute(
-                        """INSERT INTO ai_provider_configs (
-                               provider_name, display_name, kind, enabled,
-                               selected_model, api_key_ref, routing_role,
-                               settings_json, created_at, updated_at
-                           )
-                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
-                           ON CONFLICT(provider_name) DO NOTHING""",
-                        (
-                            provider["provider_name"],
-                            provider["display_name"],
-                            provider["kind"],
-                            provider["enabled"],
-                            provider["selected_model"],
-                            provider["api_key_ref"],
-                            provider["routing_role"],
-                            provider["settings_json"],
-                        ),
-                    )
-                self._conn.execute(
-                    """INSERT INTO ai_routing_policy (
-                           id, active_provider, routing_mode, local_fallback_enabled,
-                           per_call_cost_cap_usd, monthly_cost_cap_usd, updated_at
-                       )
-                       VALUES (1, 'ollama', 'local_only', 1, 1.0, 25.0, datetime('now'))
-                       ON CONFLICT(id) DO NOTHING"""
-                )
-                self._conn.execute(
-                    """UPDATE ai_routing_policy
-                       SET routing_mode = CASE
-                             WHEN local_fallback_enabled = 1
-                               THEN 'cloud_with_local_fallback'
-                             ELSE 'cloud_manual'
-                           END,
-                           updated_at = datetime('now')
-                       WHERE id = 1 AND routing_mode = 'hybrid_auto'"""
-                )
-
-        await self._run_write(_do)
-
-    async def list_ai_provider_configs(self) -> list[dict[str, Any]]:
-        """Return AI provider configuration rows in UI display order."""
-        await self.ensure_ai_settings_defaults()
-
-        rows = await self._run_read(
-            lambda: self._fetchall(
-                """SELECT provider_name, display_name, kind, enabled,
-                          selected_model, api_key_ref, routing_role, settings_json
-                   FROM ai_provider_configs
-                   ORDER BY CASE provider_name
-                     WHEN 'ollama' THEN 0
-                     WHEN 'openrouter' THEN 1
-                     WHEN 'openai' THEN 2
-                     WHEN 'anthropic' THEN 3
-                     WHEN 'gemini' THEN 4
-                     WHEN 'grok' THEN 5
-                     ELSE 99
-                   END"""
-            )
-        )
-        return [
-            {
-                **row,
-                "enabled": bool(row["enabled"]),
-                "settings": json.loads(row["settings_json"] or "{}"),
-            }
-            for row in rows
-        ]
-
-    async def get_ai_routing_policy(self) -> dict[str, Any]:
-        """Return the singleton AI routing policy row."""
-        await self.ensure_ai_settings_defaults()
-        row = await self._run_read(
-            lambda: self._fetchone(
-                """SELECT active_provider, routing_mode, local_fallback_enabled
-                   FROM ai_routing_policy
-                   WHERE id = 1"""
-            )
-        )
-        assert row is not None
-        return {
-            "active_provider": row["active_provider"],
-            "routing_mode": row["routing_mode"],
-            "local_fallback_enabled": bool(row["local_fallback_enabled"]),
-        }
-
-    async def update_ai_routing_policy(
-        self,
-        *,
-        active_provider: str,
-        routing_mode: str,
-        local_fallback_enabled: bool,
-    ) -> dict[str, Any]:
-        """Persist non-secret AI routing settings."""
-        await self.ensure_ai_settings_defaults()
-
-        def _do() -> None:
-            assert self._conn is not None
-            with self._conn:
-                self._conn.execute(
-                    """UPDATE ai_routing_policy
-                       SET active_provider = ?,
-                           routing_mode = ?,
-                           local_fallback_enabled = ?,
-                           updated_at = datetime('now')
-                       WHERE id = 1""",
-                    (
-                        active_provider,
-                        routing_mode,
-                        1 if local_fallback_enabled else 0,
-                    ),
-                )
-
-        await self._run_write(_do)
-        return await self.get_ai_routing_policy()
-
-    async def update_ai_provider_key_ref(
-        self,
-        *,
-        provider_name: str,
-        api_key_ref: str | None,
-        enabled: bool,
-    ) -> dict[str, Any]:
-        """Persist only a provider's opaque key reference and enabled flag."""
-        await self.ensure_ai_settings_defaults()
-
-        def _do() -> None:
-            assert self._conn is not None
-            with self._conn:
-                self._conn.execute(
-                    """UPDATE ai_provider_configs
-                       SET api_key_ref = ?,
-                           enabled = ?,
-                           routing_role = ?,
-                           updated_at = datetime('now')
-                       WHERE provider_name = ?""",
-                    (
-                        api_key_ref,
-                        1 if enabled else 0,
-                        "manual" if enabled else "disabled",
-                        provider_name,
-                    ),
-                )
-
-        await self._run_write(_do)
-        providers = await self.list_ai_provider_configs()
-        return next(
-            provider for provider in providers
-            if provider["provider_name"] == provider_name
-        )
-
-    async def update_ai_provider_model(
-        self,
-        *,
-        provider_name: str,
-        model: str,
-    ) -> dict[str, Any]:
-        """Persist only the validated selected model for one provider."""
-        await self.ensure_ai_settings_defaults()
-
-        def _do() -> None:
-            assert self._conn is not None
-            with self._conn:
-                self._conn.execute(
-                    """UPDATE ai_provider_configs
-                       SET selected_model = ?, updated_at = datetime('now')
-                       WHERE provider_name = ?""",
-                    (model, provider_name),
-                )
-
-        await self._run_write(_do)
-        providers = await self.list_ai_provider_configs()
-        return next(
-            provider for provider in providers
-            if provider["provider_name"] == provider_name
-        )
-
-    async def insert_ai_usage_log(
-        self,
-        *,
-        provider_name: str,
-        model: str | None,
-        task_type: str,
-        routing_mode: str,
-        input_tokens: int | None,
-        output_tokens: int | None,
-        estimated_cost: float | None,
-        actual_cost: float | None,
-        status: str,
-        provider_request_id: str | None,
-        error_code: str | None,
-        run_id: str,
-        requested_provider_name: str,
-        requested_model: str | None,
-        resolved_model: str | None,
-        fallback_reason: str | None,
-        duration_ms: int | None,
-        reasoning_tokens: int | None,
-        cached_tokens: int | None,
-    ) -> dict[str, Any]:
-        """Insert one AI usage row and return it."""
-        def _do() -> dict[str, Any]:
-            assert self._conn is not None
-            with self._conn:
-                cur = self._conn.execute(
-                    """INSERT INTO ai_usage_log (
-                           provider_name, model, task_type, routing_mode,
-                           input_tokens, output_tokens, estimated_cost,
-                           actual_cost, status, provider_request_id, error_code,
-                           run_id, requested_provider_name, requested_model,
-                           resolved_model, fallback_reason, duration_ms,
-                           reasoning_tokens, cached_tokens
-                       )
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                    (
-                        provider_name,
-                        model,
-                        task_type,
-                        routing_mode,
-                        input_tokens,
-                        output_tokens,
-                        estimated_cost,
-                        actual_cost,
-                        status,
-                        provider_request_id,
-                        error_code,
-                        run_id,
-                        requested_provider_name,
-                        requested_model,
-                        resolved_model,
-                        fallback_reason,
-                        duration_ms,
-                        reasoning_tokens,
-                        cached_tokens,
-                    ),
-                )
-                row = self._conn.execute(
-                    """SELECT id, provider_name, model, task_type, routing_mode,
-                              input_tokens, output_tokens, estimated_cost,
-                              actual_cost, currency, status, provider_request_id,
-                              error_code, run_id, requested_provider_name,
-                              requested_model, resolved_model, fallback_reason,
-                              duration_ms, reasoning_tokens, cached_tokens, created_at
-                       FROM ai_usage_log
-                       WHERE id = ?""",
-                    (cur.lastrowid,),
-                ).fetchone()
-                assert row is not None
-                return dict(row)
-
-        return await self._run_write(_do)
-
-    async def list_ai_usage_log(self, *, limit: int = 50) -> list[dict[str, Any]]:
-        """Return recent AI usage rows newest-first."""
-        return await self._run_read(
-            lambda: self._fetchall(
-                """SELECT id, provider_name, model, task_type, routing_mode,
-                          input_tokens, output_tokens, estimated_cost,
-                          actual_cost, currency, status, provider_request_id,
-                          error_code, run_id, requested_provider_name,
-                          requested_model, resolved_model, fallback_reason,
-                          duration_ms, reasoning_tokens, cached_tokens, created_at
-                   FROM ai_usage_log
-                   ORDER BY id DESC
-                   LIMIT ?""",
-                (limit,),
-            )
-        )
-
-    async def list_ai_run_attempts(self, *, limit: int = 50) -> list[dict[str, Any]]:
-        """Return attempts for the newest logical AI runs."""
-        return await self._run_read(
-            lambda: self._fetchall(
-                """SELECT id, provider_name, model, input_tokens, output_tokens,
-                          estimated_cost, actual_cost, status, provider_request_id,
-                          error_code, COALESCE(run_id, 'legacy-' || id) AS run_id,
-                          COALESCE(requested_provider_name, provider_name)
-                              AS requested_provider_name,
-                          COALESCE(requested_model, model) AS requested_model,
-                          COALESCE(resolved_model, model) AS resolved_model,
-                          fallback_reason, COALESCE(duration_ms, 0) AS duration_ms,
-                          reasoning_tokens, cached_tokens, created_at
-                   FROM ai_usage_log
-                   WHERE COALESCE(run_id, 'legacy-' || id) IN (
-                       SELECT COALESCE(run_id, 'legacy-' || id)
-                       FROM ai_usage_log
-                       GROUP BY COALESCE(run_id, 'legacy-' || id)
-                       ORDER BY MAX(id) DESC
-                       LIMIT ?
-                   )
-                   ORDER BY id DESC""",
-                (limit,),
-            )
-        )
-
-    async def get_ai_usage_monthly_totals(self) -> dict[str, float]:
-        """Return current-month estimated and actual AI spend totals."""
-        row = await self._run_read(
-            lambda: self._fetchone(
-                """SELECT
-                          COALESCE(SUM(estimated_cost), 0) AS estimated_total,
-                          COALESCE(SUM(actual_cost), 0) AS actual_total
-                   FROM ai_usage_log
-                   WHERE strftime('%Y-%m', created_at) = strftime('%Y-%m', 'now')"""
-            )
-        )
-        assert row is not None
-        return {
-            "monthly_estimated_cost_usd": float(row["estimated_total"]),
-            "monthly_actual_cost_usd": float(row["actual_total"]),
-        }
-
-    async def get_ai_usage_monthly_effective_spend(self) -> float:
-        """Return cost-cap spend: actual cost when present, else estimate."""
-        row = await self._run_read(
-            lambda: self._fetchone(
-                """SELECT
-                          COALESCE(SUM(
-                              CASE
-                                  WHEN actual_cost IS NOT NULL THEN actual_cost
-                                  WHEN status = 'success' THEN COALESCE(estimated_cost, 0)
-                                  ELSE 0
-                              END
-                          ), 0)
-                              AS effective_total
-                   FROM ai_usage_log
-                   WHERE strftime('%Y-%m', created_at) = strftime('%Y-%m', 'now')
-                """
-            )
-        )
-        assert row is not None
-        return float(row["effective_total"])
 
     # ── Fibonacci Config (Branch 3) ─────────────────────────────
     #
@@ -2288,8 +1900,7 @@ class DatabaseService:
 
     # ── Instrument Cache Operations ────────────────────────────
     #
-    # Orbit integration: This is the ONLY table that other Orbit modules
-    # (MoonMarket, Inflect) will read from. Parallax is the sole writer.
+    # Orbit integration: MoonMarket reads this table; Parallax is the sole writer.
     # The market router auto-populates this on every search/conid resolution.
 
     async def get_instrument(self, conid: int) -> dict | None:

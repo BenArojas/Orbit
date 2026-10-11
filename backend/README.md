@@ -1,10 +1,10 @@
 # Orbit Backend Sidecar
 
-Shared Python FastAPI sidecar for Orbit. The existing routes mostly serve the Parallax module; MoonMarket and Inflect should be added to this same sidecar rather than creating separate backend services.
+Shared Python FastAPI sidecar for Orbit. Routes serve Parallax, MoonMarket, and the TWS Assistant through one backend.
 
 Python FastAPI server that sits between the Tauri frontend and external
-services (IBKR Client Portal Gateway, Ollama). Runs on `localhost:8000`.
-The frontend never talks to IBKR or Ollama directly — everything flows
+services (IBKR Client Portal Gateway). Runs on `localhost:8000`.
+The frontend never talks to IBKR directly — everything flows
 through this process.
 
 ## Module map
@@ -21,14 +21,11 @@ through this process.
 | `services/ibkr.py` | IBKR Client Portal HTTP + WebSocket integration (httpx, websockets, ibind). |
 | `services/gateway.py` | IBKR Gateway provisioning, JVM lifecycle, pid-file orphan recovery, `/v1/api/logout`. See [`docs/gateway-lifecycle.md`](docs/gateway-lifecycle.md). |
 | `services/indicators.py` | Indicator computation (Polars → pandas-ta bridge). |
-| `services/ai.py` | Ollama chat + analysis service (stateless). |
-| `services/ollama.py` | Ollama lifecycle (detect → start server → list models). Never auto-installs. |
-| `services/prompt_builder.py` | Structured-JSON prompt assembly with per-indicator hints + token budget. |
 | `services/scanner.py` | Background trigger scanner (asyncio task, per-rule cadence, dedup). |
-| `services/screener.py` / `screener_ai.py` | IBKR scanner orchestration + AI natural-language → filter codes. |
+| `services/screener.py` | IBKR scanner orchestration and deterministic filter handling. |
 | `services/sectors.py` | Sector performance + RRG calculations (singleton, conid cache). |
 | `services/db.py` | SQLite connection + schema management (WAL mode, full CRUD). |
-| `routers/` | FastAPI route handlers (auth, gateway, market, indicators, ai, screener, sectors, watchlist, triggers, settings, health, ws, …). |
+| `routers/` | FastAPI route handlers (auth, gateway, market, indicators, screener, sectors, watchlist, triggers, settings, health, ws, …). |
 | `models/` | Pydantic request/response models (mirrors `src/lib/api.ts`). |
 | `constants/` | Static IBKR catalogues — filter codes, scanner presets, etc. |
 | `tests/` | pytest suite. Asyncio mode auto, mocks all network calls. |

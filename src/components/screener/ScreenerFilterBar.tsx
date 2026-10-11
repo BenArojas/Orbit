@@ -2,7 +2,7 @@
  * ScreenerFilterBar — Preset selector + IBKR native filter pills + scan button
  *
  * Layout:
- *   Row 1: [Preset Dropdown] | [Quick-pick chips] | [+ Add Filter ▾] [Clear] | [AI] [Scan]
+ *   Row 1: [Preset Dropdown] | [Quick-pick chips] | [+ Add Filter ▾] [Clear] [Scan]
  *   Filter pills appear inline after quick-picks / add button.
  *
  * Filters are IBKR native scanner filter codes (code/value pairs).
@@ -16,7 +16,7 @@
 
 import { useState, useRef, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Plus, X, Play, Loader2, ChevronDown, RotateCcw, Sparkles } from "lucide-react";
+import { Plus, X, Play, Loader2, ChevronDown, RotateCcw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { parallaxApi, type FilterCatalogueEntry, type ScannerLocation } from "@/modules/parallax/api";
 import { useScreenerStore, type ActiveFilter } from "@/store/screener";
@@ -52,7 +52,7 @@ function buildLabel(entry: FilterCatalogueEntry, value: string, direction: "abov
 // Clicking the pill opens a compact popover pre-filled with the current value,
 // so users can tweak a threshold without removing + re-adding.
 // The catalogue `entry` is looked up by the parent via filter.code and passed
-// down — when it's missing (AI-suggested code not in our catalogue, rare) the
+// down — when it's missing (a code not in our catalogue, rare) the
 // pill falls back to read-only mode with just the remove button.
 
 function FilterPill({
@@ -97,7 +97,7 @@ function FilterPill({
   // (still removable) so we never lose the user's filter.
   if (!entry) {
     return (
-      <span className="group flex items-center gap-1.5 rounded-full border border-[var(--clr-cyan)]/40 bg-[var(--glow-cyan)] px-2.5 py-1 font-data text-[10px] font-medium text-[var(--clr-cyan)]">
+      <span className="group flex items-center gap-1.5 rounded-full border border-[var(--clr-cyan)]/40 bg-[var(--glow-cyan)] px-2.5 py-1 font-data text-xs font-medium text-[var(--clr-cyan)]">
         <span>{filter.display_label}</span>
         <button
           onClick={onRemove}
@@ -113,7 +113,7 @@ function FilterPill({
   return (
     <div ref={ref} className="relative">
       <span
-        className={`group flex items-center gap-1.5 rounded-full border px-2.5 py-1 font-data text-[10px] font-medium transition-colors ${
+        className={`group flex items-center gap-1.5 rounded-full border px-2.5 py-1 font-data text-xs font-medium transition-colors ${
           open
             ? "border-[var(--clr-cyan)] bg-[var(--clr-cyan)]/20 text-[var(--clr-cyan)]"
             : "border-[var(--clr-cyan)]/40 bg-[var(--glow-cyan)] text-[var(--clr-cyan)] hover:border-[var(--clr-cyan)]"
@@ -141,7 +141,7 @@ function FilterPill({
 
       {open && (
         <div className="absolute left-0 top-full z-20 mt-1 rounded-lg border border-[var(--border)] bg-[var(--bg-2)] p-2.5 shadow-xl">
-          <p className="mb-1.5 text-[10px] font-medium text-[var(--text-2)]">
+          <p className="mb-1.5 text-xs font-medium text-[var(--text-2)]">
             {entry.label}&nbsp;{direction === "above" ? "≥" : "≤"}
           </p>
           <div className="flex items-center gap-1.5">
@@ -154,12 +154,12 @@ function FilterPill({
               autoFocus
             />
             {entry.unit && (
-              <span className="text-[10px] text-[var(--text-3)]">{entry.unit}</span>
+              <span className="text-xs text-[var(--text-3)]">{entry.unit}</span>
             )}
             <button
               type="button"
               onClick={handleSave}
-              className="rounded bg-[var(--clr-cyan)]/20 px-2 py-1 text-[10px] font-medium text-[var(--clr-cyan)] transition-colors hover:bg-[var(--clr-cyan)]/30"
+              className="rounded bg-[var(--clr-cyan)]/20 px-2 py-1 text-xs font-medium text-[var(--clr-cyan)] transition-colors hover:bg-[var(--clr-cyan)]/30"
             >
               Save
             </button>
@@ -216,14 +216,14 @@ function QuickPickChip({
     <div ref={ref} className="relative">
       <button
         onClick={handleOpen}
-        className="rounded-full border border-dashed border-[var(--border)] px-2.5 py-1 text-[10px] text-[var(--text-3)] transition-colors hover:border-[var(--clr-cyan)] hover:text-[var(--clr-cyan)]"
+        className="rounded-full border border-dashed border-[var(--border)] px-2.5 py-1 text-xs text-[var(--text-3)] transition-colors hover:border-[var(--clr-cyan)] hover:text-[var(--clr-cyan)]"
       >
         {entry.label}
       </button>
 
       {open && (
         <div className="absolute left-0 top-full z-20 mt-1 rounded-lg border border-[var(--border)] bg-[var(--bg-2)] p-2.5 shadow-xl">
-          <p className="mb-1.5 text-[10px] font-medium text-[var(--text-2)]">
+          <p className="mb-1.5 text-xs font-medium text-[var(--text-2)]">
             {entry.label}&nbsp;{entry.direction === "above" ? "≥" : "≤"}
           </p>
           <div className="flex items-center gap-1.5">
@@ -236,11 +236,11 @@ function QuickPickChip({
               autoFocus
             />
             {entry.unit && (
-              <span className="text-[10px] text-[var(--text-3)]">{entry.unit}</span>
+              <span className="text-xs text-[var(--text-3)]">{entry.unit}</span>
             )}
             <button
               onClick={handleAdd}
-              className="rounded bg-[var(--clr-cyan)]/20 px-2 py-1 text-[10px] font-medium text-[var(--clr-cyan)] transition-colors hover:bg-[var(--clr-cyan)]/30"
+              className="rounded bg-[var(--clr-cyan)]/20 px-2 py-1 text-xs font-medium text-[var(--clr-cyan)] transition-colors hover:bg-[var(--clr-cyan)]/30"
             >
               Add
             </button>
@@ -328,7 +328,7 @@ function AddFilterDropdown({
     return (
       <button
         onClick={handleOpen}
-        className="flex items-center gap-1 rounded-full border border-dashed border-[var(--border)] px-2.5 py-1 text-[10px] font-medium text-[var(--text-3)] transition-colors hover:border-[var(--clr-cyan)] hover:text-[var(--clr-cyan)]"
+          className="flex items-center gap-1 rounded-full border border-dashed border-[var(--border)] px-2.5 py-1 text-xs font-medium text-[var(--text-3)] transition-colors hover:border-[var(--clr-cyan)] hover:text-[var(--clr-cyan)]"
       >
         <Plus size={10} />
         Add Filter
@@ -342,7 +342,7 @@ function AddFilterDropdown({
       {/* Trigger (open state) */}
       <button
         onClick={() => setOpen(false)}
-        className="flex items-center gap-1 rounded-full border border-[var(--clr-cyan)]/40 bg-[var(--glow-cyan)] px-2.5 py-1 text-[10px] font-medium text-[var(--clr-cyan)]"
+        className="flex items-center gap-1 rounded-full border border-[var(--clr-cyan)]/40 bg-[var(--glow-cyan)] px-2.5 py-1 text-xs font-medium text-[var(--clr-cyan)]"
       >
         <Plus size={10} />
         Add Filter
@@ -357,7 +357,7 @@ function AddFilterDropdown({
             <button
               key={cat}
               onClick={() => { setSelectedCat(cat); setSelected(null); }}
-              className={`px-3 py-1.5 text-left text-[11px] transition-colors hover:bg-[var(--bg-3)] ${
+              className={`px-3 py-1.5 text-left text-xs transition-colors hover:bg-[var(--bg-3)] ${
                 selectedCat === cat
                   ? "text-[var(--clr-cyan)] font-medium"
                   : "text-[var(--text-2)]"
@@ -376,7 +376,7 @@ function AddFilterDropdown({
                 key={e.code}
                 onClick={() => handleSelectEntry(e)}
                 title={e.description ?? undefined}
-                className={`px-3 py-1.5 text-left text-[11px] transition-colors hover:bg-[var(--bg-3)] ${
+              className={`px-3 py-1.5 text-left text-xs transition-colors hover:bg-[var(--bg-3)] ${
                   selected?.entry.code === e.code
                     ? "text-[var(--clr-cyan)] font-medium"
                     : "text-[var(--text-2)]"
@@ -394,13 +394,13 @@ function AddFilterDropdown({
         {/* Value input form */}
         {selected && (
           <div className="flex min-w-[200px] flex-col gap-2 p-3">
-            <p className="text-[11px] font-medium text-[var(--text-1)]">
+          <p className="text-xs font-medium text-[var(--text-1)]">
               {selected.entry.label}
             </p>
 
             {/* Direction toggle — only when paired_code exists */}
             {selected.belowEntry && (
-              <div className="flex overflow-hidden rounded-md border border-[var(--border)] text-[10px]">
+        <div className="flex overflow-hidden rounded-md border border-[var(--border)] text-xs">
                 <button
                   onClick={() => setDirection("above")}
                   className={`flex-1 py-1 transition-colors ${
@@ -435,7 +435,7 @@ function AddFilterDropdown({
                 autoFocus
               />
               {selected.entry.unit && (
-                <span className="text-[10px] text-[var(--text-3)]">{selected.entry.unit}</span>
+              <span className="text-xs text-[var(--text-3)]">{selected.entry.unit}</span>
               )}
             </div>
 
@@ -443,13 +443,13 @@ function AddFilterDropdown({
             <div className="flex gap-1.5">
               <button
                 onClick={handleAdd}
-                className="flex-1 rounded bg-[var(--clr-cyan)]/20 py-1 text-[10px] font-medium text-[var(--clr-cyan)] transition-colors hover:bg-[var(--clr-cyan)]/30"
+              className="flex-1 rounded bg-[var(--clr-cyan)]/20 py-1 text-xs font-medium text-[var(--clr-cyan)] transition-colors hover:bg-[var(--clr-cyan)]/30"
               >
                 Add
               </button>
               <button
                 onClick={() => setOpen(false)}
-                className="px-2 py-1 text-[10px] text-[var(--text-3)] transition-colors hover:text-[var(--text-1)]"
+              className="px-2 py-1 text-xs text-[var(--text-3)] transition-colors hover:text-[var(--text-1)]"
               >
                 Cancel
               </button>
@@ -465,15 +465,11 @@ function AddFilterDropdown({
 
 export default function ScreenerFilterBar({
   onScan,
-  aiPanelOpen = false,
-  onToggleAiPanel,
   onClearResults,
   showClearResults = false,
   onOpenBrowseAllScans,
 }: {
   onScan: () => void;
-  aiPanelOpen?: boolean;
-  onToggleAiPanel?: () => void;
   /** Parent supplies the reset side-effects (store reset + scanMutation.reset). */
   onClearResults?: () => void;
   /** Show the Clear Results button (results exist or there is a scan error). */
@@ -544,12 +540,7 @@ export default function ScreenerFilterBar({
   };
 
   return (
-    <div className="flex flex-wrap items-center gap-2 border-b border-border bg-[var(--bg-1)] px-4 py-2.5">
-      {/* Section label */}
-      <span className="text-[10px] font-semibold uppercase tracking-wider text-[var(--text-3)]">
-        Screener
-      </span>
-
+    <div className="relative flex flex-wrap items-center gap-2 border-b border-border bg-[var(--bg-1)] px-3 py-1.5">
       {/* Grouped preset selector */}
       {presetsLoading ? (
         <PresetSkeleton />
@@ -559,7 +550,7 @@ export default function ScreenerFilterBar({
           aria-label="Scanner preset"
           value={presetKey}
           onChange={handlePresetChange}
-          className="rounded-md border border-[var(--border)] bg-[var(--bg-2)] px-2.5 py-1 font-data text-[11px] text-[var(--text-1)] outline-none transition-colors focus:border-[var(--clr-cyan)]"
+          className="rounded-md border border-[var(--border)] bg-[var(--bg-2)] px-2.5 py-1 font-data text-xs text-[var(--text-1)] outline-none transition-colors focus:border-[var(--clr-cyan)]"
         >
           <option value="">Select preset…</option>
           {popularPresets.length > 0 && (
@@ -602,7 +593,7 @@ export default function ScreenerFilterBar({
       {selectedPreset?.subtitle && (
         <span
           data-testid="preset-subtitle"
-          className="rounded-full bg-[var(--bg-2)] border border-[var(--border)] px-2 py-0.5 text-[10px] italic text-[var(--text-3)]"
+          className="max-w-[180px] truncate rounded-full border border-[var(--border)] bg-[var(--bg-2)] px-2 py-0.5 text-xs italic text-[var(--text-3)]"
         >
           {selectedPreset.subtitle}
         </span>
@@ -644,7 +635,7 @@ export default function ScreenerFilterBar({
                 ? "Available only for stock presets — this preset uses its own location"
                 : `Scan location: ${locationOverride}`
             }
-            className="rounded-md border border-[var(--border)] bg-[var(--bg-2)] px-2.5 py-1 font-data text-[11px] text-[var(--text-1)] outline-none transition-colors focus:border-[var(--clr-cyan)] disabled:cursor-not-allowed disabled:opacity-50"
+            className="rounded-md border border-[var(--border)] bg-[var(--bg-2)] px-2.5 py-1 font-data text-xs text-[var(--text-1)] outline-none transition-colors focus:border-[var(--clr-cyan)] disabled:cursor-not-allowed disabled:opacity-50"
           >
             {locations.map((opt) => {
               const disabled = isOptionDisabled(opt);
@@ -668,42 +659,36 @@ export default function ScreenerFilterBar({
         );
       })()}
 
-      {/* Separator */}
-      <div className="h-4 w-px bg-[var(--border)]" />
-
-      {/* Quick-pick chips (popular catalogue entries) */}
-      {popularChips.map((entry) => (
-        <QuickPickChip key={entry.code} entry={entry} onAdd={addFilter} />
-      ))}
-
-      {/* Separator */}
-      {popularChips.length > 0 && <div className="h-4 w-px bg-[var(--border)]" />}
-
-      {/* Add filter dropdown (full catalogue) */}
-      <AddFilterDropdown catalogue={catalogue} onAdd={addFilter} />
-
-      {/* Active filter pills */}
-      {filters.map((f) => (
-        <FilterPill
-          key={f.id}
-          filter={f}
-          entry={catalogue.find((e) => e.code === f.code)}
-          onRemove={() => removeFilter(f.id)}
-          onUpdate={(value, display_label) => updateFilter(f.id, value, display_label)}
-        />
-      ))}
-
-      {/* Clear filters (in-place — keeps results visible) */}
-      {filters.length > 0 && (
-        <button
-          onClick={clearFilters}
-          title="Remove all filters (keeps current results)"
-          className="flex items-center gap-1 text-[10px] text-[var(--text-3)] transition-colors hover:text-[var(--clr-red)]"
-        >
-          <RotateCcw size={10} />
-          Clear
-        </button>
-      )}
+      <details className="relative">
+        <summary className="cursor-pointer list-none rounded-md border border-[var(--border)] px-2.5 py-1 font-data text-xs text-[var(--text-2)] transition-colors hover:border-[var(--clr-cyan)] hover:bg-[var(--bg-2)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--clr-cyan)] active:scale-[0.99]">
+          Advanced filters{filters.length ? ` · ${filters.length} active` : ""}
+        </summary>
+        <div className="absolute left-0 top-full z-30 mt-1 flex max-h-[min(60vh,440px)] max-w-[calc(100vw-24px)] flex-wrap items-center gap-2 overflow-auto rounded-lg border border-[var(--border)] bg-[var(--bg-1)] p-3 shadow-lg">
+          {popularChips.map((entry) => (
+            <QuickPickChip key={entry.code} entry={entry} onAdd={addFilter} />
+          ))}
+          <AddFilterDropdown catalogue={catalogue} onAdd={addFilter} />
+          {filters.map((f) => (
+            <FilterPill
+              key={f.id}
+              filter={f}
+              entry={catalogue.find((e) => e.code === f.code)}
+              onRemove={() => removeFilter(f.id)}
+              onUpdate={(value, display_label) => updateFilter(f.id, value, display_label)}
+            />
+          ))}
+          {filters.length > 0 && (
+            <button
+              onClick={clearFilters}
+              title="Remove all filters (keeps current results)"
+              className="flex items-center gap-1 text-xs text-[var(--text-3)] transition-colors hover:text-[var(--clr-red)]"
+            >
+              <RotateCcw size={10} />
+              Clear filters
+            </button>
+          )}
+        </div>
+      </details>
 
       {/* Spacer */}
       <div className="flex-1" />
@@ -713,37 +698,17 @@ export default function ScreenerFilterBar({
         <button
           onClick={onClearResults}
           title="Clear results and return to the start screen"
-          className="flex items-center gap-1.5 rounded-md border border-[var(--border)] px-2.5 py-1 text-[11px] font-medium text-[var(--text-3)] transition-colors hover:border-[var(--clr-red)] hover:text-[var(--clr-red)]"
+          className="flex items-center gap-1.5 rounded-md border border-[var(--border)] px-2.5 py-1 text-xs font-medium text-[var(--text-3)] transition-colors hover:border-[var(--clr-red)] hover:text-[var(--clr-red)]"
         >
           <RotateCcw size={12} />
           Clear results
         </button>
       )}
 
-      {/* AI panel toggle */}
-      {onToggleAiPanel && (
-        <button
-          onClick={onToggleAiPanel}
-          title={aiPanelOpen ? "Hide AI Filters" : "AI Filters"}
-          className={`flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-[11px] font-medium transition-colors ${
-            aiPanelOpen
-              ? "border-[var(--clr-cyan)]/40 bg-[var(--clr-cyan)]/15 text-[var(--clr-cyan)]"
-              : "border-[var(--border)] text-[var(--text-3)] hover:border-[var(--clr-cyan)] hover:text-[var(--clr-cyan)]"
-          }`}
-        >
-          <Sparkles size={12} />
-          AI
-        </button>
-      )}
+      {/* Scan button — primary action in the Names surface accent.
 
-      {/* Scan button — primary CTA.
-          Solid amber fill (visually distinct from all the other tinted-cyan
-          UI elements: AI button, filter pills, Apply All Filters). Slightly
-          bigger + semibold so it reads as "the action".
-
-          When the user has existing results AND has since changed filters/preset
-          without rescanning, we show a small CYAN pulse dot — cyan instead of
-          amber so the dot stands out against the amber button background. */}
+          When filters change after a scan, a static accent dot keeps that state
+          visible without a looping attention animation. */}
       <div className="relative">
         <Button
           size="sm"
@@ -754,7 +719,7 @@ export default function ScreenerFilterBar({
               ? "Filters changed — press Scan to refresh results"
               : undefined
           }
-          className="gap-1.5 px-3.5 py-1.5 border-[var(--clr-orange)] bg-[var(--clr-orange)] text-[var(--bg-0)] font-semibold hover:bg-[var(--clr-orange)]/90 hover:text-[var(--bg-0)] disabled:opacity-40"
+          className="gap-1.5 px-3.5 py-1.5 border-[var(--clr-cyan)] bg-[var(--clr-cyan)] text-[var(--surface-1)] font-semibold hover:bg-[var(--clr-cyan)]/90 hover:text-[var(--surface-1)] active:scale-[0.98] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--clr-cyan)] disabled:opacity-40"
         >
           {isScanning ? (
             <>
@@ -774,8 +739,7 @@ export default function ScreenerFilterBar({
             data-testid="scan-dirty-pulse"
             className="pointer-events-none absolute -right-1 -top-1 flex h-2.5 w-2.5"
           >
-            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[var(--clr-cyan)] opacity-75" />
-            <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-[var(--clr-cyan)] ring-1 ring-[var(--bg-0)]" />
+            <span className="inline-flex h-2.5 w-2.5 rounded-full bg-[var(--clr-cyan)] ring-1 ring-[var(--bg-0)]" />
           </span>
         )}
       </div>

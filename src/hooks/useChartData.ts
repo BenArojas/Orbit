@@ -24,6 +24,7 @@ import { useFibConfig } from "./useFibConfig";
 import { useWebSocket, type WsMessage } from "./useWebSocket";
 import { useIbkrReady } from "@/context/GatewayContext";
 import { useSettingsStore } from "@/store/settings";
+import { useCandleRollover } from "./useCandleRollover";
 import {
   HISTORY_PERIOD_LADDER,
   TIMEFRAME_PERIOD_CEILING,
@@ -60,6 +61,7 @@ function indicatorIdsToBackendNames(ids: Set<IndicatorId>): string[] {
 // ── Live tick type ───────────────────────────────────────────
 
 export interface LiveTick {
+  timestamp?: number;
   last: number;
   volume: number;
   high: number;
@@ -183,6 +185,7 @@ export function useChartData(
 
       if (last != null) {
         setLiveTick((prev) => ({
+          timestamp: typeof msg.timestamp === "number" ? msg.timestamp : undefined,
           last,
           volume: volume ?? prev?.volume ?? 0,
           high: high ?? prev?.high ?? last,
@@ -288,6 +291,8 @@ export function useChartData(
     }
   }, [candlesQuery.isFetching]);
 
+  const currentTick = useCandleRollover(timeframe, candlesQuery.data?.candles, liveTick, candlesQuery.refetch);
+
   return {
     /** OHLCV candle data */
     candles: candlesQuery.data?.candles ?? [],
@@ -303,7 +308,7 @@ export function useChartData(
     /** Where the rendered fib came from. */
     fibSource,
     /** Live tick from WebSocket (updates last candle) */
-    liveTick,
+    liveTick: currentTick,
     /** WebSocket connection status */
     wsStatus,
     /** TanStack Query loading state */

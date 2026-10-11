@@ -8,8 +8,23 @@ from services.gateway import GatewayLifecycle
 
 @pytest.fixture
 def client():
+    from fastapi import FastAPI
     from fastapi.testclient import TestClient
-    from main import app
+    from deps import get_gateway, get_ibkr
+    from exceptions import GatewayError
+    from main import gateway_error_handler
+    from routers.gateway import router
+    from services.ibkr import IBKRService
+    from state import IBKRState
+
+    app = FastAPI()
+    app.include_router(router)
+    app.add_exception_handler(GatewayError, gateway_error_handler)
+    app.state.gateway = MagicMock(spec=GatewayLifecycle)
+    app.state.ibkr = MagicMock(spec=IBKRService)
+    app.state.ibkr.state = IBKRState()
+    app.dependency_overrides[get_gateway] = lambda: app.state.gateway
+    app.dependency_overrides[get_ibkr] = lambda: app.state.ibkr
 
     with TestClient(app, raise_server_exceptions=False) as c:
         yield c, app

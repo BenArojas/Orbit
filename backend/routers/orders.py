@@ -2,7 +2,7 @@
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
-from deps import require_ibkr_auth
+from deps import require_cp_mode, require_ibkr_auth
 from models import (
     MoonMarketOrderActionResponse,
     MoonMarketOrderDraft,
@@ -74,6 +74,7 @@ async def preview_order(
 async def place_orders(
     request: MoonMarketOrdersRequest,
     ibkr: IBKRService = Depends(require_ibkr_auth),
+    _: None = Depends(require_cp_mode),
 ) -> MoonMarketOrderActionResponse:
     try:
         decision = await _safety_policy(ibkr).evaluate_order_action(request.account_id, "place")
@@ -95,6 +96,7 @@ async def reply_to_order(
     reply_id: str,
     request: MoonMarketOrderReplyRequest,
     ibkr: IBKRService = Depends(require_ibkr_auth),
+    _: None = Depends(require_cp_mode),
 ) -> MoonMarketOrderActionResponse:
     try:
         decision = await _safety_policy(ibkr).evaluate_order_action(account_id, "reply")
@@ -113,6 +115,7 @@ async def cancel_order(
     account_id: str,
     order_id: str,
     ibkr: IBKRService = Depends(require_ibkr_auth),
+    _: None = Depends(require_cp_mode),
 ) -> MoonMarketOrderActionResponse:
     try:
         decision = await _safety_policy(ibkr).evaluate_order_action(account_id, "cancel")
@@ -132,6 +135,7 @@ async def modify_order(
     order_id: str,
     order: MoonMarketOrderDraft,
     ibkr: IBKRService = Depends(require_ibkr_auth),
+    _: None = Depends(require_cp_mode),
 ) -> MoonMarketOrderActionResponse:
     try:
         decision = await _safety_policy(ibkr).evaluate_order_action(account_id, "modify")

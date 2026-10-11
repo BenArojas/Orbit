@@ -17,6 +17,8 @@ import { useWebSocket, type WsMessage } from "./useWebSocket";
 
 export interface LiveQuoteTick {
   last: number;
+  receivedAt?: number;
+  availability?: string;
   changePct?: number;
   changeAmt?: number;
   bid?: number;
@@ -27,8 +29,28 @@ export interface LiveQuoteTick {
 }
 
 export function useLiveQuotes(conids: number[]): Map<number, LiveQuoteTick> {
-  const { subscribe, unsubscribe, addHandler } = useWebSocket();
+  const { subscribe, unsubscribe, addHandler, status, upstreamStatus } = useWebSocket();
   const [ticks, setTicks] = useState<Map<number, LiveQuoteTick>>(() => new Map());
+  const previousStatusRef = useRef(status);
+  const previousUpstreamReady = useRef(upstreamStatus?.wsReady);
+
+  useEffect(() => {
+    if (status !== "connected" && previousStatusRef.current === "connected") {
+      setTicks((previous) => new Map(
+        [...previous].map(([conid, tick]) => [conid, { ...tick, availability: undefined }]),
+      ));
+    }
+    previousStatusRef.current = status;
+  }, [status]);
+
+  useEffect(() => {
+    if (previousUpstreamReady.current === true && upstreamStatus?.wsReady !== true) {
+      setTicks((previous) => new Map(
+        [...previous].map(([conid, tick]) => [conid, { ...tick, availability: undefined }]),
+      ));
+    }
+    previousUpstreamReady.current = upstreamStatus?.wsReady;
+  }, [upstreamStatus?.wsReady]);
 
   // Track the currently-subscribed set so each effect run only emits
   // the *delta* (newly-added / newly-removed conids). The unmount
@@ -75,12 +97,16 @@ export function useLiveQuotes(conids: number[]): Map<number, LiveQuoteTick> {
       const c = msg.conid;
       if (c == null || !subscribedRef.current.has(c)) return;
       const last = msg.last as number | undefined;
-      if (last == null) return;
+      const availability = msg.availability as string | undefined;
+      if (last == null && availability == null) return;
       setTicks((prev) => {
         const next = new Map(prev);
         const prior = next.get(c);
+        if (last == null && !prior) return prev;
         next.set(c, {
-          last,
+          last: last ?? prior!.last,
+          receivedAt: last != null && typeof msg.timestamp === "number" ? msg.timestamp : prior?.receivedAt,
+          availability: availability ?? prior?.availability,
           changePct: (msg.change_pct as number | undefined) ?? prior?.changePct,
           changeAmt: (msg.change_amt as number | undefined) ?? prior?.changeAmt,
           bid: (msg.bid as number | undefined) ?? prior?.bid,

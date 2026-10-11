@@ -1,8 +1,8 @@
 # Orbit
 
 Local desktop trading decision-support platform. Orbit unifies Parallax
-(technical analysis), MoonMarket (portfolio/trading), and Inflect (future
-trading journal) in one Tauri app with one Python sidecar and one SQLite
+(technical analysis), MoonMarket (portfolio/trading), and the TWS Assistant
+in one Tauri app with one Python sidecar and one SQLite
 database.
 
 Orbit was previously called **IBKR Hub** during planning. That name is kept
@@ -24,8 +24,6 @@ If you're looking for something specific, this is where it lives.
 | File | What it covers |
 |------|----------------|
 | [`PROJECT_PLAN.md`](PROJECT_PLAN.md) | Phase-by-phase task tracker, locked decisions, owner assignments, "what shipped where". The canonical source of truth for "what's done and what's next." |
-| [`AGENTS.md`](AGENTS.md) | Codex project rules and skill pointers. |
-| [`CLAUDE.md`](CLAUDE.md) | Claude Code project rules and skill pointers. Keep aligned with `AGENTS.md`. |
 
 ### Setup & how-to
 
@@ -67,7 +65,6 @@ symlinks to those canonical copies rather than duplicated text.
 | Frontend | React 19 / TypeScript, Tailwind CSS, shadcn/ui, Lightweight Charts |
 | Backend sidecar | Python FastAPI (httpx + websockets for IBKR) |
 | Data | Polars, pandas-ta bridge for indicators |
-| AI | Ollama (local LLM — Gemma 4 26B recommended) |
 | Storage | SQLite |
 
 ## Architecture
@@ -76,7 +73,7 @@ symlinks to those canonical copies rather than duplicated text.
 ┌─────────────┐       ┌─────────────────────────────┐       ┌──────────────┐
 │  Tauri v2    │──HTTP──▶  Python FastAPI sidecar     │──HTTP──▶  IBKR Client │
 │  React UI    │◀──WS───│  localhost:8000              │◀──WS───│  Portal      │
-└─────────────┘       │  Indicators · AI · Triggers  │       │  Gateway     │
+└─────────────┘       │  Indicators · Triggers       │       │  Gateway     │
                       └─────────────────────────────┘       │  :5001       │
                                      │                       └──────────────┘
                                      ▼
@@ -87,7 +84,7 @@ symlinks to those canonical copies rather than duplicated text.
 ```
 
 All data flows through the Python sidecar. The frontend never talks to IBKR
-or Ollama directly.
+directly.
 
 ---
 

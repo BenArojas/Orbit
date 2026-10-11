@@ -9,7 +9,7 @@ endpoint resolves or searches for a symbol (search, conid resolution,
 quote fetch). This endpoint lets the frontend retrieve symbol + company
 name without needing to hit IBKR again.
 
-Orbit integration: All Orbit modules (Parallax, MoonMarket, Inflect) write
+Orbit integration: Parallax and MoonMarket write
 to and read from this same cache, keyed by conid.
 """
 

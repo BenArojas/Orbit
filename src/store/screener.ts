@@ -190,8 +190,8 @@ export const useScreenerStore = create<ScreenerState>()((set) => ({
     // Picking a scanner only updates `selectedPreset` — never touches the
     // user's existing filters. Previously this wiped filters to the preset's
     // default_filters (or to [] when none existed), which silently destroyed
-    // work the user had already done in the filter bar (incl. AI suggestions
-    // they had just accepted). Try-this empty-state cards still go through
+    // work the user had already done in the filter bar. Try-this empty-state
+    // cards still go through
     // applyPreset() when they need to set both atomically.
     set({
       selectedPreset: preset,

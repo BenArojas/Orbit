@@ -145,7 +145,6 @@ describe("useGateway feedback — toasts + IBKR cache invalidation", () => {
     expect(predicate!({ queryKey: ["watchlists"] })).toBe(true);
     expect(predicate!({ queryKey: ["sectors", "performance"] })).toBe(true);
     expect(predicate!({ queryKey: ["screener-presets"] })).toBe(true);
-    expect(predicate!({ queryKey: ["ai", "status"] })).toBe(false);
     expect(predicate!({ queryKey: ["gateway-status"] })).toBe(false);
     expect(predicate!({ queryKey: ["watchlist-configs"] })).toBe(false);
     expect(predicate!({ queryKey: ["trigger-rules"] })).toBe(false);

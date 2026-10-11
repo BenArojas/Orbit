@@ -8,8 +8,8 @@ This is the canonical guide for Orbit's React/Tauri frontend.
 - `src/lib/sidecarClient.ts` alone owns sidecar transport mechanics and
   `ApiError`.
 - `src/lib/api.ts` owns Orbit shell, gateway, and authentication contracts.
-- Product contracts live in `src/modules/parallax/api.ts`,
-  `src/modules/moonmarket/api.ts`, and `src/modules/inflect/api.ts`.
+- Product contracts live in `src/modules/parallax/api.ts` and
+  `src/modules/moonmarket/api.ts`.
 - Module APIs use `sidecarRequest`; components do not call `fetch` directly.
 
 ## State and UI
@@ -26,7 +26,7 @@ This is the canonical guide for Orbit's React/Tauri frontend.
 ## Structure
 
 - `src/orbit/`: shared shell, providers, account context, and OrderTicket.
-- `src/modules/`: Parallax, MoonMarket, and Inflect product surfaces/contracts.
+- `src/modules/`: Parallax and MoonMarket product surfaces/contracts.
 - `src/components/`: reusable feature and UI components.
 - `src/hooks/`: shared queries, mutations, and subscriptions.
 - `src/store/`: shared Zustand stores.

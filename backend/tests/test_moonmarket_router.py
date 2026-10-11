@@ -250,7 +250,7 @@ def _client(
     db: DatabaseService | None = None,
 ) -> TestClient:
     # Mount the router on a bare app so the test is isolated from the full
-    # lifespan (gateway/IBKR/Ollama startup), which is unnecessary here.
+    # lifespan (gateway/IBKR startup), which is unnecessary here.
     app = FastAPI()
     app.include_router(moonmarket_router)
     if fake_ibkr is not None:
@@ -466,7 +466,7 @@ def test_moonmarket_performance_reuses_all_periods_payload_for_picker_changes():
     ]
 
 
-def test_moonmarket_trades_normalizes_summary_and_upserts_fills(monkeypatch):
+def test_moonmarket_trades_normalizes_summary(monkeypatch):
     class FixedDateTime(datetime):
         @classmethod
         def now(cls, tz=None):
@@ -476,8 +476,7 @@ def test_moonmarket_trades_normalizes_summary_and_upserts_fills(monkeypatch):
     monkeypatch.setattr("services.moonmarket.datetime", FixedDateTime)
 
     fake = _FakeIbkr()
-    db = _memory_db()
-    resp = _client(fake, db).get("/moonmarket/trades?account_id=DU12345&days=7")
+    resp = _client(fake, _memory_db()).get("/moonmarket/trades?account_id=DU12345&days=7")
 
     assert resp.status_code == 200
     body = resp.json()
@@ -508,10 +507,6 @@ def test_moonmarket_trades_normalizes_summary_and_upserts_fills(monkeypatch):
     }
     assert body["trades"][1]["execution_id"] == "E-BUY-1"
     assert body["trades"][1]["side"] == "BUY"
-    assert [row["execution_id"] for row in db._fetchall("SELECT execution_id FROM fills ORDER BY trade_time_ms DESC")] == [
-        "E-SELL-1",
-        "E-BUY-1",
-    ]
     assert ("GET", "/iserver/account/trades", {"params": {"days": 7}}) in fake.requests
 
 

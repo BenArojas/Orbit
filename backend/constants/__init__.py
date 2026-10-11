@@ -5,7 +5,7 @@ Ported from MoonMarket — these are stable IBKR API constants.
 
 This package also hosts:
   - constants.ibkr_filters: canonical FILTER_CATALOGUE for the screener
-    and AI translation layer (single source of truth for filter codes).
+    and filter UI (single source of truth for filter codes).
 """
 
 # ── IBKR Snapshot Field Codes ────────────────────────────────
@@ -25,9 +25,9 @@ FIELD_LOW = "71"
 FIELD_COMPANY_NAME = "7051"
 FIELD_VOLUME = "7762"
 FIELD_PRIOR_CLOSE = "7741"
-FIELD_MARKET_DATA_AVAIL = "6509"
 FIELD_OPEN = "7295"
 FIELD_MARKET_CAP = "7289"       # Market cap in $M
+FIELD_MARKET_DATA_AVAIL = "6509" # Real-time, delayed, frozen, or unavailable data
 
 # Default fields for a standard quote snapshot
 DEFAULT_QUOTE_FIELDS = [
@@ -64,6 +64,7 @@ LIVE_STREAM_FIELDS = [
     FIELD_HIGH,
     FIELD_LOW,
     FIELD_VOLUME,
+    FIELD_MARKET_DATA_AVAIL,
 ]
 
 

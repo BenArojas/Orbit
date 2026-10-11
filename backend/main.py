@@ -2,7 +2,7 @@
 Orbit backend — FastAPI application entrypoint.
 
 This is the Python sidecar that Tauri launches automatically.
-It owns all communication with IBKR, Ollama, and SQLite.
+It owns all communication with IBKR and SQLite.
 The React frontend talks exclusively to this server.
 
 Run in dev mode:
@@ -19,32 +19,29 @@ from starlette.middleware.cors import CORSMiddleware
 
 from config import FRONTEND_ORIGIN, TAURI_ORIGIN, REQUEST_LOG_ENABLED
 from exceptions import (
-    AIError,
     GatewayError,
     IBKRAuthError,
     IBKRConnectionError,
     IBKRRateLimitError,
     IBKRRequestError,
-    OllamaConnectionError,
     ParallaxError,
     ScreenerError,
 )
+from services.broker_session import BrokerSessionService
+from services.execution_plan import ExecutionPlanService
+from services.tws_broker_adapter import TwsBrokerAdapter
+from services.tws_live_policy import TwsLivePolicyService
 from services.db import DatabaseService
 from services.templates import seed_builtin_templates
 from services.gateway import GatewayLifecycle
 from services.ibkr import IBKRService
 from services.screener import ScreenerService
 from services.sectors import SectorService
-from services.ai import AiService
-from services.ai_analysis_preparation import AIAnalysisPreparationService
-from services.ai_providers import AIProviderRegistry, OllamaLLMProvider
-from services.ollama import OllamaLifecycle
-from services.ollama_context import OllamaContextService
+from services.market_assessment import MarketAssessmentService
 from services.scanner import ScannerService
 from services.moonmarket import MoonMarketService
-from services.inflect.service import InflectService
-from services.inflect_sync import InflectSyncService
-from services.inflect_backfill import InflectBackfillService
+from services.rs_leaders import RSLeadersService
+from services.instrument_identity import InstrumentIdentityService
 
 # ── Logging setup (must be first) ────────────────────────────
 
@@ -52,6 +49,10 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
 )
+# httpx logs every upstream request at INFO, including the expected 401s from
+# IBKR /iserver/auth/status when the user is not logged into Client Portal.
+# Those are handled correctly by IBKRService; suppress the access-log spam.
+logging.getLogger("httpx").setLevel(logging.WARNING)
 log = logging.getLogger("parallax")
 
 # ── App version ──────────────────────────────────────────────
@@ -85,6 +86,21 @@ async def lifespan(app: FastAPI):
     ibkr = IBKRService()
     app.state.ibkr = ibkr
 
+    # TWS broker adapter — owns the ib_async IB connection; starts disconnected.
+    # Must be created before BrokerSessionService so mode can be derived from it.
+    tws_adapter = TwsBrokerAdapter()
+    app.state.tws_adapter = tws_adapter
+
+    # Broker session — mode derived from tws_adapter.is_connected() + ibkr auth.
+    broker_session = BrokerSessionService(ibkr, tws_adapter)
+    app.state.broker_session = broker_session
+
+    # Execution plan service — process-local draft store; lost on restart by design.
+    app.state.execution_plan_service = ExecutionPlanService()
+
+    # TWS live policy — process-local allowlist and arm state; lost on restart by design.
+    app.state.tws_live_policy = TwsLivePolicyService()
+
     # Initialize SQLite database (Step 1.4)
     db = DatabaseService()
     await db.initialize()
@@ -99,45 +115,11 @@ async def lifespan(app: FastAPI):
     # Create the sector service singleton (Step 3.3–3.4)
     # Must be a singleton so the conid cache persists across requests
     app.state.sectors = SectorService(ibkr)
+    app.state.market_assessment = MarketAssessmentService(ibkr)
+    app.state.rs_leaders = RSLeadersService(ibkr, InstrumentIdentityService(db))
 
     # Screener service (Phase 5)
     app.state.screener = ScreenerService(ibkr)
-
-    # Ollama lifecycle — detect binary, start server, list models (Step 4.12)
-    # This NEVER downloads or installs anything. It detects what the user
-    # already has, starts the Ollama server if present, and lists models.
-    # If Ollama isn't installed, the frontend shows a setup guide with links.
-    ollama = OllamaLifecycle()
-    app.state.ollama = ollama
-
-    # Run startup: detect → start server → check models → restore selection.
-    # This is fast (no downloads) so we run it inline, not in background.
-    saved_model = await db.get_setting("ai_model")
-    try:
-        await ollama.startup(saved_model=saved_model)
-        if ollama.status()["ready"]:
-            log.info("Ollama ready — AI features available (model: %s)", ollama.selected_model)
-        else:
-            log.info("Ollama state: %s — frontend will guide setup", ollama.state.value)
-    except (OllamaConnectionError, AIError, OSError) as e:
-        log.error("Ollama startup failed: %s", e)
-
-    # AI service — stateless wrapper for Ollama chat/analysis.
-    # The model name is passed per-request from ollama.selected_model.
-    # OllamaContextService queries /api/show to get the true context-window
-    # ceiling per model and caches it, so the prompt truncator uses an
-    # accurate budget instead of the static tier table.
-    ollama_context = OllamaContextService(ollama)
-    ai_provider_registry = AIProviderRegistry({
-        "ollama": OllamaLLMProvider(),
-    })
-    app.state.ai_provider_registry = ai_provider_registry
-    ai = AiService(
-        context_service=ollama_context,
-        provider_registry=ai_provider_registry,
-    )
-    app.state.ai = ai
-    app.state.ai_analysis_preparation = AIAnalysisPreparationService()
 
     # Background trigger scanner (Phase 6.1 / 6.2)
     # Evaluates active trigger rules every N minutes while the app is open.
@@ -170,32 +152,13 @@ async def lifespan(app: FastAPI):
     scanner.on_trigger_fired = _on_trigger_fired
     scanner.start()
 
-    # Inflect background fills-sync (keeps the durable `fills` projection fresh
-    # inside IBKR's 7-day window while the app is open). Auth-gated, extended-
-    # hours-gated; modeled on the scanner's lifecycle.
-    inflect_service = InflectService(
-        ibkr=ibkr, db=db, moonmarket=MoonMarketService(ibkr)
-    )
-    inflect_sync = InflectSyncService(ibkr=ibkr, inflect=inflect_service)
-    app.state.inflect_sync = inflect_sync
-    inflect_sync.start()
-
-    inflect_backfill = InflectBackfillService(
-        ibkr=ibkr, db=db, inflect=inflect_service
-    )
-    app.state.inflect_backfill = inflect_backfill
-    inflect_backfill.start()
-
     log.info("Backend ready. Waiting for frontend connections.")
     yield
 
     # Shutdown
     log.info("Orbit backend shutting down...")
-    await inflect_backfill.stop()
-    await inflect_sync.stop()
+    await tws_adapter.disconnect()
     await scanner.stop()
-    await ai.shutdown()
-    await ollama.shutdown()
     await db.close()
     await ibkr.shutdown()
     await gateway.shutdown()
@@ -209,13 +172,13 @@ Orbit is a local-first trading **decision-support** backend.
 
 ⚠️ **Safety:** Orbit is decision support, not an autonomous trading bot. It never
 places or executes orders on its own — every broker action requires explicit
-human confirmation. All broker, AI, and persistence access flows through this
+human confirmation. All broker and persistence access flows through this
 backend. Machine-readable policy: `GET /.well-known/agent.json`.
 
 **Modules**
 - **Parallax** — technical analysis, screening, watchlists, alerts.
 - **MoonMarket** — portfolio, account, options, human-confirmed order workflows.
-- **Inflect** — trading journal and trade review.
+- **TWS Assistant** — live execution planning and broker workflow support.
 
 Use `conid` across module boundaries; ticker text is display metadata only.
 Agent briefing: see `llms.txt` in the repository root.
@@ -240,9 +203,10 @@ app = FastAPI(
 
 # ── CORS ─────────────────────────────────────────────────────
 
-# Allow both origins so the same backend binary works in dev (localhost:1420)
-# and in the packaged Tauri app (tauri://localhost).
-_cors_origins = list({FRONTEND_ORIGIN, TAURI_ORIGIN})
+# Allow all three origins so the same binary works in dev (localhost:1420 or
+# 127.0.0.1:1420) and in the packaged Tauri app (tauri://localhost).
+# Using a set to dedup in case FRONTEND_ORIGIN is already one of the aliases.
+_cors_origins = list({FRONTEND_ORIGIN, TAURI_ORIGIN, "http://127.0.0.1:1420"})
 
 app.add_middleware(
     CORSMiddleware,
@@ -319,28 +283,6 @@ async def ibkr_request_error_handler(request: Request, exc: IBKRRequestError):
     )
 
 
-@app.exception_handler(OllamaConnectionError)
-async def ollama_connection_error_handler(request: Request, exc: OllamaConnectionError):
-    return JSONResponse(
-        status_code=503,
-        content={
-            "error": "ollama_connection_error",
-            "message": exc.message,
-        },
-    )
-
-
-@app.exception_handler(AIError)
-async def ai_error_handler(request: Request, exc: AIError):
-    return JSONResponse(
-        status_code=500,
-        content={
-            "error": "ai_error",
-            "message": exc.message,
-        },
-    )
-
-
 @app.exception_handler(ScreenerError)
 async def screener_error_handler(request: Request, exc: ScreenerError):
     return JSONResponse(
@@ -382,6 +324,7 @@ from routers.indicators import router as indicators_router
 from routers.market import router as market_router
 from routers.sectors import router as sectors_router
 from routers.watchlist import router as watchlist_router
+from routers.rs import router as rs_router
 from routers.ws import router as ws_router
 
 app.include_router(auth_router)
@@ -389,14 +332,13 @@ app.include_router(indicators_router)
 app.include_router(market_router)
 app.include_router(sectors_router)
 app.include_router(watchlist_router)
+app.include_router(rs_router)
 app.include_router(ws_router)
 
 from routers.triggers import router as triggers_router
-from routers.ai import router as ai_router
 from routers.fibonacci import router as fibonacci_router
 
 app.include_router(triggers_router)
-app.include_router(ai_router)
 app.include_router(fibonacci_router)
 
 from routers.screener import router as screener_router
@@ -438,19 +380,26 @@ app.include_router(trading_safety_router)
 from routers.options import router as options_router
 app.include_router(options_router)
 
-from routers.inflect import router as inflect_router
-app.include_router(inflect_router)
-
 from routers.agent import router as agent_router
 app.include_router(agent_router)
+
+from routers.orbit_session import router as orbit_session_router
+app.include_router(orbit_session_router)
+
+from routers.execution_assistant import router as execution_assistant_router
+app.include_router(execution_assistant_router)
+
+from routers.tws_stream import router as tws_stream_router
+app.include_router(tws_stream_router)
 
 # Routers exposed for in-process reuse (the read-only MCP server + its tests).
 ALL_ROUTERS = [
     auth_router, indicators_router, market_router, sectors_router, watchlist_router,
-    ws_router, triggers_router, ai_router, fibonacci_router, screener_router,
+    ws_router, triggers_router, fibonacci_router, screener_router,
     gateway_router, watchlist_config_router, settings_router, pulse_config_router,
     health_router, instruments_router, drawings_router, moonmarket_router,
-    orders_router, trading_safety_router, options_router, inflect_router, agent_router,
+    orders_router, trading_safety_router, options_router, agent_router,
+    orbit_session_router, execution_assistant_router, tws_stream_router,
 ]
 
 

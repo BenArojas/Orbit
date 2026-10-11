@@ -11,7 +11,7 @@ interface Props {
  * Gates rendering on IBKR auth state.
  * - Loading first auth probe -> spinner
  * - Unauthenticated -> force activeScreen='connection'
- * - Authenticated and stuck on 'connection' -> route to Today (the cockpit)
+ * - Authenticated and stuck on 'connection' -> route to Market (Parallax home)
  */
 export function AuthGuard({ children }: Props) {
   const { isAuthenticated, isLoading } = useGateway();
@@ -24,8 +24,8 @@ export function AuthGuard({ children }: Props) {
     if (!isAuthenticated && activeScreen !== "connection") {
       useNavigationStore.setState({ activeScreen: "connection" });
     } else if (isAuthenticated && activeScreen === "connection") {
-      // Always land on Today after authenticating — it's the cockpit.
-      useNavigationStore.setState({ activeScreen: "today" });
+      // Market is the authenticated Parallax landing view.
+      useNavigationStore.setState({ activeScreen: "market" });
     }
   }, [isAuthenticated, isLoading, activeScreen]);
 

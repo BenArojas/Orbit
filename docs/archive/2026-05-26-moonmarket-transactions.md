@@ -2,9 +2,8 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use `superpowers:subagent-driven-development` (recommended) or `superpowers:executing-plans` to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Add Plan #4 MoonMarket Transactions: route-aware MoonMarket navigation, read-only recent trades and live orders, and a local `fills` table that writes normalized IBKR executions for future Inflect.
 
-**Architecture:** Extend the existing MoonMarket FastAPI router and `MoonMarketService`; add typed Pydantic contracts; add SQLite `fills` migration/upsert methods in `DatabaseService`; split the current MoonMarket frontend into shared layout, portfolio page, and transactions page; fetch data through `src/lib/api.ts` with TanStack Query.
+**Architecture:** Extend the existing MoonMarket FastAPI router and `MoonMarketService`; add typed Pydantic contracts; split the current MoonMarket frontend into shared layout, portfolio page, and transactions page; fetch live data through the module API with TanStack Query.
 
 **Tech Stack:** FastAPI, Pydantic, SQLite, `IBKRService`, React 19, TypeScript, Tailwind v4, TanStack Query v5, Vitest, Testing Library, uv/pytest.
 
@@ -17,7 +16,6 @@
 - [ ] Do not add options-specific order behavior.
 - [ ] Do not call IBKR directly from the frontend.
 - [ ] Preserve the Plan #3 portfolio screen and `PerformanceCards`.
-- [ ] Store local fills by `execution_id` and `conid`, not ticker.
 
 ---
 
@@ -123,84 +121,6 @@ status: str | None = None
 
 ---
 
-## Task 3: SQLite Fills Table
-
-- [ ] Update `backend/services/db.py` `_create_tables` with a `fills` table:
-
-```sql
-CREATE TABLE IF NOT EXISTS fills (
-    execution_id TEXT PRIMARY KEY,
-    account_id TEXT NOT NULL,
-    conid INTEGER NOT NULL,
-    symbol TEXT,
-    description TEXT,
-    side TEXT NOT NULL,
-    quantity REAL NOT NULL,
-    price REAL,
-    net_amount REAL,
-    commission REAL,
-    sec_type TEXT,
-    trade_time TEXT NOT NULL,
-    trade_time_ms INTEGER,
-    raw_json TEXT,
-    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-)
-```
-
-- [ ] Add an index for future Inflect reads:
-
-```sql
-CREATE INDEX IF NOT EXISTS idx_fills_account_time
-ON fills(account_id, trade_time_ms DESC)
-```
-
-- [ ] Add an index for cross-module instrument lookups:
-
-```sql
-CREATE INDEX IF NOT EXISTS idx_fills_conid_time
-ON fills(conid, trade_time_ms DESC)
-```
-
-- [ ] Add `DatabaseService.upsert_fills(rows: list[dict[str, Any]]) -> int`.
-
-  Requirements:
-
-  - Use `await self._run_write(fn)` for the write.
-  - Upsert by `execution_id`.
-  - Update `updated_at = CURRENT_TIMESTAMP` on conflict.
-  - Return the number of rows accepted for upsert.
-  - Skip rows without `execution_id`, `account_id`, `conid`, `side`, `quantity`, or `trade_time`.
-  - Store original source row as JSON in `raw_json` when provided.
-
-- [ ] Add `DatabaseService.list_fills(account_id: str, days: int = 7) -> list[dict[str, Any]]`.
-
-  Requirements:
-
-  - Read from the local table for tests and future Inflect.
-  - Bound `days` to `1..7`.
-  - Sort newest first.
-
-- [ ] Update `backend/tests/test_db_migrations.py`.
-
-  Assertions:
-
-  - New databases contain `fills`.
-  - Re-running migrations is idempotent.
-  - `upsert_fills` inserts a fill.
-  - Re-upserting the same `execution_id` updates the row instead of duplicating.
-  - `list_fills` returns newest first for the selected account.
-
-- [ ] Run DB tests:
-
-```bash
-uv run pytest tests/test_db_migrations.py
-```
-
-Expected result after implementation: DB migration/upsert tests pass.
-
----
-
 ## Task 4: MoonMarket Service Methods
 
 - [ ] Update `backend/services/moonmarket.py`.
@@ -241,7 +161,7 @@ await self.ibkr._request("GET", "/iserver/account/trades")
   - Preserve `conid` as integer.
   - Skip invalid rows that cannot produce a safe `MoonMarketTrade`.
   - Compute summary server-side.
-  - Upsert valid rows into `fills` when `db` is provided.
+- Return normalized live trades without a local execution projection.
 
 - [ ] Implement live orders fetch.
 
@@ -577,7 +497,6 @@ git diff --check
 
 - [ ] Confirm no bare `except Exception` blocks were introduced.
 
-- [ ] Confirm `fills` writes use `DatabaseService._run_write`.
 
 - [ ] Commit on `feature/moonmarket-transactions`:
 

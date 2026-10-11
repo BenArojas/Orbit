@@ -29,7 +29,6 @@ from __future__ import annotations
 
 import json
 import logging
-import re
 import time
 from datetime import datetime, timezone
 from logging.handlers import RotatingFileHandler
@@ -95,7 +94,6 @@ def _build_logger() -> logging.Logger:
 
 _log = _build_logger()
 _REDACTED = "[REDACTED]"
-_INFLECT_TRADE_PATH_RE = re.compile(r"(/inflect/trades/)([^/?]+)")
 
 
 def _now_iso() -> str:
@@ -117,10 +115,6 @@ def _emit(record: dict[str, Any]) -> None:
     except (OSError, ValueError, TypeError):
         # Disk full, encoding error, etc. We can't take down requests for this.
         pass
-
-
-def _redact_path(path: str) -> str:
-    return _INFLECT_TRADE_PATH_RE.sub(rf"\1{_REDACTED}", path)
 
 
 def _redact_query(query: str) -> str:
@@ -177,7 +171,7 @@ class RequestLoggingMiddleware:
                 "ts": _now_iso(),
                 "kind": "http",
                 "method": scope.get("method", ""),
-                "path": _redact_path(scope.get("path", "")),
+                "path": scope.get("path", ""),
                 "query": _redact_query(
                     (scope.get("query_string") or b"").decode("latin-1")
                 ),

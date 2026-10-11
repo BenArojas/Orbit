@@ -23,7 +23,7 @@
  */
 
 import { useMemo } from "react";
-import { ArrowUpDown, ArrowUp, ArrowDown, TrendingUp, Info } from "lucide-react";
+import { ArrowUpDown, ArrowUp, ArrowDown, TrendingUp } from "lucide-react";
 import {
   Table,
   TableHeader,
@@ -38,6 +38,8 @@ import {
   SCREENER_PAGE_SIZE,
   type SortDir,
 } from "@/store/screener";
+import { useRSRatings } from "@/hooks/useRSRatings";
+import { PublishedRating, PublishedSourceNotice } from "@/components/parallax/PublishedRating";
 import { TableSkeleton } from "./ScreenerSkeleton";
 import { useStockTags } from "@/hooks/useStockTags";
 import { StockTagDots } from "@/components/tags/StockTagDots";
@@ -246,9 +248,8 @@ function DisclaimerStrip({
   }
 
   return (
-    <div className="flex items-center gap-2 border-b border-border bg-[var(--bg-1)]/50 px-4 py-1.5">
-      <Info size={11} className="text-[var(--text-3)]" />
-      <span className="font-data text-[10px] text-[var(--text-3)]">{text}</span>
+    <div className="flex items-center border-b border-border bg-[var(--bg-1)]/50 px-3 py-1.5">
+      <span className="font-data text-xs text-[var(--text-3)]">{text}</span>
     </div>
   );
 }
@@ -299,6 +300,9 @@ export default function ScreenerResultsTable() {
     return sorted.slice(start, start + SCREENER_PAGE_SIZE);
   }, [results, sortBy, sortDir, page]);
 
+  const ratingLookup = useRSRatings(isScanning ? [] : pageRows.map((row) => row.conid));
+  const ratingByConid = new Map(ratingLookup.items.map((rating) => [rating.conid, rating]));
+
   // Tag dots for visible page (shows which results are firing watchlist rules)
   const tagConids = pageRows.map((r) => r.conid);
   const { data: stockTags } = useStockTags(tagConids);
@@ -326,6 +330,13 @@ export default function ScreenerResultsTable() {
 
   return (
     <div className="flex flex-1 flex-col overflow-hidden">
+      <PublishedSourceNotice
+        sourceStatus={ratingLookup.sourceStatus}
+        freshness={ratingLookup.freshness}
+        publishedAt={ratingLookup.sourcePublishedAt}
+        isLoading={ratingLookup.isLoading}
+        isError={ratingLookup.isError}
+      />
       {/* Disclaimer strip — top/bottom cap messaging */}
       <DisclaimerStrip total={results.length} lastBatchSize={lastBatchSize} />
 
@@ -339,10 +350,10 @@ export default function ScreenerResultsTable() {
                   key={col.key}
                   onClick={() => handleSort(col.key)}
                   style={{ minWidth: col.minWidth }}
-                  className="cursor-pointer select-none px-3 py-2"
+                  className="cursor-pointer select-none px-3 py-1.5"
                 >
                   <div
-                    className={`flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wider text-[var(--text-3)] ${
+                    className={`flex items-center gap-1 text-xs font-semibold uppercase tracking-wider text-[var(--text-3)] ${
                       col.align === "right" ? "justify-end" : ""
                     }`}
                   >
@@ -351,6 +362,14 @@ export default function ScreenerResultsTable() {
                   </div>
                 </TableHead>
               ))}
+              <TableHead className="px-3 py-1.5">
+                <details className="relative inline-block text-[10px] font-semibold uppercase tracking-wider text-[var(--text-3)]">
+                  <summary aria-label="Fred published RS percentile details" className="cursor-pointer">RS</summary>
+                  <p role="note" className="absolute right-0 top-full z-30 mt-1 w-64 rounded border border-[var(--border)] bg-[var(--bg-1)] p-2 font-normal normal-case tracking-normal text-[var(--text-2)] shadow-md">
+                    Fred published RS percentile. This does not claim exact TradingView parity; unavailable RS evidence does not automatically mean the price or chart is unavailable.
+                  </p>
+                </details>
+              </TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -364,7 +383,7 @@ export default function ScreenerResultsTable() {
                   <TableCell
                     key={col.key}
                     data-testid={col.key === "symbol" ? "screener-tag-cell" : undefined}
-                    className={`px-3 py-2 font-data text-[11px] ${
+                    className={`px-3 py-1.5 font-data text-[13px] ${
                       col.align === "right" ? "text-right" : ""
                     }`}
                   >
@@ -381,6 +400,13 @@ export default function ScreenerResultsTable() {
                     )}
                   </TableCell>
                 ))}
+                <TableCell className="px-3 py-1.5 font-data text-xs">
+                  <PublishedRating
+                    rating={ratingByConid.get(row.conid)}
+                    loading={ratingLookup.isLoading}
+                    lookupFailed={ratingLookup.isError}
+                  />
+                </TableCell>
               </TableRow>
             ))}
           </TableBody>

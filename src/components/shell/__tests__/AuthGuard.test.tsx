@@ -35,11 +35,11 @@ describe("AuthGuard", () => {
     expect(useNavigationStore.getState().activeScreen).toBe("connection");
   });
 
-  it("lands on Today when re-authenticating from connection", () => {
+  it("lands on Market when re-authenticating from connection", () => {
     useNavigationStore.setState({ activeScreen: "connection" });
     setup({ isAuthenticated: true, isLoading: false });
     render(<AuthGuard><div>protected</div></AuthGuard>);
-    expect(useNavigationStore.getState().activeScreen).toBe("today");
+    expect(useNavigationStore.getState().activeScreen).toBe("market");
   });
 
   it("renders children when authenticated and not on connection", () => {

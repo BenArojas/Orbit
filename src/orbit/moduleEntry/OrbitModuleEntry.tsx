@@ -1,13 +1,18 @@
 import type { ReactElement } from "react";
 import type { LucideIcon } from "lucide-react";
-import { Activity, Briefcase, NotebookPen } from "lucide-react";
+import { Activity, Briefcase, Terminal } from "lucide-react";
+import { BackToOrbitButton } from "@/components/ui/BackToOrbitButton";
 import { GatewaySetup } from "@/components/gateway/GatewaySetup";
-import { useGatewayContext } from "@/context/GatewayContext";
-import { InflectModule } from "@/modules/inflect/InflectModule";
+import { useBrokerSession } from "@/context/BrokerSessionContext";
 import { MoonMarketModule } from "@/modules/moonmarket/MoonMarketModule";
 import { ParallaxModule } from "@/modules/parallax/ParallaxModule";
+import { TwsExecutionAssistantModule } from "@/modules/tws-execution-assistant/TwsExecutionAssistantModule";
+import type { BrokerSessionMode } from "@/modules/tws-execution-assistant/api";
 
-export type OrbitModuleId = "parallax" | "moonmarket" | "inflect";
+export type OrbitModuleId =
+  | "parallax"
+  | "moonmarket"
+  | "tws-execution-assistant";
 
 type OrbitModuleDefinition = {
   id: OrbitModuleId;
@@ -15,7 +20,6 @@ type OrbitModuleDefinition = {
   description: string;
   path: string;
   icon: LucideIcon;
-  requiresAuth: boolean;
   render: () => ReactElement;
 };
 
@@ -26,7 +30,6 @@ export const orbitModules: Record<OrbitModuleId, OrbitModuleDefinition> = {
     description: "Technical analysis",
     path: "/parallax",
     icon: Activity,
-    requiresAuth: true,
     render: () => <ParallaxModule />,
   },
   moonmarket: {
@@ -35,35 +38,52 @@ export const orbitModules: Record<OrbitModuleId, OrbitModuleDefinition> = {
     description: "Portfolio and trading",
     path: "/moonmarket",
     icon: Briefcase,
-    requiresAuth: true,
     render: () => <MoonMarketModule />,
   },
-  inflect: {
-    id: "inflect",
-    label: "Inflect",
-    description: "Trading journal",
-    path: "/inflect",
-    icon: NotebookPen,
-    requiresAuth: true,
-    render: () => <InflectModule />,
+  "tws-execution-assistant": {
+    id: "tws-execution-assistant",
+    label: "TWS Execution Assistant",
+    description: "Broker execution assistant",
+    path: "/tws",
+    icon: Terminal,
+    render: () => <TwsExecutionAssistantModule />,
   },
 };
 
-function ModuleLockedState({ module }: { module: OrbitModuleDefinition }) {
+function lockedMessage(moduleId: OrbitModuleId, mode: BrokerSessionMode): string {
+  if (moduleId === "tws-execution-assistant") {
+    return "Connect TWS or IB Gateway from the Execution Assistant to enter TWS mode.";
+  }
+  return mode === "tws"
+    ? `TWS mode is active. Disconnect from TWS / IB Gateway to use ${orbitModules[moduleId].label}.`
+    : `Connect IBKR to open ${orbitModules[moduleId].label}. Orbit keeps you on this route so the reason is visible before the module mounts.`;
+}
+
+function ModuleLockedState({
+  module,
+  message,
+  showSetup,
+}: {
+  module: OrbitModuleDefinition;
+  message: string;
+  showSetup: boolean;
+}) {
   return (
     <div className="flex min-h-screen bg-[var(--bg-1)] text-foreground">
       <div className="mx-auto flex w-full max-w-6xl flex-col gap-8 px-6 py-10 lg:flex-row lg:items-start">
         <section className="flex-1 space-y-4 pt-4">
-          <p className="text-[11px] font-medium uppercase tracking-[0.28em] text-[var(--text-3)]">
-            Orbit Module Locked
-          </p>
+          <div className="flex items-center justify-between">
+            <p className="text-[11px] font-medium uppercase tracking-[0.28em] text-[var(--text-3)]">
+              Orbit Module Locked
+            </p>
+            <BackToOrbitButton />
+          </div>
           <div className="space-y-2">
             <h1 className="text-3xl font-semibold text-foreground">
               {module.label} is locked
             </h1>
             <p className="max-w-xl text-sm leading-6 text-[var(--text-2)]">
-              Connect IBKR to open {module.label}. Orbit keeps you on this route so the
-              reason is visible before the module mounts.
+              {message}
             </p>
           </div>
           <div className="rounded-lg border border-border bg-[var(--bg-2)]/70 px-4 py-3 text-[12px] text-[var(--text-2)]">
@@ -73,20 +93,28 @@ function ModuleLockedState({ module }: { module: OrbitModuleDefinition }) {
           </div>
         </section>
 
-        <aside className="w-full max-w-xl rounded-xl border border-border bg-[var(--bg-2)] p-4 shadow-[0_0_32px_rgba(0,0,0,0.2)]">
-          <GatewaySetup hideLogout />
-        </aside>
+        {showSetup && (
+          <aside className="w-full max-w-xl rounded-xl border border-border bg-[var(--bg-2)] p-4 shadow-[0_0_32px_rgba(0,0,0,0.2)]">
+            <GatewaySetup hideLogout />
+          </aside>
+        )}
       </div>
     </div>
   );
 }
 
 export function OrbitModuleEntry({ moduleId }: { moduleId: OrbitModuleId }) {
-  const { isAuthenticated } = useGatewayContext();
+  const { mode, isModuleAvailable } = useBrokerSession();
   const module = orbitModules[moduleId];
 
-  if (module.requiresAuth && !isAuthenticated) {
-    return <ModuleLockedState module={module} />;
+  if (!isModuleAvailable(moduleId)) {
+    return (
+      <ModuleLockedState
+        module={module}
+        message={lockedMessage(moduleId, mode)}
+        showSetup={mode === "none" && moduleId !== "tws-execution-assistant"}
+      />
+    );
   }
 
   return module.render();

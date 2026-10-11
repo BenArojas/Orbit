@@ -2,7 +2,7 @@
  * Parallax sidecar contract.
  *
  * Owns Parallax-facing market, chart, indicator, watchlist, trigger, screener,
- * AI, drawing, and Fibonacci endpoint contracts. Transport mechanics stay in
+ * drawing and Fibonacci endpoint contracts. Transport mechanics stay in
  * "@/lib/sidecarClient".
  *
  * Keep shared-adjacent contracts here only when Parallax is the current owner
@@ -55,8 +55,98 @@ export interface SearchResult {
   secType: string;
 }
 
+export interface RSLeader {
+  conid: number | null;
+  symbol: string;
+  company_name?: string | null;
+  sector: string | null;
+  raw_strength: number | null;
+  published_percentile: number | null;
+  source_price: number | null;
+  avg_volume_50: number | null;
+  source_rank: number;
+}
+
+export interface RSLeadersResponse {
+  status: "available" | "stale" | "unavailable" | "verifying";
+  source_revision: string | null;
+  source_published_at: string | null;
+  fetched_at: string | null;
+  evidence_session: string | null;
+  freshness: "stale" | "unknown";
+  eligible_count: number;
+  items: RSLeader[];
+  issues: string[];
+}
+
+export interface RSLeadersSourceResponse {
+  phase: "verifying" | "unavailable";
+  source_revision: string | null;
+  source_published_at: string | null;
+  fetched_at: string | null;
+  freshness: "stale" | "unknown";
+  eligible_count: number;
+  issues: string[];
+}
+
+export interface RSRating extends Omit<RSLeader, "conid" | "source_rank"> {
+  conid: number;
+  status: "rated" | "not_published" | "unverified" | "source_unavailable";
+}
+
+export interface RSRatingsResponse {
+  status: "available" | "stale" | "unavailable";
+  source_revision: string | null;
+  source_published_at: string | null;
+  evidence_session: string | null;
+  freshness: "stale" | "unknown";
+  items: RSRating[];
+}
+
 export interface QuotesBundledResponse {
     items: QuoteResponse[];
+}
+
+export interface MarketInstrumentEvidence {
+    symbol: string;
+    name: string | null;
+    conid: number | null;
+    session_date: string | null;
+    close: number | null;
+    ema21: number | null;
+    sma50: number | null;
+    ema21_distance_pct: number | null;
+    sma50_distance_pct: number | null;
+    sma200: number | null;
+    trend: "constructive" | "weak" | "mixed" | null;
+    above_sma50: boolean | null;
+    unavailable_reason: string | null;
+}
+
+export interface MarketAssessmentResponse {
+    status: "complete" | "partial" | "incomplete";
+    posture: "broad" | "selective" | "defensive" | null;
+    expected_session: string | null;
+    evidence_session: string | null;
+    calculated_at: string;
+    indices: MarketInstrumentEvidence[];
+    sectors: MarketInstrumentEvidence[];
+    participation: {
+        total: 11;
+        available: number;
+        missing: number;
+        confirmed_above: number;
+        possible_above_min: number;
+        possible_above_max: number;
+    };
+    issues: string[];
+    previous_assessment: {
+        posture: "broad" | "selective" | "defensive";
+        evidence_session: string;
+        calculated_at: string;
+    } | null;
+    next_reconcile_at: string | null;
+    market_open: boolean;
 }
 // ── Candles / indicators ────────────────────────────────────
 export interface CandleData {
@@ -474,12 +564,13 @@ export type TriggerRule = {
     symbol: string | null;
     template_id: number | null;
     ibkr_mirror_target: string | null;
+    revision: number;
     conditions: TriggerCondition[];
     created_at: string;
     updated_at: string;
 };
 
-export type TriggerRuleCreate = Omit<TriggerRule, "id" | "created_at" | "updated_at">;
+export type TriggerRuleCreate = Omit<TriggerRule, "id" | "revision" | "created_at" | "updated_at">;
 
 export type TriggerRuleUpdate = Partial<TriggerRuleCreate>;
 
@@ -487,13 +578,16 @@ export type TriggerConditionValue = {
     indicator: string;
     condition: string;
     threshold: number | null;
-    actual_value: number;
+    actual_value: number | null;
     news_candle_method?: string | null;
+    condition_role?: "waiting" | "invalidation" | null;
 };
 
 export type TriggerHit = {
     id: number;
     rule_id: number;
+    rule_revision?: number | null;
+    rule_evaluation_id?: number | null;
     rule_name: string | null;
     conid: number;
     symbol: string;
@@ -507,6 +601,83 @@ export type TriggerHit = {
     moved_back: boolean;
     expires_at: string | null;
 };
+
+export type SetupPlanType = "pullback" | "breakout" | "breakout_retest";
+export type SetupPlanTimeframe = "1m" | "5m" | "15m" | "30m" | "1h" | "4h" | "1D" | "1W" | "1M";
+export type SetupPlanMonitoringMode = "manual" | "automatic";
+
+export type RuleEvaluation = {
+    id: number;
+    plan_id: number;
+    plan_revision: number;
+    rule_id: number;
+    rule_revision: number;
+    outcome: "matched" | "not_matched" | "failed" | "unavailable";
+    invalidation_outcome: "matched" | "not_matched" | "failed" | "unavailable" | null;
+    invalidation_failure_code: string | null;
+    invalidation_failure_message: string | null;
+    checked_at: string;
+    evidence_at: string | null;
+    evidence_session_policy?: "us_equity_extended" | null;
+    condition_values: TriggerConditionValue[];
+    failure_code: string | null;
+    failure_message: string | null;
+    reviewed_at: string | null;
+};
+
+export type SetupPlanRule = {
+    id: number;
+    revision: number;
+    enabled: boolean;
+    timeframe: SetupPlanTimeframe;
+    scan_interval_seconds: number;
+    conditions: TriggerCondition[];
+    invalidation_condition: TriggerCondition | null;
+};
+
+export type SetupPlan = {
+    id: number;
+    account_id: string;
+    account_mode: "paper" | "live";
+    conid: number;
+    symbol: string;
+    setup_type: SetupPlanType;
+    waiting_intention: string;
+    monitoring_mode: SetupPlanMonitoringMode;
+    invalidation_reference: string | null;
+    invalidation_condition: TriggerCondition | null;
+    rule: SetupPlanRule | null;
+    lifecycle: "active" | "archived";
+    revision: number;
+    created_at: string;
+    updated_at: string;
+    archived_at: string | null;
+    monitoring_health: "not_monitored" | "not_checked" | "healthy" | "unavailable" | "overdue";
+    monitoring_due_at: string | null;
+    latest_evaluation: RuleEvaluation | null;
+    unreviewed_match_count: number;
+    review_evaluation?: RuleEvaluation | null;
+};
+
+export type SetupPlanDetail = SetupPlan & {
+    evaluations: RuleEvaluation[];
+    unreviewed_matches: RuleEvaluation[];
+    hits: TriggerHit[];
+};
+
+export type SetupPlanCreate = {
+    conid: number;
+    setup_type: SetupPlanType;
+    waiting_intention: string;
+    monitoring_mode: SetupPlanMonitoringMode;
+    invalidation_reference?: string | null;
+    invalidation_condition?: TriggerCondition | null;
+    timeframe?: SetupPlanTimeframe;
+    scan_interval_seconds?: number;
+    conditions?: TriggerCondition[];
+};
+
+export type SetupPlanUpdate = Partial<Omit<SetupPlanCreate, "conid">>;
 
 export type RuleTemplate = {
     id: number;
@@ -523,312 +694,6 @@ export type StockTagMap = Record<
     number,
     { rule_id: number; rule_name: string; indicators: string[]; fired_at: string }[]
 >;
-// ── AI analysis / model lifecycle ───────────────────────────
-export type AiContextMode = "none" | "summary" | "ohlcv" | "patterns";
-
-export interface AnalyzeRequest {
-    conid: number;
-    symbol: string;
-    timeframes: string[];
-    indicators: string[];
-    session_id?: string;
-    /** Originating watchlist name (if any). Adds context to the AI prompt. */
-    watchlist?: string;
-    /** Ordered indicator priority — first = most important. Omit to let AI decide. */
-    indicator_priority?: string[];
-    /**
-     * Chart context mode — controls what raw price history is appended to
-     * the indicator context for each timeframe.
-     *   "none"     — indicator values only (default, fastest)
-     *   "summary"  — compact recent-closes + direction blurb (~+5% response time)
-     *   "ohlcv"    — full OHLCV table for context_bars bars (~+25-40% response time)
-     *   "patterns" — pre-computed candlestick patterns (~+10-15% response time)
-     */
-    context_mode?: AiContextMode;
-    /** Number of bars to include when context_mode != "none" (5–30). */
-    context_bars?: number;
-    /** Active fibs currently rendered on the chart. */
-    fibs?: FibonacciSnapshot[];
-    provider_name?: AIProviderName;
-    model?: string | null;
-    task_type?: "analysis" | "execution_sensitive";
-}
-
-export interface FibonacciSnapshot {
-    source: "auto" | "manual" | "locked";
-    swing_high: number;
-    swing_low: number;
-    swing_high_time: number;
-    swing_low_time: number;
-    direction: "up" | "down";
-    score?: number;
-    is_primary: boolean;
-    timeframe: string | null;
-    note?: string;
-}
-
-export interface ChatRequest {
-    session_id: string;
-    message: string;
-}
-
-export interface SignalLevel {
-    label: string;
-    value: string; // "$123.45" or "—" when no grounded level exists
-    sub: string;
-    color?: "green" | "red";
-}
-
-export interface SignalCheck {
-    text: string;
-    type: "confirm" | "caution";
-}
-
-export interface SignalMeta {
-    label: string;
-    value: string; // e.g. "2:1" or "—" when not applicable
-}
-
-export interface SignalData {
-    direction: "STRONG LONG" | "LONG" | "NEUTRAL" | "SHORT" | "STRONG SHORT";
-    description: string;
-    confidence: number;
-    levels: SignalLevel[];
-    meta: SignalMeta[];
-    checks: SignalCheck[];
-}
-
-export type AnalysisStatus = "directional" | "neutral" | "rejected";
-
-export interface AnalyzeResponse {
-    session_id: string;
-    signal: SignalData | null;
-    status: AnalysisStatus;
-    narrative: string | null;
-    warning: string | null;
-    message: string;
-    rejected_output?: string | null;
-}
-
-export interface ChatResponse {
-    session_id: string;
-    signal: SignalData | null;
-    message: string;
-}
-
-export type AIProviderName =
-    | "ollama"
-    | "openai"
-    | "anthropic"
-    | "gemini"
-    | "grok"
-    | "openrouter";
-
-export type AIProviderKind = "local" | "cloud";
-
-export type AIRoutingMode =
-    | "local_only"
-    | "cloud_manual"
-    | "cloud_with_local_fallback";
-
-export interface AIProviderStatus {
-    provider_name: AIProviderName;
-    display_name: string;
-    kind: AIProviderKind;
-    enabled: boolean;
-    ready: boolean;
-    selected_model: string | null;
-    has_key: boolean;
-    error: string | null;
-}
-
-export interface AIProviderMetadata {
-    provider_name: AIProviderName;
-    kind: AIProviderKind;
-    model: string | null;
-    estimated_cost: number | null;
-    actual_cost: number | null;
-    fallback_used: boolean;
-    requested_model?: string;
-    resolved_model?: string;
-    provider_request_id?: string;
-    input_tokens?: number;
-    output_tokens?: number;
-    reasoning_tokens?: number;
-    cached_tokens?: number;
-    duration_ms?: number;
-    finish_reason?: string;
-}
-
-export interface AIRunAttempt {
-    provider_name: AIProviderName;
-    requested_model: string | null;
-    resolved_model: string | null;
-    status: "success" | "failed" | "fallback_success" | "blocked";
-    provider_request_id: string | null;
-    input_tokens: number | null;
-    output_tokens: number | null;
-    reasoning_tokens: number | null;
-    cached_tokens: number | null;
-    estimated_cost_usd: string | null;
-    actual_cost_usd: string | null;
-    duration_ms: number;
-    error_code: string | null;
-}
-
-export interface AIRunReceipt {
-    run_id: string;
-    requested_provider: AIProviderName;
-    requested_model: string | null;
-    executed_provider: AIProviderName | null;
-    resolved_model: string | null;
-    fallback_used: boolean;
-    fallback_reason: string | null;
-    status: "success" | "failed" | "fallback_success" | "blocked";
-    attempts: AIRunAttempt[];
-    created_at: string;
-}
-
-export interface AIQualityChecks {
-    response_completed: boolean;
-    signal_parsed: boolean;
-    entry_present: boolean;
-    stop_present: boolean;
-    target_present: boolean;
-    checks_count: number;
-    narrative_characters: number;
-}
-
-export interface AIComparisonSide {
-    receipt: AIRunReceipt;
-    message: string;
-    signal: SignalData | null;
-    quality: AIQualityChecks;
-}
-
-export interface AIComparisonResponse {
-    snapshot_id: string;
-    same_input: true;
-    local: AIComparisonSide;
-    cloud: AIComparisonSide;
-}
-
-export interface AIProvidersResponse {
-    providers: AIProviderStatus[];
-    active_provider: AIProviderName;
-    routing_mode: AIRoutingMode;
-    cloud_enabled: boolean;
-}
-
-export interface AIModelOption {
-    id: string;
-    name: string;
-    context_length: number;
-    max_completion_tokens: number;
-    prompt_price_per_token: string;
-    completion_price_per_token: string;
-    request_price: string;
-}
-
-export interface AIProviderModelsResponse {
-    provider_name: "openrouter";
-    models: AIModelOption[];
-    selected_model: string | null;
-    fetched_at: string;
-}
-
-export interface AIAnalysisPreview {
-    snapshot_id: string;
-    expires_at: string;
-    provider_name: "openrouter";
-    model: AIModelOption;
-    request_body: Record<string, unknown>;
-    disclosure: {
-        sent_to_cloud: string[];
-        kept_local: string[];
-        exact_payload_available_until: string;
-    };
-    cost: {
-        currency: "USD";
-        estimated_input_tokens: number;
-        expected_output_tokens: number;
-        max_output_tokens: number;
-        estimated_cost_usd: string;
-        maximum_cost_usd: string;
-    };
-    fallback_enabled: boolean;
-}
-
-export interface AIProviderModelUpdateRequest {
-    model: string;
-}
-
-export interface AIProviderKeySaveRequest {
-    api_key: string;
-}
-
-export interface AIRoutingPolicyResponse {
-  active_provider: AIProviderName;
-  routing_mode: AIRoutingMode;
-  local_fallback_enabled: boolean;
-}
-
-export type AIRoutingPolicyUpdate = AIRoutingPolicyResponse;
-
-export const AI_PROVIDERS_QUERY_KEY = ["ai", "providers"] as const;
-export const AI_OPENROUTER_MODELS_QUERY_KEY = [
-    "ai",
-    "providers",
-    "openrouter",
-    "models",
-] as const;
-
-export interface AiStatusResponse {
-    state:
-    | "not_installed"
-    | "installed"
-    | "starting"
-    | "running"
-    | "no_models"
-    | "ready"
-    | "error";
-    selected_model: string | null;
-    ready: boolean;
-    error: string | null;
-    platform: string;
-}
-
-export interface OllamaModelResponse {
-    name: string;
-    size_bytes: number;
-    size_gb: number;
-    family: string;
-    parameter_size: string;
-    quantization: string;
-    modified_at: string;
-}
-
-export interface RecommendedModel {
-    name: string;
-    display_name: string;
-    size_gb: number;
-    min_ram_gb: number;
-    description: string;
-    pull_command: string;
-    tier: "minimal" | "light" | "recommended" | "heavy";
-}
-
-export interface SetupGuideResponse {
-    install_url: string;
-    install_note: string;
-    models_url: string;
-    recommended_models: RecommendedModel[];
-    pull_example: string;
-}
-
-export interface ModelSelectRequest {
-    model: string;
-}
 // ── Screener ────────────────────────────────────────────────
 export interface ScannerPreset {
     instrument: string;
@@ -883,9 +748,8 @@ export interface ScannerScanType {
  * Mirrors backend FilterCatalogueEntry. The frontend fetches this once per
  * session and hydrates the filter bar + quick-pick chips.
  *
- * `description` — same short guidance string Ollama sees in its system prompt.
- * Rendered as a native `title` tooltip on the Add Filter menu items so UI
- * guidance stays consistent with what the AI screener uses.
+ * `description` — short guidance rendered as a native `title` tooltip on the
+ * Add Filter menu items.
  */
 export interface FilterCatalogueEntry {
     code: string;
@@ -983,32 +847,27 @@ export interface ScannerParamsResponse {
     filters: Record<string, unknown>[];
 }
 
-// ── AI Screener (Phase 5C) ────────────────────────────────────
-
-export interface AiFilterRequest {
-    query: string;
-    model: string;
-    preset_context?: string;
-}
-
-export interface AiFilterSuggestion {
-    code: string;
-    value: string;
-    display_label: string;
-    reasoning: string;
-}
-
-export interface AiFilterResponse {
-    filters: AiFilterSuggestion[];
-    summary: string;
-    raw_query: string;
-}
-
-
 // ── API functions ───────────────────────────────────────────
 
 export const parallaxApi = {
     // Market Data
+    rsLeaders: (signal?: AbortSignal) =>
+        sidecarRequest<RSLeadersResponse>("GET", "/rs/leaders", undefined, signal),
+
+    refreshRSLeaders: (signal?: AbortSignal) =>
+        sidecarRequest<RSLeadersResponse>("POST", "/rs/leaders/refresh", undefined, signal),
+
+    refreshRSLeadersSource: (signal?: AbortSignal) =>
+        sidecarRequest<RSLeadersSourceResponse>("POST", "/rs/leaders/refresh/source", undefined, signal),
+
+    resolveRSLeaders: (signal?: AbortSignal) =>
+        sidecarRequest<RSLeadersResponse>("POST", "/rs/leaders/refresh/resolve", undefined, signal),
+
+    rsRatings: (conids: number[], signal?: AbortSignal) =>
+        sidecarRequest<RSRatingsResponse>("POST", "/rs/ratings", { conids }, signal),
+
+    marketAssessment: (signal?: AbortSignal) =>
+        sidecarRequest<MarketAssessmentResponse>("GET", "/market/assessment", undefined, signal),
       quote: (conid: number, signal?: AbortSignal) =>
         sidecarRequest<QuoteResponse>("GET", `/market/quote/${conid}`, undefined, signal),
 
@@ -1098,17 +957,20 @@ export const parallaxApi = {
             signal,
         ),
 
-    watchlistAddInstrument: (watchlistId: string, conid: number) =>
+    watchlistAddInstrument: (watchlistId: string, conid: number, signal?: AbortSignal) =>
         sidecarRequest<{ added: boolean; conid: number }>(
             "POST",
             `/watchlist/${encodeURIComponent(watchlistId)}/instruments`,
             { conid },
+            signal,
         ),
 
-    watchlistRemoveInstrument: (watchlistId: string, conid: number) =>
+    watchlistRemoveInstrument: (watchlistId: string, conid: number, signal?: AbortSignal) =>
         sidecarRequest<{ removed: boolean; conid: number }>(
             "DELETE",
             `/watchlist/${encodeURIComponent(watchlistId)}/instruments/${conid}`,
+            undefined,
+            signal,
         ),
 
     watchlistMembership: (conid: number) =>
@@ -1129,6 +991,24 @@ export const parallaxApi = {
 
     deleteTriggerRule: (id: number) =>
         sidecarRequest<void>("DELETE", `/triggers/rules/${id}`),
+
+    getSetupPlans: (signal?: AbortSignal) =>
+        sidecarRequest<SetupPlan[]>("GET", "/triggers/setup-plans", undefined, signal),
+
+    getSetupPlan: (id: number, signal?: AbortSignal) =>
+        sidecarRequest<SetupPlanDetail>("GET", `/triggers/setup-plans/${id}`, undefined, signal),
+
+    createSetupPlan: (plan: SetupPlanCreate, signal?: AbortSignal) =>
+        sidecarRequest<SetupPlanDetail>("POST", "/triggers/setup-plans", plan, signal),
+
+    updateSetupPlan: (id: number, patch: SetupPlanUpdate, signal?: AbortSignal) =>
+        sidecarRequest<SetupPlanDetail>("PATCH", `/triggers/setup-plans/${id}`, patch, signal),
+
+    reviewSetupPlan: (id: number, evaluation_ids: number[]) =>
+        sidecarRequest<SetupPlanDetail>("POST", `/triggers/setup-plans/${id}/review`, { evaluation_ids }),
+
+    archiveSetupPlan: (id: number) =>
+        sidecarRequest<SetupPlanDetail>("POST", `/triggers/setup-plans/${id}/archive`),
 
     getTriggerHits: (
         opts: {
@@ -1185,63 +1065,6 @@ export const parallaxApi = {
 
     deleteWatchlistConfig: (name: string) =>
         sidecarRequest<void>("DELETE", `/watchlist-config/${encodeURIComponent(name)}`),
-
-    // AI Analysis (Phase 4)
-    aiProviders: () =>
-        sidecarRequest<AIProvidersResponse>("GET", "/ai/providers"),
-
-    aiOpenRouterModels: () =>
-        sidecarRequest<AIProviderModelsResponse>("GET", "/ai/providers/openrouter/models"),
-
-    aiSelectOpenRouterModel: (req: AIProviderModelUpdateRequest) =>
-        sidecarRequest<AIProviderModelsResponse>("PUT", "/ai/providers/openrouter/model", req),
-
-    aiAnalysisPreview: (req: AnalyzeRequest) =>
-        sidecarRequest<AIAnalysisPreview>("POST", "/ai/analysis/preview", req),
-
-    aiAnalysisCompare: (snapshotId: string) =>
-        sidecarRequest<AIComparisonResponse>(
-            "POST", "/ai/analysis/compare", { snapshot_id: snapshotId },
-        ),
-
-    aiRoutingPolicy: () =>
-        sidecarRequest<AIRoutingPolicyResponse>("GET", "/ai/routing-policy"),
-
-    aiRuns: (limit = 50) =>
-        sidecarRequest<AIRunReceipt[]>("GET", `/ai/runs?limit=${limit}`),
-
-    aiUpdateRoutingPolicy: (req: AIRoutingPolicyUpdate) =>
-        sidecarRequest<AIRoutingPolicyResponse>("PUT", "/ai/routing-policy", req),
-
-    aiSaveProviderKey: (providerName: AIProviderName, req: AIProviderKeySaveRequest) =>
-        sidecarRequest<AIProviderStatus>("POST", `/ai/providers/${providerName}/key`, req),
-
-    aiDeleteProviderKey: (providerName: AIProviderName) =>
-        sidecarRequest<AIProviderStatus>("DELETE", `/ai/providers/${providerName}/key`),
-
-    aiStatus: () =>
-        sidecarRequest<AiStatusResponse>("GET", "/ai/status"),
-
-    aiModels: () =>
-        sidecarRequest<OllamaModelResponse[]>("GET", "/ai/models"),
-
-    aiSelectModel: (req: ModelSelectRequest) =>
-        sidecarRequest<AiStatusResponse>("POST", "/ai/models/select", req),
-
-    aiSetupGuide: () =>
-        sidecarRequest<SetupGuideResponse>("GET", "/ai/setup-guide"),
-
-    aiRefresh: () =>
-        sidecarRequest<AiStatusResponse>("POST", "/ai/refresh"),
-
-    aiWarmup: () =>
-        sidecarRequest<void>("POST", "/ai/warmup"),
-
-    aiAnalyze: (req: AnalyzeRequest) =>
-        sidecarRequest<AnalyzeResponse>("POST", "/ai/analyze", req),
-
-    aiChat: (req: ChatRequest) =>
-        sidecarRequest<ChatResponse>("POST", "/ai/chat", req),
 
     // Fibonacci Locks (Phase 4)
     lockFibonacci: (req: LockFibonacciRequest) =>
@@ -1301,8 +1124,6 @@ export const parallaxApi = {
     screenerContractInfo: (conid: number) =>
         sidecarRequest<ContractInfoResponse>("GET", `/screener/contract/${conid}`),
 
-    screenerAiFilters: (req: AiFilterRequest) =>
-        sidecarRequest<AiFilterResponse>("POST", "/screener/ai-filters", req),
     // Chart Drawings (drawing-tools-plan.md Branch 1)
     createDrawing: (req: CreateDrawingRequest) =>
         sidecarRequest<Drawing>("POST", "/drawings", req),

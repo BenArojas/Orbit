@@ -24,6 +24,7 @@ from models import (
 from services.db import DatabaseService
 from services.ibkr import IBKRService
 from services.indicators import IndicatorService, get_active_fib_weights
+from services.setup_evidence import INTRADAY_SECONDS
 
 log = logging.getLogger("parallax.routers.indicators")
 
@@ -60,13 +61,7 @@ async def compute_indicators(
       5. Returns everything in one response (candles + indicator values + fibonacci)
     """
     # Step 1: Resolve IBKR (period, bar) from timeframe
-    spec = TIMEFRAME_SPEC.get(request.timeframe)
-    if spec is None:
-        # Defensive fallback — model validator should have caught invalid values
-        log.warning(
-            "Unknown timeframe %r, falling back to 1D spec", request.timeframe
-        )
-        spec = TIMEFRAME_SPEC["1D"]
+    spec = TIMEFRAME_SPEC[request.timeframe]
 
     ibkr_period = spec.period
     # Apply history_period override if provided (keeps bar size from TIMEFRAME_SPEC).
@@ -95,7 +90,8 @@ async def compute_indicators(
     )
 
     # Step 2: Fetch historical candle data from IBKR
-    raw = await ibkr.history(request.conid, period=ibkr_period, bar=ibkr_bar)
+    history = ibkr.history_fresh if request.timeframe in INTRADAY_SECONDS and not request.indicators else ibkr.history
+    raw = await history(request.conid, period=ibkr_period, bar=ibkr_bar)
     bars = raw.get("data", [])
 
     # Step 3: Sanity-check bar count against IBKR hard cap

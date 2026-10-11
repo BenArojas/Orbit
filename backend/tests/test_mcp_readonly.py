@@ -2,10 +2,10 @@
 
 RouteMap is config, not an auth boundary — so this test IS the boundary. It
 builds the mounted server in-process and asserts that no order/auth/gateway/
-settings/ai or mutation tool is ever exposed, and that the MCP_EXPOSE_PORTFOLIO
-flag gates the sensitive portfolio/journal reads both ways.
+settings or mutation tool is ever exposed, and that the MCP_EXPOSE_PORTFOLIO
+flag gates sensitive portfolio reads both ways.
 
-Uses a bare FastAPI app (the real routers, no IBKR/Ollama lifespan), so no
+Uses a bare FastAPI app (the real routers, no IBKR lifespan), so no
 gateway is required to run it.
 """
 import pytest
@@ -49,7 +49,7 @@ async def test_no_mutation_tools(monkeypatch):
 async def test_portfolio_flag_gates_sensitive(monkeypatch):
     off = await _tool_names(monkeypatch, "false")
     on = await _tool_names(monkeypatch, "true")
-    sensitive = ("moonmarket_portfolio", "inflect_trades", "moonmarket_trades")
+    sensitive = ("moonmarket_portfolio", "moonmarket_trades")
     assert not any(s in n for n in off for s in sensitive), "sensitive read leaked when flag OFF"
     assert any(s in n for n in on for s in sensitive), "sensitive read missing when flag ON"
     # Turning the flag on only adds tools; it never removes a base tool.
@@ -60,5 +60,5 @@ async def test_portfolio_flag_gates_sensitive(monkeypatch):
 async def test_expected_read_groups_present(monkeypatch):
     names = await _tool_names(monkeypatch, "true")
     for group in ("market", "screener", "sectors", "options", "watchlist",
-                  "fibonacci", "instruments", "inflect_setups"):
+                  "fibonacci", "instruments"):
         assert any(group in n for n in names), f"expected read group {group!r} missing"

@@ -44,6 +44,7 @@ import logging
 import math
 import sqlite3
 import time
+from datetime import datetime, timezone
 from typing import Any, Awaitable, Callable
 
 from constants.ibkr_history import TIMEFRAME_SPEC
@@ -52,6 +53,9 @@ from models import CandleData
 from services.db import DatabaseService
 from services.ibkr import IBKRService
 from services.indicators import IndicatorService
+from services.moonmarket import MoonMarketService
+from services.rs_leaders import _is_verified_us_stock
+from services.setup_evidence import US_EXTENDED, evidence_is_current
 
 log = logging.getLogger("parallax.scanner")
 
@@ -216,8 +220,6 @@ class ScannerService:
 
     async def _evaluate_due_rules(self) -> None:
         """Load enabled rules, evaluate those whose next-eval time has elapsed."""
-        from datetime import datetime, timezone
-
         try:
             all_rules = await self.db.get_trigger_rules(enabled_only=True)
         except sqlite3.Error as exc:
@@ -226,15 +228,6 @@ class ScannerService:
 
         now = time.time()
         due = [r for r in all_rules if self._rule_state.get(r["id"], 0.0) <= now]
-        if not due:
-            log.debug("Scanner: no rules due this tick")
-            return
-
-        log.info(
-            "Scanner: %d/%d rule(s) due this tick",
-            len(due), len(all_rules),
-        )
-
         hit_count = 0
         for rule in due:
             try:
@@ -268,6 +261,213 @@ class ScannerService:
                 "Scanner: tick complete — %d rule(s) evaluated, %d new hit(s)",
                 len(due), hit_count,
             )
+        await self._evaluate_due_setup_plans()
+
+    async def _evaluate_due_setup_plans(self) -> None:
+        """Evaluate only plans owned by the currently provider-selected account."""
+        try:
+            scope = await MoonMarketService(self.ibkr).selected_account_scope()
+        except (IBKRAuthError, IBKRConnectionError, IBKRRateLimitError, IBKRRequestError) as exc:
+            log.info("Setup plan scan has no current account scope: %s", exc.message)
+            return
+        if scope is None:
+            return
+        try:
+            plans = await self.db.get_active_setup_plan_rules(
+                scope["account_id"], scope["account_mode"]
+            )
+        except sqlite3.Error as exc:
+            log.error("Scanner: DB error loading setup plans: %s", exc)
+            return
+
+        now = time.time()
+        for plan in plans:
+            rule = plan["rule"]
+            if self._rule_state.get(rule["id"], 0.0) > now:
+                continue
+            try:
+                await self._evaluate_setup_plan(plan, scope)
+            except sqlite3.Error as exc:
+                log.error("DB error evaluating setup plan %s: %s", plan["id"], exc)
+            except Exception:  # noqa: BLE001 — isolate one tracked plan from the scanner loop
+                log.exception("Setup plan %s evaluation failed", plan["id"])
+            finally:
+                self._rule_state[rule["id"]] = now + self._resolve_interval(rule)
+
+    async def _evaluate_setup_plan(self, plan: dict, scope: dict[str, str]) -> None:
+        rule = plan["rule"]
+        invalidation_condition = rule.get("invalidation_condition")
+        fetch_rule = {
+            **rule,
+            "conditions": [*rule["conditions"], *([invalidation_condition] if invalidation_condition else [])],
+        }
+        checked_at = datetime.now(timezone.utc).isoformat()
+        evidence_at = None
+        evidence_session_policy = None
+        outcome = "failed"
+        invalidation_outcome = "failed" if invalidation_condition else None
+        values: list[dict] = []
+        failure_code = None
+        failure_message = None
+        invalidation_failure_code = None
+        invalidation_failure_message = None
+
+        def append_values(result: dict, role: str) -> list[dict]:
+            return [
+                {
+                    **value,
+                    "condition_role": role,
+                    "actual_value": (
+                        value["actual_value"]
+                        if math.isfinite(value["actual_value"])
+                        else None
+                    ),
+                }
+                for value in result["values"]
+            ]
+
+        def result_outcome(result: dict) -> str:
+            if result["unavailable"]:
+                return "unavailable"
+            return "matched" if result["fires"] else "not_matched"
+
+        try:
+            bar, evidence_seconds = await self._fetch_evaluation_bar(
+                plan["conid"], fetch_rule, include_evidence=True
+            )
+            if evidence_seconds is not None:
+                evidence_at = datetime.fromtimestamp(
+                    evidence_seconds, timezone.utc
+                ).isoformat()
+            definitions = await self.ibkr.security_definitions((plan["conid"],))
+            verified_us = any(
+                _is_verified_us_stock(definition, plan["conid"], plan["symbol"]) is True
+                for definition in definitions
+            )
+            if verified_us:
+                evidence_session_policy = US_EXTENDED
+            checked_at = datetime.now(timezone.utc).isoformat()
+            current = verified_us and evidence_is_current(
+                evidence_at, rule["timeframe"], datetime.fromisoformat(checked_at)
+            )
+            if not current:
+                outcome = "unavailable"
+                failure_code = "stale_evidence" if verified_us and evidence_at else "evidence_unverifiable"
+                failure_message = "Latest candle is stale or its US session freshness cannot be verified."
+                if invalidation_condition:
+                    invalidation_outcome = "unavailable"
+                    invalidation_failure_code = failure_code
+                    invalidation_failure_message = failure_message
+            elif bar is None:
+                outcome = "unavailable"
+                failure_code = "insufficient_history"
+                failure_message = "IBKR returned fewer than two candles for this timeframe."
+                if invalidation_condition:
+                    invalidation_outcome = "unavailable"
+                    invalidation_failure_code = "insufficient_history"
+                    invalidation_failure_message = failure_message
+            else:
+                try:
+                    waiting_result = self._evaluate_conditions(rule, bar)
+                    outcome = result_outcome(waiting_result)
+                    values.extend(append_values(waiting_result, "waiting"))
+                    if waiting_result["unavailable"]:
+                        failure_code = "condition_data_unavailable"
+                        failure_message = "Missing evidence for: " + ", ".join(waiting_result["unavailable"])
+                except (ValueError, TypeError, KeyError, IndexError, ZeroDivisionError) as exc:
+                    outcome = "failed"
+                    failure_code = "invalid_market_data"
+                    failure_message = str(exc)
+                except Exception as exc:  # noqa: BLE001 — persist one group's evaluation failure
+                    outcome = "failed"
+                    failure_code = "evaluation_failed"
+                    failure_message = str(exc)
+                    log.exception("Waiting-condition check failed for setup plan %s", plan["id"])
+
+                if invalidation_condition:
+                    try:
+                        invalidation_result = self._evaluate_conditions(
+                            {"conditions": [invalidation_condition]}, bar
+                        )
+                        invalidation_outcome = result_outcome(invalidation_result)
+                        values.extend(append_values(invalidation_result, "invalidation"))
+                        if invalidation_result["unavailable"]:
+                            invalidation_failure_code = "condition_data_unavailable"
+                            invalidation_failure_message = "Missing evidence for: " + ", ".join(
+                                invalidation_result["unavailable"]
+                            )
+                    except (ValueError, TypeError, KeyError, IndexError, ZeroDivisionError) as exc:
+                        invalidation_outcome = "failed"
+                        invalidation_failure_code = "invalid_market_data"
+                        invalidation_failure_message = str(exc)
+                    except Exception as exc:  # noqa: BLE001 — persist one group's evaluation failure
+                        invalidation_outcome = "failed"
+                        invalidation_failure_code = "evaluation_failed"
+                        invalidation_failure_message = str(exc)
+                        log.exception("Invalidation check failed for setup plan %s", plan["id"])
+        except (IBKRAuthError, IBKRConnectionError, IBKRRateLimitError, IBKRRequestError) as exc:
+            outcome = "unavailable"
+            failure_code = type(exc).__name__
+            failure_message = exc.message
+            if invalidation_condition:
+                invalidation_outcome = "unavailable"
+                invalidation_failure_code = type(exc).__name__
+                invalidation_failure_message = exc.message
+        except (ValueError, TypeError, KeyError, IndexError, ZeroDivisionError) as exc:
+            outcome = "failed"
+            failure_code = "invalid_market_data"
+            failure_message = str(exc)
+            if invalidation_condition:
+                invalidation_outcome = "failed"
+                invalidation_failure_code = "invalid_market_data"
+                invalidation_failure_message = str(exc)
+        except Exception as exc:  # noqa: BLE001 — persist unexpected check failures per plan
+            outcome = "failed"
+            failure_code = "evaluation_failed"
+            failure_message = str(exc)
+            if invalidation_condition:
+                invalidation_outcome = "failed"
+                invalidation_failure_code = "evaluation_failed"
+                invalidation_failure_message = str(exc)
+            log.exception("Setup plan %s evaluation failed", plan["id"])
+
+        try:
+            current_scope = await MoonMarketService(self.ibkr).selected_account_scope()
+        except (IBKRAuthError, IBKRConnectionError, IBKRRateLimitError, IBKRRequestError):
+            return
+        if current_scope != scope:
+            return
+
+        checked_at = datetime.now(timezone.utc).isoformat()
+        if (outcome in {"matched", "not_matched"} or invalidation_outcome in {"matched", "not_matched"}) and not evidence_is_current(
+            evidence_at, rule["timeframe"], datetime.fromisoformat(checked_at)
+        ):
+            outcome = "unavailable"
+            failure_code = "stale_evidence"
+            failure_message = "Market evidence became stale before the check completed."
+            if invalidation_condition:
+                invalidation_outcome = "unavailable"
+                invalidation_failure_code = failure_code
+                invalidation_failure_message = failure_message
+
+        await self.db.record_setup_plan_evaluation(
+            plan_id=plan["id"],
+            evidence_session_policy=evidence_session_policy,
+            owner_account_id=scope["account_id"],
+            account_mode=scope["account_mode"],
+            plan_revision=plan["revision"],
+            rule_id=rule["id"],
+            rule_revision=rule["revision"],
+            outcome=outcome,
+            invalidation_outcome=invalidation_outcome,
+            checked_at=checked_at,
+            evidence_at=evidence_at,
+            condition_values=values,
+            failure_code=failure_code,
+            failure_message=failure_message,
+            invalidation_failure_code=invalidation_failure_code,
+            invalidation_failure_message=invalidation_failure_message,
+        )
 
     async def _evaluate_one(self, rule: dict) -> int:
         """
@@ -303,6 +503,8 @@ class ScannerService:
 
             result = self._evaluate_conditions(rule, bar)
             if not result["fires"]:
+                if not result["unavailable"] and not rule.get("ibkr_mirror_target"):
+                    await self.db.clear_trigger_match(rule["id"], int(rule.get("revision", 1)), tgt["conid"])
                 continue
 
             recorded = await self._record_hit(rule, tgt, result["values"])
@@ -338,14 +540,16 @@ class ScannerService:
         Fires only when EVERY condition passes.
         """
         values: list[dict] = []
+        unavailable: list[str] = []
         all_pass = True
         for cond in rule.get("conditions", []):
             ind = cond["indicator"]
             op = cond["condition"]
             thr = cond.get("threshold")
             actual = bar.get(ind)
-            if actual is None:
+            if actual is None or not math.isfinite(float(actual)):
                 all_pass = False
+                unavailable.append(ind)
                 values.append({
                     "indicator": ind,
                     "condition": op,
@@ -354,7 +558,12 @@ class ScannerService:
                     "news_candle_method": cond.get("news_candle_method"),
                 })
                 continue
-            passed = _passes(op, float(actual), thr, prev=bar.get(f"{ind}_prev"))
+            previous = bar.get(f"{ind}_prev")
+            if op in {"crosses_above", "crosses_below"} and (
+                previous is None or not math.isfinite(float(previous))
+            ):
+                unavailable.append(f"{ind} previous value")
+            passed = _passes(op, float(actual), thr, prev=previous)
             values.append({
                 "indicator": ind,
                 "condition": op,
@@ -364,11 +573,13 @@ class ScannerService:
             })
             if not passed:
                 all_pass = False
-        return {"fires": all_pass, "values": values}
+        return {"fires": all_pass, "values": values, "unavailable": unavailable}
 
     # ── Bar assembly ─────────────────────────────────────────
 
-    async def _fetch_evaluation_bar(self, conid: int, rule: dict) -> dict | None:
+    async def _fetch_evaluation_bar(
+        self, conid: int, rule: dict, *, include_evidence: bool = False
+    ) -> dict | tuple[dict | None, int | None] | None:
         """
         Fetch OHLCV + indicator values for `conid` and flatten the latest
         bar into a dict the condition evaluator can consume.
@@ -382,13 +593,14 @@ class ScannerService:
 
         Returns None when there are fewer than 2 candles available.
         """
-        candles = await self._fetch_candles(conid, rule.get("timeframe", "1D"))
+        candles = await self._fetch_candles(conid, rule.get("timeframe", "1D"), fresh=include_evidence)
+        evidence_time = candles[-1].time if candles else None
         if len(candles) < 2:
             log.debug(
                 "Scanner: not enough bars for conid %d (got %d)",
                 conid, len(candles),
             )
-            return None
+            return (None, evidence_time) if include_evidence else None
 
         last = candles[-1]
         last_close = float(last.close)
@@ -465,16 +677,17 @@ class ScannerService:
             # If all methods returned None we leave news_candle absent so the
             # condition fails cleanly with actual_value=NaN.
 
-        return bar
+        return (bar, evidence_time) if include_evidence else bar
 
-    async def _fetch_candles(self, conid: int, timeframe: str = "1D") -> list[CandleData]:
+    async def _fetch_candles(self, conid: int, timeframe: str = "1D", *, fresh: bool = False) -> list[CandleData]:
         """
         Fetch OHLCV history for trigger evaluation.
 
         Uses the same timeframe-to-history mapping as the Analysis chart.
         """
-        spec = TIMEFRAME_SPEC.get(timeframe, TIMEFRAME_SPEC["1D"])
-        raw = await self.ibkr.history(conid, period=spec.period, bar=spec.bar)
+        spec = TIMEFRAME_SPEC[timeframe]
+        history = self.ibkr.history_fresh if fresh else self.ibkr.history
+        raw = await history(conid, period=spec.period, bar=spec.bar, outside_rth=True)
         bars = raw.get("data", [])
         return [
             CandleData(
@@ -529,7 +742,9 @@ class ScannerService:
         """
         today = time.strftime("%Y-%m-%d")
         timeframe = rule.get("timeframe", "1D")
-        dedup_key = f"{rule['id']}:{target['conid']}:{today}:{timeframe}"
+        revision = int(rule.get("revision", 1))
+        revision_tag = f":r{revision}" if revision > 1 else ""
+        dedup_key = f"{rule['id']}{revision_tag}:{target['conid']}:{today}:{timeframe}"
         mirror = rule.get("ibkr_mirror_target")
         source = rule.get("watchlist_name") if mirror else None
 
@@ -550,12 +765,14 @@ class ScannerService:
             dedup_key=dedup_key,
             condition_values=values,
             watchlist_name=rule.get("watchlist_name"),
+            rule_revision=revision,
             source_watchlist=source,
             target_watchlist=mirror,
             expires_at=expires_at,
+            repeat_on_transition=not bool(mirror),
         )
         if hit_id is None:
-            log.debug("Rule %d/%s already fired today (dedup)", rule["id"], target["conid"])
+            log.debug("Rule %d/%s has no new alert (dedup)", rule["id"], target["conid"])
             return False
 
         log.info(

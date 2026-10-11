@@ -25,7 +25,7 @@ if "pandas_ta" not in sys.modules:
 
 
 # ---------------------------------------------------------------------------
-# Shared fixture builders for prompt_facts tests.
+# Shared fixture builders for indicator and chart tests.
 # Subsequent tests import these directly: from tests.conftest import make_candle
 # ---------------------------------------------------------------------------
 from typing import Optional  # noqa: E402

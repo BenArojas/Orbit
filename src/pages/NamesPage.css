@@ -1,0 +1,48 @@
+.names-mineral {
+  --surface-0: #F1F4F5;
+  --surface-1: #FCFDFD;
+  --surface-2: #E5ECEF;
+  --text-1: #25313A;
+  --text-2: #45535D;
+  --text-3: #58666E;
+  --border-1: #CCD7DC;
+  --clr-cyan: #436782;
+  --clr-orange: #76500B;
+  --clr-red: #923E3E;
+  --clr-green: #2F684D;
+  --glow-cyan: rgba(67, 103, 130, 0.12);
+  --bg-0: #F1F4F5;
+  --bg-1: #FCFDFD;
+  --bg-2: #E5ECEF;
+  --bg-3: #DCE6EA;
+  --bg-4: #CCD7DC;
+  --background: #F1F4F5;
+  --foreground: #25313A;
+  --card: #FCFDFD;
+  --card-foreground: #25313A;
+  --popover: #FCFDFD;
+  --popover-foreground: #25313A;
+  --primary: #436782;
+  --primary-foreground: #FCFDFD;
+  --secondary: #E5ECEF;
+  --secondary-foreground: #25313A;
+  --muted: #E5ECEF;
+  --muted-foreground: #45535D;
+  --accent: #E5ECEF;
+  --accent-foreground: #25313A;
+  --destructive: #923E3E;
+  --destructive-foreground: #FCFDFD;
+  --border: #CCD7DC;
+  --input: #CCD7DC;
+  --ring: #436782;
+  color: var(--text-1);
+  background: var(--surface-0);
+}
+
+.names-mineral button:focus-visible,
+.names-mineral input:focus-visible,
+.names-mineral select:focus-visible,
+.names-mineral summary:focus-visible {
+  outline: 2px solid var(--clr-cyan);
+  outline-offset: 2px;
+}

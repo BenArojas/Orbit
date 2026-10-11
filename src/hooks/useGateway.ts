@@ -35,7 +35,7 @@ import { api, GatewayStatusResponse, GatewayState } from "@/lib/api";
 // session is reset (logout / restart / factory reset) we invalidate these
 // so the UI doesn't show stale prices, watchlists, or scanner metadata
 // until something else asks for fresh data.  Local-only state (gateway
-// status, settings, AI status, trigger-rule config) is intentionally left
+// status, settings, trigger-rule config) is intentionally left
 // alone — that data isn't tied to an IBKR session.
 const IBKR_QUERY_PREFIXES: ReadonlyArray<string> = [
   "quote",
@@ -240,7 +240,7 @@ export function useGateway(): UseGatewayReturn {
    * Invalidate every IBKR-session-dependent query so cached data
    * (prices, watchlists, scanner metadata, …) is refetched once the
    * session is restored.  Local-only data (gateway status, settings,
-   * AI, trigger-rule config) is left alone.
+   * trigger-rule config) is left alone.
    */
   const invalidateIbkrQueries = useCallback(() => {
     queryClient.invalidateQueries({

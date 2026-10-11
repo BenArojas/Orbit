@@ -5,16 +5,44 @@
  * and which indicators are toggled on/off.
  *
  * Orbit integration: conid (IBKR contract ID) is the universal instrument key.
- * When Inflect queries /indicators for trade context, it sends the same conid
- * stored here. No special Inflect logic needed — it's a natural API consumer.
  */
 
 import { create } from "zustand";
 
+export type AnalysisPanelTab = "fibonacci" | "watchlists" | "triggers" | "setup";
+
+const PANEL_PREFERENCE_KEY = "orbit.parallax.analysis-panel";
+
+function readPanelPreferences(): { collapsed: boolean; activeTab: AnalysisPanelTab; visibilityExplicit: boolean } {
+  try {
+    const saved = typeof localStorage === "undefined" ? null : localStorage.getItem(PANEL_PREFERENCE_KEY);
+    const value = saved ? JSON.parse(saved) as { collapsed?: unknown; activeTab?: unknown } : null;
+    const collapsed = typeof value?.collapsed === "boolean" ? value.collapsed : true;
+    const activeTab: AnalysisPanelTab = value?.activeTab === "watchlists" || value?.activeTab === "triggers" || value?.activeTab === "fibonacci" || value?.activeTab === "setup"
+      ? value.activeTab
+      : "fibonacci";
+    return { collapsed, activeTab, visibilityExplicit: typeof value?.collapsed === "boolean" };
+  } catch {
+    return { collapsed: true, activeTab: "fibonacci" as AnalysisPanelTab, visibilityExplicit: false };
+  }
+}
+
+function savePanelPreferences(preferences: { collapsed?: boolean; activeTab?: AnalysisPanelTab }) {
+  try {
+    const saved = typeof localStorage === "undefined" ? null : localStorage.getItem(PANEL_PREFERENCE_KEY);
+    const previous = saved ? JSON.parse(saved) as Record<string, unknown> : {};
+    if (typeof localStorage !== "undefined") {
+      localStorage.setItem(PANEL_PREFERENCE_KEY, JSON.stringify({ ...previous, ...preferences }));
+    }
+  } catch {
+    // Keep the in-memory preference if browser storage is unavailable.
+  }
+}
+
 import type { FibonacciCandidate, FibonacciResult } from "@/modules/parallax/api";
 import { useDrawingsStore } from "@/store/drawings";
 
-export type Timeframe = "1m" | "5m" | "15m" | "1h" | "4h" | "1D" | "1W" | "1M";
+export type Timeframe = "1m" | "5m" | "15m" | "30m" | "1h" | "4h" | "1D" | "1W" | "1M";
 
 /** Matches the 14 indicators from PROJECT_PLAN.md */
 export type IndicatorId =
@@ -68,7 +96,7 @@ export interface ActiveFib {
   colorIndex: number;
   /**
    * When true the fib stays in the list but is not painted on the chart
-   * or sent to the AI. Lets the user toggle a drawn fib off without
+   * or used for other chart calculations. Lets the user toggle a drawn fib off without
    * deleting it (e.g. to compare multi-timeframe overlap). Defaults to
    * false. Only meaningful for locked fibs — the auto primary's
    * visibility is governed by the `fibonacci` indicator pill.
@@ -244,8 +272,12 @@ interface ChartState {
   resetZoomRequestId: number;
   requestResetZoom: () => void;
 
-  /** True when the right sidebar is collapsed to a 32px icon rail. In-memory only — resets on reload. */
+  /** True when the right sidebar is collapsed to its compact rail. */
   rightPanelCollapsed: boolean;
+  /** Whether visibility came from an explicit saved or in-session user choice. */
+  rightPanelVisibilityExplicit: boolean;
+  rightPanelActiveTab: AnalysisPanelTab;
+  setRightPanelActiveTab: (tab: AnalysisPanelTab) => void;
   /** Toggle the right panel between expanded (340px) and collapsed (32px rail). */
   toggleRightPanel: () => void;
 
@@ -310,6 +342,8 @@ interface ChartState {
  */
 const DEFAULT_INDICATORS: IndicatorId[] = [];
 
+const initialPanelPreferences = readPanelPreferences();
+
 export const useChartStore = create<ChartState>()((set, get) => ({
   activeConid: null,
   activeSymbol: "",
@@ -322,16 +356,16 @@ export const useChartStore = create<ChartState>()((set, get) => ({
   fibCleared: false,
   activeFibs: [],
   resetZoomRequestId: 0,
-  rightPanelCollapsed: false,
+  rightPanelCollapsed: initialPanelPreferences.collapsed,
+  rightPanelVisibilityExplicit: initialPanelPreferences.visibilityExplicit,
+  rightPanelActiveTab: initialPanelPreferences.activeTab,
 
   // Branch 7 / plan decisions 10A + 10B:
   // Switching to a new instrument resets the whole chart so the
   // trader gets a clean slate. Indicators chosen for AAPL rarely
   // make sense for, say, ES futures; carrying over fib state,
   // draw mode, or candidate overrides is even more surprising.
-  // The AI chat is cleared by an effect in AnalysisPage.tsx (it
-  // owns the cross-store coordination so this slice stays self-
-  // contained). Locked fibs are conid-scoped on the server — the
+  // Locked fibs are conid-scoped on the server — the
   // useLockedFibs query refetches and repopulates `activeFibs`
   // for the new conid asynchronously.
   //
@@ -548,5 +582,13 @@ export const useChartStore = create<ChartState>()((set, get) => ({
 
   requestResetZoom: () => set((s) => ({ resetZoomRequestId: s.resetZoomRequestId + 1 })),
 
-  toggleRightPanel: () => set((s) => ({ rightPanelCollapsed: !s.rightPanelCollapsed })),
+  setRightPanelActiveTab: (tab) => {
+    savePanelPreferences({ activeTab: tab });
+    set({ rightPanelActiveTab: tab });
+  },
+  toggleRightPanel: () => set((s) => {
+    const collapsed = !s.rightPanelCollapsed;
+    savePanelPreferences({ collapsed });
+    return { rightPanelCollapsed: collapsed, rightPanelVisibilityExplicit: true };
+  }),
 }));
