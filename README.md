@@ -24,8 +24,6 @@ If you're looking for something specific, this is where it lives.
 | File | What it covers |
 |------|----------------|
 | [`PROJECT_PLAN.md`](PROJECT_PLAN.md) | Phase-by-phase task tracker, locked decisions, owner assignments, "what shipped where". The canonical source of truth for "what's done and what's next." |
-| [`AGENTS.md`](AGENTS.md) | Codex project rules and skill pointers. |
-| [`CLAUDE.md`](CLAUDE.md) | Claude Code project rules and skill pointers. Keep aligned with `AGENTS.md`. |
 
 ### Setup & how-to
 

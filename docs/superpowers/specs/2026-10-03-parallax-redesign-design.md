@@ -1,7 +1,6 @@
 # Parallax redesign
 
-Date: 2026-10-03. Owner: Parallax. Status: Market implemented with live verification pending; RS/watchlist product decisions approved, implementation not started.
-Next action: implement the [RS/watchlist brief](../plans/2026-10-03-parallax-rs-watchlist-handoff.md), preserving the uncommitted Market work. The orchestrator plans and reviews; the separate coder implements.
+Date: 2026-10-03. Owner: Parallax. Status: approved Market, Names, Analysis and Today workflow implemented; live verification pending. See [active project plan](../../../PROJECT_PLAN.md) for the merge gate and remaining work.
 
 ## What we are changing
 
@@ -32,7 +31,7 @@ Approved initial rules:
 - Show SMA200 for the three indices as long-term context, requiring 200 completed sessions. It does not affect posture or block the EMA21/SMA50 assessment when unavailable.
 - Use local exchange_calendars with the XNYS session schedule for this US-market view, accounting for holidays, early closes and daylight saving. No guessed weekday/calendar fallback; unavailable schedule means session-dependent evidence cannot be certified current.
 - Reconcile automatically on entry/reconnect and five minutes after regular-session close; retry incomplete evidence every five minutes while Market is open. Extended-hours quotes remain separate. The delay is a buffer, not proof of provider finalization.
-- Add read-only GET /market/assessment for daily evidence and posture; retain existing EMA50 sector feeds. Prices use the existing WebSocket, with automatic backend requests for history/reconciliation. No database changes are approved.
+- Add read-only GET /market/assessment for daily evidence and posture; retain existing EMA50 sector feeds. Prices use the existing WebSocket, with automatic backend requests for history/reconciliation. This first Market slice adds no database changes; later approved saved-plan persistence is described below.
 - These are approved initial heuristics to validate, not proven trading signals. Missing-sector participation must show a range or “at least” count, never an invented complete count.
 
 ## Strong stocks and the watchlist
@@ -94,11 +93,18 @@ Follow the canonical [module and safety rules](../../architecture/modules.md) an
 Market and RS/watchlist product decisions are locked. Validate Fred's source freshness and rating semantics during the RS slice. Before tactic slices, settle: pullback boundaries and stop buffer; breakout / retest rules; overhead resistance measurement; setup-monitoring cadence and alert behavior.
 Data availability and IBKR pacing must be checked against the real implementation. Unavailable metrics should be omitted or marked unavailable, never filled with invented values.
 
-## How we proceed and verify
+## Saved plans and Today — implemented decisions
 
-1. Spec and initial market rules approved. Resolve the remaining open rules only before their affected slice; do not treat them as approved by the mockup.
-2. Give the approved first-slice brief directly to the coder. Keep PROJECT_PLAN.md aligned with actual implementation progress; no issue-board or removed-skill workflow is required.
-3. Start with one end-to-end slice: market-first navigation and a real, clearly labelled market evidence view. Approve its specific calculations and scope first.
-4. Add watchlist / candidate discovery, then stock review and tactic monitoring in separately approved slices. Preserve Compare throughout; design new chart tools later.
-5. Use focused, meaningful verification for honest missing-data states, user-controlled additions, completed-candle confirmation, correct structural low and Compare's historical/live behavior where affected.
-6. Review the implemented interface on a small laptop, verify existing saved chart work survives, and complete real-provider checks before claiming live behavior. Human approval remains required for merging.
+- The working flow is Market → Names → Analysis → Track setup → Today. Tracked plans are Today’s primary view; Quick alerts remain a secondary tab for price/indicator rules without a saved trading plan. The ticker strip belongs on Market.
+- Use a compact trading workbench: readable aligned rows, restrained cyan, status badges and visible button affordances. A plan row opens Analysis with that exact plan; navigation and drafts retain the originating view context.
+- Plans may be manual or use explicitly selected supported waiting/invalidation conditions, including 30m checks. These conditions do not implement full pullback, breakout or retest detection. Text invalidation references are planning context unless an explicit condition is supplied.
+- Guidance uses existing measured evidence to answer what changed and what needs review. Prioritize invalidation matches, waiting-condition matches and monitoring issues. Distinguish the pending event from any newer check; missing or stale evidence cannot imply that the user is caught up.
+- Keep watching explicitly acknowledges the displayed current-revision evaluation IDs. Opening a chart does not acknowledge evidence. Stop tracking archives the plan and preserves history. Ownership follows the provider-selected account and paper/live scope; monitoring does not mutate broker orders or watchlist membership.
+- Automatic-check freshness is certified only for verified US stocks with the local XNYS schedule and supported extended-hours policy. Other or unverified listings fail closed. Transport availability, evidence freshness, plan lifecycle and review state remain separate.
+- Quick-alert dismissal persists. Repeated matches stay quiet until the condition validly clears and matches again; unavailable data cannot rearm a rule. History is grouped, and delete controls expose confirmation, pending and retryable failure states.
+
+## Verification and next decisions
+
+Keep [PROJECT_PLAN.md](../../../PROJECT_PLAN.md) aligned with the current gate and unresolved follow-ups. Completed coder handoffs are retained in Git history rather than as active instructions.
+Use focused public-workflow checks during a slice and the full relevant gate at merge. Fixture results do not certify live Fred ingestion, IBKR identity/quote freshness, reconnect or broker watchlist behavior.
+Before claiming live readiness, perform a native small-laptop paper-account walkthrough and confirm that saved chart work, plan history and account/mode isolation survive navigation and restart. Further tactic formulas and chart-tool additions require their own approval.
