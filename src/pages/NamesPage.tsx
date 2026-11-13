@@ -126,7 +126,7 @@ function NamesTable({
     if (!rating) return "No published RS percentile is available for this name. Prices and existing charts may still be available.";
     if ("status" in rating) {
       if (rating.status === "unverified") return "The listing could not be verified as the corresponding US security. Prices and existing charts may still be available.";
-      if (rating.status === "not_published") return "This verified listing is absent from Fred’s published dataset. Prices and existing charts may still be available.";
+      if (rating.status === "not_published") return "This listing is outside Orbit’s current top-30 RS coverage; its relative strength is unknown. Prices and existing charts may still be available.";
       if (rating.status === "source_unavailable") return "Fred’s published dataset is unavailable. Prices and existing charts may still be available.";
     }
     return "Fred did not publish an RS percentile for this name. Prices and existing charts may still be available.";

@@ -2,7 +2,7 @@
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
-from deps import get_instrument_identity, get_rs_leaders, require_ibkr_auth
+from deps import get_instrument_identity, get_rs_leaders, require_product_data as require_ibkr_auth
 from models.rs import RSLeadersResponse, RSLeadersSourceResponse, RSRatingRequest, RSRatingsResponse
 from request_cancellation import ClientDisconnected, run_cancelling_on_disconnect
 from services.ibkr import IBKRService

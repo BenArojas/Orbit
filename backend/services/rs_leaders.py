@@ -148,6 +148,12 @@ def _is_verified_us_stock(contract: Any, conid: int, symbol: str) -> bool | None
     actual_symbol = str(contract.get("ticker") or "").strip().upper()
     instrument_type = str(contract.get("assetClass") or "").strip().upper()
     exchange = str(contract.get("listingExchange") or "").strip().upper()
+    if contract.get("source") == "tws":
+        return (
+            actual_conid == conid and actual_symbol == symbol.upper()
+            and instrument_type == "STK" and contract.get("currency") == "USD"
+            and exchange in US_LISTING_EXCHANGES
+        )
     country = str(contract.get("countryCode") or "").strip().upper()
     currency = str(contract.get("currency") or "").strip().upper()
     is_us = contract.get("isUS")

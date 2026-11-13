@@ -1,0 +1,460 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Orbit — Style Foundation</title>
+<style>
+@font-face{font-family:Geist;src:url("../../../../node_modules/@fontsource-variable/geist/files/geist-latin-wght-normal.woff2") format("woff2-variations");font-weight:100 900;font-display:block}
+@font-face{font-family:InterV;src:url("../../../../node_modules/@fontsource-variable/inter/files/inter-latin-wght-normal.woff2") format("woff2-variations");font-weight:100 900;font-display:block}
+@font-face{font-family:JBMono;src:url("../../../../node_modules/@fontsource/jetbrains-mono/files/jetbrains-mono-latin-400-normal.woff2") format("woff2");font-weight:400;font-display:block}
+@font-face{font-family:JBMono;src:url("../../../../node_modules/@fontsource/jetbrains-mono/files/jetbrains-mono-latin-500-normal.woff2") format("woff2");font-weight:500;font-display:block}
+
+*{box-sizing:border-box;margin:0;padding:0}
+html{-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
+body{background:#17181c;font-family:InterV,system-ui,sans-serif;color:#b9bcc4}
+
+/* ════════ page chrome ════════ */
+.page{max-width:1640px;margin:0 auto;padding:40px 28px 80px}
+.page-head{border-bottom:1px solid #2a2c33;padding-bottom:22px;margin-bottom:30px}
+.page-head h1{font-size:19px;font-weight:600;color:#f0f1f4;letter-spacing:-.01em}
+.page-head p{font-size:13.5px;margin-top:7px;max-width:860px;line-height:1.6;color:#8d919b}
+.page-head .note{margin-top:12px;font-size:12px;color:#6e727c}
+.cols{display:grid;grid-template-columns:1fr 1fr;gap:26px;align-items:start}
+
+/* ════════ direction frame ════════ */
+.dir{border-radius:14px;overflow:hidden;border:1px solid #2a2c33}
+.dir-label{display:flex;justify-content:space-between;align-items:baseline;gap:12px;padding:15px 20px;background:#1e2026;border-bottom:1px solid #2a2c33}
+.dir-label b{font-size:14px;color:#f0f1f4;font-weight:600}
+.dir-label span{font-size:11.5px;color:#7f838d}
+.body{padding:26px 24px 30px}
+
+/* ════════ shared section scaffolding ════════ */
+.sec{margin-bottom:34px}
+.sec:last-child{margin-bottom:0}
+.sec-h{font-size:10px;letter-spacing:.11em;text-transform:uppercase;font-weight:600;margin-bottom:13px;padding-bottom:7px}
+.sub{font-size:11.5px;line-height:1.55;margin-bottom:11px}
+.inspo{font-size:12.5px;line-height:1.65}
+.inspo b{font-weight:600}
+
+/* swatches */
+.sw-row{display:flex;flex-wrap:wrap;gap:7px;margin-bottom:12px}
+.sw{width:66px}
+.sw i{display:block;height:40px;border-radius:5px}
+.sw em{display:block;font-family:JBMono,monospace;font-size:8.5px;font-style:normal;margin-top:5px;letter-spacing:-.02em}
+.sw span{display:block;font-size:9px;margin-top:1px}
+
+/* type specimen */
+.spec{display:flex;align-items:baseline;gap:12px;padding:9px 0;border-bottom:1px dashed}
+.spec:last-child{border-bottom:0}
+.spec .tag{font-size:9px;letter-spacing:.06em;text-transform:uppercase;width:72px;flex:none}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.shape-demo{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.lbl{font-size:10px;letter-spacing:.05em;text-transform:uppercase;margin-bottom:7px}
+
+/* ══════════════════════════════════════════════════════════════════════
+   DIRECTION A — TERMINAL DARK
+   Bloomberg density, Linear restraint. Neon pulled back so that colour
+   means something: green/red = money only, amber = armed.
+   ══════════════════════════════════════════════════════════════════════ */
+.A{
+  --bg0:#0b0d11; --bg1:#121519; --bg2:#181c22; --bg3:#21262e; --line:#2b313a;
+  --ink:#e9ecf1; --ink2:#99a1ae; --ink3:#5f6775;
+  --up:#3ddc91; --down:#ff5d6e; --arm:#ffb224; --info:#49a8ff;
+  background:var(--bg0); color:var(--ink2);
+  font-family:Geist,system-ui,sans-serif;
+}
+.A .sec-h{color:var(--ink3);border-bottom:1px solid var(--line)}
+.A .sub,.A .inspo{color:var(--ink2)}
+.A .inspo b{color:var(--ink)}
+.A .sw em{color:var(--ink3)}
+.A .sw span{color:var(--ink3)}
+.A .spec{border-color:#23282f}
+.A .spec .tag{color:var(--ink3);font-family:JBMono,monospace}
+.A .lbl{color:var(--ink3)}
+.A .num{font-family:JBMono,monospace;font-variant-numeric:tabular-nums;color:var(--ink)}
+
+.A .d-h1{font-size:25px;font-weight:600;letter-spacing:-.02em;color:var(--ink)}
+.A .d-h2{font-size:15px;font-weight:600;color:var(--ink);letter-spacing:-.01em}
+.A .d-body{font-size:13px;color:var(--ink2);line-height:1.5}
+.A .d-micro{font-size:10px;letter-spacing:.09em;text-transform:uppercase;color:var(--ink3);font-weight:500}
+.A .d-money{font-family:JBMono,monospace;font-size:21px;font-variant-numeric:tabular-nums;letter-spacing:-.02em;color:var(--ink)}
+
+.A .card{background:var(--bg1);border:1px solid var(--line);border-radius:8px;padding:16px}
+.A .btn{font-family:inherit;font-size:12.5px;font-weight:500;padding:8px 14px;border-radius:6px;border:1px solid var(--line);background:var(--bg2);color:var(--ink);cursor:pointer}
+.A .btn.primary{background:var(--ink);color:#0b0d11;border-color:var(--ink);font-weight:600}
+.A .btn.ghost{background:transparent;color:var(--ink2)}
+.A .chip{display:inline-flex;align-items:center;gap:5px;font-size:10px;letter-spacing:.06em;text-transform:uppercase;font-weight:600;padding:3px 7px;border-radius:3px;border:1px solid}
+.A .chip.up{color:var(--up);border-color:rgba(61,220,145,.3);background:rgba(61,220,145,.08)}
+.A .chip.down{color:var(--down);border-color:rgba(255,93,110,.3);background:rgba(255,93,110,.08)}
+.A .chip.arm{color:var(--arm);border-color:rgba(255,178,36,.32);background:rgba(255,178,36,.09)}
+.A .chip.mute{color:var(--ink3);border-color:var(--line)}
+
+/* rail — direction A: engineered, ticks + mono labels */
+.A .rail{padding:26px 6px 30px;position:relative}
+.A .rail-line{height:2px;background:linear-gradient(90deg,rgba(255,93,110,.55) 0%,var(--bg3) 22%,var(--bg3) 100%);border-radius:2px;position:relative}
+.A .mk{position:absolute;top:50%;transform:translate(-50%,-50%)}
+.A .mk i{display:block;width:7px;height:7px;border-radius:1px;transform:rotate(45deg);background:var(--ink3)}
+.A .mk.stop i{background:var(--down)}
+.A .mk.entry i{background:var(--ink)}
+.A .mk.t i{background:var(--up)}
+.A .mk b{position:absolute;top:13px;left:50%;transform:translateX(-50%);font-family:JBMono,monospace;font-size:9.5px;font-weight:500;color:var(--ink2);white-space:nowrap}
+.A .mk em{position:absolute;top:-21px;left:50%;transform:translateX(-50%);font-size:8.5px;font-style:normal;letter-spacing:.08em;text-transform:uppercase;color:var(--ink3);white-space:nowrap}
+.A .now{position:absolute;top:-9px;transform:translateX(-50%);display:flex;flex-direction:column;align-items:center}
+.A .now span{font-family:JBMono,monospace;font-size:10.5px;font-weight:500;color:var(--arm);background:rgba(255,178,36,.12);border:1px solid rgba(255,178,36,.35);border-radius:3px;padding:1px 5px;white-space:nowrap}
+.A .now i{width:1px;height:12px;background:var(--arm);margin-top:2px}
+
+/* fire button — direction A */
+.A .fire{width:100%;border-radius:7px;padding:15px;text-align:center;font-family:inherit;border:1px solid;cursor:pointer;position:relative;overflow:hidden}
+.A .fire .ttl{font-size:13.5px;font-weight:600;letter-spacing:.03em}
+.A .fire .sub2{font-size:10.5px;margin-top:4px;letter-spacing:.02em}
+.A .fire.locked{background:var(--bg2);border-color:var(--line);color:var(--ink3);cursor:not-allowed}
+.A .fire.locked .ttl{color:#6b7380}
+.A .fire.ready{background:linear-gradient(180deg,rgba(255,178,36,.16),rgba(255,178,36,.07));border-color:var(--arm);color:var(--arm);box-shadow:0 0 0 1px rgba(255,178,36,.12),0 6px 22px -8px rgba(255,178,36,.5)}
+.A .fire.live{background:rgba(61,220,145,.1);border-color:rgba(61,220,145,.45);color:var(--up)}
+.A .cond{display:flex;align-items:center;gap:9px;padding:7px 0;font-size:12.5px;color:var(--ink2);border-bottom:1px solid #1d2229}
+.A .cond:last-child{border-bottom:0}
+.A .cond .dot{width:5px;height:5px;border-radius:50%;flex:none}
+.A .cond.ok .dot{background:var(--up);box-shadow:0 0 7px rgba(61,220,145,.7)}
+.A .cond.no .dot{background:#39404a}
+.A .cond.no{color:var(--ink3)}
+
+/* ══════════════════════════════════════════════════════════════════════
+   DIRECTION B — DAYLIGHT CALM
+   Apple Health / Monzo plain-language. Paper surfaces, soft shadows,
+   no hairlines. Serif headlines so plans read like a briefing, not a blotter.
+   ══════════════════════════════════════════════════════════════════════ */
+.B{
+  --paper:#f6f4f0; --card:#fffefc; --sunk:#efece6; --edge:#e4e0d8;
+  --ink:#1b1a18; --ink2:#6b6862; --ink3:#9c988f;
+  --brand:#2f3cc4; --up:#1c7d4d; --down:#c0392f; --arm:#c4761f;
+  background:var(--paper); color:var(--ink2);
+  font-family:InterV,system-ui,sans-serif;
+}
+.B .sec-h{color:var(--ink3);border-bottom:1px solid var(--edge)}
+.B .sub,.B .inspo{color:var(--ink2)}
+.B .inspo b{color:var(--ink)}
+.B .sw em{color:var(--ink2)}
+.B .sw span{color:var(--ink3)}
+.B .spec{border-color:var(--edge)}
+.B .spec .tag{color:var(--ink3)}
+.B .lbl{color:var(--ink3)}
+.B .num{font-family:JBMono,monospace;font-variant-numeric:tabular-nums;color:var(--ink)}
+
+.B .d-h1{font-family:Georgia,"Times New Roman",serif;font-size:27px;font-weight:400;letter-spacing:-.015em;color:var(--ink)}
+.B .d-h2{font-family:Georgia,serif;font-size:17px;font-weight:400;color:var(--ink)}
+.B .d-body{font-size:14px;color:var(--ink2);line-height:1.6}
+.B .d-micro{font-size:10.5px;letter-spacing:.07em;text-transform:uppercase;color:var(--ink3);font-weight:600}
+.B .d-money{font-family:JBMono,monospace;font-size:26px;font-weight:500;font-variant-numeric:tabular-nums;letter-spacing:-.03em;color:var(--ink)}
+
+.B .card{background:var(--card);border-radius:18px;padding:20px;box-shadow:0 1px 2px rgba(27,26,24,.05),0 8px 24px -14px rgba(27,26,24,.14)}
+.B .btn{font-family:inherit;font-size:13.5px;font-weight:500;padding:10px 18px;border-radius:999px;border:1px solid var(--edge);background:var(--card);color:var(--ink);cursor:pointer}
+.B .btn.primary{background:var(--brand);border-color:var(--brand);color:#fff;font-weight:600}
+.B .btn.ghost{background:transparent;border-color:transparent;color:var(--ink2)}
+.B .chip{display:inline-flex;align-items:center;gap:5px;font-size:11.5px;font-weight:600;padding:4px 11px;border-radius:999px;border:0}
+.B .chip.up{color:#12603a;background:#dcf0e4}
+.B .chip.down{color:#8f2a22;background:#f8e2de}
+.B .chip.arm{color:#8c5313;background:#fbecd8}
+.B .chip.mute{color:var(--ink2);background:var(--sunk)}
+
+/* rail — direction B: soft track, plain words */
+.B .rail{padding:30px 8px 34px;position:relative}
+.B .rail-line{height:8px;border-radius:999px;background:linear-gradient(90deg,#f3dad6 0%,#f3dad6 6%,var(--sunk) 22%,#e7efe9 65%,#dcf0e4 100%);position:relative}
+.B .mk{position:absolute;top:50%;transform:translate(-50%,-50%)}
+.B .mk i{display:block;width:13px;height:13px;border-radius:50%;background:#fff;box-shadow:0 0 0 3px var(--ink3)}
+.B .mk.stop i{box-shadow:0 0 0 3px var(--down)}
+.B .mk.entry i{box-shadow:0 0 0 3px var(--brand)}
+.B .mk.t i{box-shadow:0 0 0 3px var(--up)}
+.B .mk b{position:absolute;top:17px;left:50%;transform:translateX(-50%);font-family:JBMono,monospace;font-size:11.5px;font-weight:500;color:var(--ink);white-space:nowrap}
+.B .mk em{position:absolute;top:-23px;left:50%;transform:translateX(-50%);font-size:10px;font-style:normal;font-weight:600;color:var(--ink3);white-space:nowrap}
+.B .now{position:absolute;top:-14px;transform:translateX(-50%);display:flex;flex-direction:column;align-items:center}
+.B .now span{font-family:JBMono,monospace;font-size:11.5px;font-weight:500;color:#fff;background:var(--ink);border-radius:999px;padding:3px 9px;white-space:nowrap}
+.B .now i{width:2px;height:13px;background:var(--ink);margin-top:1px;border-radius:2px}
+
+/* fire button — direction B */
+.B .fire{width:100%;border-radius:16px;padding:19px;text-align:center;font-family:inherit;border:0;cursor:pointer}
+.B .fire .ttl{font-size:16px;font-weight:650;letter-spacing:-.01em}
+.B .fire .sub2{font-size:12.5px;margin-top:5px}
+.B .fire.locked{background:var(--sunk);color:var(--ink3);cursor:not-allowed}
+.B .fire.ready{background:linear-gradient(180deg,#d8831f,#bb6412);color:#fff;box-shadow:0 2px 3px rgba(140,83,19,.2),0 14px 30px -12px rgba(196,118,31,.75)}
+.B .fire.live{background:#dcf0e4;color:#12603a}
+.B .cond{display:flex;align-items:center;gap:11px;padding:10px 0;font-size:14px;color:var(--ink)}
+.B .cond .dot{width:19px;height:19px;border-radius:50%;flex:none;display:grid;place-items:center;font-size:11px;font-weight:700}
+.B .cond.ok .dot{background:#dcf0e4;color:#12603a}
+.B .cond.no .dot{background:var(--sunk);color:var(--ink3)}
+.B .cond.no{color:var(--ink3)}
+</style>
+</head>
+<body>
+<div class="page">
+  <div class="page-head">
+    <h1>Orbit — style foundation, two directions</h1>
+    <p>Not screens yet. This is the vocabulary the screens get built from: palette, type, edges, and the four shapes that carry
+       the whole product — the money headline, the price rail, the condition list, and the fire button.</p>
+    <p class="note">Numbers shown are illustrative (IREN, demo data). Pick a direction, or mix: "A's density with B's wording" is a valid answer.</p>
+  </div>
+
+  <div class="cols">
+
+    <!-- ══════════ A ══════════ -->
+    <div class="dir">
+      <div class="dir-label"><b>Direction A — Terminal Dark</b><span>evolution of today's Orbit</span></div>
+      <div class="body A">
+
+        <div class="sec">
+          <div class="sec-h">Inspiration</div>
+          <p class="inspo"><b>Bloomberg density, Linear restraint.</b> Keeps Orbit's current dark identity but takes the neon away
+            from decoration and spends it on meaning: green and red appear <b>only</b> on money, amber <b>only</b> on armed.
+            Everything else is graphite. Dense, flat, reads fast at a glance mid-session.</p>
+        </div>
+
+        <div class="sec">
+          <div class="sec-h">Palette</div>
+          <div class="lbl">Surfaces</div>
+          <div class="sw-row">
+            <div class="sw"><i style="background:#0b0d11"></i><em>#0B0D11</em><span>canvas</span></div>
+            <div class="sw"><i style="background:#121519"></i><em>#121519</em><span>card</span></div>
+            <div class="sw"><i style="background:#181c22"></i><em>#181C22</em><span>inset</span></div>
+            <div class="sw"><i style="background:#21262e"></i><em>#21262E</em><span>raised</span></div>
+            <div class="sw"><i style="background:#2b313a"></i><em>#2B313A</em><span>hairline</span></div>
+          </div>
+          <div class="lbl">Ink</div>
+          <div class="sw-row">
+            <div class="sw"><i style="background:#e9ecf1"></i><em>#E9ECF1</em><span>primary</span></div>
+            <div class="sw"><i style="background:#99a1ae"></i><em>#99A1AE</em><span>secondary</span></div>
+            <div class="sw"><i style="background:#5f6775"></i><em>#5F6775</em><span>muted</span></div>
+          </div>
+          <div class="lbl">Meaning — never decorative</div>
+          <div class="sw-row">
+            <div class="sw"><i style="background:#3ddc91"></i><em>#3DDC91</em><span>profit</span></div>
+            <div class="sw"><i style="background:#ff5d6e"></i><em>#FF5D6E</em><span>loss / stop</span></div>
+            <div class="sw"><i style="background:#ffb224"></i><em>#FFB224</em><span>armed</span></div>
+            <div class="sw"><i style="background:#49a8ff"></i><em>#49A8FF</em><span>agent</span></div>
+          </div>
+          <p class="sub">Today's <span class="num">#00FF88</span> / <span class="num">#00D4FF</span> are desaturated ~25% — at full
+            neon everything shouts and the fire button can't stand out.</p>
+        </div>
+
+        <div class="sec">
+          <div class="sec-h">Type — Geist + JetBrains Mono</div>
+          <div class="spec"><span class="tag">h1 25/600</span><span class="d-h1">Three plans for IREN</span></div>
+          <div class="spec"><span class="tag">h2 15/600</span><span class="d-h2">Intraday breakout</span></div>
+          <div class="spec"><span class="tag">body 13</span><span class="d-body">Buy if it breaks the early high.</span></div>
+          <div class="spec"><span class="tag">micro 10</span><span class="d-micro">Risk budget</span></div>
+          <div class="spec"><span class="tag">money 21</span><span class="d-money">$1,250</span></div>
+          <div class="spec"><span class="tag">tabular</span><span class="num" style="font-size:13px">18.85 · 19.65 · 20.45</span></div>
+          <p class="sub" style="margin-top:12px">Every price, size and dollar amount is tabular mono so columns line up and digits
+            don't jump as prices tick.</p>
+        </div>
+
+        <div class="sec">
+          <div class="sec-h">Edges &amp; shapes</div>
+          <div class="grid2">
+            <div>
+              <div class="lbl">Radius</div>
+              <div class="shape-demo">
+                <div style="width:46px;height:34px;background:#21262e;border:1px solid #2b313a;border-radius:3px"></div>
+                <div style="width:46px;height:34px;background:#21262e;border:1px solid #2b313a;border-radius:6px"></div>
+                <div style="width:46px;height:34px;background:#21262e;border:1px solid #2b313a;border-radius:8px"></div>
+              </div>
+              <p class="sub" style="margin-top:8px">3 badge · 6 control · 8 card. Tight.</p>
+            </div>
+            <div>
+              <div class="lbl">Separation</div>
+              <p class="sub">1px hairlines, no shadows. Depth comes from the surface ramp, not blur — shadows on near-black
+                read as smudges.</p>
+            </div>
+          </div>
+          <div class="lbl" style="margin-top:16px">Controls</div>
+          <div class="shape-demo">
+            <button class="btn primary">Load this plan</button>
+            <button class="btn">Adjust</button>
+            <button class="btn ghost">Drop</button>
+            <span class="chip up">+$250</span><span class="chip down">−$500</span>
+            <span class="chip arm">Armed</span><span class="chip mute">Waiting</span>
+          </div>
+        </div>
+
+        <div class="sec">
+          <div class="sec-h">Signature 1 — money headline</div>
+          <div class="card">
+            <div class="d-micro" style="margin-bottom:9px">If this works</div>
+            <div style="display:flex;align-items:baseline;gap:9px">
+              <span class="d-money" style="color:#3ddc91">+$1,250</span>
+              <span class="d-body">if it hits target 2</span>
+            </div>
+            <div style="display:flex;align-items:baseline;gap:9px;margin-top:11px;padding-top:11px;border-top:1px solid #21262e">
+              <span class="d-money" style="font-size:16px;color:#ff5d6e">−$500</span>
+              <span class="d-body">if the stop is hit — your whole budget for one trade</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="sec">
+          <div class="sec-h">Signature 2 — price rail</div>
+          <div class="card">
+            <div class="rail">
+              <div class="rail-line">
+                <div class="now" style="left:26.7%"><span>18.62 now</span><i></i></div>
+                <div class="mk stop" style="left:5.6%"><i></i><em>Out</em><b>18.05</b></div>
+                <div class="mk entry" style="left:35.2%"><i></i><em>Buy</em><b>18.85</b></div>
+                <div class="mk t" style="left:64.8%"><i></i><em>Take 1</em><b>19.65</b></div>
+                <div class="mk t" style="left:94.4%"><i></i><em>Take 2</em><b>20.45</b></div>
+              </div>
+            </div>
+            <p class="sub" style="margin:0">One line replaces the whole order ticket. Diamonds are plan levels, the amber tag is live price.</p>
+          </div>
+        </div>
+
+        <div class="sec">
+          <div class="sec-h">Signature 3 — conditions</div>
+          <div class="card">
+            <div class="cond ok"><span class="dot"></span>Early high is set</div>
+            <div class="cond ok"><span class="dot"></span>Price is above the opening average</div>
+            <div class="cond no"><span class="dot"></span>Spread is tight enough</div>
+            <div class="cond no"><span class="dot"></span>Price hasn't run away from the plan</div>
+          </div>
+        </div>
+
+        <div class="sec">
+          <div class="sec-h">Signature 4 — the fire button</div>
+          <button class="fire locked" style="margin-bottom:10px"><div class="ttl">LOCKED</div><div class="sub2">2 things still missing</div></button>
+          <button class="fire ready" style="margin-bottom:10px"><div class="ttl">HOLD TO FIRE</div><div class="sub2">625 shares · risking $500</div></button>
+          <button class="fire live"><div class="ttl">LIVE</div><div class="sub2">Filled 625 @ 18.86 · stop is at the broker</div></button>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- ══════════ B ══════════ -->
+    <div class="dir">
+      <div class="dir-label"><b>Direction B — Daylight Calm</b><span>fresh "simplified pro"</span></div>
+      <div class="body B">
+
+        <div class="sec">
+          <div class="sec-h">Inspiration</div>
+          <p class="inspo"><b>Apple Health meets a private-bank briefing.</b> Paper surfaces, soft shadows, no hairlines, lots of air.
+            Serif headlines so a plan reads like something written <b>for</b> you rather than a blotter dump. Colour is scarce:
+            one indigo for "this is the action", muted green and clay for money. Deliberately not scary.</p>
+        </div>
+
+        <div class="sec">
+          <div class="sec-h">Palette</div>
+          <div class="lbl">Surfaces</div>
+          <div class="sw-row">
+            <div class="sw"><i style="background:#f6f4f0;border:1px solid #e4e0d8"></i><em>#F6F4F0</em><span>paper</span></div>
+            <div class="sw"><i style="background:#fffefc;border:1px solid #e4e0d8"></i><em>#FFFEFC</em><span>card</span></div>
+            <div class="sw"><i style="background:#efece6"></i><em>#EFECE6</em><span>sunk</span></div>
+            <div class="sw"><i style="background:#e4e0d8"></i><em>#E4E0D8</em><span>edge</span></div>
+          </div>
+          <div class="lbl">Ink</div>
+          <div class="sw-row">
+            <div class="sw"><i style="background:#1b1a18"></i><em>#1B1A18</em><span>primary</span></div>
+            <div class="sw"><i style="background:#6b6862"></i><em>#6B6862</em><span>secondary</span></div>
+            <div class="sw"><i style="background:#9c988f"></i><em>#9C988F</em><span>muted</span></div>
+          </div>
+          <div class="lbl">Meaning</div>
+          <div class="sw-row">
+            <div class="sw"><i style="background:#2f3cc4"></i><em>#2F3CC4</em><span>action</span></div>
+            <div class="sw"><i style="background:#1c7d4d"></i><em>#1C7D4D</em><span>profit</span></div>
+            <div class="sw"><i style="background:#c0392f"></i><em>#C0392F</em><span>loss / stop</span></div>
+            <div class="sw"><i style="background:#c4761f"></i><em>#C4761F</em><span>armed</span></div>
+          </div>
+          <p class="sub">Warm paper rather than cold white — hours in front of it matter. A night palette would invert surfaces and
+            keep these same meaning colours.</p>
+        </div>
+
+        <div class="sec">
+          <div class="sec-h">Type — Georgia headlines + Inter + mono</div>
+          <div class="spec"><span class="tag">h1 27 serif</span><span class="d-h1">Three plans for IREN</span></div>
+          <div class="spec"><span class="tag">h2 17 serif</span><span class="d-h2">Intraday breakout</span></div>
+          <div class="spec"><span class="tag">body 14</span><span class="d-body">Buy if it breaks the early high.</span></div>
+          <div class="spec"><span class="tag">micro 10.5</span><span class="d-micro">Risk budget</span></div>
+          <div class="spec"><span class="tag">money 26</span><span class="d-money">$1,250</span></div>
+          <div class="spec"><span class="tag">tabular</span><span class="num" style="font-size:14px">18.85 · 19.65 · 20.45</span></div>
+          <p class="sub" style="margin-top:12px">Serif is for sentences only. Every number stays mono and tabular — the calm look
+            must not cost you legibility on prices.</p>
+        </div>
+
+        <div class="sec">
+          <div class="sec-h">Edges &amp; shapes</div>
+          <div class="grid2">
+            <div>
+              <div class="lbl">Radius</div>
+              <div class="shape-demo">
+                <div style="width:46px;height:34px;background:#efece6;border-radius:12px"></div>
+                <div style="width:46px;height:34px;background:#efece6;border-radius:18px"></div>
+                <div style="width:46px;height:34px;background:#efece6;border-radius:999px"></div>
+              </div>
+              <p class="sub" style="margin-top:8px">12 inner · 18 card · pill controls.</p>
+            </div>
+            <div>
+              <div class="lbl">Separation</div>
+              <p class="sub">Two-layer soft shadow, almost no borders. Cards float on paper; grouping comes from spacing.</p>
+            </div>
+          </div>
+          <div class="lbl" style="margin-top:16px">Controls</div>
+          <div class="shape-demo">
+            <button class="btn primary">Load this plan</button>
+            <button class="btn">Adjust</button>
+            <button class="btn ghost">Drop</button>
+            <span class="chip up">+$250</span><span class="chip down">−$500</span>
+            <span class="chip arm">Armed</span><span class="chip mute">Waiting</span>
+          </div>
+        </div>
+
+        <div class="sec">
+          <div class="sec-h">Signature 1 — money headline</div>
+          <div class="card">
+            <div class="d-micro" style="margin-bottom:10px">If this works</div>
+            <div style="display:flex;align-items:baseline;gap:10px">
+              <span class="d-money" style="color:#1c7d4d">+$1,250</span>
+              <span class="d-body">if it hits target 2</span>
+            </div>
+            <div style="display:flex;align-items:baseline;gap:10px;margin-top:14px;padding-top:14px;border-top:1px solid #efece6">
+              <span class="d-money" style="font-size:19px;color:#c0392f">−$500</span>
+              <span class="d-body">if the stop is hit — your whole budget for one trade</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="sec">
+          <div class="sec-h">Signature 2 — price rail</div>
+          <div class="card">
+            <div class="rail">
+              <div class="rail-line">
+                <div class="now" style="left:26.7%"><span>18.62 now</span><i></i></div>
+                <div class="mk stop" style="left:5.6%"><i></i><em>Out</em><b>18.05</b></div>
+                <div class="mk entry" style="left:35.2%"><i></i><em>Buy</em><b>18.85</b></div>
+                <div class="mk t" style="left:64.8%"><i></i><em>Take 1</em><b>19.65</b></div>
+                <div class="mk t" style="left:94.4%"><i></i><em>Take 2</em><b>20.45</b></div>
+              </div>
+            </div>
+            <p class="sub" style="margin:0">Same component, softer language. The track itself is tinted red behind the stop and
+              green past the targets, so the shape of the trade is readable before any number is.</p>
+          </div>
+        </div>
+
+        <div class="sec">
+          <div class="sec-h">Signature 3 — conditions</div>
+          <div class="card">
+            <div class="cond ok"><span class="dot">✓</span>Early high is set</div>
+            <div class="cond ok"><span class="dot">✓</span>Price is above the opening average</div>
+            <div class="cond no"><span class="dot">·</span>Spread is tight enough</div>
+            <div class="cond no"><span class="dot">·</span>Price hasn't run away from the plan</div>
+          </div>
+        </div>
+
+        <div class="sec">
+          <div class="sec-h">Signature 4 — the fire button</div>
+          <button class="fire locked" style="margin-bottom:12px"><div class="ttl">Not yet</div><div class="sub2">2 things still missing</div></button>
+          <button class="fire ready" style="margin-bottom:12px"><div class="ttl">Hold to place this trade</div><div class="sub2">625 shares · risking $500</div></button>
+          <button class="fire live"><div class="ttl">You're in</div><div class="sub2">625 shares at $18.86 · your exit is already at the broker</div></button>
+        </div>
+
+      </div>
+    </div>
+
+  </div>
+</div>
+</body>
+</html>

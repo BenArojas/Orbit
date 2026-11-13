@@ -52,8 +52,8 @@ Project knowledge is loaded on demand from canonical docs:
 | [`docs/testing.md`](docs/testing.md) | Critical-promises testing and size limits. |
 | [`PROJECT_PLAN.md`](PROJECT_PLAN.md) | Roadmap and deferred work. |
 
-Workflow skills remain under `.agents/skills/`. Matching Claude skill files are
-symlinks to those canonical copies rather than duplicated text.
+Repository rules are in [`AGENTS.md`](AGENTS.md). The approved redesign and
+phase gates are in [`docs/design/2026-11-12-plan-agent/spec.md`](docs/design/2026-11-12-plan-agent/spec.md).
 
 ---
 
@@ -111,13 +111,21 @@ into `~/.parallax/gateway/`. No system Java required.
 cd backend && uv sync && cd ..
 npm install
 
-# Terminal 1 — backend sidecar (with hot reload + clean shutdown)
-./scripts/dev-backend.sh        # macOS / Linux
-pwsh ./scripts/dev-backend.ps1  # Windows
-
-# Terminal 2 — Tauri dev shell (opens the app window)
+# Tauri dev shell launches the authenticated Python sidecar through Rust.
+# Stop any manually launched backend on port 8000 before opening Orbit.
 npm run tauri dev
 ```
+
+The desktop shell creates a fresh in-memory credential and passes it to Python
+over private stdin. Mutations, private reads, and WebSockets require it.
+Browser-only `npm run dev` and standalone backend launchers do not have a
+desktop session and cannot mutate the sidecar. No credential is placed in
+Vite variables, URLs, browser storage, or console output.
+
+**Phase 0 trading boundary:** paper TWS orders require a recognized paper port
+and one connected `DU` account. Client Portal order mutations and all legacy
+live-trading routes are disabled. The old order screens are being replaced;
+their blocked actions do not imply live trading is available.
 
 Authenticate with IBKR at `https://localhost:5001` when prompted.
 

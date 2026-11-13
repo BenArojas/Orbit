@@ -16,7 +16,7 @@
 
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { API_BASE } from "@/config/endpoints";
+import { sidecarRequest } from "@/lib/sidecarClient";
 import {
   Dialog,
   DialogContent,
@@ -43,9 +43,7 @@ interface HealthDetails {
 // ── Data fetching ─────────────────────────────────────────────────────────────
 
 async function fetchHealthDetails(): Promise<HealthDetails> {
-  const res = await fetch(`${API_BASE}/health/details`);
-  if (!res.ok) throw new Error(`Health check failed: ${res.status}`);
-  return res.json() as Promise<HealthDetails>;
+  return sidecarRequest<HealthDetails>("GET", "/health/details");
 }
 
 function useHealthDetails() {

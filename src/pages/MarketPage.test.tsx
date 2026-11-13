@@ -32,7 +32,7 @@ const sectors = ["XLK", "XLV", "XLF", "XLE", "XLI", "XLY", "XLP", "XLU", "XLRE",
 function assessmentFixture(indexClose = 500): MarketAssessmentResponse {
   return {
     status: "complete" as const,
-    posture: "broad" as const,
+    posture: "healthy" as const,
     expected_session: "2026-10-02",
     evidence_session: "2026-10-02",
     calculated_at: "2026-10-02T20:05:00Z",
@@ -84,7 +84,7 @@ describe("MarketPage", () => {
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     render(<QueryClientProvider client={queryClient}><MarketPage /></QueryClientProvider>);
 
-    expect(await screen.findByRole("heading", { name: "Broad strength" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Healthy conditions" })).toBeInTheDocument();
     expect(screen.getByText("2026-10-02 completed · SPY, QQQ and IWM are constructive. Only 8 of 11 sector ETFs are above SMA50.")).toBeInTheDocument();
     expect(screen.getByText("Give breakouts and retests priority; all setup types remain available.")).toBeInTheDocument();
     expect(screen.getByText(/IBKR transport connected/)).toBeInTheDocument();
@@ -102,7 +102,7 @@ describe("MarketPage", () => {
     act(() => queryClient.setQueryData(["parallax", "market-assessment"], {
       ...assessmentFixture(), expected_session: "2026-10-05",
     }));
-    expect(await screen.findByRole("heading", { name: "Previous assessment · Broad strength" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Previous assessment · Healthy conditions" })).toBeInTheDocument();
     expect(screen.getByText(/Dated evidence from 2026-10-02; current session 2026-10-05 is not confirmed/)).toBeInTheDocument();
     expect(screen.getByText("Current tactic priorities are unconfirmed; all setup types remain available.")).toBeInTheDocument();
 
@@ -128,7 +128,7 @@ describe("MarketPage", () => {
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     render(<QueryClientProvider client={queryClient}><MarketPage /></QueryClientProvider>);
 
-    expect(await screen.findByRole("heading", { name: "Broad strength" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Healthy conditions" })).toBeInTheDocument();
     for (const [posture, title, guidance] of [
       ["selective", "Selective strength", "Favor strong names near support; other setup types remain available with selectivity."],
       ["defensive", "Defensive conditions", "Favor patience and stronger confirmation; all setup types remain available."],
@@ -176,7 +176,7 @@ describe("MarketPage", () => {
       await vi.advanceTimersByTimeAsync(1);
       await Promise.resolve();
     });
-    expect(screen.getByRole("heading", { name: "Broad strength" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Healthy conditions" })).toBeInTheDocument();
     expect(marketAssessment).toHaveBeenCalledTimes(1);
 
     await act(async () => {
@@ -206,7 +206,7 @@ describe("MarketPage", () => {
       await vi.advanceTimersByTimeAsync(1);
       await Promise.resolve();
     });
-    expect(screen.getByRole("heading", { name: "Broad strength" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Healthy conditions" })).toBeInTheDocument();
     expect(marketAssessment).toHaveBeenCalledTimes(1);
     const summary = screen.getByText("Methodology and evidence details");
     const details = summary.closest("details");

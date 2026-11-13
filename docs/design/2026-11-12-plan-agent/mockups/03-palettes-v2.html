@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Orbit — palettes v2</title>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@400..800&family=Geist+Mono:wght@400;500&display=block" rel="stylesheet">
+<script src="palettes.js"></script>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+html{-webkit-font-smoothing:antialiased}
+body{background:#101114;color:#9a9ca4;font-family:"Schibsted Grotesk",system-ui,sans-serif;padding:36px 26px 60px}
+.page{max-width:1640px;margin:0 auto}
+h1{font-size:21px;color:#f1f1f3;font-weight:700;letter-spacing:-.02em}
+.lede{font-size:13.5px;line-height:1.65;margin-top:8px;max-width:1000px}
+.lede b{color:#dcdde2;font-weight:600}
+.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:20px;margin-top:26px}
+.pal{border-radius:18px;overflow:hidden;background:var(--c60);border:1px solid var(--edge)}
+.pal-top{display:flex;justify-content:space-between;align-items:baseline;padding:15px 18px 0}
+.pal-top b{color:var(--ink);font-size:15px;font-weight:700;letter-spacing:-.01em}
+.pal-top span{color:var(--ink3);font-size:11.5px}
+.ratio{display:flex;height:26px;margin:12px 18px 0;border-radius:8px;overflow:hidden;font-family:"Geist Mono",monospace;font-size:9.5px}
+.ratio div{display:flex;align-items:center;padding-left:9px}
+.app{margin:14px 18px 0;border-radius:14px;background:var(--card);border:1px solid var(--edge);overflow:hidden}
+.bar{display:flex;align-items:center;gap:12px;padding:10px 13px;border-bottom:1px solid var(--edge)}
+.logo{font-weight:800;color:var(--ink);font-size:13px;letter-spacing:-.02em}
+.logo i{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--c10);margin-right:6px;vertical-align:1px}
+nav{display:flex;gap:2px}
+nav a{font-size:11px;color:var(--ink3);padding:4px 8px;border-radius:7px}
+nav a.on{color:var(--ink);background:color-mix(in srgb,var(--c30) 16%,transparent)}
+.wallet{margin-left:auto;display:flex;align-items:center;gap:7px;font-size:10px;color:var(--ink3)}
+.wallet .m{width:46px;height:4px;border-radius:9px;background:var(--raise);overflow:hidden}
+.wallet .m i{display:block;width:34%;height:100%;background:var(--c30)}
+.wallet b{font-family:"Geist Mono",monospace;font-weight:500;color:var(--ink2)}
+.card{padding:14px 14px 15px}
+.hd{display:flex;justify-content:space-between;align-items:center}
+.tk{display:flex;align-items:baseline;gap:8px}
+.tk b{font-size:16px;font-weight:700;color:var(--ink);letter-spacing:-.015em}
+.tk em{font-style:normal;font-size:11.5px;color:var(--ink2)}
+.pill{font-size:10.5px;font-weight:600;padding:3px 9px;border-radius:99px;color:var(--c10);background:color-mix(in srgb,var(--c10) 14%,transparent)}
+[data-light="1"] .pill{color:color-mix(in srgb,var(--c10) 65%,#000)}
+.money{display:flex;align-items:baseline;gap:8px;margin-top:12px}
+.money .big{font-family:"Geist Mono",monospace;font-size:23px;font-weight:500;letter-spacing:-.035em;color:var(--up)}
+.money .t{font-size:12px;color:var(--ink2)}
+.money .sm{font-family:"Geist Mono",monospace;font-size:13.5px;color:var(--down)}
+.rail{position:relative;padding:22px 2px 25px}
+.track{height:4px;border-radius:9px;background:var(--raise);position:relative}
+.fl{position:absolute;left:0;top:0;bottom:0;width:6%;border-radius:9px 0 0 9px;background:color-mix(in srgb,var(--down) 55%,transparent)}
+.fr{position:absolute;right:0;top:0;bottom:0;width:36%;border-radius:0 9px 9px 0;background:color-mix(in srgb,var(--up) 30%,transparent)}
+.mk{position:absolute;top:50%;transform:translate(-50%,-50%)}
+.mk i{display:block;width:9px;height:9px;border-radius:50%;background:var(--card);box-shadow:0 0 0 2px var(--mc)}
+.mk b{position:absolute;top:12px;left:50%;transform:translateX(-50%);font-family:"Geist Mono",monospace;font-size:9.5px;font-weight:500;color:var(--ink2);white-space:nowrap}
+.mk em{position:absolute;top:-18px;left:50%;transform:translateX(-50%);font-style:normal;font-size:8.5px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--ink3);white-space:nowrap}
+.now{position:absolute;top:-11px;transform:translateX(-50%);text-align:center}
+.now span{display:inline-block;font-family:"Geist Mono",monospace;font-size:10px;font-weight:500;color:var(--on10);background:var(--c10);border-radius:99px;padding:2px 7px}
+.now i{display:block;width:2px;height:10px;margin:1px auto 0;background:var(--c10);border-radius:2px}
+.row{display:grid;grid-template-columns:1fr 1fr;gap:12px;align-items:end}
+.conds div{display:flex;align-items:center;gap:7px;font-size:11.5px;color:var(--ink);padding:3px 0}
+.conds div i{width:6px;height:6px;border-radius:50%;background:var(--up);flex:none}
+.conds div.no{color:var(--ink3)} .conds div.no i{background:var(--edge)}
+.spark-meta{font-size:10px;color:var(--ink3)} .spark-meta b{font-family:"Geist Mono",monospace;font-weight:500;color:var(--ink);font-size:12px;margin-right:5px}
+.fire{width:100%;margin-top:13px;border:0;border-radius:11px;padding:13px;font-family:inherit;background:var(--c10);color:var(--on10);box-shadow:0 8px 22px -12px color-mix(in srgb,var(--c10) 70%,transparent)}
+.fire .t{font-size:14px;font-weight:700;letter-spacing:-.01em}
+.fire .s{font-size:11px;margin-top:2px;opacity:.75;font-weight:500}
+.sec{display:flex;gap:7px;margin-top:8px}
+.sec button{flex:1;font-family:inherit;font-size:11.5px;font-weight:500;padding:7px;border-radius:9px;background:transparent;color:var(--ink2);border:1px solid var(--edge)}
+.inspo{font-size:11.5px;line-height:1.6;color:var(--ink2);padding:13px 18px 17px}
+</style></head>
+<body><div class="page">
+<h1>Palettes, round two: quieter, 60 / 30 / 10</h1>
+<p class="lede">Every accent here is <b>desaturated and pulled toward warm or dusty tones</b>, the way luxury and banking palettes work:
+a deep anchor, a soft light neutral, and one restrained metal or pastel used sparingly. Each palette is shown on the same mini app
+(nav, risk wallet, plan card, fire button) so you can compare them directly. Profit and loss colours are softened to match and appear only on money.</p>
+<div class="grid" id="grid"></div>
+</div>
+<script>
+const spark = (c)=>`<svg width="100%" height="40" viewBox="0 0 190 40" preserveAspectRatio="none"><path d="M0 33 L18 30 L36 31 L54 25 L72 27 L90 19 L108 22 L126 12 L144 15 L162 8 L180 10 L190 5" fill="none" stroke="${c}" stroke-width="1.6" stroke-linejoin="round" vector-effect="non-scaling-stroke"/></svg>`;
+const g = document.getElementById('grid');
+ORBIT_PALETTES.forEach(p=>{
+  const el=document.createElement('div'); el.className='pal'; applyPalette(el,p);
+  el.innerHTML=`
+  <div class="pal-top"><b>${p.name}</b><span>${p.tag}</span></div>
+  <div class="ratio"><div style="flex:60;background:${p.light?p.raise:p.raise};color:${p.ink2}">60 · ${p.n60}</div><div style="flex:30;background:${p.c30};color:${p.c60}">30 · ${p.n30}</div><div style="flex:10;background:${p.c10};color:${p.on10}">10</div></div>
+  <div class="app">
+    <div class="bar"><span class="logo"><i></i>Orbit</span><nav><a>Ideas</a><a class="on">Plans</a><a>Live</a><a>Review</a></nav>
+      <div class="wallet">Today<div class="m"><i></i></div><b>$310 / $900</b></div></div>
+    <div class="card">
+      <div class="hd"><div class="tk"><b>IREN</b><em>Intraday breakout</em></div><span class="pill">Ready</span></div>
+      <div class="money"><span class="big">+$1,250</span><span class="t">if it reaches target 2</span></div>
+      <div class="money" style="margin-top:4px"><span class="sm">−$500</span><span class="t">if the stop is hit</span></div>
+      <div class="rail"><div class="track"><div class="fl"></div><div class="fr"></div>
+        <div class="now" style="left:27%"><span>18.62</span><i></i></div>
+        <div class="mk" style="left:6%;--mc:var(--down)"><i></i><em>Out</em><b>18.05</b></div>
+        <div class="mk" style="left:35%;--mc:var(--c30)"><i></i><em>Buy</em><b>18.85</b></div>
+        <div class="mk" style="left:65%;--mc:var(--up)"><i></i><em>T1</em><b>19.65</b></div>
+        <div class="mk" style="left:94%;--mc:var(--up)"><i></i><em>T2</em><b>20.45</b></div></div></div>
+      <div class="row">
+        <div class="conds"><div><i></i>Early high is set</div><div><i></i>Above opening average</div><div class="no"><i></i>Spread is tight</div></div>
+        <div>${spark(p.c30)}<div class="spark-meta"><b>+15.2%</b>premarket</div></div>
+      </div>
+      <button class="fire"><div class="t">Hold to place this trade</div><div class="s">625 shares · risking $500</div></button>
+      <div class="sec"><button>Adjust</button><button>Drop</button></div>
+    </div>
+  </div>
+  <p class="inspo">${p.inspo}</p>`;
+  g.appendChild(el);
+});
+</script>
+</body></html>

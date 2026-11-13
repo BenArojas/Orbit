@@ -1,0 +1,327 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Orbit — Cobalt + Sunburst bases</title>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@400..800&family=Geist+Mono:wght@400;500;600&display=block" rel="stylesheet">
+<script src="palettes-cobalt.js"></script>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+html{-webkit-font-smoothing:antialiased}
+body{
+  background:#090A0F;color:#A2A6B8;
+  font-family:"Schibsted Grotesk",system-ui,sans-serif;
+  padding:34px 28px 68px;
+}
+.page{max-width:1680px;margin:0 auto}
+.top{display:flex;justify-content:space-between;align-items:flex-end;gap:24px;flex-wrap:wrap}
+h1{font-size:23px;color:#F5F6FA;font-weight:700;letter-spacing:-.025em}
+.lede{font-size:13.5px;line-height:1.62;margin-top:8px;max-width:940px;color:#9CA1B4}
+.lede b{color:#ECEEF5;font-weight:600}
+
+.controls{display:flex;gap:10px;align-items:center}
+.toggle-10{
+  cursor:pointer;border:1px solid #282C3E;background:#131622;color:#EDEFF7;
+  font-family:inherit;font-size:12.5px;font-weight:600;padding:9px 15px;border-radius:10px;
+  display:flex;align-items:center;gap:9px;
+  transition:transform 160ms cubic-bezier(.2,.8,.2,1),border-color 160ms ease,background 160ms ease;
+}
+.toggle-10:hover{border-color:#3E4561;background:#191D2D}
+.toggle-10:active{transform:scale(.98)}
+.toggle-10 .dot{width:9px;height:9px;border-radius:50%;background:#FFB800;box-shadow:0 0 10px #FFB800;transition:all 180ms ease}
+body.mute10 .toggle-10 .dot{background:#4B5068;box-shadow:none}
+
+.grid{display:grid;grid-template-columns:repeat(2,minmax(560px,1fr));gap:24px;margin-top:26px}
+@media (max-width:1240px){.grid{grid-template-columns:1fr}}
+
+.pal{
+  border-radius:20px;background:#11131C;border:1px solid #222638;
+  padding:18px;display:flex;flex-direction:column;gap:14px;
+  transition:border-color 180ms cubic-bezier(.2,.8,.2,1),transform 180ms cubic-bezier(.2,.8,.2,1);
+}
+.pal:hover{border-color:#383F5C}
+
+.pal-hd{display:flex;justify-content:space-between;align-items:baseline;padding:0 2px}
+.pal-hd b{font-size:16.5px;font-weight:700;color:#F4F5FA;letter-spacing:-.015em}
+.pal-hd span{font-family:"Geist Mono",monospace;font-size:11px;color:#8389A3}
+
+/* 60 / 30 / 10 proportion bar */
+.swatches{display:flex;height:30px;border-radius:9px;overflow:hidden;font-family:"Geist Mono",monospace;font-size:10.5px;font-weight:500;border:1px solid rgba(255,255,255,.08)}
+.swatches > div{display:flex;align-items:center;justify-content:space-between;padding:0 11px;white-space:nowrap;gap:8px;transition:all 200ms cubic-bezier(.2,.8,.2,1)}
+.sw-60{flex:60;background:var(--c60);color:var(--ink)}
+.sw-30{flex:30;background:var(--s30);color:var(--on30)}
+.sw-10{flex:10;background:var(--c10);color:var(--on10);font-weight:600;justify-content:center!important}
+body.mute10 .sw-10{background:var(--s30b);color:var(--on30muted)}
+
+/* Mini Orbit desktop window */
+.win{
+  border-radius:14px;overflow:hidden;background:var(--c60);
+  border:1px solid var(--edge);
+  box-shadow:0 18px 40px -20px rgba(0,0,0,.65);
+}
+.topbar{
+  display:flex;align-items:center;gap:12px;padding:9px 14px;
+  background:var(--card);border-bottom:1px solid var(--edge);
+}
+.brand{display:flex;align-items:center;gap:7px;font-weight:800;font-size:13px;color:var(--ink);letter-spacing:-.02em}
+.brand i{width:8px;height:8px;border-radius:50%;background:var(--c10);transition:background 180ms ease}
+body.mute10 .brand i{background:var(--c30)}
+
+.tabs{display:flex;gap:3px;margin-left:4px}
+.tabs a{font-size:11px;font-weight:600;color:var(--ink3);padding:4px 9px;border-radius:7px}
+.tabs a.on{background:var(--s30);color:var(--on30)}
+
+.status{margin-left:auto;display:flex;align-items:center;gap:10px;font-size:10.5px;color:var(--ink2)}
+.wallet{display:flex;align-items:center;gap:6px}
+.wallet .bar{width:44px;height:5px;border-radius:9px;background:var(--raise);overflow:hidden}
+.wallet .bar i{display:block;width:35%;height:100%;background:var(--c10);transition:background 180ms ease}
+body.mute10 .wallet .bar i{background:var(--c30)}
+.wallet b{font-family:"Geist Mono",monospace;font-size:10.5px;color:var(--ink);font-weight:500}
+.gw{display:inline-flex;align-items:center;gap:5px;padding:3px 8px;border-radius:99px;background:var(--raise);color:var(--ink2);font-family:"Geist Mono",monospace;font-size:10px}
+.gw i{width:6px;height:6px;border-radius:50%;background:var(--up)}
+
+/* True 60 / 30 split layout */
+.split{display:grid;grid-template-columns:1.58fr 1fr;min-height:292px}
+
+/* 60% Main Workspace */
+.zone60{padding:14px;display:flex;flex-direction:column;gap:11px;background:var(--c60)}
+.seg-row{display:flex;justify-content:space-between;align-items:center}
+.seg{display:inline-flex;background:var(--raise);padding:3px;border-radius:9px;gap:2px}
+.seg span{font-size:10.5px;font-weight:600;color:var(--ink2);padding:4px 9px;border-radius:6px}
+.seg span.on{background:var(--card);color:var(--ink);box-shadow:0 1px 3px rgba(0,0,0,.12)}
+.rr-pill{font-family:"Geist Mono",monospace;font-size:10.5px;font-weight:600;color:var(--ink2);background:var(--raise);padding:4px 9px;border-radius:99px}
+
+.pcard{
+  background:var(--card);border:1px solid var(--edge);border-radius:12px;
+  padding:14px;display:flex;flex-direction:column;gap:12px;flex:1;
+}
+.tk-row{display:flex;justify-content:space-between;align-items:flex-start}
+.tk b{font-size:18px;font-weight:800;color:var(--ink);letter-spacing:-.02em}
+.tk span{display:block;font-size:11.5px;color:var(--ink2);margin-top:1px}
+.badge-ready{
+  font-size:10.5px;font-weight:700;padding:4px 10px;border-radius:99px;
+  background:var(--c10);color:var(--on10);letter-spacing:.01em;
+  transition:all 180ms ease;
+}
+body.mute10 .badge-ready{background:var(--s30);color:var(--on30)}
+
+.payoff{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.pay-box{padding:9px 11px;border-radius:9px;background:var(--raise)}
+.pay-box small{display:block;font-size:10.5px;color:var(--ink2);font-weight:500}
+.pay-box b{display:block;font-family:"Geist Mono",monospace;font-size:19px;font-weight:600;letter-spacing:-.03em;margin-top:2px}
+.pay-box.win-box b{color:var(--up)}
+.pay-box.loss-box b{color:var(--down)}
+
+/* Price rail */
+.rail{position:relative;padding:24px 4px 22px;margin-top:2px}
+.track{height:6px;border-radius:9px;background:var(--raise);position:relative}
+.zone-loss{position:absolute;left:6%;width:29%;top:0;bottom:0;border-radius:9px 0 0 9px;background:color-mix(in srgb,var(--down) 32%,transparent)}
+.zone-win{position:absolute;left:35%;width:59%;top:0;bottom:0;border-radius:0 9px 9px 0;background:color-mix(in srgb,var(--up) 28%,transparent)}
+.mk{position:absolute;top:50%;transform:translate(-50%,-50%)}
+.mk i{display:block;width:10px;height:10px;border-radius:50%;background:var(--card);border:2.5px solid var(--mc)}
+.mk em{position:absolute;top:-17px;left:50%;transform:translateX(-50%);font-style:normal;font-size:8.5px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--ink3);white-space:nowrap}
+.mk b{position:absolute;top:13px;left:50%;transform:translateX(-50%);font-family:"Geist Mono",monospace;font-size:9.5px;font-weight:500;color:var(--ink2);white-space:nowrap}
+
+.now{position:absolute;top:-14px;transform:translateX(-50%);text-align:center;z-index:2}
+.now span{
+  display:inline-block;font-family:"Geist Mono",monospace;font-size:10px;font-weight:600;
+  background:var(--c10);color:var(--on10);padding:2px 7px;border-radius:99px;
+  box-shadow:0 3px 10px color-mix(in srgb,var(--c10) 45%,transparent);
+  transition:all 180ms ease;
+}
+.now i{display:block;width:2px;height:12px;background:var(--c10);margin:0 auto;transition:background 180ms ease}
+body.mute10 .now span{background:var(--s30);color:var(--on30);box-shadow:none}
+body.mute10 .now i{background:var(--s30)}
+
+.mini-foot{display:flex;justify-content:space-between;align-items:center;font-size:11px;color:var(--ink2);padding-top:2px}
+.mini-foot b{font-family:"Geist Mono",monospace;color:var(--ink);font-weight:500}
+
+/* 30% Contrasting Dock (Agent + Fire Console) */
+.zone30{
+  background:var(--s30);color:var(--on30);
+  border-left:1px solid var(--s30edge);
+  padding:14px;display:flex;flex-direction:column;justify-content:space-between;gap:11px;
+}
+.agent-hd{display:flex;justify-content:space-between;align-items:center;font-size:11px;font-weight:700;letter-spacing:.02em}
+.agent-hd span{display:inline-flex;align-items:center;gap:6px}
+.agent-hd span i{width:7px;height:7px;border-radius:50%;background:var(--c10);transition:background 180ms ease}
+body.mute10 .agent-hd span i{background:var(--on30)}
+.agent-tag{font-family:"Geist Mono",monospace;font-size:9.5px;font-weight:500;color:var(--on30muted);background:var(--s30b);padding:2px 7px;border-radius:6px;border:1px solid var(--s30edge)}
+
+.bubble{
+  background:var(--s30b);border:1px solid var(--s30edge);border-radius:10px;
+  padding:9px 10px;font-size:11.5px;line-height:1.48;color:var(--on30);
+}
+.bubble em{font-style:normal;color:var(--c10);font-weight:600;transition:color 180ms ease}
+body.mute10 .bubble em{color:var(--on30)}
+
+.conds{display:flex;flex-direction:column;gap:5px}
+.conds div{display:flex;align-items:center;gap:7px;font-size:11px;color:var(--on30)}
+.conds div i{width:13px;height:13px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-size:8.5px;font-weight:800;background:color-mix(in srgb,var(--up) 24%,transparent);color:#5FF2B0;flex:none}
+.conds div.wait{color:var(--on30muted)}
+.conds div.wait i{background:var(--s30b);border:1px solid var(--s30edge);color:transparent}
+
+/* 10% Loud Hold-to-Place Button */
+.fire{
+  position:relative;overflow:hidden;cursor:pointer;user-select:none;
+  width:100%;border:0;border-radius:11px;padding:12px 12px;font-family:inherit;
+  background:var(--c10);color:var(--on10);text-align:center;
+  box-shadow:0 10px 24px -10px color-mix(in srgb,var(--c10) 75%,transparent);
+  transition:transform 150ms cubic-bezier(.2,.8,.2,1),background 180ms ease,box-shadow 180ms ease;
+}
+.fire:hover{transform:translateY(-1px)}
+.fire:active{transform:scale(.985)}
+.fire .fill{
+  position:absolute;inset:0;width:0%;
+  background:rgba(255,255,255,.28);
+  transition:width 200ms cubic-bezier(.2,.8,.2,1);pointer-events:none;
+}
+.fire.holding .fill{width:100%;transition:width 1200ms linear}
+.fire .t{position:relative;font-size:13px;font-weight:800;letter-spacing:-.01em}
+.fire .s{position:relative;font-size:10.5px;font-weight:600;opacity:.8;margin-top:2px;font-family:"Geist Mono",monospace}
+body.mute10 .fire{background:var(--on30);color:var(--s30);box-shadow:none}
+
+.inspo{font-size:12px;line-height:1.55;color:#989EB3;padding:0 2px}
+</style>
+</head>
+<body>
+<div class="page">
+  <div class="top">
+    <div>
+      <h1>Racing cobalt + sunburst, six new bases</h1>
+      <p class="lede">The <b>30% cobalt dock</b> and <b>10% sunburst yellow</b> stay the same in every panel. Only the <b>60% base</b> changes, replacing jet carbon: three light bases (A to C) and three dark ones (D to F). Use the toggle to hide the yellow and compare how each base holds up.</p>
+    </div>
+    <div class="controls">
+      <button class="toggle-10" id="toggle10" type="button">
+        <span class="dot"></span>
+        <span id="toggleLabel">Test the video effect: Hide 10% loud colour</span>
+      </button>
+    </div>
+  </div>
+
+  <div class="grid" id="grid"></div>
+</div>
+
+<script>
+const grid = document.getElementById('grid');
+
+ORBIT_PALETTES.forEach(p => {
+  const card = document.createElement('div');
+  card.className = 'pal';
+  applyPalette(card, p);
+
+  card.innerHTML = `
+    <div class="pal-hd">
+      <b>${p.name}</b>
+      <span>${p.tag}</span>
+    </div>
+    <div class="swatches">
+      <div class="sw-60"><span>60% · ${p.n60}</span><span>${p.c60}</span></div>
+      <div class="sw-30"><span>30% · ${p.n30}</span><span>${p.s30}</span></div>
+      <div class="sw-10"><span>10%</span></div>
+    </div>
+    <div class="win">
+      <div class="topbar">
+        <div class="brand"><i></i>Orbit</div>
+        <div class="tabs"><a>Ideas</a><a class="on">Plans</a><a>Live</a><a>Review</a></div>
+        <div class="status">
+          <div class="wallet">Risk <div class="bar"><i></i></div><b>$310/$900</b></div>
+          <div class="gw"><i></i>IBKR</div>
+        </div>
+      </div>
+      <div class="split">
+        <div class="zone60">
+          <div class="seg-row">
+            <div class="seg"><span class="on">Intraday</span><span>Swing</span><span>Options</span></div>
+            <span class="rr-pill">2.5 : 1 reward / risk</span>
+          </div>
+          <div class="pcard">
+            <div class="tk-row">
+              <div class="tk"><b>IREN · $18.62</b><span>Earnings gap +15.2% · Regular hours breakout</span></div>
+              <span class="badge-ready">Ready</span>
+            </div>
+            <div class="payoff">
+              <div class="pay-box win-box"><small>Target 2 upside</small><b>+$1,250</b></div>
+              <div class="pay-box loss-box"><small>Capped stop loss</small><b>−$500</b></div>
+            </div>
+            <div class="rail">
+              <div class="track">
+                <div class="zone-loss"></div>
+                <div class="zone-win"></div>
+                <div class="now" style="left:29%"><span>18.62</span><i></i></div>
+                <div class="mk" style="left:6%;--mc:var(--down)"><i></i><em>Stop</em><b>18.05</b></div>
+                <div class="mk" style="left:35%;--mc:var(--c30)"><i></i><em>Entry</em><b>18.85</b></div>
+                <div class="mk" style="left:66%;--mc:var(--up)"><i></i><em>T1</em><b>19.65</b></div>
+                <div class="mk" style="left:94%;--mc:var(--up)"><i></i><em>T2</em><b>20.45</b></div>
+              </div>
+            </div>
+            <div class="mini-foot">
+              <span>Position: <b>625 shares</b> ($11,781)</span>
+              <span>Auto-exit: <b>3:55 PM ET</b></span>
+            </div>
+          </div>
+        </div>
+
+        <div class="zone30">
+          <div class="agent-hd">
+            <span><i></i>Orbit Agent</span>
+            <em class="agent-tag" style="font-style:normal">UI Bridge · Safe</em>
+          </div>
+          <div class="bubble">
+            Sized <b>625 shares</b> so a drop to $18.05 risks exactly <em>$500</em>. Watching $18.85 opening high to unlock entry.
+          </div>
+          <div class="conds">
+            <div><i>✓</i>Premarket high holds ($18.40)</div>
+            <div><i>✓</i>Above opening VWAP</div>
+            <div class="wait"><i></i>Break $18.85 on tight spread</div>
+          </div>
+          <button class="fire" type="button">
+            <div class="fill"></div>
+            <div class="t">Hold 1.2s to place trade</div>
+            <div class="s">625 sh · Bracket + 3:55p exit</div>
+          </button>
+        </div>
+      </div>
+    </div>
+    <p class="inspo">${p.inspo}</p>
+  `;
+
+  const btn = card.querySelector('.fire');
+  const title = btn.querySelector('.t');
+  let timer = null;
+  const start = () => {
+    if (btn.dataset.placed === '1') {
+      btn.dataset.placed = '0';
+      title.textContent = 'Hold 1.2s to place trade';
+      return;
+    }
+    btn.classList.add('holding');
+    timer = setTimeout(() => {
+      btn.classList.remove('holding');
+      btn.dataset.placed = '1';
+      title.textContent = '✓ Order package live (click to reset)';
+    }, 1200);
+  };
+  const cancel = () => {
+    if (timer) { clearTimeout(timer); timer = null; }
+    btn.classList.remove('holding');
+  };
+  btn.addEventListener('mousedown', start);
+  btn.addEventListener('touchstart', start, {passive:true});
+  ['mouseup','mouseleave','touchend','touchcancel'].forEach(ev => btn.addEventListener(ev, cancel));
+
+  grid.appendChild(card);
+});
+
+const tBtn = document.getElementById('toggle10');
+const tLbl = document.getElementById('toggleLabel');
+tBtn.addEventListener('click', () => {
+  const muted = document.body.classList.toggle('mute10');
+  tLbl.textContent = muted
+    ? 'Now turn the 10% loud colour back ON'
+    : 'Test the video effect: Hide 10% loud colour';
+});
+</script>
+</body>
+</html>

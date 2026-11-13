@@ -19,6 +19,8 @@ class RSItem(BaseModel):
 
 
 class RSLeadersResponse(BaseModel):
+    coverage: Literal["top_30_only"] = "top_30_only"
+    coverage_limit: int = 30
     status: Literal["available", "stale", "unavailable", "verifying"]
     source_revision: str | None = None
     source_published_at: datetime | None = None
@@ -56,6 +58,7 @@ class RSRatingItem(BaseModel):
 
 
 class RSRatingsResponse(BaseModel):
+    coverage: Literal["top_30_only"] = "top_30_only"
     status: Literal["available", "stale", "unavailable"]
     source_revision: str | None = None
     source_published_at: datetime | None = None

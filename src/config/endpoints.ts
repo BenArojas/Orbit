@@ -9,7 +9,7 @@
  * dynamic port assignment), this is the only file to touch.
  */
 
-const SIDECAR_HOST = "localhost";
+const SIDECAR_HOST = "127.0.0.1";
 const SIDECAR_PORT = 8000;
 
 /** HTTP base URL for the Python FastAPI sidecar */

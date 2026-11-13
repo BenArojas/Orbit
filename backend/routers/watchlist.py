@@ -19,11 +19,12 @@ Phase 8.9 / Commit C split:
 
 import asyncio
 import logging
+import sqlite3
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from constants import DEFAULT_QUOTE_FIELDS_STR
-from deps import get_ibkr, get_instrument_identity
+from deps import get_product_data as get_ibkr, get_instrument_identity, get_db
 from exceptions import IBKRAuthError, IBKRConnectionError, IBKRRateLimitError, IBKRRequestError
 from models import WatchlistAddRequest, WatchlistCreateRequest
 from services.ibkr import IBKRService, _safe_float
@@ -32,6 +33,53 @@ from services.instrument_identity import InstrumentIdentityService
 log = logging.getLogger("parallax.routers.watchlist")
 
 router = APIRouter(prefix="/watchlist", tags=["watchlist"])
+
+
+@router.get("/import-status")
+async def import_status(db=Depends(get_db)):
+    return {
+        "imported": await db.get_setting("orbit.watchlists.imported") is not None,
+        "local_list_count": len(await db.local_watchlists()),
+    }
+
+
+@router.post("/import-client-portal")
+async def import_client_portal_watchlists(request: Request, db=Depends(get_db)):
+    """Read CP once; commit only after every list was fetched and validated."""
+    if await db.get_setting("orbit.watchlists.imported") is not None:
+        return {"imported": False, "reason": "already_imported"}
+    source = request.app.state.ibkr
+    lists = await source.get_watchlists()
+    if not lists:
+        raise HTTPException(422, "Client Portal returned no watchlists; import was not marked complete")
+    snapshot = []
+    for item in lists:
+        if not item.get("id") or not isinstance(item.get("name"), str) or not item["name"].strip():
+            raise HTTPException(422, "Client Portal returned an invalid watchlist")
+        raw = await source.get_watchlist_raw(str(item["id"]))
+        content = raw.get("data", raw) if isinstance(raw, dict) else None
+        if not isinstance(content, dict) or "instruments" not in content:
+            raise HTTPException(422, "Client Portal did not confirm the watchlist contents")
+        rows = content["instruments"]
+        if not isinstance(rows, list) or any(not isinstance(row, dict) for row in rows):
+            raise HTTPException(422, "Client Portal returned invalid watchlist rows")
+        for row in rows:
+            value = row.get("conid") or row.get("C")
+            if value is not None:
+                try:
+                    valid = int(value) > 0
+                except (TypeError, ValueError):
+                    valid = False
+                if not valid:
+                    raise HTTPException(422, "Client Portal returned an invalid contract ID")
+            elif not any(key in row for key in ("H", "header", "name")):
+                raise HTTPException(422, "Client Portal returned an unsupported watchlist row")
+        snapshot.append({"id": str(item["id"]), "name": item["name"], "rows": rows})
+    try:
+        imported = await db.import_watchlists(snapshot)
+    except sqlite3.IntegrityError as exc:
+        raise HTTPException(409, "Watchlist names or IDs conflict; no lists were imported") from exc
+    return {"imported": imported, "list_count": len(snapshot)}
 
 
 # Keep the per-request snapshot batch aligned with IBKR's practical limit.
@@ -281,6 +329,10 @@ async def get_watchlist_quotes(
                 "lastPrice": _safe_float(snap.get("31")),
                 "changePercent": _safe_float(snap.get("83")),
                 "changeAmount": _safe_float(snap.get("82")),
+                "market_data_type": snap.get("market_data_type", "unknown"),
+                "received_at": snap.get("received_at"),
+                "freshness": snap.get("freshness", "unknown"),
+                "entry_data_eligible": snap.get("entry_data_eligible", False),
             })
 
     return {"items": items}

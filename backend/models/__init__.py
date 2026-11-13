@@ -223,6 +223,12 @@ class MoonMarketPosition(BaseModel):
     pnl_percent: Optional[float] = None
     daily_pnl_percent: Optional[float] = None
     currency: str = "USD"
+    account: str | None = None
+    multiplier: str | None = None
+    strike: float | None = None
+    right: str | None = None
+    expiry: str | None = None
+    market_data_freshness: Literal["unknown"] = "unknown"
 
 
 class MoonMarketAllocationItem(BaseModel):
@@ -360,6 +366,10 @@ class MoonMarketOptionContract(BaseModel):
     delta: Optional[float] = None
     bid_size: Optional[float] = Field(default=None, alias="bidSize")
     ask_size: Optional[float] = Field(default=None, alias="askSize")
+    greeks: dict[str, float | None] | None = None
+    greeks_status: Literal["available", "unavailable"] = "unavailable"
+    market_data_type: str = "unknown"
+    freshness: str = "unknown"
 
     model_config = ConfigDict(populate_by_name=True)
 
@@ -678,7 +688,7 @@ class RuleEvaluationResponse(BaseModel):
     invalidation_failure_message: Optional[str] = None
     checked_at: str
     evidence_at: Optional[str] = None
-    evidence_session_policy: Optional[Literal["us_equity_extended"]] = None
+    evidence_session_policy: Optional[Literal["us_equity_extended", "us_equity_rth"]] = None
     condition_values: list[TriggerConditionValue]
     failure_code: Optional[str] = None
     failure_message: Optional[str] = None

@@ -55,7 +55,7 @@ from services.ibkr import IBKRService
 from services.indicators import IndicatorService
 from services.moonmarket import MoonMarketService
 from services.rs_leaders import _is_verified_us_stock
-from services.setup_evidence import US_EXTENDED, evidence_is_current
+from services.setup_evidence import US_EXTENDED, US_RTH, evidence_is_current
 
 log = logging.getLogger("parallax.scanner")
 
@@ -345,10 +345,11 @@ class ScannerService:
                 for definition in definitions
             )
             if verified_us:
-                evidence_session_policy = US_EXTENDED
+                evidence_session_policy = US_RTH if getattr(self.ibkr, "regular_hours_only", False) is True else US_EXTENDED
             checked_at = datetime.now(timezone.utc).isoformat()
             current = verified_us and evidence_is_current(
-                evidence_at, rule["timeframe"], datetime.fromisoformat(checked_at)
+                evidence_at, rule["timeframe"], datetime.fromisoformat(checked_at),
+                outside_rth=evidence_session_policy != US_RTH,
             )
             if not current:
                 outcome = "unavailable"
@@ -440,7 +441,8 @@ class ScannerService:
 
         checked_at = datetime.now(timezone.utc).isoformat()
         if (outcome in {"matched", "not_matched"} or invalidation_outcome in {"matched", "not_matched"}) and not evidence_is_current(
-            evidence_at, rule["timeframe"], datetime.fromisoformat(checked_at)
+            evidence_at, rule["timeframe"], datetime.fromisoformat(checked_at),
+            outside_rth=evidence_session_policy != US_RTH,
         ):
             outcome = "unavailable"
             failure_code = "stale_evidence"
@@ -687,7 +689,10 @@ class ScannerService:
         """
         spec = TIMEFRAME_SPEC[timeframe]
         history = self.ibkr.history_fresh if fresh else self.ibkr.history
-        raw = await history(conid, period=spec.period, bar=spec.bar, outside_rth=True)
+        raw = await history(
+            conid, period=spec.period, bar=spec.bar,
+            outside_rth=getattr(self.ibkr, "regular_hours_only", False) is not True,
+        )
         bars = raw.get("data", [])
         return [
             CandleData(

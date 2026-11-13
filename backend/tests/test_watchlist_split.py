@@ -116,6 +116,8 @@ def test_quotes_fills_nulls_for_missing_conids():
     assert len(items) == 2
     assert items[1] == {
         "conid": 999999, "lastPrice": None, "changePercent": None, "changeAmount": None,
+        "market_data_type": "unknown", "received_at": None,
+        "freshness": "unknown", "entry_data_eligible": False,
     }
 
 

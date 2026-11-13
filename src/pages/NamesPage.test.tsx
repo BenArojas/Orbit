@@ -153,7 +153,7 @@ describe("NamesPage", () => {
     const namesTable = screen.getByRole("button", { name: "Open UNRATED in Analysis" }).closest("table");
     const headerCount = namesTable?.querySelectorAll("thead th").length;
     fireEvent.click(screen.getByRole("button", { name: "RS rating details" }));
-    const ratingExplanation = screen.getByText(/verified listing is absent from Fred’s published dataset/);
+    const ratingExplanation = screen.getByText(/outside Orbit’s current top-30 RS coverage/);
     expect(ratingExplanation).toBeInTheDocument();
     expect(screen.getByText(/Prices and existing charts may still be available/)).toBeInTheDocument();
     expect(ratingExplanation.closest("td")).toHaveAttribute("colspan", String(headerCount));
@@ -234,7 +234,7 @@ describe("NamesPage", () => {
     expect(await screen.findByLabelText("Fred published RS percentile: 0")).toBeInTheDocument();
     expect(screen.getByText("RS rating unavailable")).toBeInTheDocument();
     fireEvent.click(screen.getByLabelText("RS rating details"));
-    expect(screen.getByText(/absent from Fred’s published dataset/)).toBeInTheDocument();
+    expect(screen.getByText(/outside Orbit’s current top-30 RS coverage/)).toBeInTheDocument();
     expect(screen.getByText(/Fred publication is stale.*published/)).toBeInTheDocument();
     expect(screen.getByText("LOW")).toBeInTheDocument();
     expect(screen.getByText("MISSING")).toBeInTheDocument();

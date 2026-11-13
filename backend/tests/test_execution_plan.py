@@ -14,7 +14,7 @@ from fastapi.testclient import TestClient
 
 from deps import get_execution_plan_service, get_tws_adapter, get_tws_live_policy
 from models.execution_plan import ExecutionPlan
-from models.tws_execution_assistant import PaperOrderSubmission, TwsModifyOrderRequest, TwsOrderActionResult
+from models.tws_execution_assistant import PaperOrderSubmission, QuoteSnapshot, TwsModifyOrderRequest, TwsOrderActionResult
 from routers.execution_assistant import router as ea_router
 from services.execution_plan import ExecutionPlanService
 from services.tws_broker_adapter import TwsAdvancedReject, TwsAdvancedRejectError, TwsPlaceOrderGuardError
@@ -51,6 +51,16 @@ class _AdapterStub:
 
     def is_kill_switch_active(self) -> bool:
         return self._kill_switch
+
+    def assert_paper_identity(self) -> str:
+        if not self._connected:
+            raise TwsPlaceOrderGuardError("not_connected")
+        if not self._paper_port:
+            raise TwsPlaceOrderGuardError("not_paper_port")
+        return "DU12345"
+
+    async def get_quote(self, conid: int) -> QuoteSnapshot:
+        return QuoteSnapshot(bid=180, ask=181, market_data_type="live", received_at=datetime.now(timezone.utc))
 
     async def place_paper_order(self, plan: ExecutionPlan, advanced_override: list[str] | None = None) -> PaperOrderSubmission:
         self.place_paper_order_calls += 1
@@ -106,7 +116,7 @@ class _AdapterStub:
         )
 
     def connected_account_id(self) -> str | None:
-        return "U12345" if self._connected else None
+        return ("DU12345" if self._paper_port else "U12345") if self._connected else None
 
     def connected_host(self) -> str:
         return "127.0.0.1"

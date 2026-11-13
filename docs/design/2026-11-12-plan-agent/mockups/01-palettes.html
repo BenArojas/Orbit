@@ -1,0 +1,259 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Orbit — 60/30/10 palettes</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@300..700&family=Geist+Mono:wght@400;500&display=block" rel="stylesheet">
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+html{-webkit-font-smoothing:antialiased}
+body{background:#141519;color:#aeb2ba;font-family:Geist,system-ui,sans-serif;padding:38px 26px 70px}
+.page{max-width:1620px;margin:0 auto}
+h1{font-size:19px;color:#f2f3f6;font-weight:600;letter-spacing:-.01em}
+.lede{font-size:13.5px;line-height:1.65;margin-top:8px;max-width:960px;color:#8b8f99}
+.lede b{color:#d8dae0;font-weight:500}
+.rule{height:1px;background:#272931;margin:24px 0 28px}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:22px}
+
+/* ─── palette card frame ─── */
+.pal{border-radius:16px;overflow:hidden;border:1px solid #272931}
+.pal-top{padding:14px 18px;background:#1c1e24;border-bottom:1px solid #272931;display:flex;justify-content:space-between;align-items:baseline;gap:10px}
+.pal-top b{color:#f2f3f6;font-size:14.5px;font-weight:600}
+.pal-top span{color:#7e828c;font-size:11.5px}
+.pal-in{padding:20px 20px 24px}
+
+/* ─── 60/30/10 ratio bar ─── */
+.ratio{display:flex;height:34px;border-radius:7px;overflow:hidden;margin-bottom:9px}
+.ratio div{display:grid;place-items:center;font-family:"Geist Mono",monospace;font-size:10px;letter-spacing:.04em}
+.roles{display:flex;gap:7px;flex-wrap:wrap;margin-bottom:18px}
+.role{font-family:"Geist Mono",monospace;font-size:9.5px;letter-spacing:-.01em;padding:3px 7px;border-radius:4px;border:1px solid #2d2f38;color:#878b95}
+.role i{display:inline-block;width:7px;height:7px;border-radius:2px;margin-right:5px;vertical-align:-1px}
+
+/* ─── live demo: scoped to each palette's vars ─── */
+.demo{border-radius:13px;padding:17px;background:var(--c60b);border:1px solid var(--edge)}
+.demo-hd{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px}
+.tkr{display:flex;align-items:baseline;gap:8px}
+.tkr b{font-size:16px;font-weight:600;color:var(--ink);letter-spacing:-.01em}
+.tkr em{font-style:normal;font-size:11.5px;color:var(--ink2)}
+.pill{font-size:10.5px;font-weight:600;padding:3px 9px;border-radius:999px;background:var(--c10-wash);color:var(--c10);letter-spacing:.01em}
+.money{display:flex;align-items:baseline;gap:9px}
+.money .big{font-family:"Geist Mono",monospace;font-size:24px;font-weight:500;font-variant-numeric:tabular-nums;letter-spacing:-.035em;color:var(--up)}
+.money .txt{font-size:12.5px;color:var(--ink2)}
+.money .sm{font-family:"Geist Mono",monospace;font-size:14px;font-weight:500;color:var(--down);font-variant-numeric:tabular-nums}
+.hr{height:1px;background:var(--edge);margin:13px 0}
+
+/* rail */
+.rail{position:relative;padding:22px 2px 26px}
+.track{height:5px;border-radius:999px;background:var(--c60c);position:relative;overflow:visible}
+.track .fillL{position:absolute;left:0;top:0;bottom:0;width:6%;background:var(--down);opacity:.5;border-radius:999px 0 0 999px}
+.track .fillR{position:absolute;right:0;top:0;bottom:0;width:36%;background:var(--up);opacity:.28;border-radius:0 999px 999px 0}
+.mk{position:absolute;top:50%;transform:translate(-50%,-50%)}
+.mk i{display:block;width:10px;height:10px;border-radius:50%;background:var(--c60b);box-shadow:0 0 0 2.5px var(--mkc)}
+.mk b{position:absolute;top:13px;left:50%;transform:translateX(-50%);font-family:"Geist Mono",monospace;font-size:10px;font-weight:500;color:var(--ink2);white-space:nowrap}
+.mk em{position:absolute;top:-19px;left:50%;transform:translateX(-50%);font-style:normal;font-size:9px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;color:var(--ink3);white-space:nowrap}
+.now{position:absolute;top:-12px;transform:translateX(-50%);text-align:center}
+.now span{display:inline-block;font-family:"Geist Mono",monospace;font-size:10.5px;font-weight:500;color:var(--c10-on);background:var(--c10);border-radius:999px;padding:2px 8px;white-space:nowrap}
+.now i{display:block;width:2px;height:11px;background:var(--c10);margin:1px auto 0;border-radius:2px}
+
+/* spark */
+.spark{display:flex;align-items:flex-end;gap:12px;margin-top:4px}
+.spark svg{display:block}
+.spark .meta{font-size:10.5px;color:var(--ink3);line-height:1.5}
+.spark .meta b{display:block;font-family:"Geist Mono",monospace;font-size:13px;font-weight:500;color:var(--ink);font-variant-numeric:tabular-nums}
+
+/* fire */
+.fire{width:100%;margin-top:15px;border:0;border-radius:12px;padding:15px;font-family:inherit;cursor:pointer;background:var(--c10);color:var(--c10-on);box-shadow:0 10px 26px -12px var(--c10-glow)}
+.fire .t{font-size:14.5px;font-weight:650;letter-spacing:-.005em}
+.fire .s{font-size:11.5px;margin-top:3px;opacity:.78;font-weight:500}
+.sec-row{display:flex;gap:8px;margin-top:9px}
+.sec-row button{flex:1;font-family:inherit;font-size:12px;font-weight:500;padding:8px;border-radius:9px;background:var(--c60c);color:var(--ink2);border:1px solid var(--edge);cursor:pointer}
+.verdict{font-size:11.5px;line-height:1.6;margin-top:15px;color:#8b8f99}
+.verdict b{color:#d8dae0;font-weight:500}
+
+/* ══════ P1 Royal Sunglow ══════ */
+.p1{--c60:#120F1F;--c60b:#1A1530;--c60c:#241D42;--edge:#2E2651;
+    --c30:#EDEAF6;--ink:#EDEAF6;--ink2:#A49DC4;--ink3:#6F6794;
+    --c10:#FFC233;--c10-on:#1A1200;--c10-wash:rgba(255,194,51,.14);--c10-glow:rgba(255,194,51,.55);
+    --up:#4FE0A0;--down:#FF6B7A}
+/* ══════ P2 Violet Acid ══════ */
+.p2{--c60:#0C0A12;--c60b:#15121E;--c60c:#211B33;--edge:#2E2548;
+    --c30:#8B6DFF;--ink:#ECEAF2;--ink2:#9C93B8;--ink3:#6A6287;
+    --c10:#D4FF3F;--c10-on:#13180A;--c10-wash:rgba(212,255,63,.13);--c10-glow:rgba(212,255,63,.45);
+    --up:#3FE08F;--down:#FF5C72}
+/* ══════ P3 Carbon Citron ══════ */
+.p3{--c60:#0E1014;--c60b:#15181E;--c60c:#1F242D;--edge:#2A313C;
+    --c30:#5E7694;--ink:#E7EBF1;--ink2:#93A0B2;--ink3:#64718
+    4;
+    --c10:#FF8A3D;--c10-on:#1A0C02;--c10-wash:rgba(255,138,61,.13);--c10-glow:rgba(255,138,61,.5);
+    --up:#43D98B;--down:#FF5F6E}
+/* ══════ P4 Paper Royal ══════ */
+.p4{--c60:#FAF8F4;--c60b:#FFFFFF;--c60c:#F0EDE6;--edge:#E3DED3;
+    --c30:#3B2BB5;--ink:#16131F;--ink2:#625D70;--ink3:#938E9F;
+    --c10:#FFC233;--c10-on:#231800;--c10-wash:rgba(255,194,51,.22);--c10-glow:rgba(255,194,51,.6);
+    --up:#11804E;--down:#C32F28}
+</style>
+</head>
+<body><div class="page">
+<h1>Colour — the 60 / 30 / 10 question</h1>
+<p class="lede">Four triads, each shown as the same live plan card so they're comparable. The split is <b>60% base surface</b>,
+<b>30% second colour</b> (the one that carries identity — ink mass or structure), <b>10% loud</b> (the fire button, armed state, live price).
+One hard constraint: <b>profit green and loss red are data colours, not brand colours</b> — they only ever appear on money and
+charts, tuned per palette so they sit on the base without fighting the loud accent.</p>
+<div class="rule"></div>
+<div class="grid">
+
+  <!-- P1 -->
+  <div class="pal"><div class="pal-top"><b>1 · Royal Sunglow</b><span>your example, executed</span></div>
+  <div class="pal-in p1" style="background:var(--c60)">
+    <div class="ratio">
+      <div style="flex:60;background:#120F1F;color:#9b94bd">60 · royal black</div>
+      <div style="flex:30;background:#EDEAF6;color:#2a2440">30 · white</div>
+      <div style="flex:10;background:#FFC233;color:#1A1200">10 · gold</div></div>
+    <div class="roles">
+      <span class="role"><i style="background:#120F1F;outline:1px solid #2E2651"></i>#120F1F canvas</span>
+      <span class="role"><i style="background:#1A1530"></i>#1A1530 card</span>
+      <span class="role"><i style="background:#EDEAF6"></i>#EDEAF6 ink</span>
+      <span class="role"><i style="background:#FFC233"></i>#FFC233 loud</span>
+      <span class="role"><i style="background:#4FE0A0"></i>#4FE0A0 profit</span>
+      <span class="role"><i style="background:#FF6B7A"></i>#FF6B7A loss</span></div>
+    <div class="demo">
+      <div class="demo-hd"><div class="tkr"><b>IREN</b><em>Intraday breakout</em></div><span class="pill">Ready</span></div>
+      <div class="money"><span class="big">+$1,250</span><span class="txt">if it hits target 2</span></div>
+      <div class="hr"></div>
+      <div class="money"><span class="sm">−$500</span><span class="txt">if the stop is hit</span></div>
+      <div class="rail"><div class="track"><div class="fillL"></div><div class="fillR"></div>
+        <div class="now" style="left:27%"><span>18.62</span><i></i></div>
+        <div class="mk" style="left:6%;--mkc:var(--down)"><i></i><em>Out</em><b>18.05</b></div>
+        <div class="mk" style="left:35%;--mkc:var(--ink)"><i></i><em>Buy</em><b>18.85</b></div>
+        <div class="mk" style="left:65%;--mkc:var(--up)"><i></i><em>T1</em><b>19.65</b></div>
+        <div class="mk" style="left:94%;--mkc:var(--up)"><i></i><em>T2</em><b>20.45</b></div></div></div>
+      <div class="spark">
+        <svg width="190" height="46" viewBox="0 0 190 46"><defs><linearGradient id="g1" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#4FE0A0" stop-opacity=".35"/><stop offset="1" stop-color="#4FE0A0" stop-opacity="0"/></linearGradient></defs>
+        <path d="M0 38 L18 35 L36 36 L54 29 L72 31 L90 22 L108 25 L126 14 L144 17 L162 9 L180 11 L190 6 L190 46 L0 46Z" fill="url(#g1)"/>
+        <path d="M0 38 L18 35 L36 36 L54 29 L72 31 L90 22 L108 25 L126 14 L144 17 L162 9 L180 11 L190 6" fill="none" stroke="#4FE0A0" stroke-width="1.6" stroke-linejoin="round"/>
+        <circle cx="190" cy="6" r="2.6" fill="#4FE0A0"/></svg>
+        <div class="meta"><b>+15.2%</b>premarket</div></div>
+      <button class="fire"><div class="t">Hold to place this trade</div><div class="s">625 shares · risking $500</div></button>
+      <div class="sec-row"><button>Adjust</button><button>Drop</button></div>
+    </div>
+    <p class="verdict" style="color:#8e86b0"><b>Reads as:</b> premium, a little regal. Gold on near-black violet makes the fire button
+      genuinely feel like a switch you shouldn't flip casually. Risk: can tip toward "crypto casino" if gold is overused.</p>
+  </div></div>
+
+  <!-- P2 -->
+  <div class="pal"><div class="pal-top"><b>2 · Violet Acid</b><span>cockpit energy</span></div>
+  <div class="pal-in p2" style="background:var(--c60)">
+    <div class="ratio">
+      <div style="flex:60;background:#0C0A12;color:#8c84a8">60 · ink violet</div>
+      <div style="flex:30;background:#8B6DFF;color:#0C0A12">30 · violet</div>
+      <div style="flex:10;background:#D4FF3F;color:#13180A">10 · acid</div></div>
+    <div class="roles">
+      <span class="role"><i style="background:#0C0A12;outline:1px solid #2E2548"></i>#0C0A12 canvas</span>
+      <span class="role"><i style="background:#15121E"></i>#15121E card</span>
+      <span class="role"><i style="background:#8B6DFF"></i>#8B6DFF structure</span>
+      <span class="role"><i style="background:#D4FF3F"></i>#D4FF3F loud</span>
+      <span class="role"><i style="background:#3FE08F"></i>#3FE08F profit</span>
+      <span class="role"><i style="background:#FF5C72"></i>#FF5C72 loss</span></div>
+    <div class="demo">
+      <div class="demo-hd"><div class="tkr"><b>IREN</b><em>Intraday breakout</em></div><span class="pill">Ready</span></div>
+      <div class="money"><span class="big">+$1,250</span><span class="txt">if it hits target 2</span></div>
+      <div class="hr"></div>
+      <div class="money"><span class="sm">−$500</span><span class="txt">if the stop is hit</span></div>
+      <div class="rail"><div class="track"><div class="fillL"></div><div class="fillR"></div>
+        <div class="now" style="left:27%"><span>18.62</span><i></i></div>
+        <div class="mk" style="left:6%;--mkc:var(--down)"><i></i><em>Out</em><b>18.05</b></div>
+        <div class="mk" style="left:35%;--mkc:var(--c30)"><i></i><em>Buy</em><b>18.85</b></div>
+        <div class="mk" style="left:65%;--mkc:var(--up)"><i></i><em>T1</em><b>19.65</b></div>
+        <div class="mk" style="left:94%;--mkc:var(--up)"><i></i><em>T2</em><b>20.45</b></div></div></div>
+      <div class="spark">
+        <svg width="190" height="46" viewBox="0 0 190 46"><defs><linearGradient id="g2" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#8B6DFF" stop-opacity=".45"/><stop offset="1" stop-color="#8B6DFF" stop-opacity="0"/></linearGradient></defs>
+        <path d="M0 38 L18 35 L36 36 L54 29 L72 31 L90 22 L108 25 L126 14 L144 17 L162 9 L180 11 L190 6 L190 46 L0 46Z" fill="url(#g2)"/>
+        <path d="M0 38 L18 35 L36 36 L54 29 L72 31 L90 22 L108 25 L126 14 L144 17 L162 9 L180 11 L190 6" fill="none" stroke="#A98DFF" stroke-width="1.6" stroke-linejoin="round"/>
+        <circle cx="190" cy="6" r="2.6" fill="#D4FF3F"/></svg>
+        <div class="meta"><b>+15.2%</b>premarket</div></div>
+      <button class="fire"><div class="t">Hold to place this trade</div><div class="s">625 shares · risking $500</div></button>
+      <div class="sec-row"><button>Adjust</button><button>Drop</button></div>
+    </div>
+    <p class="verdict" style="color:#8d85a6"><b>Reads as:</b> fast, technical, a bit sci-fi. Violet does the structural work (chart lines,
+      active states) so acid stays rare and keeps its punch. Risk: acid yellow-green on violet is loud for an 8-hour session.</p>
+  </div></div>
+
+  <!-- P3 -->
+  <div class="pal"><div class="pal-top"><b>3 · Carbon Ember</b><span>instrument, not toy</span></div>
+  <div class="pal-in p3" style="background:var(--c60)">
+    <div class="ratio">
+      <div style="flex:60;background:#0E1014;color:#8b97a8">60 · carbon</div>
+      <div style="flex:30;background:#5E7694;color:#0E1014">30 · steel</div>
+      <div style="flex:10;background:#FF8A3D;color:#1A0C02">10 · ember</div></div>
+    <div class="roles">
+      <span class="role"><i style="background:#0E1014;outline:1px solid #2A313C"></i>#0E1014 canvas</span>
+      <span class="role"><i style="background:#15181E"></i>#15181E card</span>
+      <span class="role"><i style="background:#5E7694"></i>#5E7694 structure</span>
+      <span class="role"><i style="background:#FF8A3D"></i>#FF8A3D loud</span>
+      <span class="role"><i style="background:#43D98B"></i>#43D98B profit</span>
+      <span class="role"><i style="background:#FF5F6E"></i>#FF5F6E loss</span></div>
+    <div class="demo">
+      <div class="demo-hd"><div class="tkr"><b>IREN</b><em>Intraday breakout</em></div><span class="pill">Ready</span></div>
+      <div class="money"><span class="big">+$1,250</span><span class="txt">if it hits target 2</span></div>
+      <div class="hr"></div>
+      <div class="money"><span class="sm">−$500</span><span class="txt">if the stop is hit</span></div>
+      <div class="rail"><div class="track"><div class="fillL"></div><div class="fillR"></div>
+        <div class="now" style="left:27%"><span>18.62</span><i></i></div>
+        <div class="mk" style="left:6%;--mkc:var(--down)"><i></i><em>Out</em><b>18.05</b></div>
+        <div class="mk" style="left:35%;--mkc:var(--c30)"><i></i><em>Buy</em><b>18.85</b></div>
+        <div class="mk" style="left:65%;--mkc:var(--up)"><i></i><em>T1</em><b>19.65</b></div>
+        <div class="mk" style="left:94%;--mkc:var(--up)"><i></i><em>T2</em><b>20.45</b></div></div></div>
+      <div class="spark">
+        <svg width="190" height="46" viewBox="0 0 190 46"><defs><linearGradient id="g3" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#5E7694" stop-opacity=".5"/><stop offset="1" stop-color="#5E7694" stop-opacity="0"/></linearGradient></defs>
+        <path d="M0 38 L18 35 L36 36 L54 29 L72 31 L90 22 L108 25 L126 14 L144 17 L162 9 L180 11 L190 6 L190 46 L0 46Z" fill="url(#g3)"/>
+        <path d="M0 38 L18 35 L36 36 L54 29 L72 31 L90 22 L108 25 L126 14 L144 17 L162 9 L180 11 L190 6" fill="none" stroke="#8AA3C0" stroke-width="1.6" stroke-linejoin="round"/>
+        <circle cx="190" cy="6" r="2.6" fill="#FF8A3D"/></svg>
+        <div class="meta"><b>+15.2%</b>premarket</div></div>
+      <button class="fire"><div class="t">Hold to place this trade</div><div class="s">625 shares · risking $500</div></button>
+      <div class="sec-row"><button>Adjust</button><button>Drop</button></div>
+    </div>
+    <p class="verdict" style="color:#8d99aa"><b>Reads as:</b> a serious tool — flight deck rather than game. Steel blue carries structure,
+      ember is the only warm thing on screen so the eye snaps to it. Risk: closest of the four to "another dark trading app".</p>
+  </div></div>
+
+  <!-- P4 -->
+  <div class="pal"><div class="pal-top"><b>4 · Paper Royal</b><span>light base, same triad</span></div>
+  <div class="pal-in p4" style="background:var(--c60)">
+    <div class="ratio">
+      <div style="flex:60;background:#FAF8F4;color:#6b6676">60 · paper</div>
+      <div style="flex:30;background:#3B2BB5;color:#fff">30 · royal</div>
+      <div style="flex:10;background:#FFC233;color:#231800">10 · gold</div></div>
+    <div class="roles">
+      <span class="role" style="border-color:#e3ded3;color:#625d70"><i style="background:#FAF8F4;outline:1px solid #E3DED3"></i>#FAF8F4 canvas</span>
+      <span class="role" style="border-color:#e3ded3;color:#625d70"><i style="background:#fff;outline:1px solid #E3DED3"></i>#FFFFFF card</span>
+      <span class="role" style="border-color:#e3ded3;color:#625d70"><i style="background:#3B2BB5"></i>#3B2BB5 royal</span>
+      <span class="role" style="border-color:#e3ded3;color:#625d70"><i style="background:#FFC233"></i>#FFC233 loud</span>
+      <span class="role" style="border-color:#e3ded3;color:#625d70"><i style="background:#11804E"></i>#11804E profit</span>
+      <span class="role" style="border-color:#e3ded3;color:#625d70"><i style="background:#C32F28"></i>#C32F28 loss</span></div>
+    <div class="demo" style="box-shadow:0 1px 2px rgba(22,19,31,.05),0 10px 26px -16px rgba(22,19,31,.2)">
+      <div class="demo-hd"><div class="tkr"><b>IREN</b><em>Intraday breakout</em></div><span class="pill" style="color:#8a5a06">Ready</span></div>
+      <div class="money"><span class="big">+$1,250</span><span class="txt">if it hits target 2</span></div>
+      <div class="hr"></div>
+      <div class="money"><span class="sm">−$500</span><span class="txt">if the stop is hit</span></div>
+      <div class="rail"><div class="track"><div class="fillL"></div><div class="fillR"></div>
+        <div class="now" style="left:27%"><span>18.62</span><i></i></div>
+        <div class="mk" style="left:6%;--mkc:var(--down)"><i></i><em>Out</em><b>18.05</b></div>
+        <div class="mk" style="left:35%;--mkc:var(--c30)"><i></i><em>Buy</em><b>18.85</b></div>
+        <div class="mk" style="left:65%;--mkc:var(--up)"><i></i><em>T1</em><b>19.65</b></div>
+        <div class="mk" style="left:94%;--mkc:var(--up)"><i></i><em>T2</em><b>20.45</b></div></div></div>
+      <div class="spark">
+        <svg width="190" height="46" viewBox="0 0 190 46"><defs><linearGradient id="g4" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#3B2BB5" stop-opacity=".3"/><stop offset="1" stop-color="#3B2BB5" stop-opacity="0"/></linearGradient></defs>
+        <path d="M0 38 L18 35 L36 36 L54 29 L72 31 L90 22 L108 25 L126 14 L144 17 L162 9 L180 11 L190 6 L190 46 L0 46Z" fill="url(#g4)"/>
+        <path d="M0 38 L18 35 L36 36 L54 29 L72 31 L90 22 L108 25 L126 14 L144 17 L162 9 L180 11 L190 6" fill="none" stroke="#3B2BB5" stroke-width="1.6" stroke-linejoin="round"/>
+        <circle cx="190" cy="6" r="2.6" fill="#3B2BB5"/></svg>
+        <div class="meta"><b>+15.2%</b>premarket</div></div>
+      <button class="fire"><div class="t">Hold to place this trade</div><div class="s">625 shares · risking $500</div></button>
+      <div class="sec-row"><button>Adjust</button><button>Drop</button></div>
+    </div>
+    <p class="verdict"><b>Reads as:</b> calm and trustworthy, like a statement from your bank. Gold still works as the loud note on paper.
+      Risk: a light app during market hours is fatiguing for some, and charts need a second dark theme anyway.</p>
+  </div></div>
+
+</div></div></body></html>

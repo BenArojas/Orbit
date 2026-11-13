@@ -14,7 +14,7 @@ import logging
 from fastapi import APIRouter, Depends
 
 from constants.ibkr_history import TIMEFRAME_SPEC, IBKR_BAR_LIMIT, clamp_period_to_bar
-from deps import get_db, get_ibkr
+from deps import get_db, get_product_data as get_ibkr
 from exceptions import IBKRBarLimitExceededError
 from models import (
     CandleData,

@@ -15,7 +15,7 @@
  */
 
 import { create } from "zustand";
-import { API_BASE } from "@/config/endpoints";
+import { sidecarRequest } from "@/lib/sidecarClient";
 
 export type ThemeMode = "dark" | "light";
 
@@ -87,21 +87,18 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
 
   loadSettings: async () => {
     try {
-      const response = await fetch(`${API_BASE}/settings`);
-      if (response.ok) {
-        const settings = (await response.json()) as Record<string, string>;
-        const rawTheme = settings["theme_mode"] ?? "dark";
-        const themeMode: ThemeMode = rawTheme === "light" ? "light" : "dark";
+      const settings = await sidecarRequest<Record<string, string>>("GET", "/settings");
+      const rawTheme = settings["theme_mode"] ?? "dark";
+      const themeMode: ThemeMode = rawTheme === "light" ? "light" : "dark";
 
-        set({
-          scanInterval: Number(settings["scan_interval"] ?? 300),
-          defaultTimeframe: settings["default_timeframe"] ?? "1D",
-          defaultPeriod: settings["default_period"] ?? "3M",
-          notificationsEnabled: (settings["notifications_enabled"] ?? "true") === "true",
-          themeMode,
-          isLoaded: true,
-        });
-      }
+      set({
+        scanInterval: Number(settings["scan_interval"] ?? 300),
+        defaultTimeframe: settings["default_timeframe"] ?? "1D",
+        defaultPeriod: settings["default_period"] ?? "3M",
+        notificationsEnabled: (settings["notifications_enabled"] ?? "true") === "true",
+        themeMode,
+        isLoaded: true,
+      });
     } catch {
       // Backend not ready yet — use defaults
       console.warn("Settings: backend not available, using defaults");
@@ -111,13 +108,9 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
 
   persistSetting: async (key, value) => {
     try {
-      await fetch(`${API_BASE}/settings/${encodeURIComponent(key)}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ value }),
-      });
+      await sidecarRequest("PUT", `/settings/${encodeURIComponent(key)}`, { value });
     } catch {
-      console.warn(`Settings: failed to persist ${key}=${value}`);
+      console.warn("Settings: failed to persist a setting");
     }
   },
 }));

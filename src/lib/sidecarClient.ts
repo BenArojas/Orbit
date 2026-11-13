@@ -11,6 +11,8 @@
 
 
 import { API_BASE } from "@/config/endpoints";
+import { isTauri } from "@tauri-apps/api/core";
+import { sessionHeaders } from "./sidecarSession";
 import { ensureOnline, NetworkOfflineError, showOfflineToast } from "./network";
 
 // ── API Error ───────────────────────────────────────────────
@@ -46,13 +48,14 @@ export async function sidecarRequest<T>(
   ensureOnline();
 
   const url = `${API_BASE}${path}`;
+  const authenticated = isTauri() ? await sessionHeaders() : {};
   const options: RequestInit = {
     method,
     // Only attach Content-Type for requests that carry a body.
     // Body-less GETs with Content-Type trigger an OPTIONS preflight on every
     // poll cycle (e.g. /gateway/status, /orbit/session/mode), which floods
     // the backend console with 400 noise.
-    headers: body !== undefined ? { "Content-Type": "application/json" } : {},
+    headers: body !== undefined ? { ...authenticated, "Content-Type": "application/json" } : authenticated,
     signal,
   };
   if (body !== undefined) {

@@ -21,7 +21,7 @@ from typing import Any, Optional
 from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel, Field
 
-from deps import get_db, get_ibkr
+from deps import get_db, get_product_data as get_ibkr
 from exceptions import IBKRError
 from services.db import DatabaseService
 from services.ibkr import IBKRService

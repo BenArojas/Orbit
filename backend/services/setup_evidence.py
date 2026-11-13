@@ -7,6 +7,7 @@ from constants.ibkr_history import VALID_TIMEFRAMES
 
 EASTERN = ZoneInfo("America/New_York")
 US_EXTENDED = "us_equity_extended"
+US_RTH = "us_equity_rth"
 INTRADAY_SECONDS = {"1m": 60, "5m": 300, "15m": 900, "30m": 1800, "1h": 3600, "4h": 14400}
 
 

@@ -66,6 +66,14 @@ class PositionSnapshot(BaseModel):
     unrealized_pnl: float | None = None
     realized_pnl: float | None = None
     daily_pnl: float | None = None
+    account: str | None = None
+    currency: str | None = None
+    sec_type: str | None = None
+    multiplier: str | None = None
+    strike: float | None = None
+    right: str | None = None
+    expiry: str | None = None
+    market_data_freshness: Literal["unknown"] = "unknown"
 
 
 class OrderSnapshot(BaseModel):
@@ -177,6 +185,14 @@ class QuoteSnapshot(BaseModel):
     is_delayed: bool = False
     unavailable_reason: str | None = None
     error_code: int | None = None
+    received_at: datetime | None = None
+    age_seconds: float | None = None
+    freshness: Literal["fresh", "stale", "unknown"] = "unknown"
+    entry_data_eligible: bool = False
+    bid_size: float | None = None
+    ask_size: float | None = None
+    volume: float | None = None
+    greeks: dict[str, float | None] | None = None
 
 
 class BarSnapshot(BaseModel):
@@ -237,6 +253,10 @@ class TwsQuoteStreamEvent(BaseModel):
     volume: float | None = None
     entitlement: MarketDataType = "unknown"
     unavailable_reason: str | None = None
+    received_at: datetime | None = None
+    age_seconds: float | None = None
+    freshness: Literal["fresh", "stale", "unknown"] = "unknown"
+    entry_data_eligible: bool = False
 
 
 class TwsStreamErrorEvent(BaseModel):

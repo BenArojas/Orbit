@@ -26,13 +26,16 @@ class BrokerSessionService:
     fully derived from adapter/auth state.
     """
 
-    def __init__(self, ibkr: IBKRService, tws_adapter: TwsBrokerAdapter) -> None:
+    def __init__(self, ibkr: IBKRService, tws_adapter: TwsBrokerAdapter, *, product_data_enabled: bool = False) -> None:
         self._ibkr = ibkr
         self._tws_adapter = tws_adapter
+        self._product_data_enabled = product_data_enabled
 
     def current_mode(self) -> BrokerSessionMode:
         if self._tws_adapter.is_connected():
             return "tws"
+        if self._product_data_enabled:
+            return "none"
         return "client_portal" if self._ibkr.state.authenticated else "none"
 
     def set_mode(self, target: BrokerSessionSwitchTarget) -> None:  # noqa: ARG002
@@ -44,6 +47,8 @@ class BrokerSessionService:
         if mode == "client_portal":
             return list(_CP_MODULES)
         if mode == "tws":
+            if self._product_data_enabled:
+                return [*_CP_MODULES, *_TWS_MODULES]
             return list(_TWS_MODULES)
         # none: no modules. Connecting happens from the top-bar status pill
         # (GatewayStatusPill), not from inside a gated module — so the tiles

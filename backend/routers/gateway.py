@@ -10,7 +10,7 @@ These endpoints let the frontend:
 
 import logging
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 
 from deps import get_gateway, get_ibkr
 from exceptions import IBKRConnectionError, IBKRRequestError
@@ -48,6 +48,7 @@ def _enrich_status(status: dict) -> dict:
 
 @router.get("/status")
 async def gateway_status(
+    request: Request,
     gw: GatewayLifecycle = Depends(get_gateway),
     ibkr: IBKRService = Depends(get_ibkr),
 ) -> dict:
@@ -64,6 +65,8 @@ async def gateway_status(
     and, on first successful auth, starts the session keep-alive tickle loop.
     """
     status = gw.status()
+    if hasattr(request.app.state, "product_data"):
+        return request.app.state.product_data.connection_status(status)
 
     authenticated = False
     auth_message = "Gateway not running."

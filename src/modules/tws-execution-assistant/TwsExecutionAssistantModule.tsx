@@ -1239,7 +1239,8 @@ export function TwsExecutionAssistantModule() {
                   type="number"
                   className="h-8 w-20 rounded border border-border bg-[var(--bg-0)] px-2.5 font-data text-[12px] outline-none transition-colors focus:border-[var(--clr-cyan)]"
                   value={form.client_id}
-                  onChange={(e) => setForm((f) => ({ ...f, client_id: Number(e.target.value) }))}
+                  readOnly
+                  title="Orbit owns the fixed client ID"
                 />
               </label>
               <button

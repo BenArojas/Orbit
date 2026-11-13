@@ -74,7 +74,7 @@ def _positive_close(value: Any) -> float | None:
 
 def _posture(index_trends: tuple[str, ...], above_count: int) -> str:
     if all(trend == "constructive" for trend in index_trends) and above_count >= 8:
-        return "broad"
+        return "healthy"
     if sum(trend == "weak" for trend in index_trends) >= 2 and above_count <= 3:
         return "defensive"
     return "selective"

@@ -1,0 +1,198 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Orbit — Concrete + Warm Graphite theme pair</title>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@400..800&family=Geist+Mono:wght@400;500;600&display=block" rel="stylesheet">
+<link rel="stylesheet" href="theme.css">
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+html{-webkit-font-smoothing:antialiased}
+body{background:#0B0C10;color:#A2A6B8;font-family:"Schibsted Grotesk",system-ui,sans-serif;padding:32px 28px 60px}
+.page{max-width:1680px;margin:0 auto}
+h1{font-size:22px;color:#F5F6FA;font-weight:700;letter-spacing:-.025em}
+.lede{font-size:13.5px;line-height:1.6;margin-top:8px;max-width:980px}
+.lede b{color:#ECEEF5;font-weight:600}
+.mono{font-family:"Geist Mono",monospace;font-variant-numeric:tabular-nums}
+.pair{display:grid;grid-template-columns:1fr 1fr;gap:22px;margin-top:24px}
+.side{border-radius:18px;background:var(--c60);border:1px solid var(--edge);padding:16px;color:var(--ink2);
+  transition:background 200ms cubic-bezier(.2,.8,.2,1)}
+.side-hd{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:12px}
+.side-hd b{font-size:15px;color:var(--ink);font-weight:700}
+.side-hd span{font-size:11px;color:var(--ink3)}
+.win{border-radius:14px;overflow:hidden;background:var(--c60);border:1px solid var(--edge);box-shadow:var(--shadow)}
+.topbar{display:flex;align-items:center;gap:12px;padding:9px 14px;background:var(--card);border-bottom:1px solid var(--edge)}
+.brand{display:flex;align-items:center;gap:7px;font-weight:800;font-size:13px;color:var(--ink)}
+.brand i{width:8px;height:8px;border-radius:50%;background:var(--c10)}
+.tabs{display:flex;gap:3px}
+.tabs a{font-size:11px;font-weight:600;color:var(--ink3);padding:4px 9px;border-radius:7px}
+.tabs a.on{background:var(--s30);color:var(--on30)}
+.status{margin-left:auto;display:flex;gap:10px;align-items:center;font-size:10.5px}
+.meter{display:flex;align-items:center;gap:6px}
+.meter .b{width:44px;height:5px;border-radius:9px;background:var(--raise);overflow:hidden}
+.meter .b i{display:block;width:72%;height:100%;background:var(--warn)}
+.meter b{color:var(--ink);font-weight:500}
+.gw{display:inline-flex;align-items:center;gap:5px;padding:3px 8px;border-radius:99px;background:var(--raise);color:var(--ink2);font-size:10px}
+.gw i{width:6px;height:6px;border-radius:50%;background:var(--up)}
+.banner{display:flex;gap:9px;align-items:center;padding:8px 14px;font-size:11.5px;color:var(--ink);
+  background:color-mix(in srgb,var(--warn) 12%,var(--card));border-bottom:1px solid color-mix(in srgb,var(--warn) 30%,transparent)}
+.banner .ic{width:16px;height:16px;flex:none;color:var(--warn)}
+.banner b{color:var(--warn);font-weight:700}
+.split{display:grid;grid-template-columns:1.58fr 1fr}
+.z60{padding:14px;display:flex;flex-direction:column;gap:11px}
+.pcard{background:var(--card);border:1px solid var(--edge);border-radius:12px;padding:14px;display:flex;flex-direction:column;gap:12px}
+.row{display:flex;justify-content:space-between;align-items:flex-start}
+.tk b{font-size:18px;font-weight:800;color:var(--ink);letter-spacing:-.02em}
+.tk span{display:block;font-size:11.5px;color:var(--ink2);margin-top:1px}
+.ready{font-size:10.5px;font-weight:700;padding:4px 10px;border-radius:99px;background:var(--c10);color:var(--on10)}
+.pay{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.pay div{padding:9px 11px;border-radius:9px;background:var(--raise)}
+.pay small{display:block;font-size:10.5px;color:var(--ink2)}
+.pay b{display:block;font-size:19px;font-weight:600;letter-spacing:-.03em;margin-top:2px}
+.rail{position:relative;padding:24px 4px 22px}
+.track{height:6px;border-radius:9px;background:var(--raise);position:relative}
+.zl{position:absolute;left:6%;width:29%;top:0;bottom:0;border-radius:9px 0 0 9px;background:color-mix(in srgb,var(--down) 30%,transparent)}
+.zw{position:absolute;left:35%;width:59%;top:0;bottom:0;border-radius:0 9px 9px 0;background:color-mix(in srgb,var(--up) 26%,transparent)}
+.mk{position:absolute;top:50%;transform:translate(-50%,-50%)}
+.mk i{display:block;width:10px;height:10px;border-radius:50%;background:var(--card);border:2.5px solid var(--mc)}
+.mk em{position:absolute;top:-17px;left:50%;transform:translateX(-50%);font-style:normal;font-size:8.5px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--ink3)}
+.mk b{position:absolute;top:13px;left:50%;transform:translateX(-50%);font-size:9.5px;font-weight:500;color:var(--ink2)}
+.now{position:absolute;top:-14px;transform:translateX(-50%);text-align:center;z-index:2}
+.now span{display:inline-block;font-size:10px;font-weight:600;background:var(--c10);color:var(--on10);padding:2px 7px;border-radius:99px}
+.now i{display:block;width:2px;height:12px;background:var(--on10);margin:0 auto;opacity:.6}
+[data-theme="dark"] .now i{background:var(--c10);opacity:1}
+.states{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.st{border-radius:10px;padding:9px 11px;font-size:11px;line-height:1.45;border:1px solid var(--edge);background:var(--card);color:var(--ink2)}
+.st b{display:flex;align-items:center;gap:6px;font-size:11.5px;color:var(--ink);margin-bottom:2px}
+.st b i{width:8px;height:8px;border-radius:2px;flex:none}
+.st.warn b i{background:var(--warn);transform:rotate(45deg)}
+.st.err{border-color:color-mix(in srgb,var(--down) 40%,var(--edge));background:color-mix(in srgb,var(--down) 7%,var(--card))}
+.st.err b{color:var(--down)} .st.err b i{background:var(--down);border-radius:50%}
+.st.ok b i{background:var(--up);border-radius:50%}
+.st.info b i{background:var(--c30);border-radius:50%}
+.z30{background:var(--s30);color:var(--on30);border-left:1px solid var(--s30edge);padding:14px;display:flex;flex-direction:column;gap:11px;justify-content:space-between}
+.ag{display:flex;justify-content:space-between;align-items:center;font-size:11px;font-weight:700}
+.ag span{display:flex;align-items:center;gap:6px}.ag span i{width:7px;height:7px;border-radius:50%;background:var(--c10)}
+.ag em{font-style:normal;font-size:9.5px;font-weight:500;color:var(--on30muted);background:var(--s30b);padding:2px 7px;border-radius:6px;border:1px solid var(--s30edge)}
+.bubble{background:var(--s30b);border:1px solid var(--s30edge);border-radius:10px;padding:9px 10px;font-size:11.5px;line-height:1.48}
+.bubble em{font-style:normal;color:var(--c10);font-weight:600}
+.conds{display:flex;flex-direction:column;gap:5px}
+.conds div{display:flex;align-items:center;gap:7px;font-size:11px}
+.conds div i{width:13px;height:13px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-size:8.5px;font-weight:800;font-style:normal;background:color-mix(in srgb,var(--up-dock) 22%,transparent);color:var(--up-dock);flex:none}
+.conds div.wait{color:var(--on30muted)}.conds div.wait i{background:var(--s30b);border:1px solid var(--s30edge);color:transparent}
+.fork{background:var(--s30b);border:1px solid var(--s30edge);border-radius:10px;padding:9px 10px;font-size:11px;color:var(--on30muted)}
+.fork b{display:block;color:var(--on30);font-size:11.5px}
+.fire{position:relative;overflow:hidden;cursor:pointer;user-select:none;width:100%;border:0;border-radius:11px;padding:12px;font-family:inherit;background:var(--c10);color:var(--on10);
+  transition:transform 150ms cubic-bezier(.2,.8,.2,1)}
+.fire:active{transform:scale(.985)}
+.fire .fill{position:absolute;inset:0;width:0;background:rgba(255,255,255,.35);transition:width 200ms cubic-bezier(.2,.8,.2,1)}
+.fire.holding .fill{width:100%;transition:width 1200ms linear}
+.fire .t{position:relative;font-size:13px;font-weight:800}
+.fire .s{position:relative;font-size:10.5px;font-weight:600;opacity:.8;margin-top:2px}
+.toast{display:flex;gap:9px;align-items:center;margin:0 14px 14px;padding:9px 12px;border-radius:10px;background:var(--ink);color:var(--c60);font-size:11.5px;box-shadow:var(--shadow)}
+.toast i{width:18px;height:18px;border-radius:50%;background:var(--up);color:#fff;display:flex;align-items:center;justify-content:center;font-style:normal;font-size:10px;font-weight:800;flex:none}
+.toast b{font-weight:700}
+.tbl{margin-top:22px;border-radius:14px;border:1px solid #23263A;overflow:hidden}
+.tbl table{width:100%;border-collapse:collapse;font-size:12px}
+.tbl th,.tbl td{padding:8px 12px;text-align:left;border-bottom:1px solid #1C1F2E}
+.tbl th{color:#7F86A3;font-weight:600;font-size:11px;background:#11131C}
+.tbl td{color:#C9CDDA}
+.sw{display:inline-block;width:12px;height:12px;border-radius:3px;vertical-align:-2px;margin-right:6px;border:1px solid rgba(255,255,255,.15)}
+.pass{color:#3DDB91;font-weight:600}.fail{color:#FF6B7A;font-weight:600}
+.rules{display:grid;grid-template-columns:repeat(5,1fr);gap:12px;margin-top:22px}
+.rules div{background:#11131C;border:1px solid #23263A;border-radius:12px;padding:12px 13px;font-size:11.5px;line-height:1.5}
+.rules h5{color:#F0F1F6;font-size:12.5px;margin-bottom:4px}
+</style>
+</head>
+<body>
+<div class="page">
+  <h1>Concrete (light) + Warm Graphite (dark)</h1>
+  <p class="lede">The same Orbit screen in both modes. The <b>cobalt dock</b> and <b>sunburst button</b> don't change between modes; only the base surfaces and the money colours adjust so they stay readable.
+  This page also shows the states traders read at a glance: a <b>warning</b> (amber-orange, diamond icon), a <b>guardrail lock</b> (loss red), a confirmation, and an info note. None of them use yellow.</p>
+  <div class="pair" id="pair"></div>
+  <div class="rules">
+    <div><h5>Yellow means "act"</h5>Only the place-trade button, the live price tag, the Ready badge and agent highlights. Never warnings.</div>
+    <div><h5>Warnings are amber-orange</h5>Always with a diamond icon, so they read even without colour.</div>
+    <div><h5>No yellow text on grey</h5>Yellow is a filled shape with dark text, or text inside the cobalt dock.</div>
+    <div><h5>Money keeps its sign</h5>Every figure shows + or −, and its spot on the rail, so it's not colour-only.</div>
+    <div><h5>Darker money colours in light mode</h5>Light-mode green and red are deeper so they pass contrast checks on grey.</div>
+  </div>
+  <div class="tbl"><table id="ct"></table></div>
+</div>
+<template id="tpl">
+  <div class="side-hd"><b></b><span></span></div>
+  <div class="win">
+    <div class="topbar">
+      <div class="brand"><i></i>Orbit</div>
+      <div class="tabs"><a>Ideas</a><a class="on">Plans</a><a>Live</a><a>Review</a></div>
+      <div class="status">
+        <div class="meter">Today <div class="b"><i></i></div><b class="mono">$650/$900</b></div>
+        <div class="gw mono"><i></i>IBKR</div>
+      </div>
+    </div>
+    <div class="banner">
+      <svg class="ic" viewBox="0 0 16 16"><path d="M8 1.5 14.5 8 8 14.5 1.5 8Z" fill="currentColor"/><path d="M8 5v3.6M8 10.6v.4" stroke="#fff" stroke-width="1.6" stroke-linecap="round"/></svg>
+      <span><b>72% of today's loss limit used.</b> One more full loss locks trading until tomorrow.</span>
+    </div>
+    <div class="split">
+      <div class="z60">
+        <div class="pcard">
+          <div class="row"><div class="tk"><b>IREN · <span class="mono" style="display:inline;font-size:18px;color:var(--ink)">$18.62</span></b><span>Earnings gap +15.2% · Regular hours breakout</span></div><span class="ready">Ready</span></div>
+          <div class="pay">
+            <div><small>If it reaches target 2</small><b class="mono" style="color:var(--up)">+$1,250</b></div>
+            <div><small>If the stop is hit</small><b class="mono" style="color:var(--down)">−$500</b></div>
+          </div>
+          <div class="rail mono"><div class="track"><div class="zl"></div><div class="zw"></div>
+            <div class="now" style="left:29%"><span>18.62</span><i></i></div>
+            <div class="mk" style="left:6%;--mc:var(--down)"><i></i><em>Stop</em><b>18.05</b></div>
+            <div class="mk" style="left:35%;--mc:var(--c30)"><i></i><em>Entry</em><b>18.85</b></div>
+            <div class="mk" style="left:66%;--mc:var(--up)"><i></i><em>T1</em><b>19.65</b></div>
+            <div class="mk" style="left:94%;--mc:var(--up)"><i></i><em>T2</em><b>20.45</b></div></div></div>
+        </div>
+        <div class="states">
+          <div class="st warn"><b><i></i>Spread is wide</b>$0.06 now vs $0.02 planned. Orbit waits before placing.</div>
+          <div class="st err"><b><i></i>Cooldown · 14 min</b>You were stopped out on AMD. New trades unlock at 11:42.</div>
+          <div class="st ok"><b><i></i>Stop moved to entry</b>This trade can't lose money now.</div>
+          <div class="st info"><b><i></i>PDT · 2 of 3 used</b>One more day trade allowed this week.</div>
+        </div>
+      </div>
+      <div class="z30">
+        <div class="ag"><span><i></i>Orbit Agent</span><em class="mono">UI Bridge · Safe</em></div>
+        <div class="bubble">Sized <b>625 shares</b> so a drop to $18.05 risks exactly <em>$500</em>. Waiting for a break of $18.85.</div>
+        <div class="conds">
+          <div><i>✓</i>Premarket high holds ($18.40)</div>
+          <div><i>✓</i>Above opening VWAP</div>
+          <div class="wait"><i></i>Break $18.85 on tight spread</div>
+        </div>
+        <div class="fork"><b>Fork · Lock in profit</b>Sell half at T1, move stop to entry. Expires in 0:45.</div>
+        <button class="fire" type="button"><div class="fill"></div><div class="t">Hold 1.2s to place trade</div><div class="s mono">625 sh · Bracket + 3:55p exit</div></button>
+      </div>
+    </div>
+    <div style="height:14px"></div>
+    <div class="toast"><i>✓</i><span><b>Target 1 hit · +$250 locked in.</b> Stop moved to your entry price.</span></div>
+  </div>
+</template>
+<script>
+const modes=[['light','Light · Concrete','#E9ECF0 base · daytime trading'],['dark','Dark · Warm Graphite','#161514 base · evenings and review']];
+const pair=document.getElementById('pair'), tpl=document.getElementById('tpl');
+modes.forEach(([t,n,s])=>{const d=document.createElement('div');d.className='side';d.dataset.theme=t;d.appendChild(tpl.content.cloneNode(true));
+  d.querySelector('.side-hd b').textContent=n;d.querySelector('.side-hd span').textContent=s;pair.appendChild(d);
+  const btn=d.querySelector('.fire'),tt=btn.querySelector('.t');let h;
+  btn.addEventListener('pointerdown',()=>{if(btn.dataset.done){delete btn.dataset.done;tt.textContent='Hold 1.2s to place trade';return}btn.classList.add('holding');h=setTimeout(()=>{btn.classList.remove('holding');btn.dataset.done=1;tt.textContent='✓ Order package live (click to reset)'},1200)});
+  ['pointerup','pointerleave','pointercancel'].forEach(e=>btn.addEventListener(e,()=>{clearTimeout(h);btn.classList.remove('holding')}));
+});
+// Live contrast table read from the actual theme tokens.
+const lum=h=>{const c=[1,3,5].map(i=>parseInt(h.slice(i,i+2),16)/255).map(x=>x<=.03928?x/12.92:((x+.055)/1.055)**2.4);return .2126*c[0]+.7152*c[1]+.0722*c[2]};
+const cr=(a,b)=>{const[x,y]=[lum(a),lum(b)].sort((p,q)=>q-p);return (x+.05)/(y+.05)};
+const tok=(el,k)=>getComputedStyle(el).getPropertyValue('--'+k).trim();
+const [L,D]=document.querySelectorAll('.side');
+const checks=[['Body text','ink','card'],['Secondary text','ink2','card'],['Faint labels','ink3','card'],['Profit','up','card'],['Loss','down','card'],['Warning','warn','card'],['Cobalt marker','c30','card'],['Dock text','on30','s30'],['Yellow on dock','c10','s30'],['Button text on yellow','on10','c10']];
+let h='<tr><th>Pair</th><th>Light colour</th><th>Light ratio</th><th>Dark colour</th><th>Dark ratio</th></tr>';
+const cell=r=>`<td class="${r>=4.5?'pass':r>=3?'':'fail'}">${r.toFixed(2)} : 1 ${r>=4.5?'· AA':r>=3?'· large text only':'· fails'}</td>`;
+checks.forEach(([n,f,b])=>{const lf=tok(L,f),lb=tok(L,b),df=tok(D,f),db=tok(D,b);
+  h+=`<tr><td>${n}</td><td class="mono"><span class="sw" style="background:${lf}"></span>${lf} on ${lb}</td>${cell(cr(lf,lb))}<td class="mono"><span class="sw" style="background:${df}"></span>${df} on ${db}</td>${cell(cr(df,db))}</tr>`});
+document.getElementById('ct').innerHTML=h;
+</script>
+</body>
+</html>

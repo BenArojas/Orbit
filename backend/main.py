@@ -30,6 +30,7 @@ from exceptions import (
 from services.broker_session import BrokerSessionService
 from services.execution_plan import ExecutionPlanService
 from services.tws_broker_adapter import TwsBrokerAdapter
+from services.tws_data import TwsDataService
 from services.tws_live_policy import TwsLivePolicyService
 from services.db import DatabaseService
 from services.templates import seed_builtin_templates
@@ -42,6 +43,7 @@ from services.scanner import ScannerService
 from services.moonmarket import MoonMarketService
 from services.rs_leaders import RSLeadersService
 from services.instrument_identity import InstrumentIdentityService
+from sidecar_security import SidecarSecurityMiddleware, launch_secret
 
 # ── Logging setup (must be first) ────────────────────────────
 
@@ -77,7 +79,7 @@ async def lifespan(app: FastAPI):
     gateway = GatewayLifecycle()
     app.state.gateway = gateway
     try:
-        await gateway.startup(auto_start=True)
+        await gateway.startup(auto_start=False)
         log.info("Gateway state: %s", gateway.state.value)
     except GatewayError as e:
         log.warning("Gateway startup: %s (non-fatal, user can set up later)", e.message)
@@ -92,7 +94,7 @@ async def lifespan(app: FastAPI):
     app.state.tws_adapter = tws_adapter
 
     # Broker session — mode derived from tws_adapter.is_connected() + ibkr auth.
-    broker_session = BrokerSessionService(ibkr, tws_adapter)
+    broker_session = BrokerSessionService(ibkr, tws_adapter, product_data_enabled=True)
     app.state.broker_session = broker_session
 
     # Execution plan service — process-local draft store; lost on restart by design.
@@ -111,19 +113,22 @@ async def lifespan(app: FastAPI):
     # Phase 8 / Task 1.5: wire the SQLite conid cache into IBKRService.
     # Must come AFTER db.initialize() so the conid_cache table exists.
     ibkr.set_db(db)
+    data = TwsDataService(tws_adapter, db)
+    app.state.product_data = data
+    tws_adapter.attach_storage(db)
 
     # Create the sector service singleton (Step 3.3–3.4)
     # Must be a singleton so the conid cache persists across requests
-    app.state.sectors = SectorService(ibkr)
-    app.state.market_assessment = MarketAssessmentService(ibkr)
-    app.state.rs_leaders = RSLeadersService(ibkr, InstrumentIdentityService(db))
+    app.state.sectors = SectorService(data)
+    app.state.market_assessment = MarketAssessmentService(data)
+    app.state.rs_leaders = RSLeadersService(data, InstrumentIdentityService(db))
 
     # Screener service (Phase 5)
-    app.state.screener = ScreenerService(ibkr)
+    app.state.screener = ScreenerService(data)
 
     # Background trigger scanner (Phase 6.1 / 6.2)
     # Evaluates active trigger rules every N minutes while the app is open.
-    scanner = ScannerService(ibkr=ibkr, db=db)
+    scanner = ScannerService(ibkr=data, db=db)
     app.state.scanner = scanner
 
     # Wire scanner hits → WebSocket broadcast so the frontend can show
@@ -157,8 +162,9 @@ async def lifespan(app: FastAPI):
 
     # Shutdown
     log.info("Orbit backend shutting down...")
-    await tws_adapter.disconnect()
     await scanner.stop()
+    await tws_adapter.disconnect()
+    await tws_adapter.flush_storage()
     await db.close()
     await ibkr.shutdown()
     await gateway.shutdown()
@@ -200,13 +206,25 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+app.state.session_secret = launch_secret()
+app.add_middleware(SidecarSecurityMiddleware, secret=app.state.session_secret)
+
+
+@app.get("/session/status", include_in_schema=False)
+async def session_status():
+    """Authenticated readiness check; never returns credentials."""
+    return {"authenticated": True, "paper_only": True}
+
 
 # ── CORS ─────────────────────────────────────────────────────
 
 # Allow all three origins so the same binary works in dev (localhost:1420 or
 # 127.0.0.1:1420) and in the packaged Tauri app (tauri://localhost).
 # Using a set to dedup in case FRONTEND_ORIGIN is already one of the aliases.
-_cors_origins = list({FRONTEND_ORIGIN, TAURI_ORIGIN, "http://127.0.0.1:1420"})
+_cors_origins = list({
+    FRONTEND_ORIGIN, TAURI_ORIGIN, "http://127.0.0.1:1420",
+    "http://tauri.localhost", "https://tauri.localhost",
+})
 
 app.add_middleware(
     CORSMiddleware,
@@ -391,6 +409,8 @@ app.include_router(execution_assistant_router)
 
 from routers.tws_stream import router as tws_stream_router
 app.include_router(tws_stream_router)
+from routers.product_data import router as product_data_router
+app.include_router(product_data_router)
 
 # Routers exposed for in-process reuse (the read-only MCP server + its tests).
 ALL_ROUTERS = [
@@ -403,17 +423,8 @@ ALL_ROUTERS = [
 ]
 
 
-# ── Read-only MCP server ─────────────────────────────────────
-# Mounted in-process on the existing sidecar at /mcp-server/mcp (streamable-http).
-# Strictly read-only (see mcp_server.py / test_mcp_readonly.py). The MCP ASGI app
-# has its own lifespan, so it MUST be merged with Orbit's lifespan or one of the
-# two startup paths is silently skipped.
-from fastmcp.utilities.lifespan import combine_lifespans
-from mcp_server import build_mcp
-
-_mcp_app = build_mcp(app).http_app(path="/mcp")
-app.router.lifespan_context = combine_lifespans(lifespan, _mcp_app.lifespan)
-app.mount("/mcp-server", _mcp_app)
+# MCP stays unmounted during Phase 0. Phase 7 adds a separate read-only
+# transport with no sidecar session credential and runtime sharing controls.
 
 
 # ── Health endpoint ──────────────────────────────────────────
@@ -426,6 +437,15 @@ async def health(request: Request):
     """
     ibkr: IBKRService = request.app.state.ibkr
     gw: GatewayLifecycle = request.app.state.gateway
+    data = getattr(request.app.state, "product_data", None)
+    if data is not None:
+        connected = data.adapter.is_connected()
+        return {
+            "status": "ok" if connected else "degraded", "source": "tws",
+            "ibkr_connected": connected, "ibkr_authenticated": connected,
+            "ws_ready": connected, "gateway_running": connected,
+            "gateway_state": "running" if connected else "error", "version": APP_VERSION,
+        }
     return {
         "status": "ok" if ibkr.state.authenticated else "degraded",
         "ibkr_connected": ibkr.state.authenticated,

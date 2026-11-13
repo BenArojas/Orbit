@@ -33,10 +33,13 @@ from services.execution_plan import ExecutionPlanService
 from services.tws_broker_adapter import TwsAdvancedRejectError, TwsBrokerAdapter, TwsPlaceOrderGuardError
 from services.tws_live_policy import TwsLivePolicyService
 from services.tws_order_packages import TwsOrderPackageValidationError, preview_order_package
+from services.market_data_quality import quote_quality
 
 router = APIRouter(prefix="/execution-assistant", tags=["execution-assistant"])
 
 _GUARD_STATUS: dict[str, int] = {
+    "not_paper_account": status.HTTP_403_FORBIDDEN,
+    "live_trading_disabled": status.HTTP_403_FORBIDDEN,
     "kill_switch_active": status.HTTP_409_CONFLICT,
     "not_connected": status.HTTP_409_CONFLICT,
     "not_paper_port": status.HTTP_403_FORBIDDEN,
@@ -63,6 +66,23 @@ def _guard_http_error(exc: TwsPlaceOrderGuardError) -> HTTPException:
     )
 
 
+async def _require_entry_quote(adapter: TwsBrokerAdapter, conid: int) -> None:
+    try:
+        adapter.assert_paper_identity()
+    except TwsPlaceOrderGuardError as exc:
+        raise _guard_http_error(exc)
+    quote = await adapter.get_quote(conid)
+    quality = quote_quality(quote.received_at, quote.market_data_type, quote.bid, quote.ask)
+    if not quality["entry_data_eligible"]:
+        raise HTTPException(409, detail={
+            "error": "entry_market_data_unavailable",
+            "market_data_type": quote.market_data_type,
+            "freshness": quality["freshness"],
+            "message": "New entries require a fresh live or delayed bid and ask. Frozen, stale, or unknown data cannot authorize an order.",
+        })
+
+
+
 @router.get("/status", response_model=TwsStatusResponse)
 async def get_status(
     adapter: TwsBrokerAdapter = Depends(get_tws_adapter),
@@ -78,7 +98,8 @@ async def connect(
     adapter: TwsBrokerAdapter = Depends(get_tws_adapter),
     session: BrokerSessionService = Depends(get_broker_session),
 ) -> TwsStatusResponse:
-    await adapter.connect(request.host, request.port, request.client_id)
+    # Client ID is an Orbit-owned identity, not a form-controlled value.
+    await adapter.connect(request.host, request.port, 1)
     available = await adapter.check_api_server()
     return adapter.get_status(session.current_mode(), available)
 
@@ -372,6 +393,7 @@ async def place_paper_order(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail={"error": "plan_not_valid", "status": plan.status},
         )
+    await _require_entry_quote(adapter, plan.conid)
     try:
         return await adapter.place_paper_order(plan)
     except TwsPlaceOrderGuardError as exc:
@@ -503,6 +525,7 @@ async def override_order(
                     status_code=status.HTTP_404_NOT_FOUND,
                     detail={"error": "plan_not_found", "plan_id": req.plan_id},
                 )
+            await _require_entry_quote(adapter, plan.conid)
             submission = await adapter.place_order(
                 plan, mode=mode, live_policy=policy if mode == "live" else None, advanced_override=codes
             )
@@ -640,6 +663,7 @@ async def place_paper_order_package(
     # The broker order graph is always rebuilt from the validated request here —
     # never trust a client-supplied TwsOrderPackagePreview for submission.
     preview = _validated_package_preview(req)
+    await _require_entry_quote(adapter, preview.conid)
     try:
         return await adapter.place_order_package(preview, mode="paper")
     except TwsPlaceOrderGuardError as exc:

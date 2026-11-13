@@ -125,7 +125,13 @@ class OptionService:
             bid=_safe_float(quote.get("84") or quote.get("bid")),
             ask=_safe_float(quote.get("86") or quote.get("ask")),
             volume=_safe_float(quote.get("7762") or quote.get("volume")),
-            delta=_safe_float(quote.get("7308") or quote.get("delta")),
-            bidSize=_safe_float(quote.get("85") or quote.get("bidSize")),
-            askSize=_safe_float(quote.get("88") or quote.get("askSize")),
+            delta=_safe_float((quote.get("greeks") or {}).get("delta", quote.get("7308") or quote.get("delta"))),
+            bidSize=_safe_float(quote.get("88") or quote.get("bidSize")),
+            askSize=_safe_float(quote.get("85") or quote.get("askSize")),
+            greeks=quote.get("greeks"),
+            greeks_status="available" if quote.get("greeks") and all(
+                quote["greeks"].get(key) is not None for key in ("delta", "gamma", "theta", "vega", "impliedVol")
+            ) else "unavailable",
+            market_data_type=quote.get("market_data_type", "unknown"),
+            freshness=quote.get("freshness", "unknown"),
         )

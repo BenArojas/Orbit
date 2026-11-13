@@ -29,6 +29,19 @@ def get_ibkr(request: Request) -> IBKRService:
     return request.app.state.ibkr
 
 
+def get_product_data(request: Request, legacy=Depends(get_ibkr)):
+    """Data migration boundary, never an order transport."""
+    return getattr(request.app.state, "product_data", legacy)
+
+
+async def require_product_data(data=Depends(get_product_data)):
+    if not data.state.authenticated:
+        raise HTTPException(status_code=503, detail={
+            "error": "tws_disconnected", "message": "Connect to TWS / IB Gateway first.",
+        })
+    return data
+
+
 def get_db(request: Request) -> DatabaseService:
     """Get the database service singleton stashed on app.state during lifespan."""
     return request.app.state.db
@@ -114,7 +127,7 @@ async def require_cp_mode(
         )
 
 
-async def require_ibkr_auth(ibkr: IBKRService = Depends(get_ibkr)) -> IBKRService:
+async def require_ibkr_auth(ibkr: IBKRService = Depends(get_product_data)) -> IBKRService:
     """
     Dependency that gates IBKR-backed routes behind authentication.
 

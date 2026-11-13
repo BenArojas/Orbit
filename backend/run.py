@@ -73,6 +73,14 @@ if __name__ == "__main__":
     # Tauri webview uses tauri://localhost as the request origin in production.
     os.environ.setdefault("FRONTEND_ORIGIN", "tauri://localhost")
 
+    # Rust sends the per-launch secret over the child's private stdin, never
+    # in process arguments, environment, URLs, or console output.
+    if "--native-session" in sys.argv:
+        credential = sys.stdin.readline(66).strip()
+        if len(credential) != 64:
+            raise RuntimeError("Missing native sidecar session")
+        os.environ["ORBIT_SESSION_SECRET"] = credential
+
     # Catch SIGHUP so the Gateway JVM doesn't outlive a terminal close.
     _install_signal_handlers()
 
@@ -80,7 +88,7 @@ if __name__ == "__main__":
     from config import BACKEND_PORT  # noqa: E402
     from main import app  # noqa: E402
 
-    uvicorn.run(
+    server = uvicorn.Server(uvicorn.Config(
         app,
         host="127.0.0.1",
         port=BACKEND_PORT,
@@ -88,4 +96,15 @@ if __name__ == "__main__":
         # Single worker required — backend uses in-process singletons
         # (IBKRService, GatewayService, scanner asyncio task).
         workers=1,
-    )
+    ))
+    if "--native-session" in sys.argv:
+        import threading
+
+        def _watch_parent() -> None:
+            # No web endpoint can stop the process. Rust owns this private
+            # pipe; an explicit shutdown or EOF after parent exit stops cleanly.
+            sys.stdin.readline()
+            server.should_exit = True
+
+        threading.Thread(target=_watch_parent, daemon=True).start()
+    server.run()

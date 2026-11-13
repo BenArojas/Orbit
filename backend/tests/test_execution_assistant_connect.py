@@ -32,6 +32,7 @@ class _AdapterStub:
         self._state = "not_initialized"
 
     async def connect(self, host: str, port: int, client_id: int) -> None:
+        self.last_client_id = client_id
         self._state = "connected" if self._connect_succeeds else "error"
 
     async def disconnect(self) -> None:
@@ -93,11 +94,12 @@ def test_api_server_available_surfaces_in_status():
 
 def test_disconnect_returns_disconnected_state():
     """Disconnect must return adapter_state='disconnected' immediately."""
-    client, _ = _client(connect_succeeds=True)
+    client, adapter = _client(connect_succeeds=True)
     client.post(
         "/execution-assistant/connect",
-        json={"host": "127.0.0.1", "port": 4002, "client_id": 1},
+        json={"host": "127.0.0.1", "port": 4002, "client_id": 99},
     )
+    assert adapter.last_client_id == 1
     r = client.post("/execution-assistant/disconnect")
     assert r.status_code == 200
     assert r.json()["adapter_state"] == "disconnected"

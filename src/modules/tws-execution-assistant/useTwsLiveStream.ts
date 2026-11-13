@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 
 import { TWS_STREAM_URL } from "@/config/endpoints";
+import { sessionProtocols } from "@/lib/sidecarSession";
 
 import type { TwsTimeframe } from "./api";
 
@@ -48,6 +49,7 @@ let reconnectAttempt = 0;
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let teardownTimer: ReturnType<typeof setTimeout> | null = null;
 let refCount = 0;
+let connectionGeneration = 0;
 
 function setStatus(status: TwsLiveStreamStatus) {
   currentStatus = status;
@@ -69,11 +71,21 @@ function send(data: TwsStreamSubscribeRequest | Record<string, unknown>) {
   }
 }
 
-function connect() {
+async function connect() {
   if (ws?.readyState === WebSocket.OPEN || ws?.readyState === WebSocket.CONNECTING) return;
+  if (currentStatus === "connecting") return;
 
   setStatus("connecting");
-  const sock = new WebSocket(TWS_STREAM_URL);
+  const generation = ++connectionGeneration;
+  let protocols: string[];
+  try {
+    protocols = await sessionProtocols();
+  } catch {
+    if (generation === connectionGeneration) setStatus("disconnected");
+    return;
+  }
+  if (generation !== connectionGeneration || refCount === 0) return;
+  const sock = new WebSocket(TWS_STREAM_URL, protocols);
   ws = sock;
 
   sock.onopen = () => {
@@ -120,6 +132,7 @@ function connect() {
 }
 
 function closeSocket() {
+  connectionGeneration += 1;
   if (reconnectTimer) {
     clearTimeout(reconnectTimer);
     reconnectTimer = null;

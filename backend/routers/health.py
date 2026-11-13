@@ -27,7 +27,7 @@ place raw technical detail is visible.
 import logging
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 
 from deps import get_db, get_gateway, get_ibkr, get_scanner
 from exceptions import IBKRConnectionError
@@ -177,6 +177,7 @@ async def _check_triggers(db: DatabaseService) -> dict:
 
 @router.get("/details")
 async def health_details(
+    request: Request,
     gw: GatewayLifecycle = Depends(get_gateway),
     ibkr: IBKRService = Depends(get_ibkr),
     scanner: ScannerService = Depends(get_scanner),
@@ -195,6 +196,21 @@ async def health_details(
     Auth state comes from IBKRService.auth_status() which is cached for
     AUTH_STATUS_TTL_SEC (Task 1.7) — no extra IBKR probe is issued.
     """
+    data = getattr(request.app.state, "product_data", None)
+    if data is not None:
+        connection = data.connection_status(gw.status())
+        connected = data.adapter.is_connected()
+        checks = [
+            {"ok": connected, "label": "TWS / IB Gateway",
+             "message": connection["auth_message"], "severity": "ok" if connected else "error"},
+            await _check_scanner_async(scanner), await _check_database(db), await _check_triggers(db),
+        ]
+        return {
+            **connection, "checks": checks,
+            "overall": "error" if any(c["severity"] == "error" for c in checks)
+            else "warning" if any(c["severity"] == "warning" for c in checks) else "ok",
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+        }
     checks = [
         _check_gateway(gw, ibkr),
         await _check_scanner_async(scanner),

@@ -37,6 +37,7 @@
 import { useEffect, useState, useCallback } from "react";
 
 import { WS_URL } from "@/config/endpoints";
+import { sessionProtocols } from "@/lib/sidecarSession";
 
 // ── Types ───────────────────────────────────────────────────
 
@@ -79,6 +80,7 @@ let reconnectAttempt = 0;
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let teardownTimer: ReturnType<typeof setTimeout> | null = null;
 let refCount = 0;
+let connectionGeneration = 0;
 
 function setStatus(s: WsStatus) {
   currentStatus = s;
@@ -96,12 +98,22 @@ function send(data: Record<string, unknown>) {
   }
 }
 
-function connect() {
+async function connect() {
   if (ws?.readyState === WebSocket.OPEN) return;
   if (ws?.readyState === WebSocket.CONNECTING) return;
+  if (currentStatus === "connecting") return;
 
   setStatus("connecting");
-  const sock = new WebSocket(WS_URL);
+  const generation = ++connectionGeneration;
+  let protocols: string[];
+  try {
+    protocols = await sessionProtocols();
+  } catch {
+    if (generation === connectionGeneration) setStatus("disconnected");
+    return;
+  }
+  if (generation !== connectionGeneration || refCount === 0) return;
+  const sock = new WebSocket(WS_URL, protocols);
   ws = sock;
 
   sock.onopen = () => {
@@ -156,6 +168,7 @@ function connect() {
 }
 
 function closeSocket() {
+  connectionGeneration += 1;
   if (reconnectTimer) {
     clearTimeout(reconnectTimer);
     reconnectTimer = null;
@@ -266,6 +279,7 @@ export function useWebSocket() {
  * Not exported from the main barrel — import directly when needed.
  */
 export function __resetWebSocketSingletonForTests() {
+  connectionGeneration += 1;
   if (teardownTimer) {
     clearTimeout(teardownTimer);
     teardownTimer = null;

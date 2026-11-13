@@ -20,16 +20,8 @@ pandas_ta_datas, pandas_ta_binaries, pandas_ta_hiddenimports = collect_all("pand
 # pandas optional extensions / data files
 pandas_datas, pandas_binaries, pandas_hiddenimports = collect_all("pandas")
 
-# FastMCP (read-only MCP server) resolves its streamable-http transport and its
-# OpenAPI/route parsing dynamically, so collect each package whole — a missing
-# submodule surfaces only as ModuleNotFoundError in the packaged sidecar.
-mcp_datas, mcp_binaries, mcp_hiddenimports = [], [], []
-for _mcp_pkg in ("fastmcp", "mcp", "sse_starlette", "openapi_pydantic",
-                 "jsonschema_path", "pydantic_settings"):
-    _d, _b, _h = collect_all(_mcp_pkg)
-    mcp_datas += _d
-    mcp_binaries += _b
-    mcp_hiddenimports += _h
+# MCP is unmounted in Phase 0 and will get its own transport in Phase 7.
+# Do not collect optional MCP CLI/provider packages into the order sidecar.
 
 a = Analysis(
     ["run.py"],
@@ -37,12 +29,10 @@ a = Analysis(
     binaries=[
         *pandas_ta_binaries,
         *pandas_binaries,
-        *mcp_binaries,
     ],
     datas=[
         *pandas_ta_datas,
         *pandas_datas,
-        *mcp_datas,
     ],
     hiddenimports=[
         # ── Uvicorn (most submodules resolved via string at runtime) ──────
@@ -63,7 +53,7 @@ a = Analysis(
         "uvicorn.lifespan.off",
         # ── Application modules ───────────────────────────────────────────
         "main",
-        "mcp_server",
+        "sidecar_security",
         "config",
         "constants",
         "state",
@@ -150,9 +140,9 @@ exe = EXE(
     upx=False,
     upx_exclude=[],
     runtime_tmpdir=None,
-    # console=False suppresses the terminal window on Windows in release builds.
-    # Set to True temporarily if you need to see raw sidecar logs during debugging.
-    console=False,
+    # Keep stdin available for the native session handshake. Tauri's Rust
+    # launcher uses CREATE_NO_WINDOW on Windows, so no terminal is shown.
+    console=True,
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,   # Set per-run by the build scripts; None = host arch

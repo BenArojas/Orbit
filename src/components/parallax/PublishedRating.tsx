@@ -24,6 +24,7 @@ export function PublishedSourceNotice({
       : freshness
         ? <p role="status">{freshness === "stale" ? "Fred publication is stale" : "Fred published snapshot; price-session date unconfirmed"} · published {date}</p>
         : <p role="status">{isLoading ? "Checking Fred rating source…" : "Fred source freshness unavailable"}</p>}
+    <p>Coverage: top 30 leaders only, not a full-universe ranking. Outside this coverage, RS is unknown, not lagging.</p>
   </div>;
 }
 
@@ -48,7 +49,7 @@ export function PublishedRating({
   if (!rating) return loading ? <span>Checking RS rating…</span> : unavailable("No published RS rating is attached to this name.");
   if ("status" in rating) {
     if (rating.status === "unverified") return unavailable("The listing could not be verified as the corresponding US security.");
-    if (rating.status === "not_published") return unavailable("This verified listing is absent from Fred’s published dataset.");
+    if (rating.status === "not_published") return unavailable("This listing is outside Orbit’s current top-30 RS coverage; its relative strength is unknown.");
     if (rating.status === "source_unavailable") return unavailable("Fred’s published dataset is unavailable.");
   }
   if (rating.published_percentile == null) return unavailable("Fred did not publish a percentile for this listing.");

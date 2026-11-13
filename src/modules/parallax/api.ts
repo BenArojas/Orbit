@@ -68,6 +68,8 @@ export interface RSLeader {
 }
 
 export interface RSLeadersResponse {
+  coverage?: "top_30_only";
+  coverage_limit?: number;
   status: "available" | "stale" | "unavailable" | "verifying";
   source_revision: string | null;
   source_published_at: string | null;
@@ -95,6 +97,7 @@ export interface RSRating extends Omit<RSLeader, "conid" | "source_rank"> {
 }
 
 export interface RSRatingsResponse {
+  coverage?: "top_30_only";
   status: "available" | "stale" | "unavailable";
   source_revision: string | null;
   source_published_at: string | null;
@@ -125,7 +128,7 @@ export interface MarketInstrumentEvidence {
 
 export interface MarketAssessmentResponse {
     status: "complete" | "partial" | "incomplete";
-    posture: "broad" | "selective" | "defensive" | null;
+    posture: "healthy" | "selective" | "defensive" | null;
     expected_session: string | null;
     evidence_session: string | null;
     calculated_at: string;
@@ -141,7 +144,7 @@ export interface MarketAssessmentResponse {
     };
     issues: string[];
     previous_assessment: {
-        posture: "broad" | "selective" | "defensive";
+        posture: "healthy" | "selective" | "defensive";
         evidence_session: string;
         calculated_at: string;
     } | null;
@@ -618,7 +621,7 @@ export type RuleEvaluation = {
     invalidation_failure_message: string | null;
     checked_at: string;
     evidence_at: string | null;
-    evidence_session_policy?: "us_equity_extended" | null;
+    evidence_session_policy?: "us_equity_extended" | "us_equity_rth" | null;
     condition_values: TriggerConditionValue[];
     failure_code: string | null;
     failure_message: string | null;

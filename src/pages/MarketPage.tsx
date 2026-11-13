@@ -59,15 +59,15 @@ function postureCopy(assessment: MarketAssessmentResponse | undefined, currentSe
     };
   }
   if (!currentSession) {
-    const lastPosture = assessment.posture === "broad" ? "Broad strength" : assessment.posture === "defensive" ? "Defensive conditions" : "Selective strength";
+    const lastPosture = assessment.posture === "healthy" ? "Healthy conditions" : assessment.posture === "defensive" ? "Defensive conditions" : "Selective strength";
     return {
       title: `Previous assessment · ${lastPosture}`,
       detail,
       guidance: "Current tactic priorities are unconfirmed; all setup types remain available.",
     };
   }
-  if (assessment.posture === "broad") {
-    return { title: "Broad strength", detail, guidance: "Give breakouts and retests priority; all setup types remain available." };
+  if (assessment.posture === "healthy") {
+    return { title: "Healthy conditions", detail, guidance: "Give breakouts and retests priority; all setup types remain available." };
   }
   if (assessment.posture === "defensive") {
     return { title: "Defensive conditions", detail, guidance: "Favor patience and stronger confirmation; all setup types remain available." };

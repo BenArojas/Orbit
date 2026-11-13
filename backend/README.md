@@ -32,17 +32,16 @@ through this process.
 
 ## Running in development
 
-The dev wrapper handles signals + cleans up the IBKR Gateway JVM on exit:
+Launch development through Tauri so Rust can create the private sidecar session:
 
 ```bash
-cd backend && uv sync          # one-time
-./scripts/dev-backend.sh        # macOS / Linux  (run from repo root)
-pwsh ./scripts/dev-backend.ps1  # Windows         (run from repo root)
+cd backend && uv sync && cd ..  # one-time
+npm run tauri dev
 ```
 
-Both scripts ultimately run `uv run uvicorn main:app --reload --port 8000`,
-but they trap `SIGINT` / `SIGTERM` / `SIGHUP` so that closing the terminal
-doesn't leave the IBKR Gateway running on `:5001` as an orphan.
+Stop any manually launched server on port 8000 first. Standalone launchers remain
+for diagnostics, but do not authorize a desktop mutation client. The sidecar
+accepts its launch credential only through native stdin; no HTTP route reveals it.
 See [`docs/gateway-lifecycle.md`](docs/gateway-lifecycle.md) for the full
 explanation of why this matters.
 
@@ -54,10 +53,11 @@ uv run pytest tests/test_gateway.py -v   # one file
 uv run pytest -k "orphan"     # by keyword
 ```
 
-Per project rule 1, every new feature/service/endpoint gets test coverage
-on the changed code — no PR without it.
+Follow [`../docs/testing.md`](../docs/testing.md): protect critical promises at
+the highest practical public boundary, not every file.
 
 ## Project rules
 
-The seven non-negotiable rules live in [`../CLAUDE.md`](../CLAUDE.md).
-Re-read them before any non-trivial change.
+Repository rules live in [`../AGENTS.md`](../AGENTS.md). Phase 0 disables Client
+Portal order mutations, all legacy live actions, and the shared-port MCP mount.
+Paper TWS mutations require both a paper port and one connected `DU` account.

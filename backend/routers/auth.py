@@ -8,7 +8,7 @@ that session — they don't handle username/password.
 
 import logging
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 
 from deps import get_ibkr
 from exceptions import IBKRRequestError
@@ -21,12 +21,16 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 
 
 @router.get("/status", response_model=AuthStatusResponse)
-async def get_auth_status(ibkr: IBKRService = Depends(get_ibkr)):
+async def get_auth_status(request: Request, ibkr: IBKRService = Depends(get_ibkr)):
     """
     Check if we have a valid IBKR session.
     Frontend calls this on app launch and after re-auth.
     If authenticated, starts the tickle keep-alive loop.
     """
+    if hasattr(request.app.state, "product_data"):
+        connected = request.app.state.tws_adapter.is_connected()
+        return AuthStatusResponse(authenticated=connected, ws_ready=connected,
+                                  message="TWS / IB Gateway connected." if connected else "TWS / IB Gateway disconnected.")
     status = await ibkr.auth_status()
 
     # Auto-start tickle loop if we're authenticated
@@ -50,9 +54,12 @@ async def get_auth_status(ibkr: IBKRService = Depends(get_ibkr)):
 
 
 @router.post("/logout", response_model=AuthStatusResponse)
-async def logout(ibkr: IBKRService = Depends(get_ibkr)):
+async def logout(request: Request, ibkr: IBKRService = Depends(get_ibkr)):
     """Log out of the IBKR session."""
-    await ibkr.logout()
+    if hasattr(request.app.state, "product_data"):
+        await request.app.state.tws_adapter.disconnect()
+    else:
+        await ibkr.logout()
     return AuthStatusResponse(
         authenticated=False,
         ws_ready=False,

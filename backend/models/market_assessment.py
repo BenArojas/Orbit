@@ -31,14 +31,14 @@ class MarketParticipation(BaseModel):
 
 
 class PreviousMarketAssessment(BaseModel):
-    posture: Literal["broad", "selective", "defensive"]
+    posture: Literal["healthy", "selective", "defensive"]
     evidence_session: str
     calculated_at: str
 
 
 class MarketAssessmentResponse(BaseModel):
     status: Literal["complete", "partial", "incomplete"]
-    posture: Literal["broad", "selective", "defensive"] | None
+    posture: Literal["healthy", "selective", "defensive"] | None
     expected_session: str | None
     evidence_session: str | None
     calculated_at: str

@@ -17,6 +17,8 @@ from starlette.websockets import WebSocketState
 from models.broker_session import BrokerSessionMode
 from models.tws_order_capabilities import can_modify_order_type
 from services.tws_order_packages import derive_package_warnings
+from exceptions import IBKRConnectionError, IBKRRequestError
+from services.market_data_quality import quote_quality
 
 if TYPE_CHECKING:
     from models.execution_plan import ExecutionPlan
@@ -96,6 +98,9 @@ def _advanced_reject_from_raw(order_id: int | None, raw: str) -> TwsAdvancedReje
     return TwsAdvancedReject(order_id=order_id, reason="TWS rejected the order.", override_codes=[], raw=raw)
 
 _IBKR_UNSET = 1.7976931348623157e+308
+# IBKR paper IDs are "DU" plus digits, optionally with one letter after "DU"
+# (observed on a real paper Gateway). Live accounts begin with "U".
+PAPER_ACCOUNT_PATTERN = re.compile(r"DU[A-Z]?[0-9]+")
 _MDT_MAP: dict[int, str] = {1: "live", 2: "frozen", 3: "delayed", 4: "delayed_frozen"}
 
 # IBKR codes that are expected market-data permission responses, not real errors.
@@ -133,7 +138,7 @@ def _quote_val(val: object) -> float | None:
         return None
     try:
         f = float(val)  # type: ignore[arg-type]
-        return None if (math.isnan(f) or f >= _IBKR_UNSET) else f
+        return None if (not math.isfinite(f) or abs(f) >= _IBKR_UNSET) else f
     except (TypeError, ValueError):
         return None
 
@@ -188,6 +193,12 @@ class TwsBrokerAdapter:
         self._recon_changed_task: asyncio.Task | None = None
         self._pnl_singles: dict[int, PnLSingle] = {}
         self._account_pnl: PnL | None = None
+        self._data_semaphore = asyncio.Semaphore(4)
+        self._storage = None
+        self._storage_tasks: set[asyncio.Task] = set()
+        self._storage_error: str | None = None
+        self._contract_metadata_cache: dict[int, dict] = {}
+        self._reconciling = False
 
         async def _on_connected(*_args: object) -> None:
             await self._broadcast_stream_status(True)
@@ -197,6 +208,7 @@ class TwsBrokerAdapter:
             self._clear_stream_registry()
             self._pnl_singles.clear()
             self._account_pnl = None
+            self._contract_metadata_cache.clear()
 
         def _on_recon_changed(*_args: object) -> None:
             if self._recon_changed_task is not None and not self._recon_changed_task.done():
@@ -208,10 +220,11 @@ class TwsBrokerAdapter:
             self._recon_changed_task = loop.create_task(self._debounced_recon_broadcast())
 
         def _on_exec_details(trade: Trade, fill: Fill) -> None:
+            self._queue_fill_storage(fill)
             # connectAsync's sync replays today's executions through this same
             # event before _state flips to "connected" — suppress those, or
             # every reconnect toasts the whole day's fills again.
-            if self._state != "connected":
+            if self._state != "connected" or self._reconciling:
                 return
             side = "BUY" if fill.execution.side == "BOT" else "SELL"
             event = TwsFillEvent(
@@ -238,30 +251,39 @@ class TwsBrokerAdapter:
         self._ib.execDetailsEvent += self._recon_changed_handler
         self._ib.execDetailsEvent += self._exec_details_handler
         self._ib.positionEvent += self._recon_changed_handler
+        self._ib.commissionReportEvent += self._on_commission
         # openOrderEvent covers modifies made in the TWS UI itself — those
         # update the order in place without a field-changed orderStatus.
         self._ib.openOrderEvent += self._recon_changed_handler
 
     async def connect(self, host: str, port: int, client_id: int) -> None:
-        # KNOWN GAP: no paper/live account-type check here. Paper is the default
-        # port convention only, not enforced. Must be closed at the Slice 7 HITL
-        # gate before any order-submission path exists.
+        # Kept in the signature for old callers; the sidecar owns the ID.
+        client_id = 1
         self._state = "connecting"
         self._client_id = client_id
         self._last_host = host
         self._connected_port = None
+        self._reconciling = True
         try:
             await self._ib.connectAsync(host, port, clientId=client_id, timeout=10)
             await self._ib.reqPositionsAsync()
             await self._ib.reqAllOpenOrdersAsync()
             self._connected_port = port
             self._state = "connected"
+            if self._storage is not None:
+                fills = await self._ib.reqExecutionsAsync()
+                for fill in fills:
+                    self._queue_fill_storage(fill)
+                    self._on_commission(None, fill, fill.commissionReport)
+                await self.flush_storage()
         except (ConnectionRefusedError, asyncio.TimeoutError, OSError, RuntimeError) as exc:
             # ponytail: covers the known ib_async connect-time exceptions; client-ID
             # conflict arrives as an error callback, not an exception — it surfaces
             # as a dropped connection visible on the next status poll.
             log.warning("TWS connect failed (%s:%s cid=%s): %s", host, port, client_id, exc)
             self._state = "error"
+        finally:
+            self._reconciling = False
 
     def _classify_entitlement(
         self, market_data_type_code: int | None, error_code: int | None,
@@ -312,7 +334,29 @@ class TwsBrokerAdapter:
         if not self.is_connected():
             return None
         accounts = self._ib.managedAccounts()
-        return accounts[0] if accounts else None
+        return accounts[0] if len(accounts) == 1 else None
+
+    def assert_paper_identity(self) -> str:
+        """Use fresh broker identity, not the UI, port alone, or a cached snapshot."""
+        if not self.is_connected():
+            raise TwsPlaceOrderGuardError("not_connected")
+        if not self.is_paper_port():
+            raise TwsPlaceOrderGuardError("not_paper_port")
+        account = self.connected_account_id()
+        if not account or not PAPER_ACCOUNT_PATTERN.fullmatch(account):
+            raise TwsPlaceOrderGuardError("not_paper_account")
+        return account
+
+    def paper_identity_evidence(self) -> dict:
+        """Diagnostic shape only, never account identifiers."""
+        connected = self.is_connected()
+        accounts = self._ib.managedAccounts() if connected else []
+        return {
+            "connected": connected, "paper_port": self.is_paper_port(),
+            "account_count": len(accounts),
+            "matching_du_account_count": sum(bool(PAPER_ACCOUNT_PATTERN.fullmatch(a)) for a in accounts),
+            "single_paper_account": len(accounts) == 1 and bool(PAPER_ACCOUNT_PATTERN.fullmatch(accounts[0])),
+        }
 
     def stream_socket_is_open(self, websocket: WebSocket) -> bool:
         return (
@@ -428,6 +472,7 @@ class TwsBrokerAdapter:
                 low=low,
                 volume=volume,
                 entitlement=entitlement,
+                **quote_quality(getattr(ticker, "time", None), entitlement, bid, ask),
             )
 
         error_code = next((code for code in captured_errors if code in _EXPECTED_MDT_ERRORS), None)
@@ -456,7 +501,7 @@ class TwsBrokerAdapter:
             conid,
             state["ticker"],
             state["captured_errors"],  # type: ignore[arg-type]
-        ).model_dump()
+        ).model_dump(mode="json")
         dead: list[WebSocket] = []
         for websocket, conids in list(self._stream_subscriptions.items()):
             if "quote" not in conids.get(conid, set()):
@@ -840,7 +885,7 @@ class TwsBrokerAdapter:
         ))
         return results
 
-    async def get_quote(self, conid: int) -> QuoteSnapshot:
+    async def get_quote(self, conid: int, *, contract_info: dict | None = None) -> QuoteSnapshot:
         """Fetch a best-effort market data snapshot for a conid.
 
         Requests delayed-frozen data first so closed-market snapshots are
@@ -856,38 +901,56 @@ class TwsBrokerAdapter:
         captured_errors: list[int] = []
 
         def _on_error(req_id: int, code: int, msg: str, contract: object) -> None:
-            # ponytail: req_id ignored — safe today (React Query single-flights per conid),
-            # filter by req_id if concurrent quote calls are ever added.
-            captured_errors.append(code)
+            if getattr(contract, "conId", None) == conid:
+                captured_errors.append(code)
 
         _mdt_filter = _SuppressExpectedMdtWarnings()
         self._ib.errorEvent += _on_error
         _ib_log.addFilter(_mdt_filter)
         try:
-            # Request delayed-frozen before snapshot so IBKR returns the most
-            # recent available quote even when live data is unavailable.
-            self._ib.reqMarketDataType(4)
             # IBKR requires exchange identity for market data (Warning 321).
             # Supplying SMART/STK/USD is enough for equities — IBKR routes SMART
             # to the correct primary exchange for the given conid.
-            contract = Contract(conId=conid, secType="STK", exchange="SMART", currency="USD")
-            try:
-                tickers = await asyncio.wait_for(
-                    self._ib.reqTickersAsync(contract), timeout=5.0
-                )
-            except (RuntimeError, OSError, asyncio.TimeoutError) as exc:
-                log.warning("Quote fetch failed for conid %s: %r", conid, exc)
-                return QuoteSnapshot()
-
+            info = contract_info or {}
+            sec_type = info.get("secType", "STK")
+            contract = Contract(
+                conId=conid, secType=sec_type,
+                exchange="SMART" if sec_type in ("STK", "OPT") else info.get("exchange", ""),
+                currency=info.get("currency", "USD"),
+            )
+            # Delayed-frozen first so closed-market snapshots are available
+            # even without a live subscription, then live, then delayed.
+            # Options never answer a delayed-frozen snapshot (the request just
+            # times out), so fall through the types until one returns values.
+            tickers = None
+            cancelled = True
+            for mdt_code in (4, 1, 3):
+                self._ib.reqMarketDataType(mdt_code)
+                try:
+                    attempt = await asyncio.wait_for(
+                        self._ib.reqTickersAsync(contract), timeout=5.0
+                    )
+                except (RuntimeError, OSError, asyncio.TimeoutError) as exc:
+                    log.warning("Quote fetch failed for conid %s (type %s): %r", conid, mdt_code, exc)
+                    continue
+                if not attempt:
+                    continue
+                tickers = attempt
+                cancelled = False
+                if any(_quote_val(getattr(attempt[0], field, None)) is not None
+                       for field in ("last", "close", "bid", "ask")):
+                    break
+                # Nothing under this data type — release the subscription and
+                # try the next one.
+                self._ib.cancelMktData(attempt[0].contract)
+                cancelled = True
             if not tickers:
-                return QuoteSnapshot(
-                    market_data_type="unavailable",
-                    unavailable_reason="Market data unavailable.",
-                )
+                return QuoteSnapshot()
 
             t = tickers[0]
             # Cancel the subscription immediately — we only wanted a snapshot.
-            self._ib.cancelMktData(t.contract)
+            if not cancelled:
+                self._ib.cancelMktData(t.contract)
 
             vals = (
                 _quote_val(t.last), _quote_val(t.close), _quote_val(t.open),
@@ -902,11 +965,19 @@ class TwsBrokerAdapter:
                 # prices are visible. Display-only inconsistency; fix if ib_async
                 # reliably populates the field in practice.
                 mdt = _MDT_MAP.get(getattr(t, "marketDataType", 0) or 0, "unknown")
+                model = getattr(t, "modelGreeks", None)
                 return QuoteSnapshot(
                     last=vals[0], close=vals[1], open=vals[2], high=vals[3],
                     low=vals[4], bid=vals[5], ask=vals[6],
                     market_data_type=mdt,
                     is_delayed=mdt in ("delayed", "delayed_frozen"),
+                    **quote_quality(getattr(t, "time", None), mdt, vals[5], vals[6]),
+                    bid_size=_quote_val(getattr(t, "bidSize", None)),
+                    ask_size=_quote_val(getattr(t, "askSize", None)),
+                    volume=_quote_val(getattr(t, "volume", None)),
+                    greeks={key: _quote_val(getattr(model, key, None))
+                            for key in ("delta", "gamma", "theta", "vega", "impliedVol")}
+                    if model is not None else None,
                 )
 
             error_code = next((code for code in captured_errors if code in _EXPECTED_MDT_ERRORS), None)
@@ -968,6 +1039,13 @@ class TwsBrokerAdapter:
                     unrealized_pnl=_nan_to_none(item.unrealizedPNL) if item else None,
                     realized_pnl=_nan_to_none(item.realizedPNL) if item else None,
                     daily_pnl=_nan_to_none(pnl_single.dailyPnL) if pnl_single else None,
+                    account=p.account,
+                    currency=p.contract.currency or None,
+                    sec_type=p.contract.secType or None,
+                    multiplier=p.contract.multiplier or None,
+                    strike=p.contract.strike if p.contract.secType in ("OPT", "FOP") else None,
+                    right=p.contract.right or None,
+                    expiry=p.contract.lastTradeDateOrContractMonth or None,
                 )
             )
 
@@ -1019,30 +1097,14 @@ class TwsBrokerAdapter:
         so the caller can surface the reject payload and prompt the user to override.
         Pass advanced_override codes (from a prior reject) to resubmit with override.
         """
-        if self._kill_switch_active:
-            raise TwsPlaceOrderGuardError("kill_switch_active")
-        if not self.is_connected():
-            raise TwsPlaceOrderGuardError("not_connected")
-        if mode == "paper":
-            if not self.is_paper_port():
-                raise TwsPlaceOrderGuardError("not_paper_port")
-        elif mode == "live":
-            if live_policy is None:
-                raise TwsPlaceOrderGuardError("live_session_not_armed")
-            live_policy.assert_live_allowed(  # type: ignore[union-attr]
-                account_id=self.connected_account_id(),
-                host=self.connected_host(),
-                port=self.connected_port(),
-                is_connected=self.is_connected(),
-                is_paper_port=self.is_paper_port(),
-            )
-        else:
-            raise TwsPlaceOrderGuardError("unsupported_execution_mode")
+        self._ensure_order_mutation_allowed(mode=mode, live_policy=live_policy)
         if plan.status != "valid":
             raise TwsPlaceOrderGuardError("plan_not_valid")
 
         contract = Contract(conId=plan.conid, symbol=plan.symbol, secType="STK", exchange="SMART", currency="USD")
         order = Order(
+            account=self.assert_paper_identity(),
+            orderRef=f"ORBIT:TWS:{plan.plan_id}:entry",
             action=plan.side,
             orderType=plan.order_type,
             totalQuantity=plan.quantity,
@@ -1125,6 +1187,7 @@ class TwsBrokerAdapter:
         trades = []
         for i, leg in enumerate(preview.legs):
             order = Order(
+                account=self.assert_paper_identity(),
                 orderId=order_ids[i],
                 action=leg.side,
                 orderType=leg.order_type,
@@ -1184,28 +1247,17 @@ class TwsBrokerAdapter:
             legs=legs_out,
         )
 
-    def _ensure_order_mutation_allowed(self, *, mode: str, live_policy: object | None = None) -> None:
-        """Shared guard for cancel and modify — fail closed before any broker call."""
-        if self._kill_switch_active:
+    def _ensure_order_mutation_allowed(
+        self, *, mode: str, live_policy: object | None = None, reducing: bool = False,
+    ) -> None:
+        """Phase 0 is paper-only even when an internal caller requests live mode."""
+        if mode != "paper":
+            raise TwsPlaceOrderGuardError("live_trading_disabled")
+        self.assert_paper_identity()
+        if self._storage_error is not None and not reducing:
+            raise TwsPlaceOrderGuardError("broker_log_unavailable")
+        if self._kill_switch_active and not reducing:
             raise TwsPlaceOrderGuardError("kill_switch_active")
-        if not self.is_connected():
-            raise TwsPlaceOrderGuardError("not_connected")
-        if mode == "paper":
-            if not self.is_paper_port():
-                raise TwsPlaceOrderGuardError("not_paper_port")
-            return
-        if mode == "live":
-            if live_policy is None:
-                raise TwsPlaceOrderGuardError("live_session_not_armed")
-            live_policy.assert_live_allowed(  # type: ignore[union-attr]
-                account_id=self.connected_account_id(),
-                host=self.connected_host(),
-                port=self.connected_port(),
-                is_connected=self.is_connected(),
-                is_paper_port=self.is_paper_port(),
-            )
-            return
-        raise TwsPlaceOrderGuardError("unsupported_execution_mode")
 
     def _open_trade_by_order_id(self, order_id: int):  # type: ignore[return]
         for trade in self._ib.openTrades():
@@ -1213,11 +1265,290 @@ class TwsBrokerAdapter:
                 return trade
         return None
 
+    def _require_data_connection(self) -> None:
+        if not self.is_connected():
+            raise IBKRConnectionError("TWS / IB Gateway is disconnected")
+
+    @staticmethod
+    async def _await_data(operation):
+        try:
+            return await asyncio.wait_for(operation, 15)
+        except (OSError, RuntimeError, TimeoutError) as exc:
+            raise IBKRConnectionError("TWS data request failed or timed out") from exc
+
+    def attach_storage(self, db) -> None:
+        self._storage = db
+
+    def _queue_storage(self, operation) -> None:
+        task = asyncio.create_task(operation)
+        self._storage_tasks.add(task)
+        def finished(done):
+            self._storage_tasks.discard(done)
+            if not done.cancelled() and done.exception() is not None:
+                self._storage_error = "Broker log persistence failed; reconciliation is required."
+                log.error("Broker log persistence failed")
+        task.add_done_callback(finished)
+
+    def _queue_fill_storage(self, fill) -> None:
+        if self._storage is None or not fill.execution.execId:
+            return
+        execution, contract = fill.execution, fill.contract
+        time = execution.time
+        payload = {
+            "execution_id": execution.execId, "account": execution.acctNumber,
+            "conid": contract.conId, "symbol": contract.symbol,
+            "sec_type": contract.secType, "currency": contract.currency,
+            "multiplier": contract.multiplier or None,
+            "strike": contract.strike if contract.secType in ("OPT", "FOP") else None,
+            "right": contract.right or None, "expiry": contract.lastTradeDateOrContractMonth or None,
+            "quantity": str(execution.shares), "price": str(execution.price),
+            "side": execution.side, "order_id": execution.orderId, "perm_id": execution.permId,
+            "order_ref": execution.orderRef or None,
+            "executed_at": time.astimezone(timezone.utc).isoformat()
+            if time is not None and time.tzinfo is not None else None,
+        }
+        self._queue_storage(self._storage.record_broker_execution(execution.execId, payload))
+
+    def _on_commission(self, trade, fill, report) -> None:
+        if self._storage is None or not report.execId:
+            return
+        commission = _quote_val(report.commission)
+        self._queue_storage(self._storage.record_broker_commission(report.execId, {
+            "amount": str(commission) if commission is not None else None,
+            "currency": report.currency or None,
+            "realized_pnl": _quote_val(report.realizedPNL),
+        }))
+
+    async def flush_storage(self) -> None:
+        if self._storage_tasks:
+            await asyncio.gather(*list(self._storage_tasks), return_exceptions=True)
+
+    async def data_account(self) -> dict:
+        self._require_data_connection()
+        account = self.connected_account_id()
+        if account is None:
+            raise IBKRRequestError(422, "Exactly one account is required")
+        summary = await self._await_data(self._ib.accountSummaryAsync(account))
+        tags = {row.tag: {"value": row.value, "currency": row.currency or None}
+                for row in summary if row.account == account}
+        return {
+            "account": account, "source": "tws", "summary": tags,
+            # D55: FINRA retired day-trade counting and the $25,000 PDT minimum
+            # effective 2026-06-04 (Rule 4210 amendment, Notice 26-10). There is
+            # no count left to gate on; intraday risk is governed by Orbit's own
+            # guardrails and the broker's real-time intraday margin checks.
+            "day_trade_rule": {
+                "status": "retired",
+                "reference": "FINRA Rule 4210 intraday margin standards "
+                             "(Regulatory Notice 26-10, effective 2026-06-04)",
+                "legacy_day_trades_remaining": tags.get("DayTradesRemaining"),
+            },
+            "summary_freshness": "unknown",
+            "received_at": datetime.now(timezone.utc).isoformat(),
+            "persistence_error": self._storage_error,
+        }
+
+
+    async def option_parameters(self, underlying_conid: int) -> list[dict]:
+        metadata = await self.contract_metadata(underlying_conid)
+        chains = await self._await_data(self._ib.reqSecDefOptParamsAsync(
+            metadata["symbol"], "", metadata["secType"], underlying_conid
+        ))
+        return [
+            {"exchange": chain.exchange, "trading_class": chain.tradingClass,
+             "multiplier": chain.multiplier, "expirations": sorted(chain.expirations),
+             "strikes": sorted(chain.strikes)}
+            for chain in chains if chain.exchange == "SMART" and chain.multiplier == "100"
+        ]
+
+    async def option_contracts(
+        self, underlying_conid: int, expiration: str, strike: float, right: str
+    ) -> list[dict]:
+        metadata = await self.contract_metadata(underlying_conid)
+        chains = await self.option_parameters(underlying_conid)
+        candidates = [c for c in chains if expiration in c["expirations"] and strike in c["strikes"]]
+        if len(candidates) != 1:
+            raise IBKRRequestError(422, "Option chain unavailable or ambiguous")
+        chain = candidates[0]
+        details = await self._await_data(self._ib.reqContractDetailsAsync(Contract(
+            symbol=metadata["symbol"], secType="OPT", exchange="SMART", currency="USD",
+            lastTradeDateOrContractMonth=expiration, strike=strike, right=right,
+            multiplier=chain["multiplier"], tradingClass=chain["trading_class"],
+        )))
+        return [
+            self._contract_metadata(d) for d in details
+            if d.contract.secType == "OPT" and d.contract.currency == "USD"
+            and d.contract.right == right and d.contract.strike == strike
+            and d.contract.lastTradeDateOrContractMonth[:8] == expiration
+            and d.contract.multiplier == "100"
+        ]
+
+    @staticmethod
+    def _contract_metadata(detail: object) -> dict:
+        contract = detail.contract
+        industry = getattr(detail, "industry", "") or ""
+        category = getattr(detail, "category", "") or ""
+        subcategory = getattr(detail, "subcategory", "") or ""
+        sector_text = f"{industry} {category} {subcategory}".lower()
+        sector_etf = None
+        for words, etf in (
+            (("semiconductor",), "SMH"),
+            (("technology", "software", "computer"), "XLK"),
+            (("financial", "bank", "insurance"), "XLF"),
+            (("health", "pharma", "biotech"), "XLV"),
+            (("energy", "oil", "gas"), "XLE"),
+            (("utilities",), "XLU"),
+            (("real estate", "reit"), "XLRE"),
+            (("communication", "telecom"), "XLC"),
+            (("consumer cyclical", "consumer discretionary"), "XLY"),
+            (("consumer defensive", "consumer staples"), "XLP"),
+            (("industrial",), "XLI"),
+            (("basic material", "materials"), "XLB"),
+        ):
+            if any(re.search(r"\b" + re.escape(word), sector_text) for word in words):
+                sector_etf = etf
+                break
+        return {
+            "source": "tws", "conid": contract.conId,
+            "symbol": contract.symbol, "ticker": contract.symbol,
+            "companyHeader": getattr(detail, "longName", "") or contract.symbol,
+            "secType": contract.secType, "assetClass": contract.secType,
+            "currency": contract.currency,
+            "listingExchange": contract.primaryExchange or contract.exchange,
+            "exchange": contract.exchange,
+            "industry": industry or None, "category": category or None,
+            "subcategory": subcategory or None, "sector_etf": sector_etf,
+            "sector_mapping_status": "mapped" if sector_etf else "unknown",
+            "multiplier": contract.multiplier or None,
+            "strike": contract.strike if contract.secType in ("OPT", "FOP") else None,
+            "right": contract.right or None,
+            "expiry": contract.lastTradeDateOrContractMonth or None,
+            "min_tick": getattr(detail, "minTick", None),
+        }
+
+    async def contract_metadata(self, conid: int) -> dict:
+        self._require_data_connection()
+        if conid in self._contract_metadata_cache:
+            return dict(self._contract_metadata_cache[conid])
+        async with self._data_semaphore:
+            details = await self._await_data(
+                self._ib.reqContractDetailsAsync(Contract(conId=conid))
+            )
+        exact = [item for item in details if item.contract.conId == conid]
+        if len(exact) != 1:
+            raise IBKRRequestError(422, "Contract identity is missing or ambiguous")
+        metadata = self._contract_metadata(exact[0])
+        self._contract_metadata_cache[conid] = metadata
+        return dict(metadata)
+
+    async def search_contract_metadata(self, symbol: str, sec_type: str = "") -> list[dict]:
+        self._require_data_connection()
+        async with self._data_semaphore:
+            descriptions = await self._await_data(self._ib.reqMatchingSymbolsAsync(symbol))
+        if descriptions is None:
+            # ib_async returns None on its own timeout; that is not "no match".
+            raise IBKRConnectionError("TWS symbol search timed out")
+        candidates = [
+            d.contract for d in descriptions or []
+            if not sec_type or d.contract.secType == sec_type
+        ][:20]
+        results = await asyncio.gather(
+            *(self.contract_metadata(c.conId) for c in candidates)
+        )
+        return results
+
+    async def historical_data(
+        self, conid: int, *, duration: str, bar_size: str
+    ) -> dict:
+        self._require_data_connection()
+        metadata = await self.contract_metadata(conid)
+        contract = Contract(
+            conId=conid, secType=metadata["secType"], currency=metadata["currency"],
+            exchange="SMART" if metadata["secType"] in ("STK", "OPT") else metadata["exchange"],
+        )
+        earliest = await self._earliest_data_at(contract)
+        async with self._data_semaphore:
+            raw = await self._ib.reqHistoricalDataAsync(
+                contract, endDateTime="", durationStr=duration,
+                barSizeSetting=bar_size, whatToShow="TRADES", useRTH=True,
+                formatDate=2, keepUpToDate=False, timeout=30,
+            )
+
+        bars = []
+        for bar in raw:
+            value = bar.date
+            if isinstance(value, datetime):
+                if value.tzinfo is None:
+                    raise IBKRRequestError(422, "Historical timestamp lacks timezone")
+                timestamp = int(value.timestamp())
+            elif isinstance(value, date_):
+                timestamp = int(datetime(value.year, value.month, value.day, tzinfo=timezone.utc).timestamp())
+            else:
+                raise IBKRRequestError(422, "Historical timestamp is unavailable")
+            bars.append({"t": timestamp * 1000, "o": bar.open, "h": bar.high,
+                         "l": bar.low, "c": bar.close, "v": bar.volume})
+        # D56: an all-time high is claimed only when this window reaches IBKR's
+        # earliest available data. Compared at day granularity because daily and
+        # larger bars are stamped at day boundaries in differing timezones.
+        window_high = max((b["h"] for b in bars), default=None)
+        earliest_at = int(earliest.timestamp() * 1000) if earliest is not None else None
+        ath, ath_status, reason = None, "unknown", None
+        if not bars or window_high is None:
+            reason = "No bars returned for the requested window."
+        elif earliest is None:
+            reason = "IBKR's earliest-data timestamp is unavailable; coverage is unverified."
+        else:
+            first_day = datetime.fromtimestamp(bars[0]["t"] / 1000, tz=timezone.utc).date()
+            if first_day <= earliest.astimezone(timezone.utc).date():
+                ath, ath_status = window_high, "verified"
+            else:
+                ath_status = "partial"
+                reason = (
+                    "Window starts after IBKR's earliest available data "
+                    f"({earliest.astimezone(timezone.utc).date().isoformat()}); "
+                    "earlier highs may exist."
+                )
+        return {
+            "data": bars, "source": "tws", "outside_rth": False,
+            "coverage": {
+                "requested_duration": duration, "bar_size": bar_size, "bars": len(bars),
+                "first_bar_at": bars[0]["t"] if bars else None,
+                "last_bar_at": bars[-1]["t"] if bars else None,
+                "earliest_data_at": earliest_at,
+                "window_high": window_high,
+                "ath": ath, "ath_status": ath_status,
+                "reason": reason,
+            },
+        }
+
+    async def _earliest_data_at(self, contract: Contract) -> datetime | None:
+        """IBKR's earliest available TRADES data for a contract (reqHeadTimeStamp).
+
+        Failures degrade coverage to "unknown" rather than failing the history
+        request itself.
+        """
+        try:
+            async with self._data_semaphore:
+                head = await self._await_data(self._ib.reqHeadTimeStampAsync(
+                    contract, whatToShow="TRADES", useRTH=True, formatDate=2,
+                ))
+        except (IBKRError, ConnectionError, asyncio.TimeoutError, OSError, RuntimeError) as exc:
+            log.warning("reqHeadTimeStamp failed for conId=%s: %s", contract.conId, exc)
+            return None
+        if not isinstance(head, datetime):
+            return None
+        return head if head.tzinfo is not None else head.replace(tzinfo=timezone.utc)
+
+
     def cancel_order(self, order_id: int, *, mode: str = "paper", live_policy: object | None = None) -> TwsOrderActionResult:
+        # A generic cancel may remove protection. Phase 2 will classify it by
+        # leg role; do not bypass the existing lock for an unknown order here.
         self._ensure_order_mutation_allowed(mode=mode, live_policy=live_policy)
         trade = self._open_trade_by_order_id(order_id)
         if trade is None:
             raise TwsPlaceOrderGuardError("order_not_found")
+        if trade.order.account and trade.order.account != self.assert_paper_identity():
+            raise TwsPlaceOrderGuardError("not_paper_account")
         self._ib.cancelOrder(trade.order)
         status_text = trade.orderStatus.status or "cancel_requested"
         return TwsOrderActionResult(
@@ -1240,6 +1571,8 @@ class TwsBrokerAdapter:
         trade = self._open_trade_by_order_id(order_id)
         if trade is None:
             raise TwsPlaceOrderGuardError("order_not_found")
+        if trade.order.account and trade.order.account != self.assert_paper_identity():
+            raise TwsPlaceOrderGuardError("not_paper_account")
         if not can_modify_order_type(trade.order.orderType):
             raise TwsPlaceOrderGuardError("unsupported_order_type")
         if trade.order.ocaGroup:
@@ -1281,6 +1614,7 @@ class TwsBrokerAdapter:
         # always-fresh Trade), so a stale advancedError from an earlier call could
         # otherwise cause a false positive here — clear it before this attempt.
         trade.advancedError = ""
+        trade.order.account = self.assert_paper_identity()
         result = self._ib.placeOrder(trade.contract, trade.order)
         # See place_order()'s comment for why trade.advancedError (not
         # orderStatus.status) is the correct reject signal.
@@ -1307,9 +1641,12 @@ class TwsBrokerAdapter:
         filling instead of cancelling during the race must never be layered
         with a second market order for the same shares.
         """
-        self._ensure_order_mutation_allowed(mode=mode, live_policy=live_policy)
-
-        trades = [t for t in self._ib.openTrades() if t.contract.conId == conid]
+        self._ensure_order_mutation_allowed(mode=mode, live_policy=live_policy, reducing=True)
+        account = self.assert_paper_identity()
+        trades = [
+            t for t in self._ib.openTrades()
+            if t.contract.conId == conid and (not t.order.account or t.order.account == account)
+        ]
         canceled_order_ids: list[int] = []
         for trade in trades:
             if trade.isDone():
@@ -1336,7 +1673,12 @@ class TwsBrokerAdapter:
 
         # Re-read the position fresh — an exit may have filled during the
         # cancel race, so the pre-cancel quantity could now be stale.
-        pos = next((p for p in self._ib.positions() if p.contract.conId == conid), None)
+        if self.assert_paper_identity() != account:
+            raise TwsPlaceOrderGuardError("not_paper_account")
+        pos = next((
+            p for p in self._ib.positions()
+            if p.contract.conId == conid and p.account == account
+        ), None)
         if pos is None or pos.position == 0:
             return TwsFlattenResult(
                 conid=conid,
@@ -1351,7 +1693,7 @@ class TwsBrokerAdapter:
         side: Literal["BUY", "SELL"] = "SELL" if pos.position > 0 else "BUY"
         quantity = abs(pos.position)
         contract = Contract(conId=conid, symbol=pos.contract.symbol, secType="STK", exchange="SMART", currency="USD")
-        order = Order(action=side, orderType="MKT", totalQuantity=quantity, tif="DAY", orderRef=f"ORBIT:TWS:FLATTEN:{conid}")
+        order = Order(account=self.assert_paper_identity(), action=side, orderType="MKT", totalQuantity=quantity, tif="DAY", orderRef=f"ORBIT:TWS:FLATTEN:{conid}")
 
         trade = self._ib.placeOrder(contract, order)
         # Same advanced-reject wait as place_order() — see its comment for why

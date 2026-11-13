@@ -28,6 +28,7 @@ import {
 } from "@/components/ui/dialog";
 import { toast } from "sonner";
 import PulseConfigSection from "@/components/settings/PulseConfigSection";
+import WatchlistImportSection from "@/components/settings/WatchlistImportSection";
 
 // ── Timeframe options (matches chart store / IBKR bar sizes) ─────────────────
 
@@ -379,6 +380,9 @@ export default function SettingsPage() {
         </div>
 
         {/* Market Pulse (Phase 8.9+) */}
+        <SettingsCard title="Watchlist migration">
+          <WatchlistImportSection />
+        </SettingsCard>
         <SettingsCard title="Market Pulse">
           <PulseConfigSection />
         </SettingsCard>

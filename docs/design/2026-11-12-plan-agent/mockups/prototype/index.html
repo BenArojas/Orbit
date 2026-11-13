@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Orbit — clickable prototype</title>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@400..800&family=Geist+Mono:wght@400;500;600&display=block" rel="stylesheet">
+<link rel="stylesheet" href="../theme.css">
+<link rel="stylesheet" href="app.css?v=7">
+<script src="app.js?v=7"></script>
+<script src="screens.js?v=7"></script>
+<script src="screens2.js?v=7"></script>
+</head>
+<body>
+<div class="app">
+  <header class="top">
+    <div class="brand"><i></i>Orbit</div>
+    <nav class="nav">
+      <span class="ind"></span>
+      <a href="#ideas" data-r="ideas">Ideas</a>
+      <a href="#plans" data-r="plans">Plans</a>
+      <a href="#live" data-r="live">Live</a>
+      <a href="#review" data-r="review">Review</a>
+      <a href="#settings" data-r="settings">Settings</a>
+    </nav>
+    <div class="hstats">
+      <div class="hstat" title="Daily loss limit">Today <div class="hmeter" id="walletMeter"><i></i></div><b class="mono" id="walletTxt"></b></div>
+      <div class="hstat" title="Pattern-day-trades used this week">PDT <b class="mono" id="pdtTxt"></b></div>
+      <div class="hstat" title="Round trip to IB Gateway"><span class="gwdot" id="gwDot"></span><span id="gwTxt" class="mono" style="font-size:11px"></span></div>
+      <button class="ibtn flat" id="flatBtn" data-agent-hidden hidden title="Sell everything and cancel every working order (⇧F)">Flatten all <span class="kbd">⇧F</span></button>
+      <button class="ibtn" id="proBtn" title="Show order types, Greeks and raw levels">Pro details</button>
+      <button class="ibtn" id="themeBtn" title="Light / dark (⌘⇧D)"></button>
+      <button class="ibtn" id="cmdBtn" title="Command bar">Search <span class="kbd">⌘K</span></button>
+    </div>
+  </header>
+  <div class="banners" id="banners"></div>
+  <div class="body">
+    <main class="ws" id="ws"></main>
+    <aside class="dock">
+      <div class="dock-hd">
+        <span class="nm"><i id="dockDot"></i>Orbit Agent</span>
+        <span class="sp"></span>
+        <button class="dbtn" id="seeBtn" title="Outline what the agent can't see or touch">What I can't see</button>
+      </div>
+      <div class="sees"><svg class="eye" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M1.5 8S4 3.5 8 3.5 14.5 8 14.5 8 12 12.5 8 12.5 1.5 8 1.5 8Z"/><circle cx="8" cy="8" r="2"/></svg><span>Reading: <span id="seesTxt"></span></span></div>
+      <div class="dock-log" id="dockLog"></div>
+      <div class="dock-in">
+        <div class="composer">
+          <div class="attach-row" id="attachRow"></div>
+          <textarea id="composer" placeholder="Tell me your idea, e.g. “IREN reported, +15% premarket, risk $500”"></textarea>
+          <div class="row">
+            <button class="dbtn" id="attachBtn" title="Attach a chart screenshot"><svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="m13 7.5-5.3 5.3a3.2 3.2 0 0 1-4.5-4.5l5.6-5.6a2.1 2.1 0 0 1 3 3L6.2 11.3a1.1 1.1 0 0 1-1.5-1.5L9.8 4.7"/></svg>Chart</button>
+            <button class="send" id="sendBtn">Send</button>
+          </div>
+        </div>
+        <div class="priv"><span class="gwdot"></span>ChatGPT plan · Codex · <b>positions shared</b></div>
+      </div>
+    </aside>
+  </div>
+</div>
+<div class="toasts" id="toasts"></div>
+</body>
+</html>

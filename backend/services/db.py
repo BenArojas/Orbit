@@ -8,9 +8,8 @@ store for us and that needs to survive app restarts:
   - Trigger hits (log of when a trigger rule actually fired)
   - Settings (scan interval, default timeframe, etc.)
 
-What we do NOT store locally:
-  - Watchlists — managed inside IBKR itself. The app reads them
-    live from IBKR's API. No local copy needed.
+  - Local watchlists after one read-only Client Portal import
+  - Executions and commissions, deduplicated by IBKR execution ID
 
 ── Orbit integration ──────────────────────────────────────────────
 The `instruments` table is the one piece of the current Parallax-owned
@@ -32,6 +31,7 @@ restarting your computer — the data stays.
 """
 
 import asyncio
+import json
 import logging
 import sqlite3
 from datetime import datetime, timedelta, timezone
@@ -44,7 +44,8 @@ from typing import Any
 _ET = ZoneInfo("America/New_York")
 
 from config import SQLITE_DB_PATH
-from services.setup_evidence import US_EXTENDED, evidence_is_current, setup_timestamps
+from services.db_migrations import broker_records, execute_schema, local_watchlists, migrate_database
+from services.setup_evidence import US_EXTENDED, US_RTH, evidence_is_current, setup_timestamps
 
 log = logging.getLogger("parallax.db")
 
@@ -111,6 +112,7 @@ class DatabaseService:
         # serialises read-vs-write at the file level, and the existing
         # _fetchone / _fetchall paths are short-lived reads.
         self._write_lock = asyncio.Lock()
+        self.migration_backup_path: str | None = None
 
     # ── Lifecycle ────────────────────────────────────────────
 
@@ -119,10 +121,30 @@ class DatabaseService:
         Open the database connection and create tables if they don't exist.
         Called once during app startup (in main.py lifespan).
         """
-        self._conn = await asyncio.to_thread(self._connect)
-        await asyncio.to_thread(self._create_tables)
-        await asyncio.to_thread(self._migrate)
+        self._conn = await asyncio.to_thread(self._initialize)
         log.info("SQLite database initialized at %s", self.db_path)
+
+    def _initialize(self) -> sqlite3.Connection:
+        conn = self._connect()
+        try:
+            backup = migrate_database(
+                conn, self.db_path, (self._baseline_schema, local_watchlists, broker_records)
+            )
+            self.migration_backup_path = str(backup) if backup else None
+            conn.execute("PRAGMA journal_mode=WAL")
+            return conn
+        except BaseException:
+            conn.close()
+            raise
+
+    @staticmethod
+    def _baseline_schema(conn: sqlite3.Connection) -> None:
+        # Reuse the legacy schema without publishing a rehearsal connection
+        # on the live service. Later changes get a new numbered migration.
+        schema = DatabaseService.__new__(DatabaseService)
+        schema._conn = conn
+        schema._create_tables()
+        schema._migrate()
 
     async def connect(self) -> None:
         """Alias for :meth:`initialize` used by tests and newer call sites."""
@@ -162,7 +184,6 @@ class DatabaseService:
         """
         conn = sqlite3.connect(self.db_path, check_same_thread=False)
         conn.row_factory = sqlite3.Row  # Access columns by name: row["symbol"]
-        conn.execute("PRAGMA journal_mode=WAL")  # Better concurrent access
         conn.execute("PRAGMA foreign_keys=ON")  # Enforce table relationships
         return conn
 
@@ -179,7 +200,7 @@ class DatabaseService:
         """
         assert self._conn is not None
 
-        self._conn.executescript("""
+        execute_schema(self._conn, """
             -- ─── Trigger Rules ─────────────────────────────────────
             -- A rule = a setup definition. It has 1..N conditions
             -- (in trigger_conditions) joined by AND. A rule is scoped
@@ -504,32 +525,15 @@ class DatabaseService:
                 ON rule_evaluations(plan_id, id DESC);
 
         """)
-        self._conn.commit()
         log.info("Database tables verified/created.")
 
     def _migrate(self) -> None:
         """
-        Safe incremental migrations for existing databases.
-
-        Each ALTER TABLE here is guarded by a try/except so it's safe to run
-        on every startup — it's a no-op if the column already exists.
-        SQLite doesn't support IF NOT EXISTS on ALTER TABLE, so we catch the
-        OperationalError that fires when you try to add a duplicate column.
+        Legacy baseline, now run only inside numbered migration 1.
         """
         assert self._conn is not None
-        migrations = [
-            # Phase 8.9 / Commit D: sec_type hint for pulse items
-            "ALTER TABLE pulse_config ADD COLUMN sec_type TEXT NOT NULL DEFAULT ''",
-        ]
-        for sql in migrations:
-            try:
-                self._conn.execute(sql)
-                self._conn.commit()
-                log.info("Migration applied: %s", sql)
-            except sqlite3.OperationalError:
-                pass  # column already exists — safe to skip
-
         additions = (
+            ("pulse_config", "sec_type", "TEXT NOT NULL DEFAULT ''"),
             ("trigger_rules", "revision", "INTEGER NOT NULL DEFAULT 1"),
             ("trigger_rules", "setup_plan_id", "INTEGER REFERENCES setup_plans(id) ON DELETE RESTRICT"),
             ("trigger_rules", "owner_account_id", "TEXT"),
@@ -584,8 +588,6 @@ class DatabaseService:
             "UPDATE pulse_config SET resolve = 'ETH' "
             "WHERE label = 'ETH' AND resolve = 'ETH.USD' AND sec_type = ''"
         )
-        self._conn.commit()
-
     # ── Internal helpers ─────────────────────────────────────
 
     def _execute(self, sql: str, params: tuple = ()) -> sqlite3.Cursor:
@@ -951,8 +953,11 @@ class DatabaseService:
                 elif (
                     latest["outcome"] in {"matched", "not_matched"}
                     and latest["invalidation_outcome"] not in {"failed", "unavailable"}
-                    and latest["evidence_session_policy"] == US_EXTENDED
-                    and evidence_is_current(latest["evidence_at"], rule["timeframe"], datetime.now(timezone.utc))
+                    and latest["evidence_session_policy"] in {US_EXTENDED, US_RTH}
+                    and evidence_is_current(
+                        latest["evidence_at"], rule["timeframe"], datetime.now(timezone.utc),
+                        outside_rth=latest["evidence_session_policy"] != US_RTH,
+                    )
                 ):
                     health = "healthy"
                 else:
@@ -1842,6 +1847,121 @@ class DatabaseService:
         await self.set_setting(self._FIB_WEIGHTS_SETTING_KEY, payload)
 
     # ── Watchlist Config Operations (Phase 6.8) ─────────────────
+
+    async def local_watchlists(self) -> list[dict]:
+        return await self._run_read(
+            lambda: self._fetchall("SELECT id, name FROM orbit_watchlists ORDER BY position, id")
+        )
+
+    async def record_broker_execution(self, execution_id: str, payload: dict) -> None:
+        await self.execute(
+            "INSERT INTO broker_executions VALUES (?, ?) "
+            "ON CONFLICT(execution_id) DO UPDATE SET payload_json=excluded.payload_json",
+            (execution_id, json.dumps(payload, allow_nan=False)),
+        )
+
+    async def record_broker_commission(self, execution_id: str, payload: dict) -> None:
+        await self.execute(
+            "INSERT INTO broker_commissions VALUES (?, ?) "
+            "ON CONFLICT(execution_id) DO UPDATE SET payload_json=excluded.payload_json",
+            (execution_id, json.dumps(payload, allow_nan=False)),
+        )
+
+    async def broker_executions(self) -> list[dict]:
+        rows = await self._run_read(lambda: self._fetchall(
+            "SELECT e.payload_json, c.payload_json AS commission_json "
+            "FROM broker_executions e LEFT JOIN broker_commissions c USING (execution_id)"
+        ))
+        return [{**json.loads(row["payload_json"]),
+                 "commission": json.loads(row["commission_json"]) if row["commission_json"] else None,
+                 "ownership": "unmatched"}
+                for row in rows]
+
+    async def local_watchlist_rows(self, watchlist_id: str) -> list[dict]:
+        rows = await self._run_read(lambda: self._fetchall(
+            "SELECT data_json FROM orbit_watchlist_rows WHERE watchlist_id=? ORDER BY position",
+            (watchlist_id,),
+        ))
+        return [json.loads(row["data_json"]) for row in rows]
+
+    async def import_watchlists(self, lists: list[dict]) -> bool:
+        """Commit one complete, validated source snapshot, never a partial import."""
+        def _import() -> bool:
+            assert self._conn is not None
+            with self._conn:
+                if self._fetchone("SELECT value FROM settings WHERE key='orbit.watchlists.imported'"):
+                    return False
+                position = self._conn.execute(
+                    "SELECT COALESCE(MAX(position), -1)+1 FROM orbit_watchlists"
+                ).fetchone()[0]
+                for offset, item in enumerate(lists):
+                    self._conn.execute(
+                        "INSERT INTO orbit_watchlists VALUES (?, ?, ?)",
+                        (item["id"], item["name"], position + offset),
+                    )
+                    self._conn.executemany(
+                        "INSERT INTO orbit_watchlist_rows VALUES (?, ?, ?)",
+                        [(item["id"], i, json.dumps(row, allow_nan=False))
+                         for i, row in enumerate(item["rows"])],
+                    )
+                self._conn.execute(
+                    "INSERT INTO settings (key, value) VALUES ('orbit.watchlists.imported', ?)",
+                    (datetime.now(timezone.utc).isoformat(),),
+                )
+            return True
+        return await self._run_write(_import)
+
+    async def create_local_watchlist(self, name: str) -> dict:
+        from uuid import uuid4
+        item = {"id": f"local:{uuid4().hex}", "name": name}
+        def _create() -> None:
+            assert self._conn is not None
+            with self._conn:
+                self._conn.execute(
+                    "INSERT INTO orbit_watchlists VALUES (?, ?, "
+                    "(SELECT COALESCE(MAX(position), -1)+1 FROM orbit_watchlists))",
+                    (item["id"], name),
+                )
+        await self._run_write(_create)
+        return item
+
+    async def delete_local_watchlist(self, watchlist_id: str) -> None:
+        await self.execute("DELETE FROM orbit_watchlists WHERE id=?", (watchlist_id,))
+
+    async def edit_local_watchlist(
+        self, watchlist_id: str, conid: int, *, remove: bool = False
+    ) -> bool:
+        def _edit() -> bool:
+            assert self._conn is not None
+            with self._conn:
+                if not self._fetchone("SELECT id FROM orbit_watchlists WHERE id=?", (watchlist_id,)):
+                    raise ValueError("Watchlist not found")
+                rows = self._fetchall(
+                    "SELECT position, data_json FROM orbit_watchlist_rows WHERE watchlist_id=? ORDER BY position",
+                    (watchlist_id,),
+                )
+                matches = [row for row in rows if int(
+                    json.loads(row["data_json"]).get("conid")
+                    or json.loads(row["data_json"]).get("C") or 0
+                ) == conid]
+                if remove:
+                    self._conn.executemany(
+                        "DELETE FROM orbit_watchlist_rows WHERE watchlist_id=? AND position=?",
+                        [(watchlist_id, row["position"]) for row in matches],
+                    )
+                    return bool(matches)
+                if matches:
+                    return False
+                instrument = self._fetchone("SELECT * FROM instruments WHERE conid=?", (conid,)) or {}
+                row = {"conid": conid, "symbol": instrument.get("symbol", ""),
+                       "name": instrument.get("company_name", "")}
+                position = max((r["position"] for r in rows), default=-1) + 1
+                self._conn.execute(
+                    "INSERT INTO orbit_watchlist_rows VALUES (?, ?, ?)",
+                    (watchlist_id, position, json.dumps(row)),
+                )
+                return True
+        return await self._run_write(_edit)
 
     async def get_all_watchlist_configs(self) -> list[dict]:
         """Return every configured watchlist (name + override days)."""

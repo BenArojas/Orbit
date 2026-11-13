@@ -131,6 +131,13 @@ from services.tws_broker_adapter import TwsAdvancedRejectError, TwsBrokerAdapter
 from services.tws_order_packages import preview_order_package
 
 
+def _paper_ib():
+    broker = MagicMock()
+    broker.isConnected.return_value = True
+    broker.managedAccounts.return_value = ["DU12345"]
+    return broker
+
+
 def test_scale_out_preview_creates_one_entry_parent_per_lot():
     client = _client()
     req = _scale_out_request()
@@ -178,8 +185,7 @@ def test_place_order_package_isolates_each_lot_under_its_own_parent():
         def __isub__(self, fn):
             return self
 
-    fake_ib = MagicMock()
-    fake_ib.isConnected.return_value = True
+    fake_ib = _paper_ib()
     fake_ib.client.getReqId.side_effect = iter(range(1, 100))
     fake_ib.errorEvent = _FakeEvent()
     fake_ib.placeOrder.side_effect = lambda contract, order: placed.append(order) or _FakeTrade(order)
@@ -379,8 +385,7 @@ def test_place_order_package_attaches_one_price_condition_to_the_broker_order():
         def __isub__(self, fn):
             return self
 
-    fake_ib = MagicMock()
-    fake_ib.isConnected.return_value = True
+    fake_ib = _paper_ib()
     fake_ib.client.getReqId.side_effect = iter(range(1, 100))
     fake_ib.errorEvent = _FakeEvent()
     fake_ib.placeOrder.side_effect = lambda contract, order: placed.append(order) or _FakeTrade(order)
@@ -410,11 +415,10 @@ def test_modify_order_refuses_oca_grouped_order_before_calling_placeorder():
     adapter._state = "connected"
     adapter._connected_port = 4002  # paper port
 
-    order = SimpleNamespace(orderId=417, orderType="STP", ocaGroup="ORBIT-pkg-LOT0", parentId=415)
+    order = SimpleNamespace(account="DU12345", orderId=417, orderType="STP", ocaGroup="ORBIT-pkg-LOT0", parentId=415)
     trade = SimpleNamespace(order=order, contract=SimpleNamespace())
 
-    fake_ib = MagicMock()
-    fake_ib.isConnected.return_value = True
+    fake_ib = _paper_ib()
     fake_ib.openTrades.return_value = [trade]
     adapter._ib = fake_ib
 
@@ -445,13 +449,12 @@ def test_modify_order_mutates_tracked_trade_so_reconciliation_reflects_new_price
     adapter._connected_port = 4002  # paper port
 
     order = SimpleNamespace(
-        orderId=100, orderType="STP", ocaGroup="", lmtPrice=0.0, auxPrice=300.0, totalQuantity=10.0,
+        account="DU12345", orderId=100, orderType="STP", ocaGroup="", lmtPrice=0.0, auxPrice=300.0, totalQuantity=10.0,
     )
     contract = SimpleNamespace()
     trade = SimpleNamespace(order=order, contract=contract, orderStatus=SimpleNamespace(status="PreSubmitted"))
 
-    fake_ib = MagicMock()
-    fake_ib.isConnected.return_value = True
+    fake_ib = _paper_ib()
     fake_ib.openTrades.return_value = [trade]
     fake_ib.placeOrder.return_value = trade  # ib_async's own modify-branch behavior
     adapter._ib = fake_ib
@@ -480,7 +483,7 @@ def test_modify_order_ignores_399_style_warning_with_no_advanced_error():
     adapter._state = "connected"
     adapter._connected_port = 4002  # paper port
 
-    order = SimpleNamespace(orderId=419, orderType="LMT", ocaGroup="", lmtPrice=118.0, totalQuantity=12.0)
+    order = SimpleNamespace(account="DU12345", orderId=419, orderType="LMT", ocaGroup="", lmtPrice=118.0, totalQuantity=12.0)
     contract = SimpleNamespace()
     # Snapshot taken mid-race: the 399 warning already flipped status to the
     # transient value, but no advancedError was ever attached — this is what
@@ -488,8 +491,7 @@ def test_modify_order_ignores_399_style_warning_with_no_advanced_error():
     # reject if you only look at orderStatus.status.
     trade = SimpleNamespace(order=order, contract=contract, orderStatus=SimpleNamespace(status="ValidationError"))
 
-    fake_ib = MagicMock()
-    fake_ib.isConnected.return_value = True
+    fake_ib = _paper_ib()
     fake_ib.openTrades.return_value = [trade]
     fake_ib.placeOrder.return_value = trade
     adapter._ib = fake_ib
@@ -510,7 +512,7 @@ def test_modify_order_raises_advanced_reject_with_parsed_override_codes():
     adapter._state = "connected"
     adapter._connected_port = 4002  # paper port
 
-    order = SimpleNamespace(orderId=500, orderType="LMT", ocaGroup="", lmtPrice=118.0, totalQuantity=12.0)
+    order = SimpleNamespace(account="DU12345", orderId=500, orderType="LMT", ocaGroup="", lmtPrice=118.0, totalQuantity=12.0)
     contract = SimpleNamespace()
     trade = SimpleNamespace(
         order=order, contract=contract, orderStatus=SimpleNamespace(status="ValidationError"),
@@ -525,8 +527,7 @@ def test_modify_order_raises_advanced_reject_with_parsed_override_codes():
         trade.advancedError = '{"errorCode": "8229", "message": "Order size exceeds your maximum limit."}'
         return trade
 
-    fake_ib = MagicMock()
-    fake_ib.isConnected.return_value = True
+    fake_ib = _paper_ib()
     fake_ib.openTrades.return_value = [trade]
     fake_ib.placeOrder.side_effect = _place_order_and_attach_reject
     adapter._ib = fake_ib

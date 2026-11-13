@@ -26,7 +26,7 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from constants import DEFAULT_QUOTE_FIELDS_STR, PERIOD_BAR
-from deps import get_ibkr, get_instrument_identity, get_market_assessment, require_ibkr_auth
+from deps import get_product_data as get_ibkr, get_instrument_identity, get_market_assessment, require_product_data as require_ibkr_auth
 from exceptions import IBKRError, SymbolNotFoundError
 from services.ibkr import IBKRService, _safe_float
 from services.instrument_identity import InstrumentIdentityService
@@ -93,6 +93,7 @@ async def get_quote(
         "changePercent": _safe_float(data.get("83")),
         "changeAmount": _safe_float(data.get("82")),
         "volume": _safe_float(data.get("7762")),
+        **_quality_fields(data),
     }
 
 
@@ -117,6 +118,17 @@ def _format_quote_row(conid: int, data: dict) -> dict:
         "changePercent": _safe_float(data.get("83")),
         "changeAmount": _safe_float(data.get("82")),
         "volume": _safe_float(data.get("7762")),
+        **_quality_fields(data),
+    }
+
+
+def _quality_fields(data: dict) -> dict:
+    return {
+        key: data.get(key, default) for key, default in (
+            ("market_data_type", "unknown"), ("received_at", None),
+            ("age_seconds", None), ("freshness", "unknown"),
+            ("entry_data_eligible", False), ("unavailable_reason", None),
+        )
     }
 
 

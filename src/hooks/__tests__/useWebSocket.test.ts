@@ -10,6 +10,10 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 import { renderHook, act } from "@testing-library/react";
 import { useWebSocket, __resetWebSocketSingletonForTests } from "../useWebSocket";
 
+vi.mock("@/lib/sidecarSession", () => ({
+  sessionProtocols: async () => ["orbit-session", "test-session"],
+}));
+
 class MockWebSocket {
   static instances: MockWebSocket[] = [];
   static OPEN = 1;
@@ -46,9 +50,10 @@ beforeEach(() => {
 });
 
 describe("useWebSocket subscription refcounting", () => {
-  it("only emits one subscribe to the server when two consumers subscribe to the same conid", () => {
+  it("only emits one subscribe to the server when two consumers subscribe to the same conid", async () => {
     const { result: a } = renderHook(() => useWebSocket());
     const { result: b } = renderHook(() => useWebSocket());
+    await act(async () => {});
 
     const sock = MockWebSocket.instances[0];
     act(() => sock.open());
@@ -62,9 +67,10 @@ describe("useWebSocket subscription refcounting", () => {
     expect(subMsgs).toHaveLength(1);
   });
 
-  it("keeps the subscription alive when one of two consumers unsubscribes", () => {
+  it("keeps the subscription alive when one of two consumers unsubscribes", async () => {
     const { result: a } = renderHook(() => useWebSocket());
     const { result: b } = renderHook(() => useWebSocket());
+    await act(async () => {});
 
     const sock = MockWebSocket.instances[0];
     act(() => sock.open());
@@ -79,9 +85,10 @@ describe("useWebSocket subscription refcounting", () => {
     expect(unsubMsgs).toHaveLength(0);
   });
 
-  it("emits the server-side unsubscribe only when the last consumer releases", () => {
+  it("emits the server-side unsubscribe only when the last consumer releases", async () => {
     const { result: a } = renderHook(() => useWebSocket());
     const { result: b } = renderHook(() => useWebSocket());
+    await act(async () => {});
 
     const sock = MockWebSocket.instances[0];
     act(() => sock.open());
@@ -97,9 +104,10 @@ describe("useWebSocket subscription refcounting", () => {
     expect(unsubMsgs).toHaveLength(1);
   });
 
-  it("re-subscribes each held conid exactly once on reconnect", () => {
+  it("re-subscribes each held conid exactly once on reconnect", async () => {
     const { result: a } = renderHook(() => useWebSocket());
     const { result: b } = renderHook(() => useWebSocket());
+    await act(async () => {});
 
     let sock = MockWebSocket.instances[0];
     act(() => sock.open());
@@ -122,6 +130,7 @@ describe("useWebSocket subscription refcounting", () => {
     expect(a.current.upstreamStatus).toBeNull();
     act(() => { vi.advanceTimersByTime(1500); });
     vi.useRealTimers();
+    await act(async () => {});
 
     sock = MockWebSocket.instances[MockWebSocket.instances.length - 1];
     act(() => sock.open());
@@ -136,8 +145,9 @@ describe("useWebSocket subscription refcounting", () => {
     expect(subMsgs.filter((s) => s.includes('"conid":456'))).toHaveLength(1);
   });
 
-  it("ignores unsubscribe when conid was never subscribed", () => {
+  it("ignores unsubscribe when conid was never subscribed", async () => {
     const { result } = renderHook(() => useWebSocket());
+    await act(async () => {});
     const sock = MockWebSocket.instances[0];
     act(() => sock.open());
 

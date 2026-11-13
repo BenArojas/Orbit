@@ -40,7 +40,7 @@ def make_ibkr(
 def _client(ibkr):
     """Return a TestClient with get_ibkr overridden for this test."""
     app.dependency_overrides[get_ibkr] = lambda: ibkr
-    client = TestClient(app)
+    client = TestClient(app, headers={"X-Orbit-Session": app.state.session_secret})
     return client
 
 

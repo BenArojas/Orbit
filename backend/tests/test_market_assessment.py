@@ -84,7 +84,7 @@ async def test_assessment_classifies_and_keeps_prior_posture_when_missing_data_c
     assert not market_open
 
     first = await service.get_assessment()
-    assert (first.status, first.posture) == ("complete", "broad")
+    assert (first.status, first.posture) == ("complete", "healthy")
     assert first.indices[0].ema21_distance_pct == pytest.approx((first.indices[0].close / first.indices[0].ema21 - 1) * 100)
     assert first.indices[0].sma50_distance_pct == pytest.approx((first.indices[0].close / first.indices[0].sma50 - 1) * 100)
     assert all(item.sma200 is None for item in first.indices)
@@ -99,7 +99,7 @@ async def test_assessment_classifies_and_keeps_prior_posture_when_missing_data_c
     assert (second.status, second.posture) == ("incomplete", None)
     assert (second.participation.possible_above_min, second.participation.possible_above_max) == (7, 8)
     assert second.previous_assessment is not None
-    assert second.previous_assessment.posture == "broad"
+    assert second.previous_assessment.posture == "healthy"
 
 
 @pytest.mark.asyncio

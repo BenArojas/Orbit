@@ -102,7 +102,7 @@ class MoonMarketService:
         execution: MoonMarketExecutionAdapter | None = None,
     ) -> None:
         self.ibkr = ibkr
-        self.execution = execution or ClientPortalExecutionAdapter(ibkr)
+        self.execution = execution or getattr(ibkr, "portfolio_reads", None) or ClientPortalExecutionAdapter(ibkr)
 
     async def accounts(self) -> MoonMarketAccountsResponse:
         raw_accounts = await self.ibkr.brokerage_accounts()
@@ -403,6 +403,12 @@ class MoonMarketService:
             if daily_pnl is not None
             else None,
             currency=_first_text(row, ("currency",), "USD"),
+            account=row.get("account"),
+            multiplier=row.get("multiplier"),
+            strike=row.get("strike"),
+            right=row.get("right"),
+            expiry=row.get("expiry"),
+            market_data_freshness=row.get("market_data_freshness", "unknown"),
         )
 
     @staticmethod

@@ -76,6 +76,10 @@ async def ws_endpoint(ws: WebSocket):
     Messages to frontend: real-time market data updates.
     """
     app = ws.scope["app"]
+    if hasattr(app.state, "product_data"):
+        from routers.product_ws import product_ws
+        await product_ws(ws, app.state.tws_adapter, _clients)
+        return
     ibkr: IBKRService = app.state.ibkr
 
     # Wire up the broadcast callback if not already set

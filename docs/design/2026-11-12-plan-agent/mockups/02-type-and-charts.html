@@ -1,0 +1,197 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Orbit — type & data viz</title>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@300..700&family=Geist+Mono:wght@400;500&family=Instrument+Sans:wght@400..700&family=Instrument+Serif:ital@0;1&family=Space+Grotesk:wght@400..700&family=IBM+Plex+Mono:wght@400;500&family=Bricolage+Grotesque:opsz,wght@12..96,400..700&family=Inter+Tight:wght@400..700&family=Martian+Mono:wght@400;500&family=Schibsted+Grotesk:wght@400..700&display=block" rel="stylesheet">
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+html{-webkit-font-smoothing:antialiased}
+body{background:#0C0A12;color:#9C93B8;font-family:Geist,system-ui,sans-serif;padding:38px 26px 70px}
+.page{max-width:1620px;margin:0 auto}
+h1{font-size:19px;color:#ECEAF2;font-weight:600;letter-spacing:-.01em}
+.lede{font-size:13.5px;line-height:1.65;margin-top:8px;max-width:980px}
+.lede b{color:#D4CFE4;font-weight:500}
+.rule{height:1px;background:#241E36;margin:24px 0 26px}
+.sec-h{font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:#6A6287;font-weight:600;margin:34px 0 14px;padding-bottom:7px;border-bottom:1px solid #241E36}
+.sec-h:first-of-type{margin-top:0}
+
+/* ─── font specimens ─── */
+.fonts{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.fs{background:#15121E;border:1px solid #241E36;border-radius:13px;padding:19px 20px 21px}
+.fs-top{display:flex;justify-content:space-between;align-items:baseline;gap:10px;margin-bottom:15px}
+.fs-top b{font-size:13px;color:#ECEAF2;font-weight:600;font-family:Geist,sans-serif}
+.fs-top span{font-size:10.5px;color:#6A6287;font-family:"Geist Mono",monospace}
+.h-demo{font-size:26px;line-height:1.15;color:#ECEAF2;margin-bottom:4px}
+.s-demo{font-size:15px;color:#C8C2DC;margin-bottom:9px}
+.b-demo{font-size:13.5px;line-height:1.55;color:#9C93B8;margin-bottom:13px}
+.n-demo{font-size:15px;font-variant-numeric:tabular-nums;color:#ECEAF2;letter-spacing:-.02em}
+.n-demo em{font-style:normal;color:#D4FF3F}
+.fs-note{font-size:11px;line-height:1.55;color:#6A6287;margin-top:12px;padding-top:11px;border-top:1px solid #241E36;font-family:Geist,sans-serif}
+.fs-note b{color:#9C93B8;font-weight:500}
+
+/* ─── data viz kit ─── */
+.viz{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}
+.vz{background:#15121E;border:1px solid #241E36;border-radius:13px;padding:17px 18px 19px}
+.vz h4{font-size:11.5px;color:#ECEAF2;font-weight:600;margin-bottom:3px;font-family:Geist,sans-serif}
+.vz p{font-size:10.5px;color:#6A6287;line-height:1.5;margin-bottom:14px;font-family:Geist,sans-serif}
+.vz .cost{font-family:"Geist Mono",monospace;font-size:9px;color:#5D5578;margin-top:12px}
+.mono{font-family:"Geist Mono",monospace;font-variant-numeric:tabular-nums}
+
+/* rr bar */
+.rr{display:flex;height:30px;border-radius:7px;overflow:hidden}
+.rr div{display:grid;place-items:center;font-family:"Geist Mono",monospace;font-size:11px;font-weight:500}
+/* meter */
+.meter{height:9px;border-radius:999px;background:#211B33;overflow:hidden;position:relative}
+.meter i{display:block;height:100%;border-radius:999px;background:linear-gradient(90deg,#FF5C72,#FF8A3D)}
+.meter-row{display:flex;justify-content:space-between;font-size:11px;margin-bottom:8px;color:#9C93B8}
+.meter-row b{font-family:"Geist Mono",monospace;color:#ECEAF2;font-weight:500}
+/* win strip */
+.strip{display:flex;align-items:flex-end;gap:3px;height:44px}
+.strip i{flex:1;border-radius:2px;display:block}
+/* fill */
+.fillbar{height:26px;border-radius:7px;background:#211B33;overflow:hidden;position:relative;display:flex;align-items:center}
+.fillbar i{position:absolute;left:0;top:0;bottom:0;background:rgba(139,109,255,.35);border-right:2px solid #8B6DFF}
+.fillbar span{position:relative;font-family:"Geist Mono",monospace;font-size:11px;color:#ECEAF2;padding-left:10px;font-weight:500}
+/* timeline */
+.tl{position:relative;height:3px;background:#211B33;border-radius:999px;margin:26px 0 30px}
+.tl .ev{position:absolute;top:50%;transform:translate(-50%,-50%);width:9px;height:9px;border-radius:50%;background:#15121E;box-shadow:0 0 0 2px #8B6DFF}
+.tl .ev.g{box-shadow:0 0 0 2px #3FE08F}
+.tl .ev.r{box-shadow:0 0 0 2px #FF5C72}
+.tl .ev b{position:absolute;top:-22px;left:50%;transform:translateX(-50%);font-size:9px;font-weight:500;color:#9C93B8;white-space:nowrap;font-family:Geist,sans-serif}
+.tl .ev em{position:absolute;top:14px;left:50%;transform:translateX(-50%);font-style:normal;font-family:"Geist Mono",monospace;font-size:9px;color:#6A6287;white-space:nowrap}
+</style>
+</head>
+<body><div class="page">
+<h1>Type &amp; the data-viz kit</h1>
+<p class="lede">Six pairings, same words each time, so only the typeface changes. Then the chart kit — every one of these is
+<b>plain SVG or CSS</b>, no charting library, so a plan card costs nothing to render. Heavy charts stay only on the Analysis screen,
+where <b>lightweight-charts</b> already does the job.</p>
+
+<div class="sec-h">Font pairings</div>
+<div class="fonts">
+
+  <div class="fs">
+    <div class="fs-top"><b>1 · Geist + Geist Mono</b><span>already installed · 0 new deps</span></div>
+    <div class="h-demo" style="font-family:Geist;font-weight:600;letter-spacing:-.025em">Three plans for IREN</div>
+    <div class="s-demo" style="font-family:Geist;font-weight:500">Intraday breakout · risking $500</div>
+    <div class="b-demo" style="font-family:Geist">Buy if it breaks the early high. You're out automatically at $18.05.</div>
+    <div class="n-demo" style="font-family:'Geist Mono'">18.85 · 19.65 · 20.45 &nbsp;<em>+$1,250</em></div>
+    <p class="fs-note"><b>Vercel's own face</b>, so it sits naturally with the UI SDK. Neutral and modern; the mono is excellent for prices.
+      Slight risk of looking like every other dev-tool dashboard.</p>
+  </div>
+
+  <div class="fs">
+    <div class="fs-top"><b>2 · Instrument Serif + Instrument Sans</b><span>Google · editorial</span></div>
+    <div class="h-demo" style="font-family:'Instrument Serif';font-weight:400;font-size:30px">Three plans for IREN</div>
+    <div class="s-demo" style="font-family:'Instrument Sans';font-weight:600">Intraday breakout · risking $500</div>
+    <div class="b-demo" style="font-family:'Instrument Sans'">Buy if it breaks the early high. You're out automatically at $18.05.</div>
+    <div class="n-demo" style="font-family:'Geist Mono'">18.85 · 19.65 · 20.45 &nbsp;<em>+$1,250</em></div>
+    <p class="fs-note">The serif is <b>modern, not dusty</b> — much sharper than Georgia. Makes a plan read like a written briefing.
+      Use it only for headlines and the agent's one-line verdicts.</p>
+  </div>
+
+  <div class="fs">
+    <div class="fs-top"><b>3 · Space Grotesk + IBM Plex Mono</b><span>Google · technical character</span></div>
+    <div class="h-demo" style="font-family:'Space Grotesk';font-weight:600;letter-spacing:-.02em">Three plans for IREN</div>
+    <div class="s-demo" style="font-family:'Space Grotesk';font-weight:500">Intraday breakout · risking $500</div>
+    <div class="b-demo" style="font-family:'Space Grotesk'">Buy if it breaks the early high. You're out automatically at $18.05.</div>
+    <div class="n-demo" style="font-family:'IBM Plex Mono'">18.85 · 19.65 · 20.45 &nbsp;<em>+$1,250</em></div>
+    <p class="fs-note">Quirky terminals and odd letterforms give it <b>personality without costing legibility</b>. Pairs well with
+      the Violet Acid palette. Can feel slightly 2021-startup.</p>
+  </div>
+
+  <div class="fs">
+    <div class="fs-top"><b>4 · Bricolage Grotesque</b><span>Google · the loud one</span></div>
+    <div class="h-demo" style="font-family:'Bricolage Grotesque';font-weight:700;letter-spacing:-.03em">Three plans for IREN</div>
+    <div class="s-demo" style="font-family:'Bricolage Grotesque';font-weight:600">Intraday breakout · risking $500</div>
+    <div class="b-demo" style="font-family:'Bricolage Grotesque';font-weight:400">Buy if it breaks the early high. You're out automatically at $18.05.</div>
+    <div class="n-demo" style="font-family:'Martian Mono';font-size:13px">18.85 · 19.65 · 20.45 &nbsp;<em>+$1,250</em></div>
+    <p class="fs-note">Headlines get real <b>attitude</b> — nothing else looks like it. Martian Mono is wide and deliberate for numbers.
+      Risk: strong flavour you may tire of, and the wide mono eats horizontal space.</p>
+  </div>
+
+  <div class="fs">
+    <div class="fs-top"><b>5 · Schibsted Grotesk + Geist Mono</b><span>Google · quiet confidence</span></div>
+    <div class="h-demo" style="font-family:'Schibsted Grotesk';font-weight:700;letter-spacing:-.025em">Three plans for IREN</div>
+    <div class="s-demo" style="font-family:'Schibsted Grotesk';font-weight:500">Intraday breakout · risking $500</div>
+    <div class="b-demo" style="font-family:'Schibsted Grotesk'">Buy if it breaks the early high. You're out automatically at $18.05.</div>
+    <div class="n-demo" style="font-family:'Geist Mono'">18.85 · 19.65 · 20.45 &nbsp;<em>+$1,250</em></div>
+    <p class="fs-note">Newsroom face: <b>tight, confident headlines</b>, very plain body. Reads as editorial rather than AI-generated.
+      Less common than Inter, so it won't feel like a template.</p>
+  </div>
+
+  <div class="fs">
+    <div class="fs-top"><b>6 · Inter Tight + Geist Mono</b><span>installed-ish · the safe one</span></div>
+    <div class="h-demo" style="font-family:'Inter Tight';font-weight:700;letter-spacing:-.03em">Three plans for IREN</div>
+    <div class="s-demo" style="font-family:'Inter Tight';font-weight:600">Intraday breakout · risking $500</div>
+    <div class="b-demo" style="font-family:'Inter Tight'">Buy if it breaks the early high. You're out automatically at $18.05.</div>
+    <div class="n-demo" style="font-family:'Geist Mono'">18.85 · 19.65 · 20.45 &nbsp;<em>+$1,250</em></div>
+    <p class="fs-note">What Orbit uses today, tightened. <b>Flawless at small sizes</b> in dense tables. This is the one you called
+      "AI" — it's everywhere for a reason, but it has no voice.</p>
+  </div>
+
+</div>
+
+<div class="sec-h">Data-viz kit — zero libraries</div>
+<div class="viz">
+
+  <div class="vz"><h4>Risk / reward split</h4><p>Replaces "R:R 2.5" with proportion you can see.</p>
+    <div class="rr"><div style="flex:500;background:rgba(255,92,114,.22);color:#FF8A96">$500 risk</div><div style="flex:1250;background:rgba(63,224,143,.2);color:#3FE08F">$1,250 reward</div></div>
+    <div class="cost">1 flex div · no JS</div></div>
+
+  <div class="vz"><h4>Daily budget used</h4><p>The circuit breaker, always visible in the header.</p>
+    <div class="meter-row"><span>Today's losses</span><b>$310 of $900</b></div>
+    <div class="meter"><i style="width:34%"></i></div>
+    <div class="cost">1 div + width %</div></div>
+
+  <div class="vz"><h4>Fill progress</h4><p>Partial fills in shares, not percentages.</p>
+    <div class="fillbar"><i style="width:60%"></i><span>120 of 200 shares</span></div>
+    <div class="cost">1 div · updates on fill event</div></div>
+
+  <div class="vz"><h4>Last 20 trades</h4><p>Journal at a glance — height is R multiple.</p>
+    <div class="strip">
+      <i style="height:40%;background:#3FE08F"></i><i style="height:22%;background:#FF5C72"></i><i style="height:70%;background:#3FE08F"></i>
+      <i style="height:22%;background:#FF5C72"></i><i style="height:22%;background:#FF5C72"></i><i style="height:95%;background:#3FE08F"></i>
+      <i style="height:48%;background:#3FE08F"></i><i style="height:22%;background:#FF5C72"></i><i style="height:34%;background:#3FE08F"></i>
+      <i style="height:22%;background:#FF5C72"></i><i style="height:62%;background:#3FE08F"></i><i style="height:22%;background:#FF5C72"></i>
+      <i style="height:80%;background:#3FE08F"></i><i style="height:22%;background:#FF5C72"></i><i style="height:40%;background:#3FE08F"></i>
+      <i style="height:55%;background:#3FE08F"></i><i style="height:22%;background:#FF5C72"></i><i style="height:28%;background:#3FE08F"></i>
+      <i style="height:22%;background:#FF5C72"></i><i style="height:72%;background:#3FE08F"></i></div>
+    <div class="cost">20 divs · static</div></div>
+
+  <div class="vz"><h4>Mini candles</h4><p>Enough chart for a plan card. Full chart only on Analysis.</p>
+    <svg width="100%" height="58" viewBox="0 0 210 58" preserveAspectRatio="none">
+      <g stroke-width="1">
+        <line x1="6" y1="40" x2="6" y2="52" stroke="#FF5C72"/><rect x="3" y="43" width="6" height="7" fill="#FF5C72"/>
+        <line x1="20" y1="36" x2="20" y2="50" stroke="#3FE08F"/><rect x="17" y="39" width="6" height="9" fill="#3FE08F"/>
+        <line x1="34" y1="33" x2="34" y2="46" stroke="#3FE08F"/><rect x="31" y="35" width="6" height="8" fill="#3FE08F"/>
+        <line x1="48" y1="34" x2="48" y2="45" stroke="#FF5C72"/><rect x="45" y="36" width="6" height="6" fill="#FF5C72"/>
+        <line x1="62" y1="28" x2="62" y2="41" stroke="#3FE08F"/><rect x="59" y="30" width="6" height="9" fill="#3FE08F"/>
+        <line x1="76" y1="24" x2="76" y2="36" stroke="#3FE08F"/><rect x="73" y="26" width="6" height="8" fill="#3FE08F"/>
+        <line x1="90" y1="26" x2="90" y2="38" stroke="#FF5C72"/><rect x="87" y="28" width="6" height="7" fill="#FF5C72"/>
+        <line x1="104" y1="18" x2="104" y2="32" stroke="#3FE08F"/><rect x="101" y="20" width="6" height="10" fill="#3FE08F"/>
+        <line x1="118" y1="16" x2="118" y2="28" stroke="#3FE08F"/><rect x="115" y="18" width="6" height="7" fill="#3FE08F"/>
+        <line x1="132" y1="19" x2="132" y2="30" stroke="#FF5C72"/><rect x="129" y="21" width="6" height="6" fill="#FF5C72"/>
+        <line x1="146" y1="12" x2="146" y2="26" stroke="#3FE08F"/><rect x="143" y="14" width="6" height="9" fill="#3FE08F"/>
+        <line x1="160" y1="9" x2="160" y2="21" stroke="#3FE08F"/><rect x="157" y="11" width="6" height="8" fill="#3FE08F"/>
+        <line x1="174" y1="11" x2="174" y2="22" stroke="#FF5C72"/><rect x="171" y="13" width="6" height="6" fill="#FF5C72"/>
+        <line x1="188" y1="6" x2="188" y2="19" stroke="#3FE08F"/><rect x="185" y="8" width="6" height="9" fill="#3FE08F"/>
+      </g>
+      <line x1="0" y1="35" x2="210" y2="35" stroke="#8B6DFF" stroke-width="1" stroke-dasharray="3 3" opacity=".75"/>
+    </svg>
+    <div class="cost">~40 SVG nodes · dashed line = your entry</div></div>
+
+  <div class="vz"><h4>Session timeline</h4><p>What happened and when, in one line.</p>
+    <div class="tl">
+      <div class="ev" style="left:3%"><b>Open</b><em>9:30</em></div>
+      <div class="ev" style="left:24%"><b>Filled</b><em>9:41</em></div>
+      <div class="ev g" style="left:52%"><b>T1 hit</b><em>10:18</em></div>
+      <div class="ev" style="left:72%"><b>Stop → break-even</b><em>10:18</em></div>
+      <div class="ev r" style="left:95%"><b>Closes</b><em>3:55</em></div>
+    </div>
+    <div class="cost">5 divs · absolute %</div></div>
+
+</div>
+</div></body></html>

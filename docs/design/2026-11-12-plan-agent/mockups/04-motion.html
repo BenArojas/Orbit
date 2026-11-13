@@ -1,0 +1,237 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Orbit — motion</title>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@400..800&family=Geist+Mono:wght@400;500&display=block" rel="stylesheet">
+<script src="palettes.js"></script>
+<style>
+:root{--dur:200ms;--fast:140ms;--ease:cubic-bezier(.2,.8,.2,1);--ease-io:cubic-bezier(.65,0,.35,1)}
+body.rm{--dur:0ms;--fast:0ms}
+@media (prefers-reduced-motion: reduce){:root{--dur:0ms;--fast:0ms}}
+*{box-sizing:border-box;margin:0;padding:0}
+html{-webkit-font-smoothing:antialiased}
+body{background:var(--c60);color:var(--ink2);font-family:"Schibsted Grotesk",system-ui,sans-serif;padding:32px 26px 60px;transition:background var(--dur) var(--ease)}
+.page{max-width:1640px;margin:0 auto}
+.top{display:flex;align-items:flex-end;justify-content:space-between;gap:20px;flex-wrap:wrap}
+h1{font-size:21px;color:var(--ink);font-weight:700;letter-spacing:-.02em}
+.lede{font-size:13.5px;line-height:1.6;margin-top:7px;max-width:820px}
+.lede b{color:var(--ink);font-weight:600}
+.mono{font-family:"Geist Mono",monospace;font-variant-numeric:tabular-nums}
+.sw{display:flex;gap:6px;flex-wrap:wrap}
+.chip{font-family:inherit;font-size:11.5px;font-weight:600;padding:6px 11px;border-radius:99px;border:1px solid var(--edge);background:var(--card);color:var(--ink2);cursor:pointer;display:flex;gap:6px;align-items:center;transition:color var(--fast) var(--ease),border-color var(--fast) var(--ease),transform var(--fast) var(--ease)}
+.chip i{width:9px;height:9px;border-radius:50%}
+.chip.on{color:var(--ink);border-color:var(--c30)}
+.chip:active{transform:scale(.97)}
+.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:18px;margin-top:24px}
+.tile{background:var(--card);border:1px solid var(--edge);border-radius:16px;padding:17px;min-height:250px;display:flex;flex-direction:column}
+.tile h4{font-size:13px;color:var(--ink);font-weight:700;letter-spacing:-.01em}
+.tile .spec{font-size:10.5px;color:var(--ink3);margin:3px 0 14px;font-family:"Geist Mono",monospace}
+.tile .stage{flex:1;position:relative}
+.tile .why{font-size:11.5px;line-height:1.55;color:var(--ink2);margin-top:12px}
+.btn{font-family:inherit;font-size:12px;font-weight:600;padding:8px 13px;border-radius:9px;border:1px solid var(--edge);background:var(--raise);color:var(--ink);cursor:pointer;
+     transition:transform var(--fast) var(--ease),box-shadow var(--dur) var(--ease),background var(--dur) var(--ease)}
+.btn:hover{transform:translateY(-1px);box-shadow:0 6px 16px -10px rgba(0,0,0,.6)}
+.btn:active{transform:translateY(0) scale(.97);transition-duration:90ms}
+.btn.loud{background:var(--c10);color:var(--on10);border-color:transparent}
+.replay{position:absolute;right:0;top:-34px;font-size:10.5px;padding:5px 9px}
+
+/* 1 skeleton */
+.sk{position:relative;overflow:hidden;background:var(--raise);border-radius:7px}
+.sk::after{content:"";position:absolute;inset:0;transform:translateX(-100%);
+  background:linear-gradient(90deg,transparent,color-mix(in srgb,var(--ink) 7%,transparent),transparent);animation:shim 1.3s var(--ease-io) infinite}
+body.rm .sk::after{animation:none}
+@keyframes shim{to{transform:translateX(100%)}}
+.swap{display:grid}.swap>*{grid-area:1/1;transition:opacity var(--dur) var(--ease),transform var(--dur) var(--ease)}
+.hide{opacity:0;pointer-events:none;transform:translateY(3px)}
+.pc{background:var(--c60);border:1px solid var(--edge);border-radius:12px;padding:13px}
+.pc .r{display:flex;justify-content:space-between;align-items:baseline}
+.pc b{color:var(--ink);font-size:14.5px;font-weight:700}
+.pc .m{font-size:20px;color:var(--up);font-weight:500}
+.pc .t{font-size:11px;color:var(--ink3)}
+.bar4{height:4px;border-radius:9px;background:var(--raise);margin-top:12px;position:relative}
+.bar4 i{position:absolute;left:0;top:0;bottom:0;width:62%;border-radius:9px;background:var(--c30)}
+
+/* 2 stagger */
+.st{opacity:0;transform:translateY(8px);transition:opacity var(--dur) var(--ease),transform var(--dur) var(--ease)}
+.st.in{opacity:1;transform:none}
+.mini{display:flex;justify-content:space-between;align-items:center;padding:10px 12px;border-radius:10px;background:var(--c60);border:1px solid var(--edge);margin-bottom:7px;font-size:12px;color:var(--ink)}
+.mini span{color:var(--ink3);font-size:11px}
+
+/* 3 live price */
+.price{font-size:30px;color:var(--ink);font-weight:500;letter-spacing:-.04em;padding:2px 8px;border-radius:8px;display:inline-block;transition:background var(--dur) var(--ease),color var(--dur) var(--ease)}
+.price.up{background:color-mix(in srgb,var(--up) 16%,transparent)}
+.price.dn{background:color-mix(in srgb,var(--down) 16%,transparent)}
+.chg{font-size:12px;margin-left:6px}
+.rail{position:relative;margin:34px 4px 10px;height:4px;border-radius:9px;background:var(--raise)}
+.rail .lv{position:absolute;top:50%;width:9px;height:9px;border-radius:50%;transform:translate(-50%,-50%);background:var(--card);box-shadow:0 0 0 2px var(--mc)}
+.rail .dot{position:absolute;top:-24px;transform:translateX(-50%);transition:left var(--dur) var(--ease)}
+.rail .dot span{font-size:10px;color:var(--on10);background:var(--c10);border-radius:99px;padding:2px 7px}
+.rail .dot i{display:block;width:2px;height:12px;margin:2px auto 0;background:var(--c10);border-radius:2px}
+
+/* 4 conditions -> ready */
+.cond{display:flex;align-items:center;gap:9px;padding:6px 0;font-size:12.5px;color:var(--ink3);transition:color var(--dur) var(--ease)}
+.cond i{width:16px;height:16px;border-radius:50%;background:var(--raise);display:grid;place-items:center;font-size:9px;font-style:normal;color:transparent;flex:none;
+  transition:background var(--dur) var(--ease),color var(--dur) var(--ease),transform var(--dur) var(--ease)}
+.cond.ok{color:var(--ink)} .cond.ok i{background:color-mix(in srgb,var(--up) 22%,transparent);color:var(--up);animation:pop var(--dur) var(--ease)}
+@keyframes pop{0%{transform:scale(.7)}60%{transform:scale(1.12)}100%{transform:scale(1)}}
+.gate{margin-top:10px;width:100%;border:0;border-radius:11px;padding:12px;font-family:inherit;font-weight:700;font-size:13px;
+  background:var(--raise);color:var(--ink3);transition:background var(--dur) var(--ease),color var(--dur) var(--ease),box-shadow var(--dur) var(--ease)}
+.gate.ready{background:var(--c10);color:var(--on10);box-shadow:0 8px 22px -12px color-mix(in srgb,var(--c10) 80%,transparent)}
+
+/* 5 hold to fire */
+.hold{position:relative;overflow:hidden;width:100%;border:0;border-radius:12px;padding:16px;font-family:inherit;cursor:pointer;user-select:none;
+  background:color-mix(in srgb,var(--c10) 18%,var(--raise));color:var(--ink);transition:transform var(--fast) var(--ease)}
+.hold:active{transform:scale(.985)}
+.hold .fill{position:absolute;inset:0;background:var(--c10);transform:scaleX(0);transform-origin:left;transition:transform var(--dur) var(--ease)}
+.hold.pressing .fill{transform:scaleX(1);transition:transform 1.2s linear}
+.hold .lab{position:relative;font-weight:700;font-size:14px;transition:color var(--dur) var(--ease)}
+.hold.pressing .lab,.hold.done .lab{color:var(--on10)}
+.hold.done .fill{transform:scaleX(1)}
+.hold .sub{position:relative;font-size:11px;opacity:.7;margin-top:2px}
+
+/* 6 segmented */
+.seg{position:relative;display:grid;grid-template-columns:repeat(3,1fr);background:var(--c60);border:1px solid var(--edge);border-radius:11px;padding:3px}
+.seg .ind{position:absolute;top:3px;bottom:3px;left:3px;width:calc((100% - 6px)/3);border-radius:8px;background:var(--raise);box-shadow:0 1px 0 color-mix(in srgb,var(--ink) 8%,transparent) inset;transition:transform var(--dur) var(--ease)}
+.seg button{position:relative;border:0;background:none;font-family:inherit;font-size:12px;font-weight:600;padding:8px;color:var(--ink3);cursor:pointer;transition:color var(--dur) var(--ease)}
+.seg button.on{color:var(--ink)}
+.segbody{margin-top:14px}
+
+/* 7 agent fill */
+.field{display:flex;justify-content:space-between;align-items:center;padding:9px 11px;border-radius:9px;border:1px solid var(--edge);margin-bottom:7px;font-size:12px;color:var(--ink3);
+  transition:border-color var(--dur) var(--ease),box-shadow var(--dur) var(--ease)}
+.field.act{border-color:var(--c30);box-shadow:0 0 0 3px color-mix(in srgb,var(--c30) 18%,transparent)}
+.field .v{color:var(--ink);transition:opacity var(--dur) var(--ease),filter var(--dur) var(--ease)}
+.field .v.blur{opacity:0;filter:blur(3px)}
+.agent{font-size:11px;color:var(--c30);display:flex;gap:6px;align-items:center;margin-bottom:9px}
+.dots i{display:inline-block;width:4px;height:4px;border-radius:50%;background:var(--c30);margin-right:3px;animation:d 1s var(--ease-io) infinite}
+.dots i:nth-child(2){animation-delay:.15s}.dots i:nth-child(3){animation-delay:.3s}
+@keyframes d{0%,100%{opacity:.25}50%{opacity:1}}
+
+/* 8 toast */
+.toast{position:absolute;left:0;right:0;bottom:0;display:flex;gap:10px;align-items:center;padding:12px 13px;border-radius:12px;background:var(--raise);border:1px solid var(--edge);
+  box-shadow:0 14px 30px -16px rgba(0,0,0,.7);opacity:0;transform:translateY(10px) scale(.98);transition:opacity var(--dur) var(--ease),transform var(--dur) var(--ease)}
+.toast.in{opacity:1;transform:none}
+.toast b{font-size:12.5px;color:var(--ink)} .toast span{font-size:11px;color:var(--ink3)}
+.toast .ic{width:26px;height:26px;border-radius:50%;display:grid;place-items:center;background:color-mix(in srgb,var(--up) 20%,transparent);color:var(--up);font-weight:700;font-size:12px}
+
+/* 9 count-up */
+.big{font-size:34px;font-weight:500;letter-spacing:-.04em;color:var(--up)}
+.rr{display:flex;height:28px;border-radius:8px;overflow:hidden;margin-top:14px;font-family:"Geist Mono",monospace;font-size:10.5px}
+.rr div{display:grid;place-items:center;transition:flex-grow 260ms var(--ease)}
+.rules{margin-top:26px;background:var(--card);border:1px solid var(--edge);border-radius:16px;padding:18px 20px;display:grid;grid-template-columns:repeat(4,1fr);gap:18px}
+.rules h5{font-size:12px;color:var(--ink);font-weight:700;margin-bottom:4px}
+.rules p{font-size:11.5px;line-height:1.55}
+</style></head>
+<body>
+<div class="page">
+<div class="top">
+  <div><h1>Motion: fast, quiet, premium</h1>
+  <p class="lede">Every transition is <b>140–200ms with one ease-out curve</b>, so things arrive quickly and settle softly. Nothing bounces
+  or loops except loading states. Click the tiles to replay each one. The palette chips swap the whole page so you can judge each palette in motion.</p></div>
+  <div><div class="sw" id="sw"></div>
+  <div style="margin-top:8px;text-align:right"><button class="chip" id="rmb">Reduced motion: off</button></div></div>
+</div>
+
+<div class="grid">
+  <div class="tile"><h4>1 · Skeleton → content</h4><div class="spec">shimmer 1.3s loop · swap 200ms crossfade</div>
+    <div class="stage"><button class="btn replay" onclick="sk()">Reload</button>
+      <div class="swap" id="skw">
+        <div class="pc" id="skel"><div class="sk" style="width:40%;height:14px"></div><div class="sk" style="width:58%;height:22px;margin-top:12px"></div><div class="sk" style="width:80%;height:10px;margin-top:10px"></div><div class="sk" style="height:4px;margin-top:14px"></div></div>
+        <div class="pc hide" id="real"><div class="r"><b>IREN</b><span class="t">Intraday breakout</span></div><div class="m mono" style="margin-top:8px">+$1,250</div><div class="t">if it reaches target 2 · risk $500</div><div class="bar4"><i></i></div></div>
+      </div></div>
+    <p class="why">Today's skeletons only pulse their opacity. A soft light sweep reads as "working", and the skeleton matches the final layout, so nothing jumps when the content arrives.</p></div>
+
+  <div class="tile"><h4>2 · Staggered entrance</h4><div class="spec">200ms · 8px rise · 40ms stagger</div>
+    <div class="stage"><button class="btn replay" onclick="stag()">Replay</button><div id="stg">
+      <div class="mini st">Intraday breakout <span>risk $500 · could make $1,250</span></div>
+      <div class="mini st">Swing pullback <span>risk $500 · could make $1,600</span></div>
+      <div class="mini st">Call option <span>costs $480 · max loss $480</span></div></div></div>
+    <p class="why">This is how the agent's plan alternatives appear. The cascade shows they belong together. The whole list lands in under 300ms.</p></div>
+
+  <div class="tile"><h4>3 · Live price tick</h4><div class="spec">tint flash 200ms · marker glide 200ms</div>
+    <div class="stage"><div><span class="price mono" id="px">18.62</span><span class="chg mono" id="chg" style="color:var(--up)">+0.00</span></div>
+      <div class="rail"><div class="lv" style="left:5%;--mc:var(--down)"></div><div class="lv" style="left:38%;--mc:var(--c30)"></div><div class="lv" style="left:66%;--mc:var(--up)"></div><div class="lv" style="left:94%;--mc:var(--up)"></div>
+      <div class="dot" id="dot" style="left:27%"><span class="mono" id="dl">18.62</span><i></i></div></div></div>
+    <p class="why">No flashing digits or blinking cells. A brief soft tint tells you which way it moved, and the live price glides along the rail instead of jumping.</p></div>
+
+  <div class="tile"><h4>4 · Conditions unlock the button</h4><div class="spec">check pop 200ms · button wake 200ms</div>
+    <div class="stage"><button class="btn replay" onclick="conds()">Replay</button><div id="cnd">
+      <div class="cond"><i>✓</i>Early high is set</div><div class="cond"><i>✓</i>Price is above the opening average</div><div class="cond"><i>✓</i>Spread is tight enough</div></div>
+      <button class="gate" id="gate">2 things still missing</button></div>
+    <p class="why">Each condition settles with a small pop. When the last one turns green, the button warms up with color and a soft glow instead of a sudden switch.</p></div>
+
+  <div class="tile"><h4>5 · Hold to place the trade</h4><div class="spec">fill 1.2s linear (deliberate) · release 200ms</div>
+    <div class="stage" style="display:flex;flex-direction:column;justify-content:center">
+      <button class="hold" id="hold"><div class="fill"></div><div class="lab" id="hl">Hold to place this trade</div><div class="sub">625 shares · risking $500</div></button>
+      <div style="text-align:center;margin-top:10px"><button class="btn" style="font-size:11px;padding:5px 10px" onclick="resetHold()">Reset</button></div></div>
+    <p class="why">This is the one intentional slow moment. The fill takes 1.2s so a trade can't go out by accident. Let go early and it slides back in 200ms. Nothing is sent until the fill completes.</p></div>
+
+  <div class="tile"><h4>6 · Sliding segmented control</h4><div class="spec">indicator 200ms · content crossfade 200ms</div>
+    <div class="stage"><div class="seg" id="seg"><div class="ind" id="ind"></div><button class="on" data-i="0">Intraday</button><button data-i="1">Swing</button><button data-i="2">Options</button></div>
+      <div class="segbody swap" id="sb">
+        <div class="pc"><div class="r"><b>Breakout</b><span class="t">closes by 3:55 PM</span></div><div class="t" style="margin-top:6px">Buy above $18.85 · out at $18.05</div></div>
+        <div class="pc hide"><div class="r"><b>Pullback</b><span class="t">holds up to 3 days</span></div><div class="t" style="margin-top:6px">Buy near $17.90 · out at $17.10</div></div>
+        <div class="pc hide"><div class="r"><b>$20 call · Dec 19</b><span class="t">costs $480</span></div><div class="t" style="margin-top:6px">Max loss is what you pay</div></div></div></div>
+    <p class="why">The indicator slides across, so you can see where you came from. The panel underneath crossfades without moving the layout.</p></div>
+
+  <div class="tile"><h4>7 · Agent fills the plan</h4><div class="spec">focus ring 200ms · value reveal 200ms · 260ms per field</div>
+    <div class="stage"><button class="btn replay" onclick="agent()">Replay</button>
+      <div class="agent"><span class="dots"><i></i><i></i><i></i></span><span id="as">Agent is filling the plan</span></div>
+      <div class="field" data-v="$18.85">Buy above <span class="v blur mono">$18.85</span></div>
+      <div class="field" data-v="$18.05">Out at <span class="v blur mono">$18.05</span></div>
+      <div class="field" data-v="625">Shares <span class="v blur mono">625</span></div></div>
+    <p class="why">When the agent works the form, you watch it happen one field at a time with a soft ring. Nothing changes behind your back.</p></div>
+
+  <div class="tile"><h4>8 · Event toast</h4><div class="spec">rise + fade 200ms · auto-hide 3.2s</div>
+    <div class="stage"><button class="btn replay" onclick="toast()">Trigger</button>
+      <div class="toast" id="toast"><div class="ic">✓</div><div><b>Target 1 hit · +$250 locked in</b><br><span>Stop moved to your entry price. This trade can't lose now.</span></div></div></div>
+    <p class="why">Fills and targets appear from the bottom and leave on their own, so they never block the chart or the button.</p></div>
+
+  <div class="tile"><h4>9 · Numbers that settle</h4><div class="spec">count-up 260ms · bar reflow 260ms</div>
+    <div class="stage"><button class="btn replay" onclick="count()">Change risk</button>
+      <div class="big mono" id="cu">+$1,250</div><div class="t" style="font-size:11.5px;color:var(--ink3)" id="cut">reward with $500 at risk</div>
+      <div class="rr"><div id="rrA" style="flex:500;background:color-mix(in srgb,var(--down) 22%,transparent);color:var(--down)">risk</div><div id="rrB" style="flex:1250;background:color-mix(in srgb,var(--up) 20%,transparent);color:var(--up)">reward</div></div></div>
+    <p class="why">When you change your risk, the numbers count to their new values and the risk/reward bar reflows. You can see how much changed, not just the result.</p></div>
+</div>
+
+<div class="rules">
+  <div><h5>One curve, two speeds</h5><p>ease-out <span class="mono">(.2,.8,.2,1)</span>. 140ms for hover and press, 200ms for everything else. The one exception is the 1.2s hold-to-fire.</p></div>
+  <div><h5>Only cheap properties</h5><p>Animate opacity and transform only, plus color for state changes. No layout animation, so the live chart never drops frames.</p></div>
+  <div><h5>Loops only while loading</h5><p>The shimmer and the agent dots are the only things that repeat. Everything else plays once and stops.</p></div>
+  <div><h5>Respect reduced motion</h5><p>The OS setting (and the toggle above) drops every duration to 0. Every state is still shown, just without the animation.</p></div>
+</div>
+</div>
+<script>
+const $=id=>document.getElementById(id), wait=ms=>new Promise(r=>setTimeout(r,ms));
+let cur=0;
+function setPal(i){cur=i;applyPalette(document.body,ORBIT_PALETTES[i]);document.querySelectorAll('#sw .chip').forEach((c,j)=>c.classList.toggle('on',j===i));}
+ORBIT_PALETTES.forEach((p,i)=>{const b=document.createElement('button');b.className='chip';b.innerHTML=`<i style="background:${p.c10}"></i>${p.name}`;b.onclick=()=>setPal(i);$('sw').appendChild(b)});
+setPal(+(new URLSearchParams(location.search).get('p')||0));
+$('rmb').onclick=()=>{document.body.classList.toggle('rm');$('rmb').textContent='Reduced motion: '+(document.body.classList.contains('rm')?'on':'off')};
+
+async function sk(){$('skel').classList.remove('hide');$('real').classList.add('hide');await wait(1100);$('skel').classList.add('hide');$('real').classList.remove('hide')}
+async function stag(){const it=[...document.querySelectorAll('#stg .st')];it.forEach(e=>e.classList.remove('in'));await wait(60);it.forEach((e,i)=>setTimeout(()=>e.classList.add('in'),i*40))}
+let p=18.62,base=18.62;
+setInterval(()=>{const d=+(Math.random()*.16-.07).toFixed(2);p=+(p+d).toFixed(2);if(p<18.2)p=18.3;if(p>19.4)p=19.2;
+  const el=$('px');el.textContent=p.toFixed(2);el.classList.remove('up','dn');void el.offsetWidth;el.classList.add(d>=0?'up':'dn');setTimeout(()=>el.classList.remove('up','dn'),260);
+  const c=(p-base);$('chg').textContent=(c>=0?'+':'')+c.toFixed(2);$('chg').style.color=c>=0?'var(--up)':'var(--down)';
+  $('dl').textContent=p.toFixed(2);$('dot').style.left=(5+(p-18.05)/(20.45-18.05)*89)+'%'},1100);
+async function conds(){const c=[...document.querySelectorAll('#cnd .cond')];c.forEach(e=>e.classList.remove('ok'));$('gate').classList.remove('ready');$('gate').textContent='3 things still missing';
+  for(let i=0;i<c.length;i++){await wait(520);c[i].classList.add('ok');const left=c.length-i-1;$('gate').textContent=left?left+(left>1?' things':' thing')+' still missing':'Ready to place';}
+  $('gate').classList.add('ready')}
+let ht;const hb=$('hold');
+const start=()=>{if(hb.classList.contains('done'))return;hb.classList.add('pressing');$('hl').textContent='Keep holding…';ht=setTimeout(()=>{hb.classList.remove('pressing');hb.classList.add('done');$('hl').textContent="You're in · 625 shares"},1200)};
+const stop=()=>{if(hb.classList.contains('done'))return;clearTimeout(ht);hb.classList.remove('pressing');$('hl').textContent='Hold to place this trade'};
+hb.addEventListener('pointerdown',start);['pointerup','pointerleave','pointercancel'].forEach(e=>hb.addEventListener(e,stop));
+function resetHold(){hb.classList.remove('done','pressing');$('hl').textContent='Hold to place this trade'}
+document.querySelectorAll('#seg button').forEach(b=>b.onclick=()=>{const i=+b.dataset.i;document.querySelectorAll('#seg button').forEach(x=>x.classList.toggle('on',x===b));
+  $('ind').style.transform=`translateX(${i*100}%)`;[...$('sb').children].forEach((c,j)=>c.classList.toggle('hide',j!==i))});
+async function agent(){const f=[...document.querySelectorAll('.field')];f.forEach(x=>{x.classList.remove('act');x.querySelector('.v').classList.add('blur')});$('as').textContent='Agent is filling the plan';
+  for(const x of f){x.classList.add('act');await wait(200);x.querySelector('.v').classList.remove('blur');await wait(260);x.classList.remove('act')}$('as').textContent='Done · check it, then load it'}
+let tt;async function toast(){const t=$('toast');t.classList.remove('in');clearTimeout(tt);await wait(30);t.classList.add('in');tt=setTimeout(()=>t.classList.remove('in'),3200)}
+let risk=500;function count(){const from=risk*2.5;risk=risk===500?350:500;const to=risk*2.5,t0=performance.now(),D=document.body.classList.contains('rm')?0:260;
+  $('cut').textContent=`reward with $${risk} at risk`;$('rrA').style.flexGrow=risk;$('rrB').style.flexGrow=to;
+  const step=n=>{const k=D?Math.min(1,(n-t0)/D):1,e=1-Math.pow(1-k,3);$('cu').textContent='+$'+Math.round(from+(to-from)*e).toLocaleString();if(k<1)requestAnimationFrame(step)};requestAnimationFrame(step)}
+// first-load showcase
+sk();stag();conds();toast();setTimeout(agent,300);
+</script>
+</body></html>
